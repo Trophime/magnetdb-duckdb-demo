@@ -2,7 +2,7 @@
   "name": "M1S2 Hifimagnet projects",
   "build": {
     "dockerfile": "Dockerfile",
-    "context": ".devcontainer"
+    "context": "."
   },
 
   "customizations": {
