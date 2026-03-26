@@ -1,0 +1,13 @@
+Welcome to M1S2 Hifimagnet projects development environment!
+
+Base image: docker.io/trophime/magnettools:trixie
+
+Available tools:
+  - Python with scientific computing libraries
+  - Jupyter notebooks (Voila on port 8866)
+
+Workspace: /workspaces/2026-m1-hifimagnet
+Datasets: /data
+
+!!! Do not forget to start the python virtualenv !!!:
+source .venv/bin/activate

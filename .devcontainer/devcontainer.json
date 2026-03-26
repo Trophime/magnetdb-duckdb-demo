@@ -1,0 +1,37 @@
+{
+  "name": "M1S2 Hifimagnet projects",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".devcontainer"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-toolsai.jupyter"
+      ],
+      "settings": {
+        // Pointing VS Code to the venv we are about to create
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+        "jupyter.notebookEditor.defaultInterpreter": "${workspaceFolder}/.venv/bin/python"
+      }
+    }
+  },
+
+  // Ensure the script has execution permissions and then run it
+  "postCreateCommand": "chmod +x .devcontainer/setup-basic.sh && ./.devcontainer/setup-basic.sh",
+
+  // Add a remote user (see Dockerfile) 
+  // and use it as the default user. On Linux, the container user's GID/UIDs
+  // will be updated to match your local UID/GID (when using the dockerFile property).
+  // See https://aka.ms/vscode-remote/containers/non-root-user for details.
+  // The default user in the base image is "jovyan", so we use that here. 
+  // If you change the user in the Dockerfile, make sure to update this value.
+  "remoteUser": "jovyan",
+
+  "forwardPorts": [8866],
+  "portsAttributes": {
+    "8866": { "label": "Voila App" }
+  }
+}

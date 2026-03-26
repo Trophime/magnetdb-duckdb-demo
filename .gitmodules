@@ -1,0 +1,9 @@
+[submodule "python_magnetrun"]
+	path = python_magnetrun
+	url = https://github.com/MagnetDB/python_magnetrun.git
+[submodule "python_magnetgeo"]
+	path = python_magnetgeo
+	url = https://github.com/MagnetDB/python_magnetgeo.git
+[submodule "python_magnetcooling"]
+	path = python_magnetcooling
+	url = https://github.com/MagnetDB/python_magnetcooling.git
