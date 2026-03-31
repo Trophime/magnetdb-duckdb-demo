@@ -3,6 +3,10 @@ set -e
 
 echo "⚡ Starting UV-powered Isolated Setup..."
 
+# 0. Initialize git submodules (required in GitHub Codespaces)
+echo "📥 Initializing git submodules..."
+git submodule update --init
+
 # 1. Create a clean virtual environment (No system-site-packages)
 # uv creates this in the .venv directory by default
 uv venv

@@ -3,6 +3,10 @@ set -e
 
 echo "🚀 Starting Isolated Environment Setup..."
 
+# 0. Initialize git submodules (required in GitHub Codespaces)
+echo "📥 Initializing git submodules..."
+git submodule update --init
+
 # 1. Create a clean venv (no system packages)
 python3 -m venv .venv --system-site-packages
 # shellcheck source=/dev/null
