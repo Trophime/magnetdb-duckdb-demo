@@ -7,3 +7,6 @@
 [submodule "python_magnetcooling"]
 	path = python_magnetcooling
 	url = https://github.com/MagnetDB/python_magnetcooling.git
+[submodule "python_magnetsetup"]
+	path = python_magnetsetup
+	url = https://github.com/MagnetDB/python_magnetsetup.git
