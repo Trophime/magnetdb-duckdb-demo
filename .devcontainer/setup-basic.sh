@@ -5,7 +5,7 @@ echo "🚀 Starting Isolated Environment Setup..."
 
 # 0. Initialize git submodules (required in GitHub Codespaces)
 echo "📥 Initializing git submodules..."
-git submodule update --init
+git submodule update --init --recursive
 
 # 1. Create a clean venv (no system packages)
 python3 -m venv .venv --system-site-packages
@@ -26,6 +26,7 @@ pip install ipyfilechooser ipywidgets voila pandas
 pip install -e "./python_magnetgeo"
 pip install -e "./python_magnetcooling[fitting]"
 pip install -e "./python_magnetrun[signal]"
+pip install -e "./python_magnetsetup"
 
 echo "✅ Setup Complete! Your environment is isolated but has access to system site packages."
 
