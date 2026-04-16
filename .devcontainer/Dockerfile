@@ -14,6 +14,6 @@ COPY motd /etc/motd
 
 USER root
 RUN echo '[ ! -z "$TERM" ] && cat /etc/motd' >> /etc/bash.bashrc
-RUN apt-get -y install texlive-latex-base texlive-latex-extra dvipng cm-super-minimal
+    && apt-get -y install texlive-latex-base texlive-latex-extra dvipng cm-super-minimal
 
 USER jovyan
