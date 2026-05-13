@@ -81,6 +81,8 @@ python magnetdb.py <entity> <action> [arguments] [options]
 
 | Command | Description |
 |---------|-------------|
+| `db create` | Create a new database file and initialise the schema |
+| `db delete [--yes]` | Delete the database file (prompts for confirmation unless `--yes`) |
 | `magnet add <json> [--input-dir <dir>]` | Add a magnet (parts + materials) from a JSON export |
 | `magnet view [name]` | List all magnets, or show detail for one |
 | `magnet delete <name>` | Delete a magnet and its part links |
@@ -90,6 +92,22 @@ python magnetdb.py <entity> <action> [arguments] [options]
 | `site update-magnet <site> <magnet>` | Patch positional/temporal fields on a site–magnet link |
 
 All subcommands accept `--db <path>` (default: `student_magnetdb.duckdb` in the current directory).
+
+### Managing the database file
+
+```bash
+# Create a new database and initialise all tables
+python magnetdb.py db create --db student.duckdb
+
+# Delete a database (interactive confirmation)
+python magnetdb.py db delete --db student.duckdb
+
+# Delete without confirmation (useful in scripts)
+python magnetdb.py db delete --db student.duckdb --yes
+```
+
+`db create` fails if the file already exists.  
+`db delete` also removes the `.wal` sidecar file if present.
 
 ---
 
@@ -116,10 +134,19 @@ Available housings: **M7**, **M8**, **M9**, **M10**.
 Dependencies flow upward — always load in this order:
 
 ```
-part JSONs (H*, R*)  →  magnet JSONs  →  site JSONs
+db create  →  part JSONs (H*, R*)  →  magnet JSONs  →  site JSONs
 ```
 
-`magnetdb.py site add` handles this automatically: it resolves magnet JSONs from the same directory (or `--magnet-dir`) and the magnet JSONs embed part definitions. A single `site add` call is usually sufficient.
+`magnetdb.py site add` handles the last three automatically: it resolves magnet JSONs from the same directory (or `--magnet-dir`) and the magnet JSONs embed part definitions. A single `site add` call is usually sufficient.
+
+### Step 0 — Create the database
+
+```bash
+cd to_duckdb/
+python magnetdb.py db create --db student.duckdb
+```
+
+This creates the file and initialises all tables in one step. The command fails if the file already exists, preventing accidental overwrites.
 
 ### Step 1 — Add a magnet from a JSON export
 
@@ -657,6 +684,9 @@ cd to_duckdb/
 DB=student.duckdb
 JSON=../../hifimagnet-projects/magnetdb.json
 RECORDS=/mnt/LNCMIG-Data/records
+
+# ── 0. Create the database ───────────────────────────────────────────────────
+python magnetdb.py db create --db $DB
 
 # ── 1. Load sites (magnets auto-resolved from the same JSON directory) ───────
 # Preview first, then load. Each _N suffix is an independent campaign.

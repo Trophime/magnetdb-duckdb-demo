@@ -3,6 +3,9 @@ magnetdb.py
 ===========
 Unified CLI entry point for the student MagnetDB DuckDB.
 
+    python magnetdb.py db create            [--db ...]
+    python magnetdb.py db delete            [--db ...] [--yes]
+
     python magnetdb.py magnet add <json_file> [--db ...] [--input-dir ...] [--part-dir ...] [--dry-run]
     python magnetdb.py magnet view [<name>]   [--db ...]
     python magnetdb.py magnet delete <name>   [--db ...]
@@ -35,6 +38,38 @@ from crud import (
 from schema import ensure_schema
 
 DEFAULT_DB = "student_magnetdb.duckdb"
+
+
+# ---------------------------------------------------------------------------
+# db handlers
+# ---------------------------------------------------------------------------
+
+
+def cmd_db_create(args) -> None:
+    db_path = Path(args.db)
+    if db_path.exists():
+        print(f"Database '{db_path}' already exists.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path)) as con:
+        ensure_schema(con)
+    print(f"Created database '{db_path}'.")
+
+
+def cmd_db_delete(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    if not args.yes:
+        answer = input(f"Delete '{db_path}'? [y/N] ").strip().lower()
+        if answer not in ("y", "yes"):
+            print("Aborted.")
+            return
+    db_path.unlink()
+    wal = db_path.with_suffix(".duckdb.wal")
+    if wal.exists():
+        wal.unlink()
+    print(f"Deleted '{db_path}'.")
 
 
 # ---------------------------------------------------------------------------
@@ -147,6 +182,8 @@ def cmd_site_update_magnet(args) -> None:
 # ---------------------------------------------------------------------------
 
 _DISPATCH = {
+    ("db",     "create"):        cmd_db_create,
+    ("db",     "delete"):        cmd_db_delete,
     ("magnet", "add"):           cmd_magnet_add,
     ("magnet", "view"):          cmd_magnet_view,
     ("magnet", "delete"):        cmd_magnet_delete,
@@ -176,7 +213,20 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=__doc__,
     )
     entity = parser.add_subparsers(dest="entity", required=True,
-                                   metavar="{magnet,site}")
+                                   metavar="{db,magnet,site}")
+
+    # ── db ───────────────────────────────────────────────────────────────────
+    db_p = entity.add_parser("db", help="Manage the DuckDB database file.")
+    db_sub = db_p.add_subparsers(dest="action", required=True,
+                                 metavar="{create,delete}")
+
+    db_create = db_sub.add_parser("create", help="Create a new database and initialise the schema.")
+    _db_arg(db_create)
+
+    db_del = db_sub.add_parser("delete", help="Delete the database file.")
+    _db_arg(db_del)
+    db_del.add_argument("--yes", "-y", action="store_true",
+                        help="Skip confirmation prompt")
 
     # ── magnet ──────────────────────────────────────────────────────────────
     magnet_p = entity.add_parser("magnet", help="Manage magnets.")
