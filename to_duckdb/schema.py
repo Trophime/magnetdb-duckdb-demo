@@ -58,11 +58,19 @@ CREATE TABLE IF NOT EXISTS magnet_parts (
     PRIMARY KEY (magnet_name, part_name)
 );
 
+-- Housing configuration must be created before sites so the FK reference below resolves.
+CREATE TABLE IF NOT EXISTS housing_config (
+    name            VARCHAR PRIMARY KEY,
+    coil_assignment MAP(VARCHAR, VARCHAR),
+    formats         VARCHAR[],
+    extra_config    JSON
+);
+
 CREATE TABLE IF NOT EXISTS sites (
     name               VARCHAR PRIMARY KEY,
     description        VARCHAR,
     status             VARCHAR,
-    housing            VARCHAR,
+    housing            VARCHAR REFERENCES housing_config(name),
     commissioned_at    TIMESTAMP,
     decommissioned_at  TIMESTAMP
 );
@@ -108,6 +116,105 @@ CREATE TABLE IF NOT EXISTS operationaldata (
 
 -- idempotent migration for databases that predate the type column
 ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'Archive';
+
+-- One row per processed overview file (OverviewRecord, data attribute excluded).
+-- sources_* columns hold the file-path lists from FileSet.
+-- signatures / sync_info / flow_params / metrics / debitbrut are stored as JSON.
+CREATE TABLE IF NOT EXISTS overview_records (
+    filename                  VARCHAR PRIMARY KEY,
+    site_name                 VARCHAR REFERENCES sites(name),
+    housing                   VARCHAR,
+    mode                      VARCHAR,
+    t0                        TIMESTAMP,
+    duration                  DOUBLE    DEFAULT 0.0,
+    teb                       DOUBLE    DEFAULT 0.0,
+    bp                        DOUBLE    DEFAULT 0.0,
+    sources_overview          VARCHAR[],
+    sources_archive           VARCHAR[],
+    sources_pupitre           VARCHAR[],
+    sources_default           VARCHAR[],
+    sources_trigger           VARCHAR[],
+    sources_spike             VARCHAR[],
+    sources_hybrid_kHz        VARCHAR[],
+    sources_hybrid_rms        VARCHAR[],
+    sources_hybrid_trigger    VARCHAR[],
+    sources_hybrid_vprocess   VARCHAR[],
+    sources_pigbrother_runlog VARCHAR[],
+    sources_pupitre_runlog    VARCHAR[],
+    signatures                JSON      DEFAULT '{}',
+    sync_info                 JSON      DEFAULT '{}',
+    flow_params               JSON      DEFAULT '{}',
+    metrics                   JSON      DEFAULT '{}',
+    debitbrut                 JSON      DEFAULT '{}'
+);
+
+-- idempotent migration for databases that predate site_name
+ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS site_name VARCHAR;
+
+-- ── Operational statistics tables ────────────────────────────────────────────
+
+-- Tracks which operationaldata files have been processed (idempotency guard).
+CREATE TABLE IF NOT EXISTS op_stats_processed (
+    operationaldata_id  INTEGER PRIMARY KEY REFERENCES operationaldata(id),
+    processed_at        TIMESTAMP DEFAULT now(),
+    n_rows              INTEGER,
+    dt_median           DOUBLE,
+    bin_config          JSON
+);
+
+-- Per-run scalar quantities (not binned).
+-- Intended use cases:
+--   'energy_j'            = sum(Ptot * dt)                  electricity billing
+--   'heat_extracted_j'    = sum((tsb-teb) * Q_m3s * rho_cp * dt)  fatal heat
+--   'duration_s'          = sum(dt)                          total run length
+--   'duration_field_on_s' = sum(dt) where Field > threshold  magnet-on time
+CREATE TABLE IF NOT EXISTS op_run_scalars (
+    operationaldata_id  INTEGER  REFERENCES operationaldata(id),
+    channel             VARCHAR  NOT NULL,
+    value               DOUBLE   NOT NULL,
+    PRIMARY KEY (operationaldata_id, channel)
+);
+
+-- Site-level field-bin distributions.
+-- One row per (file, field bin, channel).
+-- Channels: 'Pmagnet', 'Ptot', 'tsb', 'teb', 'debitbrut', ...
+-- Derived at query time:
+--   operating time (h)   = SUM(sum_dt) / 3600
+--   time-weighted mean   = SUM(sum_x_dt) / SUM(sum_dt)
+--   time-weighted stddev = sqrt(SUM(sum_x2_dt)/SUM(sum_dt) - mean^2)
+--   peak value           = MAX(max_x)
+CREATE TABLE IF NOT EXISTS op_site_bin_stats (
+    operationaldata_id  INTEGER  REFERENCES operationaldata(id),
+    field_bin_low       DOUBLE   NOT NULL,
+    field_bin_high      DOUBLE   NOT NULL,
+    channel             VARCHAR  NOT NULL,
+    n_samples           BIGINT   NOT NULL,
+    sum_dt              DOUBLE   NOT NULL,
+    sum_x_dt            DOUBLE,
+    sum_x2_dt           DOUBLE,
+    min_x               DOUBLE,
+    max_x               DOUBLE,
+    PRIMARY KEY (operationaldata_id, field_bin_low, channel)
+);
+
+-- Per-part field-bin distributions.
+-- One row per (file, part, field bin, channel).
+-- Channels: 'Icoil', 'Ucoil', 'hoop_stress_proxy' (= I^2, proportional to sigma_theta)
+-- Only rows where |Icoil| > current_threshold are included.
+CREATE TABLE IF NOT EXISTS op_part_bin_stats (
+    operationaldata_id  INTEGER  REFERENCES operationaldata(id),
+    part_name           VARCHAR  REFERENCES parts(name),
+    field_bin_low       DOUBLE   NOT NULL,
+    field_bin_high      DOUBLE   NOT NULL,
+    channel             VARCHAR  NOT NULL,
+    n_samples           BIGINT   NOT NULL,
+    sum_dt              DOUBLE   NOT NULL,
+    sum_x_dt            DOUBLE,
+    sum_x2_dt           DOUBLE,
+    min_x               DOUBLE,
+    max_x               DOUBLE,
+    PRIMARY KEY (operationaldata_id, part_name, field_bin_low, channel)
+);
 """
 
 

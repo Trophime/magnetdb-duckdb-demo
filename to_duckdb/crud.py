@@ -20,18 +20,50 @@ insert_magnet_parts(con, magnet_name, parts, verbose)
 insert_magnet_part_row(con, magnet_name, part_name, rank, coil_index)
 
 parse_timestamp(value)
-insert_site(con, data, verbose)
+insert_site(con, data, verbose, create_housing)
+insert_housing_config_from_magnetrun(con, housing_name, verbose)
 insert_site_magnets(con, site_name, magnet_entries, verbose)
 insert_experiments(con, site_name, records, verbose)
 
 update_site_magnet(con, site_name, magnet_name, **kwargs)
+
+insert_overview_record(con, record, site_name, verbose)
+upsert_overview_record(con, record, site_name, verbose)
+attach_site_to_overview_record(con, filename, site_name, verbose)
 """
 
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 from schema import COIL_TYPES
+
+# ---------------------------------------------------------------------------
+# Housing config derivation constants
+# ---------------------------------------------------------------------------
+
+_COIL_TO_SUFFIX: dict[str, str] = {"Insert": "H", "Bitter": "B"}
+_SUFFIX_TO_COIL: dict[str, str] = {v: k for k, v in _COIL_TO_SUFFIX.items()}
+_H_UCOILS: list[str] = [f"Ucoil{i}" for i in range(1, 15)]
+_B_UCOILS: list[str] = ["Ucoil15", "Ucoil16"]
+
+_PIGBROTHER_FORMULA_MAP: dict[str, dict] = {
+    "Courants_Alimentations/Référence_GR1": {
+        "formula": "Courants_Alimentations/Référence_GR1 = Référence_A1 + Référence_A2",
+        "symbol": "I_ref_GR1",
+        "unit": "ampere",
+        "label": "GR1 Reference Current",
+        "description": "Group 1 reference current sum from power supply outputs",
+    },
+    "Courants_Alimentations/Référence_GR2": {
+        "formula": "Courants_Alimentations/Référence_GR2 = Référence_A3 + Référence_A4",
+        "symbol": "I_ref_GR2",
+        "unit": "ampere",
+        "label": "GR2 Reference Current",
+        "description": "Group 2 reference current sum from power supply outputs",
+    },
+}
 
 # ---------------------------------------------------------------------------
 # JSON loading
@@ -272,26 +304,61 @@ def parse_timestamp(value) -> str | None:
     return str(value)
 
 
-def insert_site(con, data: dict, verbose: bool = True) -> None:
-    """Insert a site row; skip silently if it already exists."""
+def insert_site(
+    con, data: dict, verbose: bool = True, create_housing: bool = True
+) -> None:
+    """Insert a site row; skip silently if it already exists.
+
+    The ``housing`` field in *data* is treated as a ``housing_config.name``
+    foreign key.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    data:
+        Site dict with at least a ``name`` key.  ``housing`` must match a
+        ``housing_config.name`` value.
+    verbose:
+        Print status lines.
+    create_housing:
+        When ``True`` (default) and the housing config is not yet in the DB,
+        auto-create it from the ``python_magnetrun`` bundled JSON files.  Set
+        to ``False`` to raise :exc:`ValueError` instead when the config is
+        missing.
+    """
     name = data["name"]
     if exists(con, "sites", name):
         if verbose:
             print(f"  ~ site      {name}  (already exists, skipped)")
         return
+
+    housing = data.get("housing") or None
+    if housing is not None:
+        if con.execute(
+            "SELECT 1 FROM housing_config WHERE name = ?", [housing]
+        ).fetchone() is None:
+            if create_housing:
+                insert_housing_config_from_magnetrun(con, housing, verbose=verbose)
+            else:
+                raise ValueError(
+                    f"Housing config '{housing}' not found in housing_config table. "
+                    "Call insert_housing_config() first, or pass create_housing=True."
+                )
+
     con.execute(
         "INSERT INTO sites VALUES (?,?,?,?,?,?)",
         [
             name,
             data.get("description") or None,
             data.get("status", "in_study"),
-            data.get("housing") or None,
+            housing,
             parse_timestamp(data.get("commissioned_at")),
             parse_timestamp(data.get("decommissioned_at")),
         ],
     )
     if verbose:
-        print(f"  + site      {name}  [{data.get('housing', '?')}]  {data.get('status', '')}")
+        print(f"  + site      {name}  [{housing or '?'}]  {data.get('status', '')}")
 
 
 def _magnet_entry_name(entry) -> str:
@@ -494,6 +561,458 @@ def delete_site(con, name: str) -> None:
 # ---------------------------------------------------------------------------
 # Update helpers
 # ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Housing config
+# ---------------------------------------------------------------------------
+
+
+def _derive_housing_config_dict(
+    name: str,
+    coil_assignment: dict[str, str],
+    formats: list[str],
+    extra_config: dict | None,
+) -> dict[str, Any]:
+    """Derive a full housing-config dict from a ``coil_assignment`` mapping.
+
+    Parameters
+    ----------
+    name:
+        Housing identifier, e.g. ``"M9"``.
+    coil_assignment:
+        ``{"Insert": "GR1", "Bitter": "GR2"}`` or vice-versa.
+    formats:
+        List of supported format names (``"pupitre"``, ``"pigbrother"``, …).
+    extra_config:
+        Optional dict of extra/override fields stored verbatim (hybrid fields
+        for M8: ``reference_gr{1,2}_hybrid``, ``hybrid_formula_map``, …).
+
+    Returns
+    -------
+    dict
+        Ready to serialise as ``<name>-housing-config.json``.
+    """
+    gr_to_coil = {gr: coil for coil, gr in coil_assignment.items()}
+    gr1_coil = gr_to_coil["GR1"]
+    gr2_coil = gr_to_coil["GR2"]
+    s1 = _COIL_TO_SUFFIX[gr1_coil]
+    s2 = _COIL_TO_SUFFIX[gr2_coil]
+
+    gr1_ucoils = _H_UCOILS if gr1_coil == "Insert" else _B_UCOILS
+    gr2_ucoils = _H_UCOILS if gr2_coil == "Insert" else _B_UCOILS
+
+    label1 = "Upper Coil Current" if s1 == "H" else "Lower Coil Current"
+    label2 = "Upper Coil Current" if s2 == "H" else "Lower Coil Current"
+    desc1 = f"{'Upper' if s1 == 'H' else 'Lower'} coil current sum from DCCT sensors"
+    desc2 = f"{'Upper' if s2 == 'H' else 'Lower'} coil current sum from DCCT sensors"
+
+    pupitre_formula_map = {
+        f"I{s1}": {
+            "formula": f"I{s1} = Idcct1 + Idcct2",
+            "symbol": f"I_{s1}",
+            "unit": "ampere",
+            "label": label1,
+            "description": desc1,
+        },
+        f"I{s2}": {
+            "formula": f"I{s2} = Idcct3 + Idcct4",
+            "symbol": f"I_{s2}",
+            "unit": "ampere",
+            "label": label2,
+            "description": desc2,
+        },
+    }
+
+    cfg: dict[str, Any] = {
+        "name": name,
+        "formats": formats,
+        "reference_gr1_current": f"I{s1}",
+        "reference_gr2_current": f"I{s2}",
+        "reference_gr1_flow": f"Flow{s1}",
+        "reference_gr2_flow": f"Flow{s2}",
+        "reference_gr1_rpm": f"Rpm{s1}",
+        "reference_gr2_rpm": f"Rpm{s2}",
+        "reference_gr1_pin": f"HP{s1}",
+        "reference_gr2_pin": f"HP{s2}",
+        "voltage_channels_gr1": gr1_ucoils,
+        "voltage_channels_gr2": gr2_ucoils,
+        "reference_gr1_voltage": f"U{s1}",
+        "reference_gr2_voltage": f"U{s2}",
+        "pupitre_formula_map": pupitre_formula_map,
+        "pigbrother_formula_map": (
+            _PIGBROTHER_FORMULA_MAP if "pigbrother" in formats else {}
+        ),
+        "hybrid_formula_map": {},
+        "hybrid_voltage_mask_map": {},
+    }
+
+    if extra_config:
+        cfg.update(extra_config)
+
+    return cfg
+
+
+def _housing_config_data_from_magnetrun(housing_name: str) -> dict:
+    """Load and convert a bundled python_magnetrun housing config to DB insert format.
+
+    Uses ``python_magnetrun.housing_config.get_bundled_housing_config_path`` to
+    locate the JSON file for *housing_name* (e.g. ``"M8"``, ``"M9"``, ``"M10"``),
+    then derives the compact ``coil_assignment`` from the ``reference_gr1_current``
+    field (suffix ``"H"`` → Insert, ``"B"`` → Bitter).
+
+    Raises
+    ------
+    ImportError
+        If ``python_magnetrun`` is not installed.
+    ValueError
+        If no bundled JSON exists for *housing_name* or the suffix cannot be
+        mapped to a coil type.
+    """
+    try:
+        from python_magnetrun.housing_config import get_bundled_housing_config_path
+    except ImportError as exc:
+        raise ImportError(
+            "python_magnetrun is not installed — cannot auto-create housing config."
+        ) from exc
+
+    json_path = get_bundled_housing_config_path(housing_name)
+    if not json_path.exists():
+        raise ValueError(
+            f"No bundled housing config for '{housing_name}' in python_magnetrun. "
+            f"Expected: {json_path}"
+        )
+
+    raw = json.loads(json_path.read_text(encoding="utf-8"))
+
+    gr1_current = raw.get("reference_gr1_current", "")
+    suffix = gr1_current[-1] if gr1_current else ""
+    gr1_coil = _SUFFIX_TO_COIL.get(suffix)
+    if gr1_coil is None:
+        raise ValueError(
+            f"Cannot infer coil_assignment for '{housing_name}': "
+            f"reference_gr1_current={gr1_current!r} has unknown suffix {suffix!r}. "
+            f"Expected one of {list(_SUFFIX_TO_COIL)}"
+        )
+    gr2_coil = "Bitter" if gr1_coil == "Insert" else "Insert"
+
+    extra: dict = {}
+    for key in (
+        "reference_gr1_hybrid",
+        "reference_gr2_hybrid",
+        "hybrid_formula_map",
+        "hybrid_voltage_mask_map",
+    ):
+        val = raw.get(key)
+        if val:
+            extra[key] = val
+
+    return {
+        "name": housing_name,
+        "coil_assignment": {gr1_coil: "GR1", gr2_coil: "GR2"},
+        "formats": list(raw.get("formats", [])),
+        "extra_config": extra or None,
+    }
+
+
+def insert_housing_config_from_magnetrun(
+    con, housing_name: str, verbose: bool = True
+) -> None:
+    """Insert a housing_config row loaded from the python_magnetrun bundled JSON.
+
+    This is the preferred way to populate M8, M9, and M10 configs: the JSON
+    files inside the ``python_magnetrun`` package are the authoritative source.
+    The function is idempotent — it skips silently if the row already exists.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    housing_name:
+        Housing identifier matching a bundled JSON, e.g. ``"M9"``.
+    verbose:
+        Print a status line when inserting.
+
+    Raises
+    ------
+    ImportError
+        If ``python_magnetrun`` is not installed.
+    ValueError
+        If no bundled JSON is found for *housing_name*.
+    """
+    if exists(con, "housing_config", housing_name):
+        if verbose:
+            print(f"  ~ housing_config  {housing_name}  (already exists, skipped)")
+        return
+    data = _housing_config_data_from_magnetrun(housing_name)
+    insert_housing_config(con, data, verbose=verbose)
+
+
+def insert_housing_config(con, data: dict, verbose: bool = True) -> None:
+    """Insert or replace a housing_config row.
+
+    Parameters
+    ----------
+    data:
+        Dict with keys:
+
+        - ``name`` (str) — housing identifier, e.g. ``"M9"``
+        - ``coil_assignment`` (dict) — ``{"Insert": "GR1", "Bitter": "GR2"}``
+        - ``formats`` (list[str]) — e.g. ``["pupitre", "pigbrother"]``
+        - ``extra_config`` (dict | None) — optional hybrid/override fields
+    """
+    name = data["name"]
+    con.execute(
+        """
+        INSERT OR REPLACE INTO housing_config
+            (name, coil_assignment, formats, extra_config)
+        VALUES (?, ?, ?, ?)
+        """,
+        [
+            name,
+            data["coil_assignment"],
+            data["formats"],
+            json.dumps(data["extra_config"]) if data.get("extra_config") else None,
+        ],
+    )
+    if verbose:
+        print(f"  + housing_config  {name}  {data['coil_assignment']}")
+
+
+def export_housing_config_json(
+    con, name: str, output_dir: str | Path = "."
+) -> Path:
+    """Write ``<output_dir>/<name>-housing-config.json`` from the DB row.
+
+    Returns the path of the written file.
+    Raises ``ValueError`` if no row for *name* exists in the table.
+    """
+    row = con.execute(
+        "SELECT coil_assignment, formats, extra_config FROM housing_config WHERE name = ?",
+        [name],
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"No housing_config row found for {name!r}")
+
+    coil_assignment, formats, extra_config_raw = row
+    extra_config = json.loads(extra_config_raw) if extra_config_raw else None
+
+    cfg_dict = _derive_housing_config_dict(
+        name, dict(coil_assignment), list(formats), extra_config
+    )
+
+    dest = Path(output_dir) / f"{name}-housing-config.json"
+    with open(dest, "w") as fh:
+        json.dump(cfg_dict, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    print(f"  Wrote {dest}")
+    return dest
+
+
+# ---------------------------------------------------------------------------
+# Overview record
+# ---------------------------------------------------------------------------
+
+
+def _fileset_lists(sources) -> dict[str, list[str]]:
+    """Extract FileSet field lists, returning empty lists for None sources."""
+    if sources is None:
+        empty: list[str] = []
+        return {k: empty for k in (
+            "overview", "archive", "pupitre", "default", "trigger", "spike",
+            "hybrid_kHz", "hybrid_rms", "hybrid_trigger", "hybrid_vprocess",
+            "pigbrother_runlog", "pupitre_runlog",
+        )}
+    return {
+        "overview":           list(getattr(sources, "overview", []) or []),
+        "archive":            list(getattr(sources, "archive", []) or []),
+        "pupitre":            list(getattr(sources, "pupitre", []) or []),
+        "default":            list(getattr(sources, "default", []) or []),
+        "trigger":            list(getattr(sources, "trigger", []) or []),
+        "spike":              list(getattr(sources, "spike", []) or []),
+        "hybrid_kHz":         list(getattr(sources, "hybrid_kHz", []) or []),
+        "hybrid_rms":         list(getattr(sources, "hybrid_rms", []) or []),
+        "hybrid_trigger":     list(getattr(sources, "hybrid_trigger", []) or []),
+        "hybrid_vprocess":    list(getattr(sources, "hybrid_vprocess", []) or []),
+        "pigbrother_runlog":  list(getattr(sources, "pigbrother_runlog", []) or []),
+        "pupitre_runlog":     list(getattr(sources, "pupitre_runlog", []) or []),
+    }
+
+
+def insert_overview_record(
+    con, record, site_name: str | None = None, verbose: bool = True
+) -> None:
+    """Insert an OverviewRecord row; skip silently if filename already exists.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    record:
+        An ``OverviewRecord`` dataclass instance (``data`` attribute is ignored).
+    site_name:
+        Site name FK (references ``sites.name``).  Pass ``None`` to leave unset.
+    verbose:
+        Print a status line when inserting.
+    """
+    filename = record.filename
+    if con.execute(
+        "SELECT 1 FROM overview_records WHERE filename = ?", [filename]
+    ).fetchone():
+        if verbose:
+            print(f"  ~ overview_record  {filename}  (already exists, skipped)")
+        return
+
+    src = _fileset_lists(record.sources)
+    t0 = str(record.t0) if record.t0 is not None else None
+
+    con.execute(
+        """
+        INSERT INTO overview_records (
+            filename, site_name, housing, mode, t0, duration, teb, bp,
+            sources_overview, sources_archive, sources_pupitre,
+            sources_default, sources_trigger, sources_spike,
+            sources_hybrid_kHz, sources_hybrid_rms, sources_hybrid_trigger,
+            sources_hybrid_vprocess, sources_pigbrother_runlog, sources_pupitre_runlog,
+            signatures, sync_info, flow_params, metrics, debitbrut
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        [
+            filename,
+            site_name,
+            record.housing,
+            record.mode or None,
+            t0,
+            float(record.duration),
+            float(record.teb),
+            float(record.BP),
+            src["overview"],
+            src["archive"],
+            src["pupitre"],
+            src["default"],
+            src["trigger"],
+            src["spike"],
+            src["hybrid_kHz"],
+            src["hybrid_rms"],
+            src["hybrid_trigger"],
+            src["hybrid_vprocess"],
+            src["pigbrother_runlog"],
+            src["pupitre_runlog"],
+            json.dumps(record.signatures),
+            json.dumps(record.sync_info),
+            json.dumps(record.flow_params),
+            json.dumps(record.metrics),
+            json.dumps(record.debitbrut),
+        ],
+    )
+    if verbose:
+        print(f"  + overview_record  {filename}  [{record.housing}]  duration={record.duration:.1f}s")
+
+
+def upsert_overview_record(
+    con, record, site_name: str | None = None, verbose: bool = True
+) -> None:
+    """Insert or replace an OverviewRecord row (idempotent re-processing).
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    record:
+        An ``OverviewRecord`` dataclass instance (``data`` attribute is ignored).
+    site_name:
+        Site name FK (references ``sites.name``).  Pass ``None`` to leave unset.
+    verbose:
+        Print a status line when upserting.
+    """
+    src = _fileset_lists(record.sources)
+    t0 = str(record.t0) if record.t0 is not None else None
+
+    con.execute(
+        """
+        INSERT OR REPLACE INTO overview_records (
+            filename, site_name, housing, mode, t0, duration, teb, bp,
+            sources_overview, sources_archive, sources_pupitre,
+            sources_default, sources_trigger, sources_spike,
+            sources_hybrid_kHz, sources_hybrid_rms, sources_hybrid_trigger,
+            sources_hybrid_vprocess, sources_pigbrother_runlog, sources_pupitre_runlog,
+            signatures, sync_info, flow_params, metrics, debitbrut
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """,
+        [
+            record.filename,
+            site_name,
+            record.housing,
+            record.mode or None,
+            t0,
+            float(record.duration),
+            float(record.teb),
+            float(record.BP),
+            src["overview"],
+            src["archive"],
+            src["pupitre"],
+            src["default"],
+            src["trigger"],
+            src["spike"],
+            src["hybrid_kHz"],
+            src["hybrid_rms"],
+            src["hybrid_trigger"],
+            src["hybrid_vprocess"],
+            src["pigbrother_runlog"],
+            src["pupitre_runlog"],
+            json.dumps(record.signatures),
+            json.dumps(record.sync_info),
+            json.dumps(record.flow_params),
+            json.dumps(record.metrics),
+            json.dumps(record.debitbrut),
+        ],
+    )
+    if verbose:
+        print(f"  ~ overview_record  {record.filename}  [{record.housing}]  (upserted)")
+
+
+def attach_site_to_overview_record(
+    con, filename: str, site_name: str, verbose: bool = True
+) -> None:
+    """Set or overwrite site_name and housing on an existing overview_record row.
+
+    The housing value is taken from sites.housing for the given site_name.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    filename:
+        Primary key of the overview_records row (basename without extension).
+    site_name:
+        Site name to attach (must exist in the sites table).
+    verbose:
+        Print a status line on success.
+
+    Raises
+    ------
+    ValueError
+        If *filename* is not found in overview_records, or *site_name* is not
+        found in sites.
+    """
+    if con.execute(
+        "SELECT 1 FROM overview_records WHERE filename = ?", [filename]
+    ).fetchone() is None:
+        raise ValueError(f"No overview_record found for filename '{filename}'")
+
+    row = con.execute(
+        "SELECT housing FROM sites WHERE name = ?", [site_name]
+    ).fetchone()
+    if row is None:
+        raise ValueError(f"No site found for site_name '{site_name}'")
+    housing = row[0]
+
+    con.execute(
+        "UPDATE overview_records SET site_name = ?, housing = ? WHERE filename = ?",
+        [site_name, housing, filename],
+    )
+    if verbose:
+        print(f"  ~ overview_record  {filename}  site_name → {site_name}  housing → {housing}")
 
 
 def update_site_magnet(con, site_name: str, magnet_name: str, **kwargs) -> None:
