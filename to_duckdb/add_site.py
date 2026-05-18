@@ -1,52 +1,8 @@
 """
 add_site.py  [DEPRECATED — use magnetdb.py instead]
-====================================================
 
-.. deprecated::
-   This script is superseded by the unified CLI ``magnetdb.py``.
-   Use ``python magnetdb.py site <subcommand> [options]`` instead.
-   ``add_site.py`` is kept for backward compatibility only and may be
-   removed in a future version.
-
-Add a site to a student DuckDB database from a MagnetDB site JSON export.
-
-Magnets referenced in the JSON that are not yet in the database are loaded
-automatically from a same-named JSON file (e.g. M19071101.json) found in
-the same directory as the site JSON (or the directory given by --magnet-dir).
-
-JSON format (as exported from MagnetDB)
-----------------------------------------
-{
-    "name":               "M10_M19071101_13",
-    "description":        "",
-    "status":             "in_operation",
-    "housing":            "M10",
-    "commissioned_at":    "2025-11-12 00:00:00",
-    "decommissioned_at":  "None",
-    "magnets": [
-        "M19071101",
-        {
-            "name":               "M10Bitters",
-            "z_offset":           0.0,
-            "r_offset":           0.0,
-            "parallax":           0.0,
-            "commissioned_at":    "2025-11-12 00:00:00",
-            "decommissioned_at":  null,
-            "metadata":           {}
-        }
-    ],
-    "records": [
-        {"name": "M10_2025.11.13---09:14:21.txt", "description": "", "file": "..."},
-        ...
-    ]
-}
-
-Usage
------
-    python add_site.py add M10_M19071101_13.json
-    python add_site.py add M10_M19071101_13.json --db path/to/student.duckdb --dry-run
-    python add_site.py add M10_M19071101_13.json --magnet-dir /path/to/magnet/jsons
-    python add_site.py update-magnet M10_M19071101_13 M19071101 --z-offset 12.5
+Superseded by ``python magnetdb.py site <subcommand> [options]``.
+See DEPRECATED.md for full documentation.
 """
 
 import argparse

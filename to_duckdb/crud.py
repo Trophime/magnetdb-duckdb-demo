@@ -14,10 +14,15 @@ load_geometry_json(path)
 infer_magnet_type(parts)
 
 insert_material(con, mat, verbose)
+view_materials(con)
+view_material(con, name)
+delete_material(con, name)
 insert_part(con, part, verbose)
 insert_magnet(con, data, magnet_type, verbose)
 insert_magnet_parts(con, magnet_name, parts, verbose)
 insert_magnet_part_row(con, magnet_name, part_name, rank, coil_index)
+check_geometry_data(con, name)
+print_geometry_check(results)
 
 parse_timestamp(value)
 insert_site(con, data, verbose, create_housing)
@@ -29,6 +34,7 @@ update_site_magnet(con, site_name, magnet_name, **kwargs)
 
 insert_overview_record(con, record, site_name, verbose)
 upsert_overview_record(con, record, site_name, verbose)
+insert_overview_record_from_dict(con, data, site_name, verbose, upsert)
 attach_site_to_overview_record(con, filename, site_name, verbose)
 """
 
@@ -167,6 +173,53 @@ def insert_material(con, mat: dict, verbose: bool = True) -> None:
     )
     if verbose:
         print(f"  + material  {name}  [{mat.get('nuance', '?')}]")
+
+
+def view_materials(con) -> None:
+    rows = con.execute("SELECT name, nuance, t_ref FROM materials ORDER BY name").fetchall()
+    if not rows:
+        print("No materials in database.")
+        return
+    print(f"{'Name':<30} {'Nuance':<15} t_ref")
+    print("-" * 55)
+    for name, nuance, t_ref in rows:
+        print(f"{name:<30} {nuance or '?':<15} {t_ref or ''}")
+
+
+def view_material(con, name: str) -> None:
+    row = con.execute(
+        "SELECT name, description, nuance, t_ref, volumic_mass, specific_heat, alpha, "
+        "electrical_conductivity, thermal_conductivity, magnet_permeability, "
+        "young, poisson, expansion_coefficient, rpe "
+        "FROM materials WHERE name = ?",
+        [name],
+    ).fetchone()
+    if not row:
+        print(f"Material '{name}' not found.")
+        return
+    labels = [
+        "description", "nuance", "t_ref", "volumic_mass", "specific_heat", "alpha",
+        "electrical_conductivity", "thermal_conductivity", "magnet_permeability",
+        "young", "poisson", "expansion_coefficient", "rpe",
+    ]
+    print(f"Material: {row[0]}")
+    for label, value in zip(labels, row[1:]):
+        if value is not None and value != "":
+            print(f"  {label:<26}: {value}")
+
+
+def delete_material(con, name: str) -> None:
+    if not exists(con, "materials", name):
+        print(f"Material '{name}' not found.")
+        return
+    ref = con.execute(
+        "SELECT name FROM parts WHERE material_name = ? LIMIT 1", [name]
+    ).fetchone()
+    if ref:
+        print(f"Error: material '{name}' is referenced by part '{ref[0]}'. Remove the part first.")
+        return
+    con.execute("DELETE FROM materials WHERE name = ?", [name])
+    print(f"Deleted material '{name}'.")
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +504,83 @@ _FLOAT_FIELDS = frozenset({"z_offset", "r_offset", "parallax"})
 _TIMESTAMP_FIELDS = frozenset({"commissioned_at", "decommissioned_at"})
 _JSON_FIELDS = frozenset({"metadata"})
 _SITE_MAGNET_FIELDS = _FLOAT_FIELDS | _TIMESTAMP_FIELDS | _JSON_FIELDS
+
+
+# ---------------------------------------------------------------------------
+# Geometry-data check helpers
+# ---------------------------------------------------------------------------
+
+
+def check_geometry_data(con, name: str | None = None) -> list[dict]:
+    """Return one status dict per magnet (and its parts) describing geometry_data coverage.
+
+    Each dict has the keys:
+
+    ``magnet``
+        Magnet name.
+    ``magnet_has_geometry``
+        True when ``magnets.geometry_data IS NOT NULL``.
+    ``parts``
+        List of ``{"name": str, "type": str, "has_geometry": bool}`` for every
+        linked part, ordered by rank.
+    ``parts_ok``
+        Number of parts with ``geometry_data IS NOT NULL``.
+    ``parts_total``
+        Total number of linked parts.
+
+    Parameters
+    ----------
+    con  : open DuckDB connection
+    name : restrict to one magnet; ``None`` checks all magnets
+    """
+    if name:
+        magnet_rows = con.execute(
+            "SELECT name, geometry_data IS NOT NULL FROM magnets WHERE name = ?",
+            [name],
+        ).fetchall()
+    else:
+        magnet_rows = con.execute(
+            "SELECT name, geometry_data IS NOT NULL FROM magnets ORDER BY name"
+        ).fetchall()
+
+    results = []
+    for magnet_name, magnet_has_geo in magnet_rows:
+        part_rows = con.execute(
+            """
+            SELECT p.name, p.type, p.geometry_data IS NOT NULL
+            FROM magnet_parts mp
+            JOIN parts p ON p.name = mp.part_name
+            WHERE mp.magnet_name = ?
+            ORDER BY mp.rank
+            """,
+            [magnet_name],
+        ).fetchall()
+        parts = [{"name": pn, "type": pt, "has_geometry": bool(hg)} for pn, pt, hg in part_rows]
+        results.append({
+            "magnet":              magnet_name,
+            "magnet_has_geometry": bool(magnet_has_geo),
+            "parts":               parts,
+            "parts_ok":            sum(1 for p in parts if p["has_geometry"]),
+            "parts_total":         len(parts),
+        })
+    return results
+
+
+def print_geometry_check(results: list[dict]) -> None:
+    """Print a human-readable geometry_data coverage report."""
+    if not results:
+        print("No magnets found.")
+        return
+
+    for r in results:
+        magnet_ok = "✓" if r["magnet_has_geometry"] else "✗"
+        parts_ok  = r["parts_ok"]
+        parts_tot = r["parts_total"]
+        status    = "OK" if r["magnet_has_geometry"] and parts_ok == parts_tot else "INCOMPLETE"
+        print(f"[{status}] {r['magnet']}  assembly={magnet_ok}  parts={parts_ok}/{parts_tot}")
+        for p in r["parts"]:
+            mark = "✓" if p["has_geometry"] else "✗"
+            print(f"        {mark} {p['name']}  ({p['type']})")
 
 
 # ---------------------------------------------------------------------------
@@ -1169,6 +1299,137 @@ def upsert_overview_record(
     )
     if verbose:
         print(f"  ~ overview_record  {record.filename}  [{record.housing}]  (upserted)")
+
+
+def insert_overview_record_from_dict(
+    con, data: dict, site_name: str | None = None, verbose: bool = True, upsert: bool = False
+) -> None:
+    """Insert (or upsert) an overview_record row from a plain dict.
+
+    Accepts the dict format produced by ``find_site_overview_records --json``,
+    the pandas-records JSON written by ``magnetrun analysis/cli.py``, or any
+    dict whose keys match the ``overview_records`` table columns.
+
+    Source lists may be given as Python ``list[str]`` **or** as a
+    comma-separated string (as written by ``cli.py``).  Both the canonical
+    ``sources_<key>`` column names and the short ``<key>`` aliases used by
+    ``cli.py`` are accepted (e.g. ``sources_overview`` or ``overview``).
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    data:
+        Dict representing one overview record.  ``filename`` is required.
+    site_name:
+        Site name FK.  If *data* already contains ``site_name`` that value
+        is used; this argument takes precedence when not ``None``.
+    verbose:
+        Print a status line.
+    upsert:
+        If ``True`` use ``INSERT OR REPLACE``; otherwise skip duplicates.
+    """
+    filename = data.get("filename")
+    if not filename:
+        raise ValueError("Record dict is missing required key 'filename'")
+
+    def _to_list(v) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, list):
+            return [str(x) for x in v if x]
+        return [x.strip() for x in str(v).split(",") if x.strip()]
+
+    _source_keys = [
+        "overview", "archive", "pupitre", "default", "trigger", "spike",
+        "hybrid_kHz", "hybrid_rms", "hybrid_trigger", "hybrid_vprocess",
+        "pigbrother_runlog", "pupitre_runlog",
+    ]
+
+    def _get_sources(key: str) -> list[str]:
+        return _to_list(data.get(f"sources_{key}", data.get(key)))
+
+    def _json_field(key: str) -> str:
+        v = data.get(key, {})
+        if isinstance(v, (dict, list)):
+            return json.dumps(v)
+        return v if isinstance(v, str) else "{}"
+
+    t0_raw = data.get("t0")
+    t0 = str(t0_raw) if t0_raw is not None else None
+
+    effective_site = site_name if site_name is not None else data.get("site_name")
+    bp = float(data.get("bp", data.get("BP", 0.0)) or 0.0)
+
+    row = [
+        filename,
+        effective_site,
+        data.get("housing") or None,
+        data.get("mode") or None,
+        t0,
+        float(data.get("duration") or 0.0),
+        float(data.get("teb") or 0.0),
+        bp,
+        _get_sources("overview"),
+        _get_sources("archive"),
+        _get_sources("pupitre"),
+        _get_sources("default"),
+        _get_sources("trigger"),
+        _get_sources("spike"),
+        _get_sources("hybrid_kHz"),
+        _get_sources("hybrid_rms"),
+        _get_sources("hybrid_trigger"),
+        _get_sources("hybrid_vprocess"),
+        _get_sources("pigbrother_runlog"),
+        _get_sources("pupitre_runlog"),
+        _json_field("signatures"),
+        _json_field("sync_info"),
+        _json_field("flow_params"),
+        _json_field("metrics"),
+        _json_field("debitbrut"),
+    ]
+
+    if upsert:
+        con.execute(
+            """
+            INSERT OR REPLACE INTO overview_records (
+                filename, site_name, housing, mode, t0, duration, teb, bp,
+                sources_overview, sources_archive, sources_pupitre,
+                sources_default, sources_trigger, sources_spike,
+                sources_hybrid_kHz, sources_hybrid_rms, sources_hybrid_trigger,
+                sources_hybrid_vprocess, sources_pigbrother_runlog, sources_pupitre_runlog,
+                signatures, sync_info, flow_params, metrics, debitbrut
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            row,
+        )
+        if verbose:
+            housing = data.get("housing", "?")
+            print(f"  ~ overview_record  {filename}  [{housing}]  (upserted)")
+    else:
+        if con.execute(
+            "SELECT 1 FROM overview_records WHERE filename = ?", [filename]
+        ).fetchone():
+            if verbose:
+                print(f"  ~ overview_record  {filename}  (already exists, skipped)")
+            return
+        con.execute(
+            """
+            INSERT INTO overview_records (
+                filename, site_name, housing, mode, t0, duration, teb, bp,
+                sources_overview, sources_archive, sources_pupitre,
+                sources_default, sources_trigger, sources_spike,
+                sources_hybrid_kHz, sources_hybrid_rms, sources_hybrid_trigger,
+                sources_hybrid_vprocess, sources_pigbrother_runlog, sources_pupitre_runlog,
+                signatures, sync_info, flow_params, metrics, debitbrut
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            """,
+            row,
+        )
+        if verbose:
+            housing = data.get("housing", "?")
+            dur = float(data.get("duration") or 0.0)
+            print(f"  + overview_record  {filename}  [{housing}]  duration={dur:.1f}s")
 
 
 def attach_site_to_overview_record(

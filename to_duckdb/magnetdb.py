@@ -6,9 +6,14 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py db create            [--db ...]
     python magnetdb.py db delete            [--db ...] [--yes]
 
-    python magnetdb.py magnet add <json_file> [--db ...] [--input-dir ...] [--part-dir ...] [--dry-run]
-    python magnetdb.py magnet view [<name>]   [--db ...]
-    python magnetdb.py magnet delete <name>   [--db ...]
+    python magnetdb.py material add <json_file> [--db ...] [--input-dir ...] [--dry-run]
+    python magnetdb.py material view [<name>]   [--db ...]
+    python magnetdb.py material delete <name>   [--db ...]
+
+    python magnetdb.py magnet add <json_file> [--db ...] [--input-dir ...] [--part-dir ...] [--geometry ...] [--dry-run]
+    python magnetdb.py magnet view [<name>]             [--db ...]
+    python magnetdb.py magnet check-geometry [<name>]   [--db ...]
+    python magnetdb.py magnet delete <name>             [--db ...]
 
     python magnetdb.py site add <json_file> [--db ...] [--input-dir ...] [--magnet-dir ...] [--dry-run]
     python magnetdb.py site view [<name>]   [--db ...]
@@ -23,6 +28,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py populate operationaldata [SITE ...] [--all] [--type ...] [--records-base ...] [--dry-run]
     python magnetdb.py populate experiments     [SITE ...] [--all] [--dry-run]
     python magnetdb.py populate overview-records [SITE ...] [--all] [--reprocess] [--dry-run]
+    python magnetdb.py populate overview-records-from-json <json_file> [--site SITE] [--reprocess] [--dry-run] [--db ...]
 """
 
 import argparse
@@ -40,11 +46,16 @@ import duckdb
 from add_magnet import add_magnet
 from add_site import add_site
 from crud import (
+    check_geometry_data,
     delete_magnet,
+    delete_material,
     delete_site,
     insert_experiments,
+    insert_material,
     insert_overview_record,
+    insert_overview_record_from_dict,
     load_json,
+    print_geometry_check,
     update_site_magnet,
     upsert_overview_record,
     view_experiments,
@@ -52,6 +63,8 @@ from crud import (
     view_housing_configs,
     view_magnet,
     view_magnets,
+    view_material,
+    view_materials,
     view_operationaldata,
     view_overview_records,
     view_site,
@@ -106,6 +119,52 @@ def cmd_db_delete(args) -> None:
 
 
 # ---------------------------------------------------------------------------
+# material handlers
+# ---------------------------------------------------------------------------
+
+
+def cmd_material_add(args) -> None:
+    json_path = Path(args.json_file)
+    if args.input_dir:
+        json_path = Path(args.input_dir) / json_path
+    if not json_path.exists():
+        print(f"Error: '{json_path}' not found.")
+        sys.exit(1)
+    data = load_json(json_path)
+    if args.dry_run:
+        print(f"[DRY RUN] would insert material '{data.get('name', '?')}'  nuance={data.get('nuance', '?')}")
+        return
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path)) as con:
+        ensure_schema(con)
+        insert_material(con, data)
+
+
+def cmd_material_view(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path), read_only=True) as con:
+        if args.name:
+            view_material(con, args.name)
+        else:
+            view_materials(con)
+
+
+def cmd_material_delete(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path)) as con:
+        delete_material(con, args.name)
+
+
+# ---------------------------------------------------------------------------
 # magnet handlers
 # ---------------------------------------------------------------------------
 
@@ -118,7 +177,12 @@ def cmd_magnet_add(args) -> None:
         print(f"Error: '{json_path}' not found.")
         sys.exit(1)
     part_dir = Path(args.part_dir) if args.part_dir else json_path.parent
-    add_magnet(load_json(json_path), args.db, dry_run=args.dry_run, part_dir=part_dir)
+    geometry_path = Path(args.geometry) if args.geometry else None
+    if geometry_path and not geometry_path.exists():
+        print(f"Error: geometry file '{geometry_path}' not found.")
+        sys.exit(1)
+    add_magnet(load_json(json_path), args.db, dry_run=args.dry_run,
+               part_dir=part_dir, geometry_path=geometry_path)
 
 
 def cmd_magnet_view(args) -> None:
@@ -131,6 +195,16 @@ def cmd_magnet_view(args) -> None:
             view_magnet(con, args.name)
         else:
             view_magnets(con)
+
+
+def cmd_magnet_check_geometry(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path), read_only=True) as con:
+        results = check_geometry_data(con, args.name or None)
+    print_geometry_check(results)
 
 
 def cmd_magnet_delete(args) -> None:
@@ -392,6 +466,54 @@ def cmd_populate_experiments(args) -> None:
             insert_experiments(con, site_name, records, verbose=True)
 
 
+def cmd_populate_overview_records_from_json(args) -> None:
+    json_path = Path(args.json_file)
+    if not json_path.exists():
+        print(f"Error: '{json_path}' not found.")
+        sys.exit(1)
+
+    try:
+        with open(json_path, encoding="utf-8") as fh:
+            records = json.load(fh)
+    except json.JSONDecodeError as exc:
+        print(f"Error: '{json_path}' is not valid JSON: {exc}")
+        sys.exit(1)
+
+    if not isinstance(records, list):
+        print("Error: JSON file must contain a top-level array of records.")
+        sys.exit(1)
+
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+
+    site_name = args.site or None
+
+    print(f"\nLoading {len(records)} overview record(s) from {json_path.name} …\n")
+
+    if args.dry_run:
+        for rec in records:
+            fname = rec.get("filename", "<missing>")
+            housing = rec.get("housing", "?")
+            dur = rec.get("duration", 0.0)
+            print(f"  [dry-run] would insert: {fname}  [{housing}]  duration={float(dur or 0):.1f}s")
+        return
+
+    with duckdb.connect(str(db_path)) as con:
+        ensure_schema(con)
+        for rec in records:
+            try:
+                insert_overview_record_from_dict(
+                    con, rec, site_name=site_name, verbose=True, upsert=args.reprocess
+                )
+            except (ValueError, KeyError) as exc:
+                fname = rec.get("filename", "<unknown>")
+                print(f"  [ERROR] {fname}: {exc}")
+
+    print("\nDone.")
+
+
 def cmd_populate_overview_records(args) -> None:
     try:
         from python_magnetrun.analysis.processing import (
@@ -453,9 +575,13 @@ def cmd_populate_overview_records(args) -> None:
 _DISPATCH = {
     ("db",                "create"):          cmd_db_create,
     ("db",                "delete"):          cmd_db_delete,
-    ("magnet",            "add"):             cmd_magnet_add,
-    ("magnet",            "view"):            cmd_magnet_view,
-    ("magnet",            "delete"):          cmd_magnet_delete,
+    ("material",          "add"):             cmd_material_add,
+    ("material",          "view"):            cmd_material_view,
+    ("material",          "delete"):          cmd_material_delete,
+    ("magnet",            "add"):              cmd_magnet_add,
+    ("magnet",            "view"):             cmd_magnet_view,
+    ("magnet",            "check-geometry"):   cmd_magnet_check_geometry,
+    ("magnet",            "delete"):           cmd_magnet_delete,
     ("site",              "add"):             cmd_site_add,
     ("site",              "view"):            cmd_site_view,
     ("site",              "delete"):          cmd_site_delete,
@@ -466,7 +592,8 @@ _DISPATCH = {
     ("overview-records",  "view"):            cmd_overview_records_view,
     ("populate",          "operationaldata"): cmd_populate_operationaldata,
     ("populate",          "experiments"):     cmd_populate_experiments,
-    ("populate",          "overview-records"): cmd_populate_overview_records,
+    ("populate",          "overview-records"):           cmd_populate_overview_records,
+    ("populate",          "overview-records-from-json"): cmd_populate_overview_records_from_json,
 }
 
 
@@ -497,7 +624,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     entity = parser.add_subparsers(
         dest="entity", required=True,
-        metavar="{db,magnet,site,housing,experiments,operationaldata,overview-records,populate}",
+        metavar="{db,material,magnet,site,housing,experiments,operationaldata,overview-records,populate}",
     )
 
     # ── db ───────────────────────────────────────────────────────────────────
@@ -513,10 +640,31 @@ def build_parser() -> argparse.ArgumentParser:
     db_del.add_argument("--yes", "-y", action="store_true",
                         help="Skip confirmation prompt")
 
+    # ── material ─────────────────────────────────────────────────────────────
+    mat_p = entity.add_parser("material", help="Manage materials.")
+    mat_sub = mat_p.add_subparsers(dest="action", required=True,
+                                   metavar="{add,view,delete}")
+
+    ma_add = mat_sub.add_parser("add", help="Add a material from a JSON file.")
+    ma_add.add_argument("json_file", help="Path to the material JSON file (or bare name with --input-dir)")
+    _db_arg(ma_add)
+    _input_dir_arg(ma_add)
+    ma_add.add_argument("--dry-run", action="store_true",
+                        help="Validate and preview without writing")
+
+    ma_view = mat_sub.add_parser("view", help="List all materials or show one.")
+    ma_view.add_argument("name", nargs="?", default=None,
+                         help="Material name (omit to list all)")
+    _db_arg(ma_view)
+
+    ma_del = mat_sub.add_parser("delete", help="Delete a material (fails if referenced by a part).")
+    ma_del.add_argument("name", help="Material name")
+    _db_arg(ma_del)
+
     # ── magnet ──────────────────────────────────────────────────────────────
     magnet_p = entity.add_parser("magnet", help="Manage magnets.")
     magnet_sub = magnet_p.add_subparsers(dest="action", required=True,
-                                         metavar="{add,view,delete}")
+                                         metavar="{add,view,check-geometry,delete}")
 
     m_add = magnet_sub.add_parser("add", help="Add a magnet from a JSON export.")
     m_add.add_argument("json_file", help="Path to the magnet JSON file (or bare name with --input-dir)")
@@ -525,6 +673,11 @@ def build_parser() -> argparse.ArgumentParser:
     m_add.add_argument("--part-dir", dest="part_dir",
                        help="Directory for <part_name>.json files "
                             "(default: same dir as the JSON file)")
+    m_add.add_argument("--geometry",
+                       help="Path to the assembly-level YAML geometry file "
+                            "(Insert, Bitters, …) to store in magnets.geometry_data. "
+                            "Required for geometry_config_to_yaml / the 'geometry' "
+                            "subcommand of student_stress_map.py.")
     m_add.add_argument("--dry-run", action="store_true",
                        help="Validate and preview without writing")
 
@@ -532,6 +685,14 @@ def build_parser() -> argparse.ArgumentParser:
     m_view.add_argument("name", nargs="?", default=None,
                         help="Magnet name (omit to list all)")
     _db_arg(m_view)
+
+    m_chk = magnet_sub.add_parser(
+        "check-geometry",
+        help="Report geometry_data coverage for magnet assembly and parts.",
+    )
+    m_chk.add_argument("name", nargs="?", default=None,
+                       help="Magnet name (omit to check all magnets)")
+    _db_arg(m_chk)
 
     m_del = magnet_sub.add_parser("delete", help="Delete a magnet and its part links.")
     m_del.add_argument("name", help="Magnet name")
@@ -629,7 +790,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── populate ─────────────────────────────────────────────────────────────
     pop_p = entity.add_parser("populate", help="Populate data tables from files.")
     pop_sub = pop_p.add_subparsers(dest="action", required=True,
-                                   metavar="{operationaldata,experiments,overview-records}")
+                                   metavar="{operationaldata,experiments,overview-records,overview-records-from-json}")
 
     # populate operationaldata
     p_opdata = pop_sub.add_parser(
@@ -696,6 +857,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ov.add_argument("--dry-run", action="store_true",
                       help="Discover files but do not write to the DB.")
+
+    # populate overview-records-from-json
+    p_ov_json = pop_sub.add_parser(
+        "overview-records-from-json",
+        help="Load overview_records directly from a pre-computed summary JSON file.",
+    )
+    _db_arg(p_ov_json)
+    p_ov_json.add_argument(
+        "json_file",
+        help=(
+            "Path to a JSON file containing an array of overview record dicts "
+            "(e.g. summary-2026.json produced by python_magnetrun analysis/cli.py). "
+            "Source lists may be plain Python lists or comma-separated strings. "
+            "Both 'sources_<key>' and '<key>' column-name aliases are accepted."
+        ),
+    )
+    p_ov_json.add_argument(
+        "--site", default=None, metavar="SITE",
+        help="Site name to assign to all loaded records (overrides any site_name in the JSON).",
+    )
+    p_ov_json.add_argument(
+        "--reprocess", action="store_true",
+        help="Overwrite existing overview_records rows (upsert instead of skip).",
+    )
+    p_ov_json.add_argument("--dry-run", action="store_true",
+                           help="Preview records without writing to the DB.")
 
     return parser
 

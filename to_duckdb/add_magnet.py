@@ -1,48 +1,8 @@
 """
 add_magnet.py  [DEPRECATED — use magnetdb.py instead]
-======================================================
 
-.. deprecated::
-   This script is superseded by the unified CLI ``magnetdb.py``.
-   Use ``python magnetdb.py magnet add <json_file> [options]`` instead.
-   ``add_magnet.py`` is kept for backward compatibility only and may be
-   removed in a future version.
-
-Add a magnet (with its parts and materials) to a student DuckDB database
-from a MagnetDB magnet JSON export.
-
-Parts may be embedded inline as dicts or referenced by name (plain string).
-When a part entry is a plain string, the script looks for a file named
-``<part_name>.json`` in the same directory as the magnet JSON (or the
-directory given by --part-dir) and loads the full part definition from there.
-
-JSON format (as exported from MagnetDB)
-----------------------------------------
-{
-    "name":                    "M25032101",
-    "status":                  "in_operation",
-    "design_office_reference": "",
-    "description":             "14 Helices, Phi = 34 mm",
-    "parts": [
-        "H24110501",               ← name-only reference (resolved from <part_dir>/H24110501.json)
-        {
-            "name":                    "H24110502",
-            "description":             "H2",
-            "status":                  "in_operation",
-            "type":                    "helix",
-            "design_office_reference": "HL-37-021-B",
-            "geometry":                "/path/to/HL-37_H2.yaml",
-            "material": { ... }
-        }
-    ]
-}
-
-Usage
------
-    python add_magnet.py M25032101.json
-    python add_magnet.py M25032101.json --db path/to/student.duckdb
-    python add_magnet.py M25032101.json --dry-run
-    python add_magnet.py M25032101.json --part-dir /path/to/part/jsons
+Superseded by ``python magnetdb.py magnet add <json_file> [options]``.
+See DEPRECATED.md for full documentation.
 """
 
 import argparse
@@ -122,19 +82,33 @@ def _validate(data: dict) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def add_magnet(data: dict, db_path, dry_run: bool = False, part_dir=None) -> None:
+def add_magnet(
+    data: dict,
+    db_path,
+    dry_run: bool = False,
+    part_dir=None,
+    geometry_path=None,
+) -> None:
     """Insert a magnet and its parts/materials into the student DuckDB.
 
     Parameters
     ----------
-    data     : dict matching the MagnetDB magnet JSON export format
-    db_path  : path to the .duckdb file (created if it does not exist)
-    dry_run  : if True, validate only — do not write
-    part_dir : directory to search for <part_name>.json files when a part
-               entry is a plain name string (default: current directory)
+    data          : dict matching the MagnetDB magnet JSON export format
+    db_path       : path to the .duckdb file (created if it does not exist)
+    dry_run       : if True, validate only — do not write
+    part_dir      : directory to search for <part_name>.json files when a part
+                    entry is a plain name string (default: current directory)
+    geometry_path : optional path to the assembly-level YAML geometry file
+                    (Insert, Bitters, …) to store in magnets.geometry_data.
+                    Takes precedence over any ``geometry`` key already present
+                    in *data*.
     """
     db_path = Path(db_path)
     part_dir = Path(part_dir) if part_dir else Path(".")
+
+    # Inject assembly geometry path so insert_magnet can populate geometry_data
+    if geometry_path:
+        data = {**data, "geometry": str(geometry_path)}
 
     # Normalise: strip accidental .json suffix from name
     if data.get("name", "").endswith(".json"):

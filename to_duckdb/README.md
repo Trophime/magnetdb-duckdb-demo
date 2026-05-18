@@ -85,6 +85,9 @@ python magnetdb.py <entity> <action> [arguments] [options]
 |---------|-------------|
 | `db create` | Create a new database file and initialise the schema |
 | `db delete [--yes]` | Delete the database file (prompts for confirmation unless `--yes`) |
+| `material add <json> [--input-dir <dir>]` | Add a material from a JSON export |
+| `material view [name]` | List all materials, or show detail for one |
+| `material delete <name>` | Delete a material (blocked if a part references it) |
 | `magnet add <json> [--input-dir <dir>]` | Add a magnet (parts + materials) from a JSON export |
 | `magnet view [name]` | List all magnets, or show detail for one |
 | `magnet delete <name>` | Delete a magnet and its part links |
@@ -99,6 +102,7 @@ python magnetdb.py <entity> <action> [arguments] [options]
 | `populate operationaldata [SITE...] [--all]` | Scan filesystem and register TDMS/pupitre files in `operationaldata` |
 | `populate experiments [SITE...] [--all]` | Scan filesystem for pupitre TXT files and register them in `experiments` |
 | `populate overview-records [SITE...] [--all]` | Process Overview TDMS files via `python_magnetrun` into `overview_records` |
+| `populate overview-records-from-json <json> [--site SITE]` | Load `overview_records` directly from a pre-computed summary JSON file |
 
 All subcommands accept `--db <path>` (default: `student_magnetdb.duckdb` in the current directory).
 
@@ -117,6 +121,56 @@ python magnetdb.py db delete --db student.duckdb --yes
 
 `db create` fails if the file already exists.  
 `db delete` also removes the `.wal` sidecar file if present.
+
+### Managing materials
+
+Materials can be imported independently of magnets, which is useful when you want to inspect or correct physical properties without re-importing a full magnet hierarchy.
+
+```bash
+JSON=../../hifimagnet-projects/magnetdb.json
+
+# Preview without writing
+python magnetdb.py material add $JSON/MA20072304.json --dry-run
+
+# Write to DB
+python magnetdb.py material add $JSON/MA20072304.json --db student.duckdb
+
+# List all materials
+python magnetdb.py material view --db student.duckdb
+
+# Show all physical properties for one material
+python magnetdb.py material view MA20072304 --db student.duckdb
+
+# Delete a material (blocked if any part still references it)
+python magnetdb.py material delete MA20072304 --db student.duckdb
+```
+
+The operation is **idempotent**: adding the same material twice is safe — the second call is silently skipped.
+
+#### Material JSON format
+
+The JSON produced by `python_magnetapi` for a material record:
+
+```json
+{
+    "name":                    "MA20072304",
+    "description":             "",
+    "nuance":                  "CuCrZr",
+    "t_ref":                   293,
+    "volumic_mass":            9000.0,
+    "specific_heat":           385,
+    "alpha":                   0.0036,
+    "electrical_conductivity": 47200000.0,
+    "thermal_conductivity":    380,
+    "magnet_permeability":     1,
+    "young":                   117000000000.0,
+    "poisson":                 0.33,
+    "expansion_coefficient":   1.8e-05,
+    "rpe":                     324000000.0
+}
+```
+
+All fields except `name` are optional. `rpe` is stored in Pa.
 
 ---
 
@@ -143,7 +197,7 @@ Available housings: **M7**, **M8**, **M9**, **M10**.
 Dependencies flow upward — always load in this order:
 
 ```
-db create  →  part JSONs (H*, R*)  →  magnet JSONs  →  site JSONs
+db create  →  material JSONs (MA*)  →  part JSONs (H*, R*)  →  magnet JSONs  →  site JSONs
 ```
 
 `magnetdb.py site add` handles the last three automatically: it resolves magnet JSONs from the same directory (or `--magnet-dir`) and the magnet JSONs embed part definitions. A single `site add` call is usually sufficient.
@@ -367,6 +421,90 @@ export MAGNETRUN_PUPITRE_DATA_DIR=/data/records/srv-data-install
 python magnetdb.py populate overview-records --all --db student.duckdb
 ```
 
+### `populate overview-records-from-json`
+
+Loads `overview_records` directly from a pre-computed summary JSON file, **without** requiring `python_magnetrun` or the raw TDMS files. This is the preferred path when a summary has already been produced (e.g. by `python -m python_magnetrun.analysis.cli`) or when the TDMS files are not locally accessible.
+
+```bash
+# Load all records from a summary file, assign them to a site
+python magnetdb.py populate overview-records-from-json summary-2026.json \
+    --site M10_M19071101_13 --db student.duckdb
+
+# Dry run — preview what would be inserted
+python magnetdb.py populate overview-records-from-json summary-2026.json \
+    --site M10_M19071101_13 --dry-run
+
+# Re-process / overwrite existing rows
+python magnetdb.py populate overview-records-from-json summary-2026.json \
+    --site M10_M19071101_13 --reprocess --db student.duckdb
+
+# Records already carry site_name — no --site needed
+python magnetdb.py populate overview-records-from-json summary-2026.json \
+    --db student.duckdb
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--site SITE` | — | Site name to assign to all loaded records; overrides any `site_name` already in the JSON |
+| `--reprocess` | — | Overwrite existing `overview_records` rows (upsert instead of skip) |
+| `--dry-run` | — | Preview records without writing to the DB |
+| `--db` | `student_magnetdb.duckdb` | Target DuckDB file |
+
+#### Accepted JSON format
+
+The file must contain a top-level JSON array.  Each element is a dict with the
+following fields (all optional except `filename`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `filename` | string | **Required.** Base filename without extension (primary key) |
+| `housing` | string | Housing identifier (`M8`, `M9`, `M10`, …) |
+| `mode` | string | Measurement mode |
+| `t0` | string \| null | Start timestamp (`"YYYY-MM-DD HH:MM:SS"` or ISO 8601) |
+| `duration` | float | Run duration in seconds |
+| `teb` | float | Pupitre inlet water temperature (°C) |
+| `bp` | float | Pupitre pressure (bar) |
+| `sources_overview` | list\[str\] \| csv | Overview TDMS file path(s) |
+| `sources_archive` | list\[str\] \| csv | Archive TDMS file path(s) |
+| `sources_pupitre` | list\[str\] \| csv | Pupitre TXT file path(s) |
+| `sources_default` | list\[str\] \| csv | Default incident file path(s) |
+| `sources_trigger` | list\[str\] \| csv | Trigger incident file path(s) |
+| `sources_spike` | list\[str\] \| csv | Spike incident file path(s) |
+| `sources_hybrid_kHz` | list\[str\] \| csv | Hybrid kHz file path(s) |
+| `sources_hybrid_rms` | list\[str\] \| csv | Hybrid RMS file path(s) |
+| `sources_hybrid_trigger` | list\[str\] \| csv | Hybrid trigger file path(s) |
+| `sources_hybrid_vprocess` | list\[str\] \| csv | Hybrid vprocess file path(s) |
+| `sources_pigbrother_runlog` | list\[str\] \| csv | Pigbrother run-log file path(s) |
+| `sources_pupitre_runlog` | list\[str\] \| csv | Pupitre Cirrus run-log file path(s) |
+| `signatures` | dict | Per-channel signature statistics |
+| `sync_info` | dict | Synchronisation metadata |
+| `flow_params` | dict | Computed flow parameters |
+| `metrics` | dict | Distance / correlation metrics |
+| `debitbrut` | dict | Raw flow-rate data |
+| `site_name` | string | Site FK (overridden by `--site` when supplied) |
+
+**Source list flexibility** — each `sources_*` field accepts either a Python list of paths or a
+comma-separated string.  The short alias without the `sources_` prefix (e.g. `overview` instead
+of `sources_overview`) is also accepted, making the command compatible with the pandas-records JSON
+written by `python -m python_magnetrun.analysis.cli`.
+
+**Minimal example:**
+
+```json
+[
+  {
+    "filename": "M10_261105-1530",
+    "housing":  "M10",
+    "t0":       "2026-11-05 15:30:00",
+    "duration": 182.4,
+    "teb":      14.2,
+    "bp":       9.8,
+    "sources_overview": ["/data/records/pbsurv/M10/Overview/M10_261105-1530.tdms"],
+    "signatures": {"Courant_GR1": {"min": 0.0, "max": 26100.0, "mean": 25980.3}}
+  }
+]
+```
+
 ---
 
 ## Database schema
@@ -482,200 +620,6 @@ Notes:
 - `decommissioned_at` can be `"None"` or omitted for active sites.
 - `records` can be an empty list `[]` if no experiment files are available yet.
 
----
-
-## Finding archived files — `operationaldata` table
-
-Two helper scripts scan the storage server for raw data files that belong to a given site's operational window (between `commissioned_at` and `decommissioned_at`). Matched files are inserted into the `operationaldata` table, which mirrors `experiments` and adds a `type` column.
-
-### `operationaldata` type values
-
-| Type | Script | File format | Source directory |
-|------|--------|-------------|-----------------|
-| `Overview` | `find_site_tdms.py` | `.tdms`, `YYDDMM-HHMM` | `<records_base>/<pbsurv>/<housing>/Overview/` |
-| `Archive` | `find_site_tdms.py` | `.tdms`, `YYDDMM-HHMM` | `<records_base>/<pbsurv>/<housing>/Fichiers_Archive/` |
-| `Spike` | `find_site_tdms.py` | `.tdms`, `YYMMDD-HHMMSS` | `<records_base>/<pbsurv>/<housing>/Fichiers_Spike/` |
-| `Default` | `find_site_tdms.py` | `.tdms`, `YYMMDD-HHMMSS` | `<records_base>/<pbsurv>/<housing>/Fichiers_Default/` |
-| `Pupitre` | `find_site_pupitre.py` | `.txt`, `YYYY.MM.DD - HH:MM:SS` | `<records_base>/<srv_subdir>/<housing>/` |
-
-All file timestamps are interpreted as French local time (`Europe/Paris`).
-
-### `find_site_tdms.py`
-
-Scans four TDMS subdirectories for a housing and registers matching files in `operationaldata`.
-
-```bash
-# Scan all types (dry run — no DB writes)
-python find_site_tdms.py M10_M19071101_13 --dry-run
-
-# Scan and register
-python find_site_tdms.py M10_M19071101_13
-
-# Restrict to specific types
-python find_site_tdms.py M10_M19071101_13 --type Overview Archive
-
-# DB timestamps stored as French local time instead of UTC
-python find_site_tdms.py M10_M19071101_13 --db-tz Europe/Paris
-
-# Override storage paths
-python find_site_tdms.py M10_M19071101_13 \
-    --records-base /data/records \
-    --pbsurv pbsurv
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--db` | `student_magnetdb.duckdb` | DuckDB file |
-| `--db-tz` | `UTC` | Timezone of `commissioned_at` / `decommissioned_at` in the DB |
-| `--type` | all | Restrict scan to one or more of `Overview Archive Spike Default` |
-| `--records-base` | `/mnt/LNCMIG-Data/records` | Root of the records tree |
-| `--pbsurv` | `pbsurv` | Subdirectory of `records-base` that contains housing directories |
-| `--dry-run` | — | Match files without writing to the DB |
-
-### `find_site_pupitre.py`
-
-Scans a single flat directory for pupitre TXT files and registers matching files in `operationaldata` with `type = 'Pupitre'`.
-
-```bash
-# Scan and register
-python find_site_pupitre.py M10_M19071101_13
-
-# Dry run
-python find_site_pupitre.py M10_M19071101_13 --dry-run
-
-# DB timestamps stored as French local time instead of UTC
-python find_site_pupitre.py M10_M19071101_13 --db-tz Europe/Paris
-
-# Override storage paths
-python find_site_pupitre.py M10_M19071101_13 \
-    --records-base /data/records \
-    --srv-subdir srv-data-install
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--db` | `student_magnetdb.duckdb` | DuckDB file |
-| `--db-tz` | `UTC` | Timezone of `commissioned_at` / `decommissioned_at` in the DB |
-| `--records-base` | `/mnt/LNCMIG-Data/records` | Root of the records tree |
-| `--srv-subdir` | `srv-data-install` | Subdirectory of `records-base` that contains housing directories |
-| `--dry-run` | — | Match files without writing to the DB |
-
-### `find_site_overview_records.py`
-
-Read-only query tool — lists all `overview_records` rows for a site. The table is populated by the `python_magnetrun` processing pipeline, not by this script.
-
-```bash
-# Table output (default)
-python find_site_overview_records.py M10_M19071101_13
-
-# Include per-record signature and sync details
-python find_site_overview_records.py M10_M19071101_13 --signatures
-
-# JSON output (one object per record)
-python find_site_overview_records.py M10_M19071101_13 --json
-
-# Different DB file
-python find_site_overview_records.py M10_M19071101_13 --db my.duckdb
-```
-
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--db` | `student_magnetdb.duckdb` | DuckDB file |
-| `--json` | — | Print results as a JSON array instead of a table |
-| `--signatures` | — | Include per-record signature and sync details in table output |
-
-Each row in the output corresponds to one processed overview TDMS file and shows start time, duration, housing, mode, pupitre parameters (`teb`, `bp`), and source-file counts.
-
-### Timezone note
-
-The scripts compare file timestamps (always `Europe/Paris`) against the site's `commissioned_at` / `decommissioned_at` from the DB. If those DB timestamps were stored as UTC (the default assumption), use `--db-tz UTC`. If they were stored as French local time, pass `--db-tz Europe/Paris`. The scripts convert both sides to the same timezone before comparing, so DST transitions are handled correctly.
-
-### Populating `operationaldata` — complete workflow
-
-### Populating `experiments`, `operationaldata`, and `overview_records`
-
-Three tables record file-level operational data, each fed by a different pipeline:
-
-| Table | Populated by | Contents |
-|-------|-------------|----------|
-| `experiments` | `magnetdb.py populate experiments` | Pupitre TXT files discovered on disk within the site's operational window |
-| `operationaldata` | `magnetdb.py populate operationaldata` (`find_site_pupitre.py` / `find_site_tdms.py`) | All TDMS and pupitre files found on disk within the site's operational window |
-| `overview_records` | `magnetdb.py populate overview-records` (`python_magnetrun` via `crud.insert_overview_record`) | Processed overview TDMS metadata — one row per overview file |
-
-**`experiments`** is populated by `populate experiments`, which scans the same pupitre TXT directory as `find_site_pupitre.py` and registers matching files. The `records` field in the site JSON is no longer used. `site add` only inserts the site row and magnet links.
-
-**`operationaldata`** reflects the full filesystem state (all TDMS types + pupitre) and is the primary feed for `compute_op_stats.py`.
-
-**`overview_records`** is populated by the `python_magnetrun` data-processing pipeline which parses overview TDMS files and calls `crud.insert_overview_record` (or `crud.upsert_overview_record` for re-processing). Use `find_site_overview_records.py` to inspect rows already present in the DB.
-
-**Standard storage layout** (LNCMI servers, both scripts use these defaults):
-
-```
-/mnt/LNCMIG-Data/records/
-├── srv-data-install/          ← pupitre TXT files (find_site_pupitre.py)
-│   ├── M9/
-│   │   ├── 2025.12.02 - 14:30:46.txt
-│   │   └── ...
-│   └── M10/
-│       └── ...
-└── pbsurv/                    ← TDMS files (find_site_tdms.py)
-    ├── M9/
-    │   ├── Overview/          → type = Overview
-    │   ├── Fichiers_Archive/  → type = Archive
-    │   ├── Fichiers_Spike/    → type = Spike
-    │   └── Fichiers_Default/  → type = Default
-    └── M10/
-        └── ...
-```
-
-**Typical run for one site** (adjust `--db-tz` if commissioning dates were stored as local time):
-
-```bash
-SITE=M9_M19061901_0
-DB=student.duckdb
-
-# 1. Pupitre TXT files (primary source for compute_op_stats.py)
-python find_site_pupitre.py $SITE --db $DB --dry-run   # preview counts
-python find_site_pupitre.py $SITE --db $DB
-
-# 2. TDMS files (Archive + Overview are most useful; add Spike/Default if needed)
-python find_site_tdms.py $SITE --db $DB --type Archive Overview --dry-run
-python find_site_tdms.py $SITE --db $DB --type Archive Overview
-
-# 3. Verify
-python -c "
-import duckdb
-con = duckdb.connect('$DB', read_only=True)
-print(con.execute(\"SELECT type, COUNT(*) FROM operationaldata WHERE site_name='$SITE' GROUP BY type\").df())
-"
-```
-
-**Batch run across all sites in the DB:**
-
-```bash
-DB=student.duckdb
-
-python -c "
-import duckdb
-con = duckdb.connect('$DB', read_only=True)
-for (s,) in con.execute('SELECT name FROM sites ORDER BY name').fetchall():
-    print(s)
-" | while read SITE; do
-    python find_site_pupitre.py "$SITE" --db "$DB"
-    python find_site_tdms.py    "$SITE" --db "$DB" --type Archive Overview
-done
-```
-
-**Off-server / custom paths:**
-
-```bash
-# Data is on a different mount or local copy
-python find_site_pupitre.py M9_M19061901_0 --db student.duckdb \
-    --records-base /data/lncmi --srv-subdir srv-data-install
-
-python find_site_tdms.py M9_M19061901_0 --db student.duckdb \
-    --records-base /data/lncmi --pbsurv pbsurv
-```
 
 ---
 

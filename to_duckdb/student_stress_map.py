@@ -79,16 +79,20 @@ dataset before interpreting ratio_rpe values.
 
 import argparse
 import json
+import re
 import shutil
 import tempfile
 from pathlib import Path
 
 import duckdb
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 import magnettools.Bmap as bmap
 import magnettools.magnettools as mt
+from python_magnetrun.magnetdata import load_magnetdata
+from python_magnetrun.runetl import prepareData
 from python_magnetsetup.ana import magnet_setup
 from python_magnetsetup.config import appenv
 
@@ -97,23 +101,24 @@ from python_magnetsetup.config import appenv
 #           Replicates generate_magnet_config() in generate_simulation_config.py
 # ---------------------------------------------------------------------------
 
+
 def _format_material_row(row: dict) -> dict:
     """Map DuckDB column names to the format expected by magnet_setup().
     Mirrors format_material() in generate_simulation_config.py exactly.
     """
     return {
-        "Tref":                  row["t_ref"],
-        "VolumicMass":           row["volumic_mass"],
-        "alpha":                 row["alpha"],
+        "Tref": row["t_ref"],
+        "VolumicMass": row["volumic_mass"],
+        "alpha": row["alpha"],
         "ElectricalConductivity": row["electrical_conductivity"],
-        "MagnetPermeability":    row["magnet_permeability"],
-        "Poisson":               row["poisson"],
-        "Rpe":                   row["rpe"],         # unit: see module docstring
-        "SpecificHeat":          row["specific_heat"],
-        "ThermalConductivity":   row["thermal_conductivity"],
-        "Young":                 row["young"],
-        "CoefDilatation":        row["expansion_coefficient"],
-        "nuance":                row["nuance"],
+        "MagnetPermeability": row["magnet_permeability"],
+        "Poisson": row["poisson"],
+        "Rpe": row["rpe"],  # unit: see module docstring
+        "SpecificHeat": row["specific_heat"],
+        "ThermalConductivity": row["thermal_conductivity"],
+        "Young": row["young"],
+        "CoefDilatation": row["expansion_coefficient"],
+        "nuance": row["nuance"],
     }
 
 
@@ -158,15 +163,31 @@ def load_magnet_config_from_duckdb(magnet_name: str, db_path: str) -> dict:
             "MAT_ISOLANT not found in the database. "
             "Run seeds_to_duckdb.py to populate structural data first."
         )
-    insulator_payload = _format_material_row(dict(zip(
-        ["t_ref", "volumic_mass", "alpha", "electrical_conductivity",
-         "magnet_permeability", "poisson", "rpe", "specific_heat",
-         "thermal_conductivity", "young", "expansion_coefficient", "nuance"],
-        isolant_rows[0]
-    )))
+    insulator_payload = _format_material_row(
+        dict(
+            zip(
+                [
+                    "t_ref",
+                    "volumic_mass",
+                    "alpha",
+                    "electrical_conductivity",
+                    "magnet_permeability",
+                    "poisson",
+                    "rpe",
+                    "specific_heat",
+                    "thermal_conductivity",
+                    "young",
+                    "expansion_coefficient",
+                    "nuance",
+                ],
+                isolant_rows[0],
+            )
+        )
+    )
 
     # Fetch all parts for this magnet, ordered by assembly rank
-    parts = con.execute("""
+    parts = con.execute(
+        """
         SELECT
             p.name          AS part_name,
             p.type          AS part_type,
@@ -182,7 +203,9 @@ def load_magnet_config_from_duckdb(magnet_name: str, db_path: str) -> dict:
         LEFT JOIN materials mat ON mat.name = p.material_name
         WHERE m.name = ?
         ORDER BY mp.rank
-    """, [magnet_name]).fetchall()
+    """,
+        [magnet_name],
+    ).fetchall()
 
     con.close()
 
@@ -193,34 +216,455 @@ def load_magnet_config_from_duckdb(magnet_name: str, db_path: str) -> dict:
         )
 
     col_names = [
-        "part_name", "part_type", "rank",
-        "t_ref", "volumic_mass", "alpha",
-        "electrical_conductivity", "magnet_permeability",
-        "poisson", "rpe", "specific_heat",
-        "thermal_conductivity", "young",
-        "expansion_coefficient", "nuance",
+        "part_name",
+        "part_type",
+        "rank",
+        "t_ref",
+        "volumic_mass",
+        "alpha",
+        "electrical_conductivity",
+        "magnet_permeability",
+        "poisson",
+        "rpe",
+        "specific_heat",
+        "thermal_conductivity",
+        "young",
+        "expansion_coefficient",
+        "nuance",
     ]
 
     config = {"geom": f"{magnet_name}.yaml"}
 
     for row in parts:
         d = dict(zip(col_names, row))
-        key = d["part_type"].capitalize()   # "Helix", "Ring", "Bitter", "Lead"
+        key = d["part_type"].capitalize()  # "Helix", "Ring", "Bitter", "Lead"
         if key not in config:
             config[key] = []
-        config[key].append({
-            "geom":      f"{d['part_name']}.yaml",
-            "material":  _format_material_row(d),
-            "insulator": insulator_payload,
-        })
+        config[key].append(
+            {
+                "geom": f"{d['part_name']}.yaml",
+                "material": _format_material_row(d),
+                "insulator": insulator_payload,
+            }
+        )
 
     return config
+
+
+def load_site_config_from_duckdb(
+    site_name: str,
+    db_path: str,
+    magnet_override: str | None = None,
+) -> tuple[str, list[tuple[str, dict]]]:
+    """
+    Return (housing, [(magnet_name, config), ...]) for every magnet at a site.
+
+    Higher-level counterpart of load_magnet_config_from_duckdb(): resolves the
+    site → magnet mapping and loads the full part/material config in a single
+    DB connection.  All magnets are returned regardless of commissioned/
+    decommissioned status, ordered by commissioned_at DESC.
+
+    Parameters
+    ----------
+    site_name       : Site name registered in DuckDB (e.g. "M9")
+    db_path         : Path to the DuckDB file
+    magnet_override : Explicit magnet name; returns only that magnet.
+                      A warning is printed if it is not linked to the site.
+
+    Returns
+    -------
+    housing : from sites.housing (e.g. "M9")
+    magnets : list of (magnet_name, config) pairs — config is a dict ready
+              for magnet_setup() / prepare_geometry_directory(), same
+              structure as load_magnet_config_from_duckdb().
+
+    Raises
+    ------
+    ValueError : site not found, no magnet linked, MAT_ISOLANT missing,
+                 or no magnet has parts in the DB.
+    """
+    con = duckdb.connect(db_path, read_only=True)
+
+    # ── 1. Site housing ───────────────────────────────────────────────────────
+    site_row = con.execute(
+        "SELECT housing FROM sites WHERE name = ?", [site_name]
+    ).fetchone()
+    if site_row is None:
+        con.close()
+        raise ValueError(
+            f"Site '{site_name}' not found in DB. "
+            "Check the site name and ensure seeds are loaded."
+        )
+    housing = site_row[0]
+
+    # ── 2. Resolve magnet list ────────────────────────────────────────────────
+    if magnet_override:
+        linked = con.execute(
+            "SELECT 1 FROM site_magnets WHERE site_name = ? AND magnet_name = ?",
+            [site_name, magnet_override],
+        ).fetchone()
+        if linked is None:
+            print(
+                f"  [WARN] Magnet '{magnet_override}' is not linked to site "
+                f"'{site_name}' — proceeding anyway."
+            )
+        magnet_names = [magnet_override]
+    else:
+        rows = con.execute(
+            """
+            SELECT magnet_name
+            FROM site_magnets
+            WHERE site_name = ?
+            ORDER BY commissioned_at DESC NULLS LAST
+            """,
+            [site_name],
+        ).fetchall()
+        if not rows:
+            con.close()
+            raise ValueError(
+                f"No magnet linked to site '{site_name}'. "
+                "Check the site name and ensure seeds are loaded."
+            )
+        magnet_names = [r[0] for r in rows]
+
+    # ── 3. Insulator material (shared by every part entry) ────────────────────
+    isolant_row = con.execute("""
+        SELECT t_ref, volumic_mass, alpha, electrical_conductivity,
+               magnet_permeability, poisson, rpe, specific_heat,
+               thermal_conductivity, young, expansion_coefficient, nuance
+        FROM materials WHERE name = 'MAT_ISOLANT'
+    """).fetchone()
+    if isolant_row is None:
+        con.close()
+        raise ValueError(
+            "MAT_ISOLANT not found in the database. "
+            "Run seeds_to_duckdb.py to populate structural data first."
+        )
+    insulator_payload = _format_material_row(
+        dict(
+            zip(
+                [
+                    "t_ref",
+                    "volumic_mass",
+                    "alpha",
+                    "electrical_conductivity",
+                    "magnet_permeability",
+                    "poisson",
+                    "rpe",
+                    "specific_heat",
+                    "thermal_conductivity",
+                    "young",
+                    "expansion_coefficient",
+                    "nuance",
+                ],
+                isolant_row,
+            )
+        )
+    )
+
+    # ── 4. Build config per magnet ────────────────────────────────────────────
+    col_names = [
+        "part_name",
+        "part_type",
+        "rank",
+        "t_ref",
+        "volumic_mass",
+        "alpha",
+        "electrical_conductivity",
+        "magnet_permeability",
+        "poisson",
+        "rpe",
+        "specific_heat",
+        "thermal_conductivity",
+        "young",
+        "expansion_coefficient",
+        "nuance",
+    ]
+    results: list[tuple[str, dict]] = []
+    for magnet_name in magnet_names:
+        parts = con.execute(
+            """
+            SELECT
+                p.name          AS part_name,
+                p.type          AS part_type,
+                mp.rank,
+                mat.t_ref, mat.volumic_mass, mat.alpha,
+                mat.electrical_conductivity, mat.magnet_permeability,
+                mat.poisson, mat.rpe, mat.specific_heat,
+                mat.thermal_conductivity, mat.young,
+                mat.expansion_coefficient, mat.nuance
+            FROM magnet_parts mp
+            JOIN parts   p   ON p.name  = mp.part_name
+            JOIN magnets m   ON m.name  = mp.magnet_name
+            LEFT JOIN materials mat ON mat.name = p.material_name
+            WHERE m.name = ?
+            ORDER BY mp.rank
+            """,
+            [magnet_name],
+        ).fetchall()
+
+        if not parts:
+            print(f"  [WARN] Magnet '{magnet_name}' has no parts in the DB — skipping.")
+            continue
+
+        config: dict = {"geom": f"{magnet_name}.yaml"}
+        for row in parts:
+            d = dict(zip(col_names, row))
+            key = d["part_type"].capitalize()  # "Helix", "Ring", "Bitter", "Lead"
+            if key not in config:
+                config[key] = []
+            config[key].append(
+                {
+                    "geom": f"{d['part_name']}.yaml",
+                    "material": _format_material_row(d),
+                    "insulator": insulator_payload,
+                }
+            )
+        results.append((magnet_name, config))
+
+    con.close()
+
+    if not results:
+        raise ValueError(
+            f"No magnet with parts found for site '{site_name}'. "
+            "Check the magnet names and ensure seeds are loaded."
+        )
+
+    return housing, results
+
+
+# ---------------------------------------------------------------------------
+# Step 1b — Generate MSite YAML from DuckDB geometry_data + site offsets
+#            Mirrors Site.geometry_config_to_json() in python_magnetdb/models.py
+# ---------------------------------------------------------------------------
+
+
+def geometry_config_to_yaml(
+    site_name: str,
+    db_path: str,
+    output_dir: str | Path | None = None,
+    geometries_dir: str | Path | None = None,
+) -> str:
+    """
+    Build a python_magnetgeo MSite from the site's magnet geometry_data and
+    site_magnets positional offsets, then return its YAML representation.
+
+    Mirrors ``Site.geometry_config_to_json()`` in python_magnetdb/models.py,
+    replacing the Django ORM with DuckDB queries.
+
+    Each magnet's assembly geometry is resolved in this order:
+
+    1. ``magnets.geometry_data`` — JSON-serialised python_magnetgeo object stored
+       at import time via ``magnetdb.py magnet add --geometry <yaml>``.
+    2. ``geometries_dir`` fallback — load ``{magnet_name}.yaml`` from this
+       directory (for DBs populated without ``--geometry``).
+
+    Parameters
+    ----------
+    site_name      : Site name as registered in DuckDB (e.g. ``"M9_M19061901_0"``)
+    db_path        : Path to the DuckDB file
+    output_dir     : If given, also write ``<site_name>.yaml`` to this directory
+                     via ``MSite.write_to_yaml()``.  The YAML string is returned
+                     regardless.
+    geometries_dir : Fallback directory containing ``{magnet_name}.yaml``
+                     assembly-level files (Insert, Bitters, …) for magnets that
+                     were imported without ``--geometry``.
+
+    Returns
+    -------
+    str
+        YAML representation of the ``MSite``.
+
+    Raises
+    ------
+    ValueError
+        If the site is not found, has no magnets, or a magnet's assembly
+        geometry cannot be resolved from either the DB or *geometries_dir*.
+    """
+    import json as _json
+    import yaml as _yaml
+    from python_magnetgeo.MSite import MSite
+    from python_magnetgeo.deserialize import unserialize_object
+
+    geo_dir = Path(geometries_dir) if geometries_dir else None
+
+    con = duckdb.connect(db_path, read_only=True)
+
+    if (
+        con.execute("SELECT 1 FROM sites WHERE name = ?", [site_name]).fetchone()
+        is None
+    ):
+        con.close()
+        raise ValueError(f"Site '{site_name}' not found in DB.")
+
+    rows = con.execute(
+        """
+        SELECT m.name, m.geometry_data, sm.z_offset, sm.r_offset, sm.parallax
+        FROM site_magnets sm
+        JOIN magnets m ON m.name = sm.magnet_name
+        WHERE sm.site_name = ?
+        ORDER BY sm.commissioned_at DESC NULLS LAST, m.name
+    """,
+        [site_name],
+    ).fetchall()
+    con.close()
+
+    if not rows:
+        raise ValueError(f"No magnets linked to site '{site_name}'.")
+
+    magnets = []
+    z_offset: list[float] = []
+    r_offset: list[float] = []
+    paralax: list[float] = []
+
+    for magnet_name, geometry_data, z, r, p in rows:
+        if geometry_data:
+            magnet_obj = unserialize_object(_json.loads(geometry_data))
+        elif geo_dir is not None:
+            yaml_path = geo_dir / f"{magnet_name}.yaml"
+            if not yaml_path.exists():
+                raise ValueError(
+                    f"Magnet '{magnet_name}': no geometry_data in DB and "
+                    f"'{yaml_path}' not found in geometries_dir."
+                )
+            import os as _os
+
+            orig_dir = _os.getcwd()
+            try:
+                _os.chdir(yaml_path.parent)
+                with open(yaml_path.name) as fh:
+                    magnet_obj = _yaml.load(fh, Loader=_yaml.FullLoader)
+            finally:
+                _os.chdir(orig_dir)
+        else:
+            raise ValueError(
+                f"Magnet '{magnet_name}' has no geometry_data in the DB. "
+                "Re-import with 'magnetdb.py magnet add --geometry <yaml>' "
+                "or pass geometries_dir to this function."
+            )
+        magnets.append(magnet_obj)
+        z_offset.append(float(z or 0.0))
+        r_offset.append(float(r or 0.0))
+        paralax.append(float(p or 0.0))
+
+    obj = MSite(
+        name=site_name,
+        magnets=magnets,
+        screens=[],
+        z_offset=z_offset,
+        r_offset=r_offset,
+        paralax=paralax,
+    )
+
+    if output_dir is not None:
+        obj.write_to_yaml(str(output_dir))
+        print(f"   Written {Path(output_dir) / site_name}.yaml")
+
+    return obj.to_yaml()
+
+
+# ---------------------------------------------------------------------------
+# Step 1c — Generate magnet assembly YAML from DuckDB geometry_data
+#            Mirrors Magnet.geometry_config_to_json() in python_magnetdb/models.py
+# ---------------------------------------------------------------------------
+
+
+def magnet_geometry_config_to_yaml(
+    magnet_name: str,
+    db_path: str,
+    output_dir: str | Path | None = None,
+    geometries_dir: str | Path | None = None,
+) -> str:
+    """
+    Build a python_magnetgeo assembly object from a magnet's geometry_data stored
+    in DuckDB, then return its YAML representation.
+
+    Mirrors ``Magnet.geometry_config_to_json()`` in python_magnetdb/models.py,
+    replacing the Django ORM with DuckDB queries.
+
+    The assembly geometry is resolved in this order:
+
+    1. ``magnets.geometry_data`` — JSON-serialised python_magnetgeo object stored
+       at import time via ``magnetdb.py magnet add --geometry <yaml>``.
+    2. ``geometries_dir`` fallback — load ``{magnet_name}.yaml`` from this
+       directory (for DBs populated without ``--geometry``).
+
+    Parameters
+    ----------
+    magnet_name    : Magnet name as registered in DuckDB (e.g. ``"M19061901"``)
+    db_path        : Path to the DuckDB file
+    output_dir     : If given, also write ``<magnet_name>.yaml`` to this directory
+                     via ``obj.write_to_yaml()``.  The YAML string is returned
+                     regardless.
+    geometries_dir : Fallback directory containing ``{magnet_name}.yaml``
+                     assembly-level files (Insert, Bitters, …) for magnets that
+                     were imported without ``--geometry``.
+
+    Returns
+    -------
+    str
+        YAML representation of the assembly object.
+
+    Raises
+    ------
+    ValueError
+        If the magnet is not found, or its assembly geometry cannot be resolved
+        from either the DB or *geometries_dir*.
+    """
+    import json as _json
+    import yaml as _yaml
+    from python_magnetgeo.deserialize import unserialize_object
+
+    geo_dir = Path(geometries_dir) if geometries_dir else None
+
+    con = duckdb.connect(db_path, read_only=True)
+    row = con.execute(
+        "SELECT geometry_data FROM magnets WHERE name = ?", [magnet_name]
+    ).fetchone()
+    con.close()
+
+    if row is None:
+        raise ValueError(f"Magnet '{magnet_name}' not found in DB.")
+
+    geometry_data = row[0]
+
+    if geometry_data:
+        obj = unserialize_object(_json.loads(geometry_data))
+    elif geo_dir is not None:
+        yaml_path = geo_dir / f"{magnet_name}.yaml"
+        if not yaml_path.exists():
+            raise ValueError(
+                f"Magnet '{magnet_name}': no geometry_data in DB and "
+                f"'{yaml_path}' not found in geometries_dir."
+            )
+        import os as _os
+
+        orig_dir = _os.getcwd()
+        try:
+            _os.chdir(yaml_path.parent)
+            with open(yaml_path.name) as fh:
+                obj = _yaml.load(fh, Loader=_yaml.FullLoader)
+        finally:
+            _os.chdir(orig_dir)
+    else:
+        raise ValueError(
+            f"Magnet '{magnet_name}' has no geometry_data in the DB. "
+            "Re-import with 'magnetdb.py magnet add --geometry <yaml>' "
+            "or pass geometries_dir to this function."
+        )
+
+    if output_dir is not None:
+        obj.write_to_yaml(str(output_dir))
+        print(f"   Written {Path(output_dir) / magnet_name}.yaml")
+
+    return obj.to_yaml()
 
 
 # ---------------------------------------------------------------------------
 # Step 2 — Prepare geometry directory on disk
 #           Replicates generate_magnet_directory() without Django
 # ---------------------------------------------------------------------------
+
 
 def prepare_geometry_directory(
     magnet_name: str,
@@ -250,7 +694,9 @@ def prepare_geometry_directory(
     """
     src_dir = Path(geometries_dir) if geometries_dir else None
     if src_dir is not None and not src_dir.is_dir():
-        print(f"  [WARN] geometries_dir not found: {src_dir} — will rely on DB-stored geometry_data.")
+        print(
+            f"  [WARN] geometries_dir not found: {src_dir} — will rely on DB-stored geometry_data."
+        )
         src_dir = None
 
     tempdir = Path(tempfile.mkdtemp(prefix=f"magnetdb_student_{magnet_name}_"))
@@ -258,28 +704,9 @@ def prepare_geometry_directory(
     data_geom.mkdir(parents=True)
     (tempdir / "data" / "cad").mkdir()
 
-    # Look up {part_name} → {geometry_stem, geometry_data} and magnet geometry from DuckDB
-    con = duckdb.connect(db_path, read_only=True)
-    part_rows = con.execute("""
-        SELECT p.name, p.geometry, p.geometry_data
-        FROM magnet_parts mp
-        JOIN parts   p ON p.name = mp.part_name
-        JOIN magnets m ON m.name = mp.magnet_name
-        WHERE m.name = ?
-    """, [magnet_name]).fetchall()
-    magnet_row = con.execute(
-        "SELECT geometry, geometry_data FROM magnets WHERE name = ?", [magnet_name]
-    ).fetchone()
-    con.close()
-
-    # Write top-level magnet geometry: stem/geometry_data → {magnet_name}.yaml
-    magnet_geom_stem = magnet_row[0] if magnet_row else magnet_name
-    magnet_geom_data = magnet_row[1] if magnet_row else None
-    _write_yaml(src_dir, magnet_geom_stem, magnet_geom_data, data_geom, magnet_name)
-
-    # Write per-part geometries: stem/geometry_data → {part_name}.yaml
-    for part_name, geom_stem, geom_data in part_rows:
-        _write_yaml(src_dir, geom_stem, geom_data, data_geom, part_name)
+    magnet_geometry_config_to_yaml(
+        magnet_name, db_path, output_dir=data_geom, geometries_dir=src_dir
+    )
 
     # Write config.json alongside the data/ tree
     with open(tempdir / "config.json", "w") as f:
@@ -301,12 +728,15 @@ def _yaml_from_geometry_data(geometry_data_json: str, dst_path: Path) -> bool:
         import json as _json
         import yaml as _yaml
         from python_magnetgeo.deserialize import unserialize_object
+
         d = _json.loads(geometry_data_json)
         obj = unserialize_object(d)
         dst_path.write_text(_yaml.dump(obj, default_flow_style=False, sort_keys=False))
         return True
     except Exception as exc:
-        print(f"  [WARN] Could not reconstruct geometry from DB JSON for {dst_path.name}: {exc}")
+        print(
+            f"  [WARN] Could not reconstruct geometry from DB JSON for {dst_path.name}: {exc}"
+        )
         return False
 
 
@@ -345,6 +775,7 @@ def _write_yaml(
 #           Replicates get_magnet_data() in object_geometries.py without Django
 # ---------------------------------------------------------------------------
 
+
 def load_magnettools(config: dict, tempdir: Path, debug: bool = False) -> tuple:
     """
     Call magnet_setup() from python_magnetsetup with the prepared directory,
@@ -367,74 +798,304 @@ def load_magnettools(config: dict, tempdir: Path, debug: bool = False) -> tuple:
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — Compute hoop stress map
-#           Direct port of compute_stress_map_chart() in compute_stress_map_chart.py
+# Step 4 — Compute hoop stress time series from a pupitre file
+#           Fast vectorised alternative to the row-by-row compute_stress_map_chart
 # ---------------------------------------------------------------------------
 
-def compute_stress_map(
+
+def validate_fast_from_pupitre(
     data: tuple,
-    i_h: float,
-    i_b: float,
-    i_s: float,
+    pupitre_file: str,
+    housing: str,
     magnet_type: str = "H",
-) -> dict:
+    check: bool = False,
+    use_mrun: bool = False,
+    site: str = "",
+) -> pd.DataFrame:
     """
-    Compute hoop stress at given currents and at maximum current (31 kA).
+    Fast vectorised hoop-stress computation over a pupitre time series.
+
+    Precomputes, at unit current (1 A), for each tube i:
+      - r[i]        : inner radius of the tube
+      - j_unit[i]   : current density at inner radius for IH = 1 A
+      - Bz_tubes[i] : Bz at (r[i], 0) produced by all tubes at IH = 1 A
+      - Bz_bmag[i]  : Bz at (r[i], 0) produced by all BMagnets at IB = 1 A
+      - Bz_umag[i]  : Bz at (r[i], 0) produced by all UMagnets at IS = 1 A
+
+    Hoop stress estimate for tube i at time step k:
+      sigma_i(k) = r_i * j_unit_i * IH(k)
+                       * (Bz_tubes_i * IH(k) + Bz_bmag_i * IB(k) + Bz_umag_i * IS(k))
+
+    All per-timestep work is pure NumPy — no C++ calls inside the time loop.
 
     Parameters
     ----------
-    data        : MagnetTools tuple from load_magnettools()
-    i_h         : helix current [A]
-    i_b         : bitter current [A]
-    i_s         : supra current [A]
-    magnet_type : "H" for insert helices, "B" for bitters
+    data         : MagnetTools tuple from load_magnettools()
+    pupitre_file : Path to the pupitre file (.txt, .tdms, or .csv)
+    housing      : Housing name (e.g. "M9")
+    magnet_type  : "H" for insert helices, "B" for bitters (used in sanity check)
+    check        : If True, validate fast results against bmap.getHoop row by row
+    use_mrun     : If True, load via python_magnetrun.MagnetRun.load_mrun() instead
+                   of load_magnetdata() + prepareData(); supports .tdms in addition
+                   to .txt/.csv and handles path auto-resolution.
+    site         : Site name forwarded to load_mrun() (ignored when use_mrun=False)
 
     Returns
     -------
-    dict with keys:
-        x        : part numbers (coil indices)
-        y        : hoop stress [MPa] at (i_h, i_b, i_s)
-        ymax     : hoop stress [MPa] at maximum current (31 kA)
-        Bz0      : central field [T] at (i_h, i_b, i_s)
-        Bz0_max  : central field [T] at maximum current
+    DataFrame with time series columns: t, IH, IB, [IS,] H1_fast, H2_fast, ...
     """
-    (Tubes, Helices, OHelices, BMagnets, UMagnets, Shims) = data
+    Tubes, Helices, OHelices, BMagnets, UMagnets, Shims = data
+    icurrents = mt.get_currents(Tubes, Helices, BMagnets, UMagnets)
+    n_tubes = len(Tubes)
 
-    def _set_currents(ih, ib, is_):
-        icurrents = mt.get_currents(Tubes, Helices, BMagnets, UMagnets)
-        vcurrents = list(icurrents)
-        num = 0
-        if len(Tubes)    != 0: vcurrents[num] = ih;  num += 1
-        if len(BMagnets) != 0: vcurrents[num] = ib;  num += 1
-        if len(UMagnets) != 0: vcurrents[num] = is_; num += 1
-        mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices,
-                        mt.DoubleVector(vcurrents))
+    # ------------------------------------------------------------------
+    # 1. Precompute unit-current quantities for every tube
+    # ------------------------------------------------------------------
+    r = np.zeros(n_tubes)
+    j_unit = np.zeros(n_tubes)
+    Bz_tubes = np.zeros(n_tubes)
+    Bz_bmag = np.zeros(n_tubes) if len(BMagnets) else None
+    Bz_umag = np.zeros(n_tubes) if len(UMagnets) else None
 
-    def _get_hoop() -> tuple[list, list]:
-        mdata = {"H": Helices, "B": BMagnets, "S": UMagnets}
-        (headers, values) = bmap.getHoop(
-            mdata[magnet_type], Tubes, Helices, BMagnets, UMagnets, magnet_type
+    def _zero_vcurrents():
+        v = mt.DoubleVector(icurrents)
+        for i in range(len(v)):
+            v[i] = 0.0
+        return v
+
+    num = 0
+    if len(Tubes):
+        v = _zero_vcurrents()
+        v[num] = 1.0  # IH = 1 A
+        mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices, v)
+        for i, Tube in enumerate(Tubes):
+            r[i] = Tube.get_R_int()
+            n_elem = Tube.get_n_elem()
+            mid_elem = int(n_elem / 2) if (n_elem % 2) == 0 else int((n_elem + 1) / 2)
+            j_unit[i] = Helices[mid_elem + Tube.get_index()].get_CurrentDensity()
+        Bz_tubes = np.array(
+            [mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, ri, 0)[1] for ri in r]
         )
-        df = pd.DataFrame.from_records(values)
-        df.columns = headers
-        return df["num"].tolist(), df["Hoop[MPa]"].tolist()
+        num += 1
 
-    # At requested currents
-    _set_currents(i_h, i_b, i_s)
-    Bz0 = mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, 0, 0)[1]
-    x, y = _get_hoop()
+    if len(BMagnets):
+        v = _zero_vcurrents()
+        v[num] = 1.0  # IB = 1 A
+        mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices, v)
+        Bz_bmag = np.array(
+            [mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, ri, 0)[1] for ri in r]
+        )
+        num += 1
 
-    # At maximum current (31 kA) — same logic as compute_max() in original
-    _set_currents(31e3, 31e3, 0)
-    Bz0_max = mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, 0, 0)[1]
-    _, ymax = _get_hoop()
+    if len(UMagnets):
+        v = _zero_vcurrents()
+        v[num] = 1.0  # IS = 1 A
+        mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices, v)
+        Bz_umag = np.array(
+            [mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, ri, 0)[1] for ri in r]
+        )
 
-    return {"x": x, "y": y, "ymax": ymax, "Bz0": Bz0, "Bz0_max": Bz0_max}
+    print(f"   Precomputed unit-current quantities for {n_tubes} tube(s).")
+
+    # ------------------------------------------------------------------
+    # 2. Load pupitre data
+    # ------------------------------------------------------------------
+    print(f"\n── Loading pupitre data: {pupitre_file} …")
+    if use_mrun:
+        from python_magnetrun.MagnetRun import load_mrun
+
+        mrun = load_mrun(pupitre_file, housing=housing, site=site)
+        df = mrun.MagnetData.Data
+    else:
+        mdata = load_magnetdata(pupitre_file)
+        prepareData(mdata, housing)
+        df = mdata.Data
+
+    n_t = len(df)
+    IH_arr = df["IH"].to_numpy() if "IH" in df.columns else np.zeros(n_t)
+    IB_arr = df["IB"].to_numpy() if "IB" in df.columns else np.zeros(n_t)
+    IS_arr = df["IS"].to_numpy() if "IS" in df.columns else np.zeros(n_t)
+
+    Bz_bmag_arr = Bz_bmag if Bz_bmag is not None else np.zeros(n_tubes)
+    Bz_umag_arr = Bz_umag if Bz_umag is not None else np.zeros(n_tubes)
+
+    # ------------------------------------------------------------------
+    # 3. Vectorised hoop stress — shapes (N, 1) broadcast against (1, T)
+    #    sigma[i, k] = r[i] * (j_unit[i] * IH[k])
+    #                        * (Bz_tubes[i]*IH[k] + Bz_bmag[i]*IB[k] + Bz_umag[i]*IS[k])
+    # ------------------------------------------------------------------
+    IH = IH_arr[np.newaxis, :]  # (1, T)
+    IB = IB_arr[np.newaxis, :]
+    IS = IS_arr[np.newaxis, :]
+
+    r2 = r[:, np.newaxis]  # (N, 1)
+    j_unit2 = j_unit[:, np.newaxis]
+    Bz_t2 = Bz_tubes[:, np.newaxis]
+    Bz_b2 = Bz_bmag_arr[:, np.newaxis]
+    Bz_u2 = Bz_umag_arr[:, np.newaxis]
+
+    Bz_total = Bz_t2 * IH + Bz_b2 * IB + Bz_u2 * IS  # (N, T)
+    j_real = j_unit2 * IH  # (N, T)
+    sigma = r2 * j_real * Bz_total  # (N, T) [Pa]
+    sigma_MPa = sigma * 1e-6
+
+    # ------------------------------------------------------------------
+    # 3b. Optional sanity check: fast sigma_MPa vs bmap.getHoop row by row
+    # ------------------------------------------------------------------
+    if check:
+        print("\n── Sanity check: fast vs bmap.getHoop …")
+        mdata_type = {"H": Helices, "B": BMagnets, "S": UMagnets}
+        max_err = np.zeros(n_tubes)
+
+        for k, row in enumerate(df.itertuples(index=False)):
+            v = _zero_vcurrents()
+            num = 0
+            if len(Tubes):
+                v[num] = row.IH
+                num += 1
+            if len(BMagnets):
+                v[num] = row.IB
+                num += 1
+            if len(UMagnets):
+                v[num] = getattr(row, "IS", 0.0)
+            mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices, v)
+
+            headers, hoop_values = bmap.getHoop(
+                mdata_type[magnet_type], Tubes, Helices, BMagnets, UMagnets, magnet_type
+            )
+            ref_df = pd.DataFrame.from_records(hoop_values, columns=headers)
+            ref_hoop = ref_df["Hoop[MPa]"].to_numpy()
+
+            for i in range(n_tubes):
+                err = abs(sigma_MPa[i, k] - ref_hoop[i])
+                max_err[i] = max(max_err[i], err)
+
+        print("   Max absolute error per tube [MPa]:")
+        for i in range(n_tubes):
+            print(f"     H{i+1}: {max_err[i]:.4e} MPa")
+
+    # ------------------------------------------------------------------
+    # 4. Store results in DataFrame
+    # ------------------------------------------------------------------
+    for i in range(n_tubes):
+        df[f"H{i+1}_fast"] = sigma_MPa[i, :]
+
+    return df
+
+
+# ---------------------------------------------------------------------------
+# Step 3b — Resolve the active magnet (and housing) for a site
+# ---------------------------------------------------------------------------
+
+
+def resolve_magnet_from_site(site_name: str, db_path: str) -> tuple[str, str]:
+    """
+    Return (magnet_name, housing) for the currently active magnet at a site.
+
+    "Active" means decommissioned_at IS NULL.  If all magnets have been
+    decommissioned, the most recently decommissioned one is returned.
+    Raises ValueError if no magnet is linked to the site at all.
+    """
+    con = duckdb.connect(db_path, read_only=True)
+    row = con.execute(
+        """
+        SELECT sm.magnet_name, s.housing
+        FROM site_magnets sm
+        JOIN sites s ON s.name = sm.site_name
+        WHERE sm.site_name = ?
+          AND sm.decommissioned_at IS NULL
+        ORDER BY sm.commissioned_at DESC NULLS LAST
+        LIMIT 1
+    """,
+        [site_name],
+    ).fetchone()
+
+    if row is None:
+        row = con.execute(
+            """
+            SELECT sm.magnet_name, s.housing
+            FROM site_magnets sm
+            JOIN sites s ON s.name = sm.site_name
+            WHERE sm.site_name = ?
+            ORDER BY sm.decommissioned_at DESC NULLS LAST
+            LIMIT 1
+        """,
+            [site_name],
+        ).fetchone()
+
+    con.close()
+
+    if row is None:
+        raise ValueError(
+            f"No magnet linked to site '{site_name}'. "
+            "Check the site name and ensure seeds are loaded."
+        )
+    return row[0], row[1]
+
+
+def resolve_pupitre_files(
+    site_name: str,
+    db_path: str,
+    files: list[str] | None = None,
+) -> list[str]:
+    """
+    Return the ordered list of pupitre files to process for a site.
+
+    Parameters
+    ----------
+    site_name : Site name registered in DuckDB (e.g. "M9")
+    db_path   : Path to the DuckDB file
+    files     : Explicit file list from --pupitre.
+                - None or empty → fetch all experiment files for the site.
+                - Non-empty     → validate each against the experiments table;
+                                  files absent from the table trigger a warning
+                                  but are still included (the file may be readable
+                                  even if not formally registered).
+
+    Returns
+    -------
+    Non-empty list of file paths, sorted by experiment id (DB order) when
+    auto-discovered, or preserving the user's order otherwise.
+
+    Raises
+    ------
+    ValueError if no files can be returned (empty table and no explicit list).
+    """
+    con = duckdb.connect(db_path, read_only=True)
+
+    if not files:
+        rows = con.execute(
+            "SELECT file FROM experiments "
+            "WHERE site_name = ? AND file IS NOT NULL "
+            "ORDER BY id",
+            [site_name],
+        ).fetchall()
+        con.close()
+        result = [r[0] for r in rows if r[0]]
+        if not result:
+            raise ValueError(
+                f"No experiment files found for site '{site_name}'. "
+                "Populate the experiments table or pass --pupitre explicitly."
+            )
+        print(f"   Found {len(result)} experiment file(s) for site '{site_name}'.")
+        return result
+
+    # Validate each provided file against the experiments table
+    for f in files:
+        row = con.execute(
+            "SELECT 1 FROM experiments WHERE site_name = ? AND file = ?",
+            [site_name, f],
+        ).fetchone()
+        if row is None:
+            print(f"  [WARN] '{f}' not found in experiments for site '{site_name}'.")
+    con.close()
+    return list(files)
 
 
 # ---------------------------------------------------------------------------
 # Step 5 — Annotate with Rpe from DuckDB and print summary
 # ---------------------------------------------------------------------------
+
 
 def annotate_with_rpe(result: dict, magnet_name: str, db_path: str) -> pd.DataFrame:
     """
@@ -442,7 +1103,8 @@ def annotate_with_rpe(result: dict, magnet_name: str, db_path: str) -> pd.DataFr
     σ/Rpe safety ratios.
     """
     con = duckdb.connect(db_path, read_only=True)
-    rpe_df = con.execute("""
+    rpe_df = con.execute(
+        """
         SELECT mp.coil_index, p.name AS part, mat.rpe, mat.nuance
         FROM magnet_parts mp
         JOIN parts   p   ON p.name  = mp.part_name
@@ -450,19 +1112,23 @@ def annotate_with_rpe(result: dict, magnet_name: str, db_path: str) -> pd.DataFr
         LEFT JOIN materials mat ON mat.name = p.material_name
         WHERE m.name = ? AND mp.coil_index IS NOT NULL
         ORDER BY mp.coil_index
-    """, [magnet_name]).df()
+    """,
+        [magnet_name],
+    ).df()
     con.close()
 
-    df = pd.DataFrame({
-        "coil_index":   result["x"],
-        "hoop_MPa":     result["y"],
-        "hoop_max_MPa": result["ymax"],
-    })
+    df = pd.DataFrame(
+        {
+            "coil_index": result["x"],
+            "hoop_MPa": result["y"],
+            "hoop_max_MPa": result["ymax"],
+        }
+    )
     df = df.merge(rpe_df, on="coil_index", how="left")
 
     # ratio_rpe is only meaningful if rpe is in the same unit as hoop_MPa.
     # See the module docstring for the unit caveat.
-    df["ratio_rpe"]     = df["hoop_MPa"]     / df["rpe"]
+    df["ratio_rpe"] = df["hoop_MPa"] / df["rpe"]
     df["ratio_rpe_max"] = df["hoop_max_MPa"] / df["rpe"]
     return df
 
@@ -471,15 +1137,34 @@ def annotate_with_rpe(result: dict, magnet_name: str, db_path: str) -> pd.DataFr
 # Step 6 — Plot (matches the chart displayed in the MagnetDB web interface)
 # ---------------------------------------------------------------------------
 
+
 def plot_stress_map(df: pd.DataFrame, magnet_name: str, i_h: float) -> None:
     fig, ax = plt.subplots(figsize=(10, 5))
-    ax.bar(df["coil_index"] - 0.2, df["hoop_MPa"],     width=0.4,
-           label=f"Hoop stress at I={i_h/1e3:.1f} kA", color="steelblue")
-    ax.bar(df["coil_index"] + 0.2, df["hoop_max_MPa"], width=0.4,
-           label="Hoop stress at I=31 kA (max)", color="tomato", alpha=0.7)
+    ax.bar(
+        df["coil_index"] - 0.2,
+        df["hoop_MPa"],
+        width=0.4,
+        label=f"Hoop stress at I={i_h/1e3:.1f} kA",
+        color="steelblue",
+    )
+    ax.bar(
+        df["coil_index"] + 0.2,
+        df["hoop_max_MPa"],
+        width=0.4,
+        label="Hoop stress at I=31 kA (max)",
+        color="tomato",
+        alpha=0.7,
+    )
     if df["rpe"].notna().any():
-        ax.step(df["coil_index"], df["rpe"], where="mid",
-                color="black", linestyle="--", linewidth=1.5, label="Rpe")
+        ax.step(
+            df["coil_index"],
+            df["rpe"],
+            where="mid",
+            color="black",
+            linestyle="--",
+            linewidth=1.5,
+            label="Rpe",
+        )
     ax.set_xlabel("Coil index (Icoil_N)")
     ax.set_ylabel("Hoop stress [MPa]")
     ax.set_title(f"Hoop stress map — {magnet_name}")
@@ -493,70 +1178,561 @@ def plot_stress_map(df: pd.DataFrame, magnet_name: str, i_h: float) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Step 4b — Single-point hoop stress for barchart subcommand
+#            Restored from the original compute_stress_map logic
 # ---------------------------------------------------------------------------
+
+
+def compute_hoop_at_currents(
+    data: tuple,
+    i_h: float,
+    i_b: float,
+    i_s: float,
+    magnet_type: str = "H",
+) -> dict:
+    """
+    Compute hoop stress at given currents and at maximum current (31 kA).
+
+    Returns
+    -------
+    dict with keys:
+        x        : coil numbers
+        y        : hoop stress [MPa] at (i_h, i_b, i_s)
+        ymax     : hoop stress [MPa] at maximum current (31 kA)
+        Bz0      : central field [T] at (i_h, i_b, i_s)
+        Bz0_max  : central field [T] at 31 kA
+    """
+    Tubes, Helices, OHelices, BMagnets, UMagnets, Shims = data
+
+    def _set_currents(ih, ib, is_):
+        icurrents = mt.get_currents(Tubes, Helices, BMagnets, UMagnets)
+        vcurrents = list(icurrents)
+        num = 0
+        if len(Tubes):
+            vcurrents[num] = ih
+            num += 1
+        if len(BMagnets):
+            vcurrents[num] = ib
+            num += 1
+        if len(UMagnets):
+            vcurrents[num] = is_
+        mt.set_currents(
+            Tubes, Helices, BMagnets, UMagnets, OHelices, mt.DoubleVector(vcurrents)
+        )
+
+    def _get_hoop():
+        mdata_type = {"H": Helices, "B": BMagnets, "S": UMagnets}
+        headers, values = bmap.getHoop(
+            mdata_type[magnet_type], Tubes, Helices, BMagnets, UMagnets, magnet_type
+        )
+        hdf = pd.DataFrame.from_records(values, columns=headers)
+        return hdf["num"].tolist(), hdf["Hoop[MPa]"].tolist()
+
+    _set_currents(i_h, i_b, i_s)
+    Bz0 = mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, 0, 0)[1]
+    x, y = _get_hoop()
+
+    _set_currents(31e3, 31e3, 0)
+    Bz0_max = mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, 0, 0)[1]
+    _, ymax = _get_hoop()
+
+    return {"x": x, "y": y, "ymax": ymax, "Bz0": Bz0, "Bz0_max": Bz0_max}
+
+
+# ---------------------------------------------------------------------------
+# Step 5b — Stats from hoop stress history
+# ---------------------------------------------------------------------------
+
+
+def compute_stress_stats(df: pd.DataFrame) -> pd.DataFrame:
+    """Return per-coil descriptive statistics from a validate_fast_from_pupitre DataFrame."""
+    fast_cols = [c for c in df.columns if re.match(r"H\d+_fast", c)]
+    rows = []
+    for col in fast_cols:
+        s = df[col]
+        rows.append(
+            {
+                "coil": col,
+                "min": s.min(),
+                "max": s.max(),
+                "mean": s.mean(),
+                "std": s.std(),
+                "p50": s.quantile(0.50),
+                "p95": s.quantile(0.95),
+                "p99": s.quantile(0.99),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+# ---------------------------------------------------------------------------
+# Step 5c — Rainflow fatigue counting
+# ---------------------------------------------------------------------------
+
+
+def compute_fatigue(df: pd.DataFrame, col: str) -> pd.DataFrame:
+    """
+    Apply rainflow cycle counting to one hoop-stress time series column.
+
+    Requires the ``rainflow`` package (pip install rainflow).
+
+    Returns
+    -------
+    DataFrame with columns: range, mean, count, i_start, i_end
+    """
+    import rainflow
+
+    sigma = df[col].to_numpy()
+    cycles = list(rainflow.count_cycles(sigma))
+    return pd.DataFrame(cycles, columns=["range", "mean", "count", "i_start", "i_end"])
+
+
+def plot_fatigue(
+    df: pd.DataFrame,
+    cycles_df: pd.DataFrame,
+    magnet_name: str,
+    col: str,
+    bins: int = 15,
+    output_png: str | None = None,
+) -> None:
+    """Two-panel plot: hoop stress time series + rainflow amplitude histogram."""
+    x = df["t"] if "t" in df.columns else df.index
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+
+    ax1.plot(x, df[col], color="steelblue", linewidth=1)
+    ax1.set_title(f"Hoop stress time series — {col} ({magnet_name})")
+    ax1.set_xlabel("t [s]" if "t" in df.columns else "index")
+    ax1.set_ylabel("Hoop stress [MPa]")
+    ax1.grid(True, alpha=0.3)
+
+    amplitudes = cycles_df["range"].to_numpy()
+    ax2.hist(amplitudes, bins=bins, color="orange", edgecolor="black", alpha=0.8)
+    ax2.set_title(f"Rainflow fatigue analysis — {col} ({len(cycles_df)} cycles)")
+    ax2.set_xlabel("Cycle amplitude [MPa]")
+    ax2.set_ylabel("Occurrences")
+    ax2.grid(axis="y", linestyle="--", alpha=0.5)
+
+    plt.tight_layout()
+    if output_png is None:
+        output_png = f"fatigue_{col}_{magnet_name}.png"
+    plt.savefig(output_png, dpi=150)
+    print(f"\nPlot saved to {output_png}")
+    plt.close()
+
+
+# ---------------------------------------------------------------------------
+# Step 7 — Normalized time-series plot (matches validate_fast_from_pupitre output)
+# ---------------------------------------------------------------------------
+
+
+def plot_stress_history(
+    df: pd.DataFrame, magnet_name: str, output_png: str | None = None
+) -> None:
+    def _normalize(s: pd.Series) -> pd.Series:
+        lo, hi = s.min(), s.max()
+        if hi == lo:
+            return pd.Series(np.zeros(len(s)), index=s.index)
+        return (s - lo) / (hi - lo)
+
+    x = df["t"] if "t" in df.columns else df.index
+    fast_cols = [c for c in df.columns if re.match(r"H\d+_fast", c)]
+
+    plt.figure(figsize=(10, 5))
+    if "IH" in df.columns:
+        plt.plot(
+            x,
+            _normalize(df["IH"]),
+            label=f"IH (max={df['IH'].max():.0f} A)",
+            linewidth=2,
+        )
+    if "IB" in df.columns:
+        plt.plot(
+            x,
+            _normalize(df["IB"]),
+            label=f"IB (max={df['IB'].max():.0f} A)",
+            linewidth=2,
+        )
+    for col in fast_cols:
+        plt.plot(
+            x,
+            _normalize(df[col]),
+            label=f"{col} (max={df[col].max():.2f} MPa)",
+            linewidth=2,
+        )
+    plt.xlabel("t [s]" if "t" in df.columns else "index")
+    plt.ylabel("Normalized value")
+    plt.title(f"Normalized currents and hoop stress — {magnet_name}")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+    if output_png is None:
+        output_png = f"stress_history_{magnet_name}.png"
+    plt.savefig(output_png, dpi=150)
+    print(f"\nPlot saved to {output_png}")
+    plt.close()
+
+
+# ---------------------------------------------------------------------------
+# Main — subcommand dispatcher
+# ---------------------------------------------------------------------------
+
+
+def _add_shared_args(p: argparse.ArgumentParser) -> None:
+    """Add arguments common to every subcommand."""
+    p.add_argument("site_name", help="Site name as registered in DuckDB (e.g. M9)")
+    p.add_argument(
+        "--db",
+        default="student_magnetdb.duckdb",
+        help="Path to the student DuckDB (default: student_magnetdb.duckdb)",
+    )
+    p.add_argument(
+        "--geometries",
+        default="geometries",
+        help="Directory of YAML geometry files (default: geometries/)",
+    )
+    p.add_argument(
+        "--magnet-type",
+        default="H",
+        choices=["H", "B", "S"],
+        help="Part type to compute hoop stress for (default: H)",
+    )
+    p.add_argument(
+        "--debug", action="store_true", help="Enable debug output from magnet_setup()"
+    )
+
+
+def _add_pupitre_args(p: argparse.ArgumentParser) -> None:
+    """Add arguments for subcommands that read a pupitre time-series file."""
+    p.add_argument(
+        "--pupitre",
+        nargs="*",
+        default=None,
+        metavar="FILE",
+        help="Pupitre file(s) (.txt, .tdms, .csv). "
+        "Omit to use all experiment files registered for the site.",
+    )
+    p.add_argument(
+        "--use-mrun",
+        action="store_true",
+        help="Load via python_magnetrun.MagnetRun.load_mrun() "
+        "(supports .tdms and path auto-resolution)",
+    )
+    p.add_argument(
+        "--check",
+        action="store_true",
+        help="Validate fast results against bmap.getHoop row by row",
+    )
+
+
+def _load_magnet(
+    args: argparse.Namespace,
+) -> tuple[list[tuple[tuple, object, str]], str]:
+    """
+    Resolve site → all magnets, prepare geometry directories, and load
+    MagnetTools objects for each.
+
+    Returns ([(data, tempdir, magnet_name), ...], housing).
+    """
+    housing, magnets = load_site_config_from_duckdb(args.site_name, args.db)
+
+    loaded: list[tuple[tuple, object, str]] = []
+    for magnet_name, config in magnets:
+        print(
+            f"\n── Site '{args.site_name}' → magnet '{magnet_name}'  housing={housing}"
+        )
+        print(
+            f"   Helix: {len(config.get('Helix', []))}  "
+            f"Ring: {len(config.get('Ring', []))}  "
+            f"Bitter: {len(config.get('Bitter', []))}"
+        )
+
+        print("\n── Preparing geometry directory …")
+        tempdir = prepare_geometry_directory(
+            magnet_name, config, args.db, args.geometries
+        )
+        print(f"   Temp dir: {tempdir}")
+
+        print("\n── Loading MagnetTools objects …")
+        data = load_magnettools(config, tempdir, debug=args.debug)
+        Tubes, Helices, OHelices, BMagnets, UMagnets, Shims = data
+        print(
+            f"   Tubes: {len(Tubes)}  Helices: {len(Helices)}  "
+            f"BMagnets: {len(BMagnets)}  UMagnets: {len(UMagnets)}"
+        )
+        loaded.append((data, tempdir, magnet_name))
+
+    # TODO:  create a yml file for the site with r_offset, .., ..
+    # save it to tempdir/data/geometries
+    # check how this is done in python_magnetdb
+    return loaded, housing
+
+
+def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.DataFrame:
+    """
+    Resolve pupitre files, compute hoop stress for each, and return a single
+    concatenated DataFrame.
+
+    File resolution:
+    - args.pupitre is None or [] → all experiment files for the site (DB order)
+    - args.pupitre is a list     → validated against experiments table (warn on miss)
+    """
+    if not housing:
+        raise ValueError(
+            "Housing could not be determined from the site. "
+            "Check that sites.housing is set in the DB."
+        )
+
+    files = resolve_pupitre_files(args.site_name, args.db, args.pupitre or None)
+    print(
+        f"\n── Computing hoop stress time series (housing={housing}, "
+        f"{len(files)} file(s)) …"
+    )
+
+    dfs: list[pd.DataFrame] = []
+    for f in files:
+        print(f"   Processing {f} …")
+        df = validate_fast_from_pupitre(
+            data,
+            f,
+            housing,
+            magnet_type=args.magnet_type,
+            check=args.check,
+            use_mrun=args.use_mrun,
+            site=args.site_name,
+        )
+        dfs.append(df)
+
+    result = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
+    if len(dfs) > 1 and "t" in result.columns:
+        result = result.sort_values("t").reset_index(drop=True)
+
+    fast_cols = [c for c in result.columns if re.match(r"H\d+_fast", c)]
+    show_cols = [c for c in ["t", "IH", "IB"] if c in result.columns] + fast_cols
+    print(result[show_cols].head().to_string(index=False))
+    return result
+
+
+def cmd_geometry(args: argparse.Namespace) -> None:
+    yaml_str = geometry_config_to_yaml(
+        args.site_name,
+        args.db,
+        output_dir=args.output_dir,
+        geometries_dir=args.geometries_dir,
+    )
+    if args.output_dir is None:
+        print(yaml_str)
+
+
+def cmd_magnet_geometry(args: argparse.Namespace) -> None:
+    yaml_str = magnet_geometry_config_to_yaml(
+        args.magnet_name,
+        args.db,
+        output_dir=args.output_dir,
+        geometries_dir=args.geometries_dir,
+    )
+    if args.output_dir is None:
+        print(yaml_str)
+
+
+def cmd_barchart(args: argparse.Namespace) -> None:
+    magnets, housing = _load_magnet(args)
+    for data, tempdir, magnet_name in magnets:
+        try:
+            print(f"\n── Computing hoop stress at Ih={args.i_h/1e3:.1f} kA …")
+            result = compute_hoop_at_currents(
+                data, args.i_h, args.i_b, args.i_s, args.magnet_type
+            )
+            print(f"   Bz0 at requested current : {result['Bz0']:.3f} T")
+            print(f"   Bz0 at max current (31kA): {result['Bz0_max']:.3f} T")
+
+            print("\n── Annotating with Rpe …")
+            df = annotate_with_rpe(result, magnet_name, args.db)
+            print(
+                df[
+                    [
+                        "coil_index",
+                        "part",
+                        "nuance",
+                        "hoop_MPa",
+                        "hoop_max_MPa",
+                        "rpe",
+                        "ratio_rpe_max",
+                    ]
+                ].to_string(index=False)
+            )
+
+            print("\n── Plotting …")
+            plot_stress_map(df, magnet_name, args.i_h)
+        finally:
+            shutil.rmtree(tempdir, ignore_errors=True)
+
+
+def cmd_history(args: argparse.Namespace) -> None:
+    magnets, housing = _load_magnet(args)
+    for data, tempdir, magnet_name in magnets:
+        try:
+            df = _load_history(args, data, housing)
+            print("\n── Plotting …")
+            plot_stress_history(df, magnet_name)
+        finally:
+            shutil.rmtree(tempdir, ignore_errors=True)
+
+
+def cmd_stats(args: argparse.Namespace) -> None:
+    magnets, housing = _load_magnet(args)
+    for data, tempdir, magnet_name in magnets:
+        try:
+            df = _load_history(args, data, housing)
+            print("\n── Statistics …")
+            stats = compute_stress_stats(df)
+            print(stats.to_string(index=False))
+            if args.output:
+                stats.to_csv(args.output, index=False)
+                print(f"\nStats saved to {args.output}")
+        finally:
+            shutil.rmtree(tempdir, ignore_errors=True)
+
+
+def cmd_fatigue(args: argparse.Namespace) -> None:
+    magnets, housing = _load_magnet(args)
+    for data, tempdir, magnet_name in magnets:
+        try:
+            df = _load_history(args, data, housing)
+            fast_cols = [c for c in df.columns if re.match(r"H\d+_fast", c)]
+            print(f"\n── Rainflow fatigue analysis ({len(fast_cols)} coil(s)) …")
+            for col in fast_cols:
+                cycles_df = compute_fatigue(df, col)
+                print(f"\n   {col}: {len(cycles_df)} cycles detected")
+                print(cycles_df.describe().to_string())
+                plot_fatigue(df, cycles_df, magnet_name, col, bins=args.bins)
+        finally:
+            shutil.rmtree(tempdir, ignore_errors=True)
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Compute hoop stress map for a magnet using DuckDB + YAML files.",
+        description="Hoop stress analysis for a site using DuckDB + YAML files.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("magnet_name",
-                        help="Magnet name as registered in DuckDB (e.g. M19061901)")
-    parser.add_argument("--db", default="student_magnetdb.duckdb",
-                        help="Path to the student DuckDB (default: student_magnetdb.duckdb)")
-    parser.add_argument("--geometries", default="geometries",
-                        help="Directory of YAML geometry files (default: geometries/)")
-    parser.add_argument("--i-h", type=float, default=20000.0,
-                        help="Helix current in A (default: 20000 A)")
-    parser.add_argument("--i-b", type=float, default=0.0,
-                        help="Bitter current in A (default: 0 A)")
-    parser.add_argument("--i-s", type=float, default=0.0,
-                        help="Supra current in A (default: 0 A)")
-    parser.add_argument("--magnet-type", default="H", choices=["H", "B", "S"],
-                        help="Part type to compute hoop stress for (default: H)")
-    parser.add_argument("--debug", action="store_true",
-                        help="Enable debug output from magnet_setup()")
-    args = parser.parse_args()
-
-    print(f"\n── Loading config from DuckDB for '{args.magnet_name}' …")
-    config = load_magnet_config_from_duckdb(args.magnet_name, args.db)
-    n_helices = len(config.get("Helix", []))
-    n_rings   = len(config.get("Ring", []))
-    n_bitters = len(config.get("Bitter", []))
-    print(f"   Helix: {n_helices}  Ring: {n_rings}  Bitter: {n_bitters}")
-
-    print(f"\n── Preparing geometry directory …")
-    tempdir = prepare_geometry_directory(
-        args.magnet_name, config, args.geometries, args.db
+    subparsers = parser.add_subparsers(
+        dest="command",
+        required=True,
+        metavar="{geometry,magnet-geometry,barchart,history,stats,fatigue}",
     )
-    print(f"   Temp dir: {tempdir}")
 
-    try:
-        print(f"\n── Loading MagnetTools objects …")
-        data = load_magnettools(config, tempdir, debug=args.debug)
-        (Tubes, Helices, OHelices, BMagnets, UMagnets, Shims) = data
-        print(f"   Tubes: {len(Tubes)}  Helices: {len(Helices)}  "
-              f"BMagnets: {len(BMagnets)}  UMagnets: {len(UMagnets)}")
+    # ── geometry ─────────────────────────────────────────────────────────────
+    p_geo = subparsers.add_parser(
+        "geometry",
+        help="Generate MSite YAML from magnet geometry_data + site offsets",
+    )
+    p_geo.add_argument(
+        "site_name", help="Site name as registered in DuckDB (e.g. M9_M19061901_0)"
+    )
+    p_geo.add_argument(
+        "--db",
+        default="student_magnetdb.duckdb",
+        help="Path to the student DuckDB (default: student_magnetdb.duckdb)",
+    )
+    p_geo.add_argument(
+        "--output-dir",
+        dest="output_dir",
+        default=None,
+        metavar="DIR",
+        help="Write <site_name>.yaml to DIR (default: print to stdout)",
+    )
+    p_geo.add_argument(
+        "--geometries-dir",
+        dest="geometries_dir",
+        default=None,
+        metavar="DIR",
+        help="Fallback directory containing {magnet_name}.yaml assembly files "
+        "for magnets imported without --geometry",
+    )
+    p_geo.set_defaults(func=cmd_geometry)
 
-        print(f"\n── Computing stress map at I_h={args.i_h/1e3:.1f} kA …")
-        result = compute_stress_map(
-            data, args.i_h, args.i_b, args.i_s, args.magnet_type
-        )
-        print(f"   Bz0 at requested current : {result['Bz0']:.3f} T")
-        print(f"   Bz0 at max current (31kA): {result['Bz0_max']:.3f} T")
+    # ── magnet-geometry ───────────────────────────────────────────────────────
+    p_mgeo = subparsers.add_parser(
+        "magnet-geometry",
+        help="Generate magnet assembly YAML from geometry_data",
+    )
+    p_mgeo.add_argument(
+        "magnet_name", help="Magnet name as registered in DuckDB (e.g. M19061901)"
+    )
+    p_mgeo.add_argument(
+        "--db",
+        default="student_magnetdb.duckdb",
+        help="Path to the student DuckDB (default: student_magnetdb.duckdb)",
+    )
+    p_mgeo.add_argument(
+        "--output-dir",
+        dest="output_dir",
+        default=None,
+        metavar="DIR",
+        help="Write <magnet_name>.yaml to DIR (default: print to stdout)",
+    )
+    p_mgeo.add_argument(
+        "--geometries-dir",
+        dest="geometries_dir",
+        default=None,
+        metavar="DIR",
+        help="Fallback directory containing {magnet_name}.yaml assembly files "
+        "for magnets imported without --geometry",
+    )
+    p_mgeo.set_defaults(func=cmd_magnet_geometry)
 
-        print(f"\n── Annotating with Rpe …")
-        df = annotate_with_rpe(result, args.magnet_name, args.db)
-        print(df[["coil_index", "part", "nuance", "hoop_MPa",
-                   "hoop_max_MPa", "rpe", "ratio_rpe_max"]].to_string(index=False))
+    # ── barchart ──────────────────────────────────────────────────────────────
+    p_bar = subparsers.add_parser(
+        "barchart",
+        help="Bar chart of hoop stress at given currents vs Rpe",
+    )
+    _add_shared_args(p_bar)
+    p_bar.add_argument(
+        "--i-h", type=float, default=20000.0, help="Helix current [A] (default: 20000)"
+    )
+    p_bar.add_argument(
+        "--i-b", type=float, default=0.0, help="Bitter current [A] (default: 0)"
+    )
+    p_bar.add_argument(
+        "--i-s", type=float, default=0.0, help="Supra current [A] (default: 0)"
+    )
+    p_bar.set_defaults(func=cmd_barchart)
 
-        print(f"\n── Plotting …")
-        plot_stress_map(df, args.magnet_name, args.i_h)
+    # ── history ───────────────────────────────────────────────────────────────
+    p_hist = subparsers.add_parser(
+        "history",
+        help="Hoop stress vs time from a pupitre file (normalised plot)",
+    )
+    _add_shared_args(p_hist)
+    _add_pupitre_args(p_hist)
+    p_hist.set_defaults(func=cmd_history)
 
-    finally:
-        shutil.rmtree(tempdir, ignore_errors=True)
+    # ── stats ─────────────────────────────────────────────────────────────────
+    p_stats = subparsers.add_parser(
+        "stats",
+        help="Descriptive statistics of hoop stress time series",
+    )
+    _add_shared_args(p_stats)
+    _add_pupitre_args(p_stats)
+    p_stats.add_argument(
+        "--output", default=None, help="Save stats table to CSV (default: print only)"
+    )
+    p_stats.set_defaults(func=cmd_stats)
+
+    # ── fatigue ───────────────────────────────────────────────────────────────
+    p_fat = subparsers.add_parser(
+        "fatigue",
+        help="Rainflow cycle counting on hoop stress time series",
+    )
+    _add_shared_args(p_fat)
+    _add_pupitre_args(p_fat)
+    p_fat.add_argument(
+        "--bins", type=int, default=15, help="Number of histogram bins (default: 15)"
+    )
+    p_fat.set_defaults(func=cmd_fatigue)
+
+    args = parser.parse_args()
+    args.func(args)
 
 
 if __name__ == "__main__":

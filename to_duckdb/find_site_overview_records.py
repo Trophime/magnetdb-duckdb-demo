@@ -1,26 +1,10 @@
 """
 find_site_overview_records.py  [DEPRECATED — use magnetdb.py instead]
-======================================================================
 
-.. deprecated::
-   This script is superseded by the unified CLI ``magnetdb.py``.
-   Use ``python magnetdb.py populate overview-records`` to process overview
-   files, or query ``overview_records`` directly via DuckDB.
-   ``find_site_overview_records.py`` is kept as an importable module for
-   ``magnetdb.py`` and may be removed as a standalone CLI in a future version.
-
-Query all overview_records attached to a site given by its name.
-
-Each row corresponds to one processed OverviewRecord (one overview TDMS file)
-and carries the experiment metadata: start time, duration, housing, mode,
-pupitre parameters (teb, bp), source-file counts, signature keys, and
-synchronisation info.
-
-Usage:
-    python find_site_overview_records.py M10_M19071101_13
-    python find_site_overview_records.py M10_M19071101_13 --db my.duckdb
-    python find_site_overview_records.py M10_M19071101_13 --json
-    python find_site_overview_records.py M10_M19071101_13 --signatures
+Superseded by ``python magnetdb.py populate overview-records`` (processing)
+or ``python magnetdb.py overview-records view`` (querying).
+Kept as an importable module for ``magnetdb.py``.
+See DEPRECATED.md for full documentation.
 """
 
 import argparse

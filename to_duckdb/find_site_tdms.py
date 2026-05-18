@@ -1,44 +1,9 @@
 """
 find_site_tdms.py  [DEPRECATED — use magnetdb.py instead]
-==========================================================
 
-.. deprecated::
-   This script is superseded by the unified CLI ``magnetdb.py``.
-   Use ``python magnetdb.py populate operationaldata`` instead.
-   ``find_site_tdms.py`` is kept as an importable module for ``magnetdb.py``
-   and may be removed as a standalone CLI in a future version.
-
-Load a site by name, then find TDMS files in all known subdirectories whose
-filename timestamp falls within the site's commissioned / decommissioned window.
-
-Matched files are inserted into a ``operationaldata`` table (same columns as
-``experiments``, plus a ``type`` field) in the DuckDB database, and printed
-to stdout.
-
-Scanned directories and their type labels
------------------------------------------
-    /mnt/LNCMIG-Data/records/pbsurv/<housing>/Overview/        → type = Overview
-    /mnt/LNCMIG-Data/records/pbsurv/<housing>/Fichiers_Archive/ → type = Archive
-    /mnt/LNCMIG-Data/records/pbsurv/<housing>/Fichiers_Spike/  → type = Spike
-    /mnt/LNCMIG-Data/records/pbsurv/<housing>/Fichiers_Default/ → type = Default
-
-Timestamp formats (all in French local time, Europe/Paris):
-    Overview / Archive  YYDDMM-HHMM   (6+4 digits, French day-first, minute precision)
-        YY = year, DD = day, MM = month, HH = hour, MM = minute
-    Spike               YYMMDD-HHMMSS  (6+6 digits, ISO date order, second precision)
-        e.g. M10_Spikes_250615-021640.tdms
-    Default             YYMMDD-HHMMSS  (6+6 digits, ISO date order, second precision)
-        optional suffix after timestamp, e.g. M10_Default_240718-124401_Courants50Hz.tdms
-
-The timezone of commissioned_at / decommissioned_at stored in DuckDB is
-uncertain. Default assumption is UTC; override with --db-tz if needed.
-
-Usage:
-    python find_site_tdms.py M10_M19071101_13
-    python find_site_tdms.py M10_M19071101_13 --db-tz Europe/Paris
-    python find_site_tdms.py M10_M19071101_13 --dry-run
-    python find_site_tdms.py M10_M19071101_13 --type Archive Spike
-    python find_site_tdms.py M10_M19071101_13 --records-base /data/records
+Superseded by ``python magnetdb.py populate operationaldata``.
+Kept as an importable module for ``magnetdb.py``.
+See DEPRECATED.md for full documentation.
 """
 
 import argparse

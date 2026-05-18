@@ -1,39 +1,8 @@
 """
 seeds_to_duckdb.py  [DEPRECATED — use magnetdb.py instead]
-===========================================================
 
-.. deprecated::
-   This script is superseded by the unified CLI ``magnetdb.py``.
-   Load magnets and sites from JSON exports produced by ``python_magnetapi``::
-
-       python magnetdb.py magnet add <magnet>.json
-       python magnetdb.py site   add <site>.json
-
-   ``seeds_to_duckdb.py`` is kept for reference only and may be removed in a
-   future version.
-
-Build a student DuckDB database from MagnetDB seed files,
-WITHOUT requiring a running Django stack or PostgreSQL.
-
-Usage
------
-    pip install duckdb
-    python seeds_to_duckdb.py [--output student_magnetdb.duckdb] [--seeds all|bitters|M19061901|...]
-
-How it works
-------------
-The seed files (seeds-Bitters.py, seed-M19061901.py, …) call functions from
-`python_magnetdb.seeds.crud` which write to Django ORM / PostgreSQL.
-
-This script replaces that entire layer with lightweight stubs that capture
-every create_*/query_* call and store the data in memory.  Once all seeds are
-loaded the collected data is flushed to DuckDB via the shared crud helpers.
-
-coil_index assignment
----------------------
-Parts are ordered in the `parts` list passed to `create_magnet()`.
-Only parts of type 'helix' or 'bitter' receive a coil_index (1-based).
-Parts of type 'ring' or 'lead' get NULL.
+Superseded by ``python magnetdb.py magnet add`` / ``python magnetdb.py site add``.
+See DEPRECATED.md for full documentation.
 """
 
 import argparse

@@ -1,39 +1,10 @@
 """
 find_site_pupitre.py  [DEPRECATED — use magnetdb.py instead]
-=============================================================
 
-.. deprecated::
-   This script is superseded by the unified CLI ``magnetdb.py``.
-   Use ``python magnetdb.py populate operationaldata --type Pupitre`` or
-   ``python magnetdb.py populate experiments`` instead.
-   ``find_site_pupitre.py`` is kept as an importable module for ``magnetdb.py``
-   and may be removed as a standalone CLI in a future version.
-
-Load a site by name, then find pupitre TXT files whose filename timestamp
-falls within the site's commissioned / decommissioned window.
-
-Matched files are inserted into the ``operationaldata`` table (type = 'Pupitre')
-in the DuckDB database, and printed to stdout.
-
-Scanned directory:
-    /mnt/LNCMIG-Data/records/srv-data-install/<housing>/
-
-Filename format — YYYY.MM.DD - HH:MM:SS.txt (French local time, Europe/Paris):
-    YYYY = 4-digit year
-    MM   = 2-digit month
-    DD   = 2-digit day
-    HH   = hour (24 h)
-    MM   = minute
-    SS   = second
-
-The timezone of commissioned_at / decommissioned_at stored in DuckDB is
-uncertain. Default assumption is UTC; override with --db-tz if needed.
-
-Usage:
-    python find_site_pupitre.py M10_M19071101_13
-    python find_site_pupitre.py M10_M19071101_13 --db-tz Europe/Paris
-    python find_site_pupitre.py M10_M19071101_13 --dry-run
-    python find_site_pupitre.py M10_M19071101_13 --records-base /data/records --srv-subdir srv-data-install
+Superseded by ``python magnetdb.py populate operationaldata --type Pupitre``
+or ``python magnetdb.py populate experiments``.
+Kept as an importable module for ``magnetdb.py``.
+See DEPRECATED.md for full documentation.
 """
 
 import argparse
