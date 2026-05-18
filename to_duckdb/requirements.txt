@@ -1,0 +1,52 @@
+# to_duckdb — Python dependencies
+# Install with:  pip install -r requirements.txt
+#
+# ── magnettools ───────────────────────────────────────────────────────────────
+# magnettools is a pybind11 C++ extension. Two installation paths are supported:
+#
+# Option A — Debian package (no build required, recommended for most users):
+#   The Debian package python3-magnettools is already installed at system level.
+#   Create the venv WITH --system-site-packages so Python picks it up:
+#     python3 -m venv --system-site-packages venv
+#     pip install -r requirements.txt        # (no magnettools entry needed here)
+#
+# Option B — Local source build from ../my-magnettools/Python:
+#   Requires the C++ dev headers first (one-time, needs sudo):
+#     sudo apt install libmagnettools-dev
+#   Then uncomment the line below and install normally into any venv:
+#     python3 -m venv venv
+#     pip install -r requirements.txt
+#
+# -e ../../my-magnettools/Python
+#
+# ── duckdb CLI ────────────────────────────────────────────────────────────────
+#   duckdb-cli is a standalone binary, not a pip package.
+#   Install from https://duckdb.org/docs/installation or:
+#     sudo apt install duckdb   (if available in your distro)
+#
+# ── Local packages (editable installs from sibling directories) ───────────────
+-e ../python_magnetgeo
+-e ../python_magnetcooling
+-e ../python_magnetrun
+-e ../python_magnetsetup
+
+# Core data stack
+duckdb
+numpy
+pandas
+pyyaml
+
+# Plotting
+matplotlib
+
+# Rainflow fatigue cycle counting  (student_stress_map.py fatigue subcommand)
+rainflow
+
+# Testing
+pytest
+
+# Notebook / interactive UI (optional)
+marimo
+
+# Interactive UI for database management (optional, but recommended for ease of use)
+duckdb-cli
