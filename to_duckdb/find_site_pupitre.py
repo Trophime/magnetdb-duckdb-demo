@@ -1,6 +1,14 @@
 """
-find_site_pupitre.py
-====================
+find_site_pupitre.py  [DEPRECATED — use magnetdb.py instead]
+=============================================================
+
+.. deprecated::
+   This script is superseded by the unified CLI ``magnetdb.py``.
+   Use ``python magnetdb.py populate operationaldata --type Pupitre`` or
+   ``python magnetdb.py populate experiments`` instead.
+   ``find_site_pupitre.py`` is kept as an importable module for ``magnetdb.py``
+   and may be removed as a standalone CLI in a future version.
+
 Load a site by name, then find pupitre TXT files whose filename timestamp
 falls within the site's commissioned / decommissioned window.
 
@@ -184,8 +192,17 @@ def find_and_register(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    import warnings
+    warnings.warn(
+        "find_site_pupitre.py is deprecated. "
+        "Use 'python magnetdb.py populate operationaldata --type Pupitre' "
+        "or 'python magnetdb.py populate experiments' instead.",
+        DeprecationWarning,
+        stacklevel=1,
+    )
     parser = argparse.ArgumentParser(
         description=(
+            "[DEPRECATED — use: python magnetdb.py populate operationaldata --type Pupitre] "
             "Find pupitre TXT files for a site's operational window "
             "and register them in the 'operationaldata' table (type=Pupitre)."
         ),

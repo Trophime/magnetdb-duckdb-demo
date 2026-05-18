@@ -158,7 +158,6 @@ def add_site(data: dict, db_path, dry_run: bool = False, magnet_dir=None) -> Non
         print("[dry-run] Validation passed. Would insert:")
         print(f"  site     : {data['name']}  [{data.get('housing', '?')}]")
         print(f"  magnets  : {magnet_names}")
-        print(f"  records  : {len(data.get('records', []))}")
         return
 
     con = duckdb.connect(str(db_path))

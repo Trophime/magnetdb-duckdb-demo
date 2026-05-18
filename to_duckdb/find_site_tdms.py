@@ -1,6 +1,13 @@
 """
-find_site_tdms.py
-=================
+find_site_tdms.py  [DEPRECATED — use magnetdb.py instead]
+==========================================================
+
+.. deprecated::
+   This script is superseded by the unified CLI ``magnetdb.py``.
+   Use ``python magnetdb.py populate operationaldata`` instead.
+   ``find_site_tdms.py`` is kept as an importable module for ``magnetdb.py``
+   and may be removed as a standalone CLI in a future version.
+
 Load a site by name, then find TDMS files in all known subdirectories whose
 filename timestamp falls within the site's commissioned / decommissioned window.
 
@@ -227,8 +234,16 @@ def find_and_register(
 
 
 def main() -> None:
+    import warnings
+    warnings.warn(
+        "find_site_tdms.py is deprecated. "
+        "Use 'python magnetdb.py populate operationaldata' instead.",
+        DeprecationWarning,
+        stacklevel=1,
+    )
     parser = argparse.ArgumentParser(
         description=(
+            "[DEPRECATED — use: python magnetdb.py populate operationaldata] "
             "Find TDMS files for a site's operational window "
             "and register them in the 'operationaldata' table."
         ),

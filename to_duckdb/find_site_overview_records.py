@@ -1,6 +1,14 @@
 """
-find_site_overview_records.py
-=============================
+find_site_overview_records.py  [DEPRECATED — use magnetdb.py instead]
+======================================================================
+
+.. deprecated::
+   This script is superseded by the unified CLI ``magnetdb.py``.
+   Use ``python magnetdb.py populate overview-records`` to process overview
+   files, or query ``overview_records`` directly via DuckDB.
+   ``find_site_overview_records.py`` is kept as an importable module for
+   ``magnetdb.py`` and may be removed as a standalone CLI in a future version.
+
 Query all overview_records attached to a site given by its name.
 
 Each row corresponds to one processed OverviewRecord (one overview TDMS file)
@@ -175,8 +183,19 @@ def print_table(records: list[dict], show_signatures: bool) -> None:
 
 
 def main() -> None:
+    import warnings
+    warnings.warn(
+        "find_site_overview_records.py is deprecated. "
+        "Use 'python magnetdb.py populate overview-records' to process files, "
+        "or query overview_records directly via DuckDB.",
+        DeprecationWarning,
+        stacklevel=1,
+    )
     parser = argparse.ArgumentParser(
-        description="List all overview_records for a given site.",
+        description=(
+            "[DEPRECATED — use: python magnetdb.py populate overview-records] "
+            "List all overview_records for a given site."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

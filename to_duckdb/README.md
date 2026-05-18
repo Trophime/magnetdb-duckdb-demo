@@ -25,8 +25,9 @@ magnetdb/                        ← repo root
     ├── magnetdb.py              ← unified CLI (use this)
     ├── add_magnet.py            ← DEPRECATED (kept for compatibility)
     ├── add_site.py              ← DEPRECATED (kept for compatibility)
-    ├── find_site_tdms.py        ← find TDMS archive files for a site
-    ├── find_site_pupitre.py     ← find pupitre TXT files for a site
+    ├── find_site_tdms.py        ← DEPRECATED (use magnetdb.py populate operationaldata)
+    ├── find_site_pupitre.py     ← DEPRECATED (use magnetdb.py populate operationaldata / experiments)
+    ├── find_site_overview_records.py ← DEPRECATED (use magnetdb.py populate overview-records)
     ├── compute_op_stats.py      ← ingest per-file statistics into DuckDB
     ├── query_cumstats.py        ← query cumulative stats by site / magnet / part
     ├── student_statheures_demo.py ← standalone field-time histogram demo
@@ -45,8 +46,9 @@ magnetdb/                        ← repo root
 | `magnetdb.py` | **Unified CLI** — single entry point for all add / view / delete / update operations |
 | `add_magnet.py` | ~~Add a magnet from a JSON export~~ — **deprecated**, use `magnetdb.py magnet add` |
 | `add_site.py` | ~~Manage sites~~ — **deprecated**, use `magnetdb.py site ...` |
-| `find_site_tdms.py` | Find TDMS archive files for a site's operational window and register them in `operationaldata` |
-| `find_site_pupitre.py` | Find pupitre TXT files for a site's operational window and register them in `operationaldata` |
+| `find_site_tdms.py` | ~~Find TDMS archive files for a site~~ — **deprecated**, use `magnetdb.py populate operationaldata` |
+| `find_site_pupitre.py` | ~~Find pupitre TXT files for a site~~ — **deprecated**, use `magnetdb.py populate operationaldata --type Pupitre` or `populate experiments` |
+| `find_site_overview_records.py` | ~~Query `overview_records` for a site~~ — **deprecated**, use `magnetdb.py populate overview-records` |
 | `compute_op_stats.py` | Ingest per-file operational statistics into the four `op_*` tables (idempotent) |
 | `query_cumstats.py` | Query cumulative statistics by site, magnet, or part — no raw files needed |
 | `student_statheures_demo.py` | Standalone field-time histogram demo (field-bin counts, no python_magnetrun required) |
@@ -90,6 +92,13 @@ python magnetdb.py <entity> <action> [arguments] [options]
 | `site view [name]` | List all sites, or show detail for one |
 | `site delete <name>` | Delete a site, its magnet links, and its experiments |
 | `site update-magnet <site> <magnet>` | Patch positional/temporal fields on a site–magnet link |
+| `housing view [name]` | List all housing configs, or show detail for one |
+| `experiments view [--site SITE]` | List experiment records, optionally filtered by site |
+| `operationaldata view [--site SITE] [--type TYPE]` | List operationaldata records, optionally filtered |
+| `overview-records view [--site SITE] [--signatures]` | List overview_records, optionally filtered by site |
+| `populate operationaldata [SITE...] [--all]` | Scan filesystem and register TDMS/pupitre files in `operationaldata` |
+| `populate experiments [SITE...] [--all]` | Scan filesystem for pupitre TXT files and register them in `experiments` |
+| `populate overview-records [SITE...] [--all]` | Process Overview TDMS files via `python_magnetrun` into `overview_records` |
 
 All subcommands accept `--db <path>` (default: `student_magnetdb.duckdb` in the current directory).
 
@@ -262,6 +271,101 @@ python magnetdb.py site update-magnet M10_M19071101_13 M19071101 \
 ```
 
 Only the fields explicitly passed are updated; all others are left unchanged.
+
+---
+
+## Populating data tables — `magnetdb.py populate`
+
+`magnetdb.py populate` is the single entry point for filling the three file-level tables. Each subcommand accepts one or more site names **or** `--all` to process every site in the DB.
+
+### `populate operationaldata`
+
+Wraps `find_site_tdms.py` and `find_site_pupitre.py` in a single call. Scans the storage server for TDMS and pupitre TXT files within each site's operational window and registers them in the `operationaldata` table.
+
+```bash
+# Dry run — preview file counts without writing
+python magnetdb.py populate operationaldata M10_M19071101_13 --dry-run
+
+# Scan all types for one site
+python magnetdb.py populate operationaldata M10_M19071101_13 --db student.duckdb
+
+# Restrict to specific types
+python magnetdb.py populate operationaldata M10_M19071101_13 --type Archive Overview
+
+# Process all sites in the DB
+python magnetdb.py populate operationaldata --all --db student.duckdb
+
+# DB timestamps stored as French local time instead of UTC
+python magnetdb.py populate operationaldata --all --db-tz Europe/Paris
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--type` | all | Restrict to one or more of `Overview Archive Spike Default Pupitre` |
+| `--records-base` | `/mnt/LNCMIG-Data/records` | Root of the records tree |
+| `--srv-subdir` | `srv-data-install` | Subdirectory of `records-base` for pupitre TXT files |
+| `--pbsurv` | `pbsurv` | Subdirectory of `records-base` for TDMS files |
+| `--db-tz` | `UTC` | Timezone of `commissioned_at` / `decommissioned_at` in the DB |
+| `--dry-run` | — | Match files without writing to the DB |
+
+### `populate experiments`
+
+Scans the pupitre TXT directory (same logic as `find_site_pupitre.py`) and registers matching files in the `experiments` table. The operation is idempotent — rows already present are skipped.
+
+The `records` field in the site JSON is **not used**. `site add` only inserts the site row and magnet links.
+
+```bash
+# Dry run — preview file counts without writing
+python magnetdb.py populate experiments M10_M19071101_13 --dry-run
+
+# One site
+python magnetdb.py populate experiments M10_M19071101_13 --db student.duckdb
+
+# All sites
+python magnetdb.py populate experiments --all --db student.duckdb
+
+# DB timestamps stored as French local time instead of UTC
+python magnetdb.py populate experiments --all --db-tz Europe/Paris
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--records-base` | `/mnt/LNCMIG-Data/records` | Root of the records tree |
+| `--srv-subdir` | `srv-data-install` | Subdirectory of `records-base` for pupitre TXT files |
+| `--db-tz` | `UTC` | Timezone of `commissioned_at` / `decommissioned_at` in the DB |
+| `--dry-run` | — | Match files without writing to the DB |
+
+### `populate overview-records`
+
+Processes Overview TDMS files registered in `operationaldata` (type = `Overview`) using the `python_magnetrun` analysis pipeline and inserts the results into `overview_records`. Requires `python_magnetrun` to be installed.
+
+Run `populate operationaldata --type Overview` first if `operationaldata` is empty.
+
+```bash
+# Process one site
+python magnetdb.py populate overview-records M10_M19071101_13 --db student.duckdb
+
+# Process all sites
+python magnetdb.py populate overview-records --all --db student.duckdb
+
+# Re-process already-ingested files (upsert)
+python magnetdb.py populate overview-records --all --reprocess
+
+# Dry run — list files that would be processed
+python magnetdb.py populate overview-records M10_M19071101_13 --dry-run
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--reprocess` | — | Overwrite existing `overview_records` rows (upsert instead of skip) |
+| `--dry-run` | — | List files without processing or writing to the DB |
+
+Data directories used by `python_magnetrun` (pupitre, pigbrother, hybrid) are resolved from environment variables. Override them if needed:
+
+```bash
+export MAGNETRUN_PUPITRE_DATA_DIR=/data/records/srv-data-install
+python magnetdb.py populate overview-records --all --db student.duckdb
+```
 
 ---
 
@@ -456,20 +560,53 @@ python find_site_pupitre.py M10_M19071101_13 \
 | `--srv-subdir` | `srv-data-install` | Subdirectory of `records-base` that contains housing directories |
 | `--dry-run` | — | Match files without writing to the DB |
 
+### `find_site_overview_records.py`
+
+Read-only query tool — lists all `overview_records` rows for a site. The table is populated by the `python_magnetrun` processing pipeline, not by this script.
+
+```bash
+# Table output (default)
+python find_site_overview_records.py M10_M19071101_13
+
+# Include per-record signature and sync details
+python find_site_overview_records.py M10_M19071101_13 --signatures
+
+# JSON output (one object per record)
+python find_site_overview_records.py M10_M19071101_13 --json
+
+# Different DB file
+python find_site_overview_records.py M10_M19071101_13 --db my.duckdb
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--db` | `student_magnetdb.duckdb` | DuckDB file |
+| `--json` | — | Print results as a JSON array instead of a table |
+| `--signatures` | — | Include per-record signature and sync details in table output |
+
+Each row in the output corresponds to one processed overview TDMS file and shows start time, duration, housing, mode, pupitre parameters (`teb`, `bp`), and source-file counts.
+
 ### Timezone note
 
 The scripts compare file timestamps (always `Europe/Paris`) against the site's `commissioned_at` / `decommissioned_at` from the DB. If those DB timestamps were stored as UTC (the default assumption), use `--db-tz UTC`. If they were stored as French local time, pass `--db-tz Europe/Paris`. The scripts convert both sides to the same timezone before comparing, so DST transitions are handled correctly.
 
 ### Populating `operationaldata` — complete workflow
 
-**`experiments` vs `operationaldata`** — two parallel tables, two sources:
+### Populating `experiments`, `operationaldata`, and `overview_records`
+
+Three tables record file-level operational data, each fed by a different pipeline:
 
 | Table | Populated by | Contents |
 |-------|-------------|----------|
-| `experiments` | `magnetdb.py site add` | Pupitre TXT files listed in the site JSON `records` field |
-| `operationaldata` | `find_site_pupitre.py` / `find_site_tdms.py` | All files found on disk within the site's operational window |
+| `experiments` | `magnetdb.py populate experiments` | Pupitre TXT files discovered on disk within the site's operational window |
+| `operationaldata` | `magnetdb.py populate operationaldata` (`find_site_pupitre.py` / `find_site_tdms.py`) | All TDMS and pupitre files found on disk within the site's operational window |
+| `overview_records` | `magnetdb.py populate overview-records` (`python_magnetrun` via `crud.insert_overview_record`) | Processed overview TDMS metadata — one row per overview file |
 
-`experiments` is limited to what was exported by MagnetDB at a given point in time. `operationaldata` reflects the actual filesystem state and is the feed for `compute_op_stats.py`.
+**`experiments`** is populated by `populate experiments`, which scans the same pupitre TXT directory as `find_site_pupitre.py` and registers matching files. The `records` field in the site JSON is no longer used. `site add` only inserts the site row and magnet links.
+
+**`operationaldata`** reflects the full filesystem state (all TDMS types + pupitre) and is the primary feed for `compute_op_stats.py`.
+
+**`overview_records`** is populated by the `python_magnetrun` data-processing pipeline which parses overview TDMS files and calls `crud.insert_overview_record` (or `crud.upsert_overview_record` for re-processing). Use `find_site_overview_records.py` to inspect rows already present in the DB.
 
 **Standard storage layout** (LNCMI servers, both scripts use these defaults):
 
@@ -704,22 +841,8 @@ python magnetdb.py magnet view --db $DB
 python magnetdb.py site view   --db $DB
 
 # ── 3. Populate operationaldata from the filesystem ──────────────────────────
-# Run for every site name now in the DB.
-
-python -c "
-import duckdb
-con = duckdb.connect('$DB', read_only=True)
-for (s,) in con.execute('SELECT name FROM sites ORDER BY name').fetchall():
-    print(s)
-" | while read SITE; do
-    # Pupitre TXT (primary source for compute_op_stats.py)
-    python find_site_pupitre.py "$SITE" --db $DB \
-        --records-base $RECORDS --srv-subdir srv-data-install
-
-    # TDMS Archive + Overview
-    python find_site_tdms.py "$SITE" --db $DB \
-        --records-base $RECORDS --type Archive Overview
-done
+python magnetdb.py populate operationaldata --all --db $DB \
+    --records-base $RECORDS --type Archive Overview Pupitre
 
 # ── 4. Ingest per-file statistics (idempotent — safe to re-run) ──────────────
 python -c "
@@ -745,7 +868,7 @@ python query_cumstats.py --db $DB --site M9_M19061901_0 site-bins --channels Pto
 
 ## Deprecated scripts
 
-`add_magnet.py`, `add_site.py`, and `seeds_to_duckdb.py` are kept for reference only and will be removed in a future version. Migrate to the equivalent `magnetdb.py` commands:
+All standalone scripts below are kept as importable modules (used internally by `magnetdb.py`) but will be removed as independent CLIs in a future version. Migrate to the equivalent `magnetdb.py` commands:
 
 | Old command | New command |
 |-------------|-------------|
@@ -753,3 +876,6 @@ python query_cumstats.py --db $DB --site M9_M19061901_0 site-bins --channels Pto
 | `python add_magnet.py <json>` | `python magnetdb.py magnet add <json>` |
 | `python add_site.py add <json>` | `python magnetdb.py site add <json>` |
 | `python add_site.py update-magnet <s> <m> ...` | `python magnetdb.py site update-magnet <s> <m> ...` |
+| `python find_site_tdms.py <site>` | `python magnetdb.py populate operationaldata <site>` |
+| `python find_site_pupitre.py <site>` | `python magnetdb.py populate operationaldata <site> --type Pupitre` |
+| `python find_site_overview_records.py <site>` | `python magnetdb.py populate overview-records <site>` |

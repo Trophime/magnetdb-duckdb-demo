@@ -535,6 +535,206 @@ def view_site(con, name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# View helpers — housing_config, experiments, operationaldata, overview_records
+# ---------------------------------------------------------------------------
+
+
+def view_housing_configs(con) -> None:
+    rows = con.execute(
+        "SELECT name, formats FROM housing_config ORDER BY name"
+    ).fetchall()
+    if not rows:
+        print("No housing configs in database.")
+        return
+    print(f"{'Name':<12} Formats")
+    print("-" * 50)
+    for name, formats in rows:
+        fmts = ", ".join(formats) if formats else "—"
+        print(f"{name:<12} {fmts}")
+
+
+def view_housing_config(con, name: str) -> None:
+    row = con.execute(
+        "SELECT name, coil_assignment, formats, extra_config "
+        "FROM housing_config WHERE name = ?",
+        [name],
+    ).fetchone()
+    if not row:
+        print(f"Housing config '{name}' not found.")
+        return
+    print(f"Housing: {row[0]}")
+    print(f"  formats        : {', '.join(row[2]) if row[2] else '—'}")
+    assignment = row[1] or {}
+    if assignment:
+        print("  coil_assignment:")
+        for coil, gr in assignment.items():
+            print(f"    {coil} → {gr}")
+    extra = row[3]
+    if extra:
+        if isinstance(extra, str):
+            extra = json.loads(extra)
+        if isinstance(extra, dict):
+            for k, v in extra.items():
+                print(f"  {k}: {v}")
+
+
+def view_experiments(con, site_name: str | None = None) -> None:
+    if site_name:
+        rows = con.execute(
+            "SELECT id, name, file, status FROM experiments "
+            "WHERE site_name = ? ORDER BY id",
+            [site_name],
+        ).fetchall()
+        header = f"experiments  site={site_name}"
+    else:
+        rows = con.execute(
+            "SELECT id, name, file, site_name, status "
+            "FROM experiments ORDER BY site_name, id"
+        ).fetchall()
+        header = "experiments"
+
+    if not rows:
+        msg = f"No experiments for site '{site_name}'." if site_name else "No experiments in database."
+        print(msg)
+        return
+
+    print(f"{header}  ({len(rows)} row(s))\n")
+
+    if site_name:
+        col_f = min(max((len(r[2] or "") for r in rows), default=40), 70)
+        print(f"{'ID':<6} {'Name':<35} {'File':<{col_f}} Status")
+        print("-" * (col_f + 45))
+        for id_, name, file_, status in rows:
+            print(f"{id_:<6} {(name or ''):<35} {(file_ or ''):<{col_f}} {status or ''}")
+    else:
+        col_s = max((len(r[3] or "") for r in rows), default=20)
+        col_f = min(max((len(r[2] or "") for r in rows), default=40), 60)
+        print(f"{'ID':<6} {'Site':<{col_s}} {'File':<{col_f}} Status")
+        print("-" * (col_s + col_f + 14))
+        for id_, name, file_, site_, status in rows:
+            print(f"{id_:<6} {(site_ or ''):<{col_s}} {(file_ or ''):<{col_f}} {status or ''}")
+
+
+def view_operationaldata(
+    con,
+    site_name: str | None = None,
+    type_filter: str | None = None,
+) -> None:
+    conditions, params = [], []
+    if site_name:
+        conditions.append("site_name = ?")
+        params.append(site_name)
+    if type_filter:
+        conditions.append("type = ?")
+        params.append(type_filter)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    rows = con.execute(
+        f"SELECT id, name, file, type, site_name, status "
+        f"FROM operationaldata {where} ORDER BY site_name, type, id",
+        params,
+    ).fetchall()
+
+    if not rows:
+        parts = []
+        if site_name:
+            parts.append(f"site '{site_name}'")
+        if type_filter:
+            parts.append(f"type '{type_filter}'")
+        qualifier = " for " + ", ".join(parts) if parts else ""
+        print(f"No operationaldata{qualifier}.")
+        return
+
+    header = "operationaldata"
+    if site_name:
+        header += f"  site={site_name}"
+    if type_filter:
+        header += f"  type={type_filter}"
+    print(f"{header}  ({len(rows)} row(s))\n")
+
+    col_s = max((len(r[4] or "") for r in rows), default=20)
+    col_t = max((len(r[3] or "") for r in rows), default=10)
+    col_f = min(max((len(r[2] or "") for r in rows), default=40), 60)
+    print(f"{'ID':<6} {'Site':<{col_s}} {'Type':<{col_t}} {'File':<{col_f}} Status")
+    print("-" * (col_s + col_t + col_f + 16))
+    for id_, name, file_, type_, site_, status in rows:
+        f_trunc = (file_ or "")[:col_f]
+        print(f"{id_:<6} {(site_ or ''):<{col_s}} {(type_ or ''):<{col_t}} {f_trunc:<{col_f}} {status or ''}")
+
+
+def _duration_str(seconds: float | None) -> str:
+    if seconds is None:
+        return "?"
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}" if h else f"{m:02d}:{s:02d}"
+
+
+def view_overview_records(
+    con,
+    site_name: str | None = None,
+    show_signatures: bool = False,
+) -> None:
+    conditions, params = [], []
+    if site_name:
+        conditions.append("site_name = ?")
+        params.append(site_name)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    rows = con.execute(
+        f"SELECT filename, housing, mode, t0, duration, teb, bp, "
+        f"len(sources_overview) + len(sources_archive) + len(sources_pupitre) "
+        f"+ len(sources_default) + len(sources_trigger) + len(sources_spike) "
+        f"+ len(sources_hybrid_kHz) + len(sources_hybrid_rms) + len(sources_hybrid_trigger) "
+        f"  AS n_sources, "
+        f"signatures, sync_info "
+        f"FROM overview_records {where} ORDER BY t0 NULLS LAST, filename",
+        params,
+    ).fetchall()
+
+    if not rows:
+        msg = f"No overview_records for site '{site_name}'." if site_name else "No overview_records in database."
+        print(msg)
+        return
+
+    header = "overview_records"
+    if site_name:
+        header += f"  site={site_name}"
+    print(f"{header}  ({len(rows)} row(s))\n")
+
+    col_f = max((len(r[0]) for r in rows), default=20)
+    col_m = max((len(r[2] or "") for r in rows), default=4)
+    print(
+        f"{'Filename':<{col_f}}  {'t0':<19}  {'Duration':<8}  {'Mode':<{col_m}}  teb    bp   n_src"
+    )
+    print("-" * (col_f + col_m + 65))
+
+    for filename, housing, mode, t0, duration, teb, bp, n_src, sigs, sync in rows:
+        t0_str = str(t0)[:19] if t0 else "—"
+        dur_str = _duration_str(duration)
+        print(
+            f"{filename:<{col_f}}  {t0_str:<19}  {dur_str:<8}  {(mode or ''):<{col_m}}"
+            f"  {teb or 0:5.1f}  {bp or 0:5.1f}  {n_src or 0}"
+        )
+
+        if show_signatures and sigs:
+            if isinstance(sigs, str):
+                sigs = json.loads(sigs)
+            if isinstance(sigs, dict):
+                for key, vals in sigs.items():
+                    mn = vals.get("min", float("nan"))
+                    mx = vals.get("max", float("nan"))
+                    avg = vals.get("mean", float("nan"))
+                    print(f"    {key}: min={mn:.2f}  max={mx:.2f}  mean={avg:.2f}")
+            if sync:
+                if isinstance(sync, str):
+                    sync = json.loads(sync)
+                ts = sync.get("timeshift_seconds") if isinstance(sync, dict) else None
+                if ts is not None:
+                    print(f"    sync timeshift: {ts:.3f} s")
+
+
+# ---------------------------------------------------------------------------
 # Delete helpers
 # ---------------------------------------------------------------------------
 
