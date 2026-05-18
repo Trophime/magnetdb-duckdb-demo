@@ -17,6 +17,6 @@ RUN echo '[ ! -z "$TERM" ] && cat /etc/motd' >> /etc/bash.bashrc \
     && apt-get -y install texlive-latex-base texlive-latex-extra dvipng cm-super-minimal \
     && apt-get -y install git-lfs \
     && apt-get -y autoremove --purge \
-    && apt-get clean \
+    && apt-get clean
 
 USER jovyan
