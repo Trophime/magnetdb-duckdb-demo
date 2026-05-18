@@ -138,6 +138,10 @@ def add_site(data: dict, db_path, dry_run: bool = False, magnet_dir=None) -> Non
         print("Create it first with:  python seeds_to_duckdb.py  or  python add_magnet.py")
         sys.exit(1)
 
+    # Normalise: strip accidental .json suffix from name
+    if data.get("name", "").endswith(".json"):
+        data["name"] = data["name"][:-5]
+
     errors = _validate(data)
     if errors:
         print("Validation errors:")

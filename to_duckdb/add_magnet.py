@@ -136,6 +136,10 @@ def add_magnet(data: dict, db_path, dry_run: bool = False, part_dir=None) -> Non
     db_path = Path(db_path)
     part_dir = Path(part_dir) if part_dir else Path(".")
 
+    # Normalise: strip accidental .json suffix from name
+    if data.get("name", "").endswith(".json"):
+        data = {**data, "name": data["name"][:-5]}
+
     # Resolve name-only part references before validation
     raw_parts = data.get("parts") or []
     if any(isinstance(p, str) for p in raw_parts):
