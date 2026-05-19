@@ -79,6 +79,7 @@ dataset before interpreting ratio_rpe values.
 
 import argparse
 import enum
+import glob as _glob
 import json
 import re
 import shutil
@@ -95,6 +96,7 @@ import magnettools.magnettools as mt
 from python_magnetrun.data_dirs import PUPITRE_DATA_DIR
 from python_magnetrun.magnetdata import load_magnetdata
 from python_magnetrun.runetl import prepareData
+from python_magnetrun.utils.timestamps import parse_filename_timestamp
 from python_magnetsetup.ana import msite_setup
 from python_magnetsetup.config import appenv
 
@@ -716,7 +718,7 @@ def load_magnettools(config: dict, tempdir: Path, debug: bool = False) -> tuple:
         mrecord_repo=data_dir,
         optim_repo=data_dir,
     )
-    print(f"load_magnettools: env={env}, config={config}")
+    # print(f"load_magnettools: env={env}, config={config}")
     return msite_setup(env, config, debug)
 
 
@@ -834,6 +836,16 @@ def validate_fast_from_pupitre(
         prepareData(mdata, housing)
         df = mdata.Data
 
+    # Drop rows where all current columns are NaN — they would propagate NaN
+    # into the stress computation and produce broken plots.
+    current_cols = [c for c in ("IH", "IB", "IS") if c in df.columns]
+    if current_cols:
+        n_before = len(df)
+        df = df.dropna(subset=current_cols, how="all").reset_index(drop=True)
+        n_dropped = n_before - len(df)
+        if n_dropped:
+            print(f"  [warn] dropped {n_dropped}/{n_before} rows with all-NaN currents")
+
     n_t = len(df)
     IH_arr = df["IH"].to_numpy() if "IH" in df.columns else np.zeros(n_t)
     IB_arr = df["IB"].to_numpy() if "IB" in df.columns else np.zeros(n_t)
@@ -906,34 +918,35 @@ def validate_fast_from_pupitre(
     return df
 
 
-def _resolve_pupitre_path(filename: str, pupitre_datadir: str, housing: str) -> str:
-    """Resolve a bare pupitre filename to an existing path.
+def _expand_pupitre_pattern(pattern: str, pupitre_datadir: str, housing: str) -> list[str]:
+    """Expand a glob pattern to matching pupitre file paths.
 
-    Search order (mirrors expand_input_files from python_magnetrun.utils.files):
-    1. filename as-is (absolute or already has a directory component)
-    2. cwd / filename
-    3. pupitre_datadir / filename
-    4. pupitre_datadir / housing / filename  (housing subdirectory)
+    For patterns with an explicit directory component, glob them directly.
+    For bare names or bare glob patterns, search in order:
+    1. cwd
+    2. pupitre_datadir
+    3. pupitre_datadir / housing
 
-    Returns the first path that exists, or filename unchanged if none found.
+    Returns all matches from the first directory that yields any result.
+    Falls back to [pattern] unchanged if nothing matches anywhere.
     """
-    p = Path(filename)
+    p = Path(pattern)
     if p.is_absolute() or p.parent != Path("."):
-        return filename
+        matches = sorted(_glob.glob(str(p)))
+        return matches if matches else [pattern]
 
-    candidates = [
-        Path.cwd() / filename,
-    ]
+    search_dirs: list[Path] = [Path.cwd()]
     if pupitre_datadir:
-        candidates.append(Path(pupitre_datadir) / filename)
+        search_dirs.append(Path(pupitre_datadir))
         if housing and housing not in ("notdefined", ""):
-            candidates.append(Path(pupitre_datadir) / housing / filename)
+            search_dirs.append(Path(pupitre_datadir) / housing)
 
-    for candidate in candidates:
-        if candidate.exists():
-            return str(candidate)
+    for base in search_dirs:
+        matches = sorted(_glob.glob(str(base / pattern)))
+        if matches:
+            return matches
 
-    return filename
+    return [pattern]
 
 
 def resolve_pupitre_files(
@@ -985,22 +998,28 @@ def resolve_pupitre_files(
                 "Populate the experiments table or pass --pupitre explicitly."
             )
         print(f"   Found {len(result)} experiment file(s) for site '{site_name}'.")
-        result = [_resolve_pupitre_path(f, pupitre_datadir, housing) for f in result]
-        return result
+        resolved: list[str] = []
+        for f in result:
+            resolved.extend(_expand_pupitre_pattern(f, pupitre_datadir, housing))
+        return resolved
 
-    # Validate each provided file against the experiments table.
+    # Expand each pattern, then validate each resolved file against the experiments table.
     # Match by exact path OR by basename — the DB may store absolute paths.
-    for f in files:
-        basename = Path(f).name
-        row = con.execute(
-            "SELECT 1 FROM experiments "
-            "WHERE site_name = ? AND (file = ? OR file LIKE ?)",
-            [site_name, f, f"%/{basename}"],
-        ).fetchone()
-        if row is None:
-            print(f"  [WARN] '{f}' not found in experiments for site '{site_name}'.")
+    resolved = []
+    for pattern in files:
+        expanded = _expand_pupitre_pattern(pattern, pupitre_datadir, housing)
+        for f in expanded:
+            basename = Path(f).name
+            row = con.execute(
+                "SELECT 1 FROM experiments "
+                "WHERE site_name = ? AND (file = ? OR file LIKE ?)",
+                [site_name, f, f"%/{basename}"],
+            ).fetchone()
+            if row is None:
+                print(f"  [WARN] '{f}' not found in experiments for site '{site_name}'.")
+        resolved.extend(expanded)
     con.close()
-    return [_resolve_pupitre_path(f, pupitre_datadir, housing) for f in files]
+    return resolved
 
 
 # ---------------------------------------------------------------------------
@@ -1250,38 +1269,51 @@ def plot_fatigue(
 def plot_stress_history(
     df: pd.DataFrame, magnet_name: str, output_png: str | None = None
 ) -> None:
+    fast_cols = [c for c in df.columns if re.match(r"H\d+_fast", c)]
+    plot_cols = [c for c in ("IH", "IB") if c in df.columns] + fast_cols
+
+    # Report and drop rows where every plotted column is NaN.
+    nan_counts = {c: int(df[c].isna().sum()) for c in plot_cols if df[c].isna().any()}
+    if nan_counts:
+        print(f"  [plot] NaN counts per column: {nan_counts}")
+    mask = df[plot_cols].notna().any(axis=1)
+    n_dropped = int((~mask).sum())
+    if n_dropped:
+        print(f"  [plot] dropping {n_dropped} all-NaN rows before plotting")
+        df = df[mask].reset_index(drop=True)
+
     def _normalize(s: pd.Series) -> pd.Series:
-        lo, hi = s.min(), s.max()
-        if hi == lo:
+        lo = s.min(skipna=True)
+        hi = s.max(skipna=True)
+        if pd.isna(lo) or pd.isna(hi) or hi == lo:
             return pd.Series(np.zeros(len(s)), index=s.index)
         return (s - lo) / (hi - lo)
 
-    x = df["t"] if "t" in df.columns else df.index
-    fast_cols = [c for c in df.columns if re.match(r"H\d+_fast", c)]
+    x = df["t_abs"] if "t_abs" in df.columns else (df["t"] if "t" in df.columns else df.index)
 
     plt.figure(figsize=(10, 5))
     if "IH" in df.columns:
         plt.plot(
             x,
             _normalize(df["IH"]),
-            label=f"IH (max={df['IH'].max():.0f} A)",
+            label=f"IH (max={df['IH'].max(skipna=True):.0f} A)",
             linewidth=2,
         )
     if "IB" in df.columns:
         plt.plot(
             x,
             _normalize(df["IB"]),
-            label=f"IB (max={df['IB'].max():.0f} A)",
+            label=f"IB (max={df['IB'].max(skipna=True):.0f} A)",
             linewidth=2,
         )
     for col in fast_cols:
         plt.plot(
             x,
             _normalize(df[col]),
-            label=f"{col} (max={df[col].max():.2f} MPa)",
+            label=f"{col} (max={df[col].max(skipna=True):.2f} MPa)",
             linewidth=2,
         )
-    plt.xlabel("t [s]" if "t" in df.columns else "index")
+    plt.xlabel("t [s]" if "t_abs" in df.columns or "t" in df.columns else "index")
     plt.ylabel("Normalized value")
     plt.title(f"Normalized currents and hoop stress — {magnet_name}")
     plt.grid(True, alpha=0.3)
@@ -1426,6 +1458,7 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
     )
 
     dfs: list[pd.DataFrame] = []
+    file_starts: list[float | None] = []
     for f in files:
         print(f"   Processing {f} …")
         df = validate_fast_from_pupitre(
@@ -1437,11 +1470,23 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
             use_mrun=args.use_mrun,
             site=args.site_name,
         )
+        dt = parse_filename_timestamp(f)
+        file_starts.append(dt.timestamp() if dt is not None else None)
         dfs.append(df)
 
-    result = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
-    if len(dfs) > 1 and "t" in result.columns:
-        result = result.sort_values("t").reset_index(drop=True)
+    # Build t_abs: seconds from the first file's start time.
+    # This keeps each file's trace at its real position on the time axis
+    # so multiple files don't overlap at t=0.
+    if len(dfs) > 1 and "t" in dfs[0].columns:
+        t0 = next((s for s in file_starts if s is not None), None)
+        for df, fs in zip(dfs, file_starts):
+            offset = (fs - t0) if (fs is not None and t0 is not None) else 0.0
+            df["t_abs"] = df["t"] + offset
+        result = pd.concat(dfs, ignore_index=True).sort_values("t_abs").reset_index(drop=True)
+    else:
+        result = dfs[0] if len(dfs) == 1 else pd.concat(dfs, ignore_index=True)
+        if "t" in result.columns:
+            result["t_abs"] = result["t"]
 
     fast_cols = [c for c in result.columns if re.match(r"H\d+_fast", c)]
     show_cols = [c for c in ["t", "IH", "IB"] if c in result.columns] + fast_cols
