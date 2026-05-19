@@ -239,7 +239,7 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
             print(f"  ~ part      {name}  (already exists, skipped)")
         return
     material_name = part.get("material_name") or (part.get("material") or {}).get("name")
-    geometry_data = part.get("geometry_data") or load_geometry_json(part.get("geometry"))
+    geometry_data = part.get("geometry_data") or load_geometry_json(part.get("geometry") or part.get("geometry_config"))
     con.execute(
         """
         INSERT INTO parts
@@ -273,7 +273,7 @@ def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> No
         if verbose:
             print(f"  ~ magnet    {name}  (already exists, skipped)")
         return
-    geometry_data = data.get("geometry_data") or load_geometry_json(data.get("geometry"))
+    geometry_data = data.get("geometry_data") or load_geometry_json(data.get("geometry") or data.get("geometry_config"))
     con.execute(
         """
         INSERT INTO magnets
