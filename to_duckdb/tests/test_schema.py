@@ -13,6 +13,16 @@ EXPECTED_TABLES = {
     "sites",
     "site_magnets",
     "experiments",
+    "operationaldata",
+    "overview_records",
+    "housing_config",
+    "op_run_scalars",
+    "op_site_bin_stats",
+    "op_part_bin_stats",
+    "op_stats_processed",
+    "hoop_stress_processed",
+    "hoop_stress_bin_stats",
+    "hoop_stress_fatigue",
 }
 
 

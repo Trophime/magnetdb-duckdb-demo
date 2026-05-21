@@ -104,7 +104,7 @@ convert to hours only at the end.
 
 ## Concrete implementation
 
-See `student_statheures_demo.py` for a full working script. The main functions are:
+See `statheures_demo.py` for a full working script. The main functions are:
 
 ### 1. Get experiments for a site from DuckDB
 

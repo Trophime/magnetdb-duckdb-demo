@@ -175,10 +175,18 @@ def insert_material(con, mat: dict, verbose: bool = True) -> None:
         print(f"  + material  {name}  [{mat.get('nuance', '?')}]")
 
 
-def view_materials(con) -> None:
-    rows = con.execute("SELECT name, nuance, t_ref FROM materials ORDER BY name").fetchall()
+def view_materials(con, nuance_filter: str | None = None) -> None:
+    conditions, params = [], []
+    if nuance_filter:
+        conditions.append("nuance = ?")
+        params.append(nuance_filter)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    rows = con.execute(
+        f"SELECT name, nuance, t_ref FROM materials {where} ORDER BY name", params
+    ).fetchall()
     if not rows:
-        print("No materials in database.")
+        qualifier = f" with nuance '{nuance_filter}'" if nuance_filter else ""
+        print(f"No materials{qualifier} in database.")
         return
     print(f"{'Name':<30} {'Nuance':<15} t_ref")
     print("-" * 55)
@@ -588,10 +596,30 @@ def print_geometry_check(results: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def view_magnets(con) -> None:
-    rows = con.execute("SELECT name, type, status FROM magnets ORDER BY name").fetchall()
+def view_magnets(
+    con,
+    type_filter: str | None = None,
+    status_filter: str | None = None,
+) -> None:
+    conditions, params = [], []
+    if type_filter:
+        conditions.append("type = ?")
+        params.append(type_filter)
+    if status_filter:
+        conditions.append("status = ?")
+        params.append(status_filter)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    rows = con.execute(
+        f"SELECT name, type, status FROM magnets {where} ORDER BY name", params
+    ).fetchall()
     if not rows:
-        print("No magnets in database.")
+        parts = []
+        if type_filter:
+            parts.append(f"type '{type_filter}'")
+        if status_filter:
+            parts.append(f"status '{status_filter}'")
+        qualifier = " matching " + ", ".join(parts) if parts else ""
+        print(f"No magnets{qualifier} in database.")
         return
     print(f"{'Name':<30} {'Type':<10} Status")
     print("-" * 55)
@@ -624,10 +652,30 @@ def view_magnet(con, name: str) -> None:
             print(f"    [{rank}] {pname}  ({ptype or '?'}){ci}")
 
 
-def view_sites(con) -> None:
-    rows = con.execute("SELECT name, housing, status FROM sites ORDER BY name").fetchall()
+def view_sites(
+    con,
+    housing_filter: str | None = None,
+    status_filter: str | None = None,
+) -> None:
+    conditions, params = [], []
+    if housing_filter:
+        conditions.append("housing = ?")
+        params.append(housing_filter)
+    if status_filter:
+        conditions.append("status = ?")
+        params.append(status_filter)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    rows = con.execute(
+        f"SELECT name, housing, status FROM sites {where} ORDER BY name", params
+    ).fetchall()
     if not rows:
-        print("No sites in database.")
+        parts = []
+        if housing_filter:
+            parts.append(f"housing '{housing_filter}'")
+        if status_filter:
+            parts.append(f"status '{status_filter}'")
+        qualifier = " matching " + ", ".join(parts) if parts else ""
+        print(f"No sites{qualifier} in database.")
         return
     print(f"{'Name':<40} {'Housing':<15} Status")
     print("-" * 65)
@@ -708,88 +756,197 @@ def view_housing_config(con, name: str) -> None:
                 print(f"  {k}: {v}")
 
 
-def view_experiments(con, site_name: str | None = None) -> None:
+# SQL fragments for timestamp extraction from file paths (experiments / operationaldata
+# have no timestamp column; the timestamp is encoded in the filename).
+# Used only when --from / --to filtering is requested.
+#
+# _EXP_FILE_TS  : pupitre TXT pattern  "YYYY.MM.DD - HH:MM:SS.txt"
+# _OD_FILE_TS   : COALESCE of pupitre + TDMS Overview/Archive (%y%m%d) +
+#                 TDMS Spike/Default (%y%m%d)
+#
+# NOTE: these strings reference the table aliases used in their respective queries
+# ("e.file" and "od.file").  They must NOT be used in f-string templates directly;
+# instead assign to a local variable first so that the regex quantifiers {N} are
+# treated as ordinary characters and not as f-string placeholders.
+_EXP_FILE_TS = (
+    "TRY_STRPTIME("
+    "regexp_extract(e.file, '(\\d{4}\\.\\d{2}\\.\\d{2} - \\d{2}:\\d{2}:\\d{2})', 1),"
+    " '%Y.%m.%d - %H:%M:%S')"
+)
+
+_OD_FILE_TS = (
+    "COALESCE("
+    "TRY_STRPTIME(regexp_extract(od.file,"
+    " '(\\d{4}\\.\\d{2}\\.\\d{2} - \\d{2}:\\d{2}:\\d{2})', 1), '%Y.%m.%d - %H:%M:%S'),"
+    " TRY_STRPTIME(regexp_extract(od.file,"
+    " '([0-9]{6}-[0-9]{4})\\.tdms$', 1), '%y%m%d-%H%M'),"
+    " TRY_STRPTIME(regexp_extract(od.file,"
+    " '(?:Spikes|Default)_([0-9]{6}-[0-9]{6})', 1), '%y%m%d-%H%M%S')"
+    ")"
+)
+
+
+def view_experiments(
+    con,
+    site_name: str | None = None,
+    magnet_name: str | None = None,
+    part_name: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+) -> None:
+    joins, conditions, params = [], [], []
+
     if site_name:
+        conditions.append("e.site_name = ?")
+        params.append(site_name)
+    if magnet_name or part_name:
+        joins.append("JOIN site_magnets sm ON sm.site_name = e.site_name")
+        if magnet_name:
+            conditions.append("sm.magnet_name = ?")
+            params.append(magnet_name)
+    if part_name:
+        joins.append("JOIN magnet_parts mp ON mp.magnet_name = sm.magnet_name")
+        conditions.append("mp.part_name = ?")
+        params.append(part_name)
+
+    join_sql = " ".join(joins)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    distinct = "DISTINCT " if (magnet_name or part_name) else ""
+
+    if from_ts or to_ts:
+        ts_expr = _EXP_FILE_TS
+        ts_conds, ts_params = [], list(params)
+        if from_ts:
+            ts_conds.append("file_ts >= CAST(? AS TIMESTAMP)")
+            ts_params.append(from_ts)
+        if to_ts:
+            ts_conds.append("file_ts <= CAST(? AS TIMESTAMP)")
+            ts_params.append(to_ts)
+        ts_where = "WHERE " + " AND ".join(ts_conds)
         rows = con.execute(
-            "SELECT id, name, file, status FROM experiments "
-            "WHERE site_name = ? ORDER BY id",
-            [site_name],
+            f"SELECT id, name, file, site_name, status FROM ("
+            f"SELECT {distinct}e.id, e.name, e.file, e.site_name, e.status,"
+            f" {ts_expr} AS file_ts"
+            f" FROM experiments e {join_sql} {where}"
+            f") t {ts_where} ORDER BY site_name, id",
+            ts_params,
         ).fetchall()
-        header = f"experiments  site={site_name}"
     else:
         rows = con.execute(
-            "SELECT id, name, file, site_name, status "
-            "FROM experiments ORDER BY site_name, id"
+            f"SELECT {distinct}e.id, e.name, e.file, e.site_name, e.status "
+            f"FROM experiments e {join_sql} {where} ORDER BY e.site_name, e.id",
+            params,
         ).fetchall()
-        header = "experiments"
+
+    labels = []
+    if site_name:
+        labels.append(f"site={site_name}")
+    if magnet_name:
+        labels.append(f"magnet={magnet_name}")
+    if part_name:
+        labels.append(f"part={part_name}")
+    if from_ts:
+        labels.append(f"from={from_ts}")
+    if to_ts:
+        labels.append(f"to={to_ts}")
+    qualifier = "  " + "  ".join(labels) if labels else ""
 
     if not rows:
-        msg = f"No experiments for site '{site_name}'." if site_name else "No experiments in database."
-        print(msg)
+        print(f"No experiments{qualifier.replace('  ', ' for ', 1).replace('  ', ', ')}.")
         return
 
-    print(f"{header}  ({len(rows)} row(s))\n")
-
-    if site_name:
-        col_f = min(max((len(r[2] or "") for r in rows), default=40), 70)
-        print(f"{'ID':<6} {'Name':<35} {'File':<{col_f}} Status")
-        print("-" * (col_f + 45))
-        for id_, name, file_, status in rows:
-            print(f"{id_:<6} {(name or ''):<35} {(file_ or ''):<{col_f}} {status or ''}")
-    else:
-        col_s = max((len(r[3] or "") for r in rows), default=20)
-        col_f = min(max((len(r[2] or "") for r in rows), default=40), 60)
-        print(f"{'ID':<6} {'Site':<{col_s}} {'File':<{col_f}} Status")
-        print("-" * (col_s + col_f + 14))
-        for id_, name, file_, site_, status in rows:
-            print(f"{id_:<6} {(site_ or ''):<{col_s}} {(file_ or ''):<{col_f}} {status or ''}")
+    print(f"experiments{qualifier}  ({len(rows)} row(s))\n")
+    col_s = max((len(r[3] or "") for r in rows), default=20)
+    col_f = min(max((len(r[2] or "") for r in rows), default=40), 60)
+    print(f"{'ID':<6} {'Site':<{col_s}} {'File':<{col_f}} Status")
+    print("-" * (col_s + col_f + 14))
+    for id_, name, file_, site_, status in rows:
+        print(f"{id_:<6} {(site_ or ''):<{col_s}} {(file_ or '')[:col_f]:<{col_f}} {status or ''}")
 
 
 def view_operationaldata(
     con,
     site_name: str | None = None,
     type_filter: str | None = None,
+    magnet_name: str | None = None,
+    part_name: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
 ) -> None:
-    conditions, params = [], []
+    joins, conditions, params = [], [], []
+
     if site_name:
-        conditions.append("site_name = ?")
+        conditions.append("od.site_name = ?")
         params.append(site_name)
     if type_filter:
-        conditions.append("type = ?")
+        conditions.append("od.type = ?")
         params.append(type_filter)
-    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    if magnet_name or part_name:
+        joins.append("JOIN site_magnets sm ON sm.site_name = od.site_name")
+        if magnet_name:
+            conditions.append("sm.magnet_name = ?")
+            params.append(magnet_name)
+    if part_name:
+        joins.append("JOIN magnet_parts mp ON mp.magnet_name = sm.magnet_name")
+        conditions.append("mp.part_name = ?")
+        params.append(part_name)
 
-    rows = con.execute(
-        f"SELECT id, name, file, type, site_name, status "
-        f"FROM operationaldata {where} ORDER BY site_name, type, id",
-        params,
-    ).fetchall()
+    join_sql = " ".join(joins)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    distinct = "DISTINCT " if (magnet_name or part_name) else ""
+
+    if from_ts or to_ts:
+        ts_expr = _OD_FILE_TS
+        ts_conds, ts_params = [], list(params)
+        if from_ts:
+            ts_conds.append("file_ts >= CAST(? AS TIMESTAMP)")
+            ts_params.append(from_ts)
+        if to_ts:
+            ts_conds.append("file_ts <= CAST(? AS TIMESTAMP)")
+            ts_params.append(to_ts)
+        ts_where = "WHERE " + " AND ".join(ts_conds)
+        rows = con.execute(
+            f"SELECT id, name, file, type, site_name, status FROM ("
+            f"SELECT {distinct}od.id, od.name, od.file, od.type, od.site_name, od.status,"
+            f" {ts_expr} AS file_ts"
+            f" FROM operationaldata od {join_sql} {where}"
+            f") t {ts_where} ORDER BY site_name, type, id",
+            ts_params,
+        ).fetchall()
+    else:
+        rows = con.execute(
+            f"SELECT {distinct}od.id, od.name, od.file, od.type, od.site_name, od.status "
+            f"FROM operationaldata od {join_sql} {where} ORDER BY od.site_name, od.type, od.id",
+            params,
+        ).fetchall()
+
+    labels = []
+    if site_name:
+        labels.append(f"site={site_name}")
+    if type_filter:
+        labels.append(f"type={type_filter}")
+    if magnet_name:
+        labels.append(f"magnet={magnet_name}")
+    if part_name:
+        labels.append(f"part={part_name}")
+    if from_ts:
+        labels.append(f"from={from_ts}")
+    if to_ts:
+        labels.append(f"to={to_ts}")
+    qualifier = "  " + "  ".join(labels) if labels else ""
 
     if not rows:
-        parts = []
-        if site_name:
-            parts.append(f"site '{site_name}'")
-        if type_filter:
-            parts.append(f"type '{type_filter}'")
-        qualifier = " for " + ", ".join(parts) if parts else ""
-        print(f"No operationaldata{qualifier}.")
+        print(f"No operationaldata{qualifier.replace('  ', ' for ', 1).replace('  ', ', ')}.")
         return
 
-    header = "operationaldata"
-    if site_name:
-        header += f"  site={site_name}"
-    if type_filter:
-        header += f"  type={type_filter}"
-    print(f"{header}  ({len(rows)} row(s))\n")
-
+    print(f"operationaldata{qualifier}  ({len(rows)} row(s))\n")
     col_s = max((len(r[4] or "") for r in rows), default=20)
     col_t = max((len(r[3] or "") for r in rows), default=10)
     col_f = min(max((len(r[2] or "") for r in rows), default=40), 60)
     print(f"{'ID':<6} {'Site':<{col_s}} {'Type':<{col_t}} {'File':<{col_f}} Status")
     print("-" * (col_s + col_t + col_f + 16))
     for id_, name, file_, type_, site_, status in rows:
-        f_trunc = (file_ or "")[:col_f]
-        print(f"{id_:<6} {(site_ or ''):<{col_s}} {(type_ or ''):<{col_t}} {f_trunc:<{col_f}} {status or ''}")
+        print(f"{id_:<6} {(site_ or ''):<{col_s}} {(type_ or ''):<{col_t}} {(file_ or '')[:col_f]:<{col_f}} {status or ''}")
 
 
 def _duration_str(seconds: float | None) -> str:
@@ -804,33 +961,65 @@ def view_overview_records(
     con,
     site_name: str | None = None,
     show_signatures: bool = False,
+    magnet_name: str | None = None,
+    part_name: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
 ) -> None:
-    conditions, params = [], []
+    joins, conditions, params = [], [], []
+
     if site_name:
-        conditions.append("site_name = ?")
+        conditions.append("ovr.site_name = ?")
         params.append(site_name)
+    if magnet_name or part_name:
+        joins.append("JOIN site_magnets sm ON sm.site_name = ovr.site_name")
+        if magnet_name:
+            conditions.append("sm.magnet_name = ?")
+            params.append(magnet_name)
+    if part_name:
+        joins.append("JOIN magnet_parts mp ON mp.magnet_name = sm.magnet_name")
+        conditions.append("mp.part_name = ?")
+        params.append(part_name)
+    if from_ts:
+        conditions.append("ovr.t0 >= CAST(? AS TIMESTAMP)")
+        params.append(from_ts)
+    if to_ts:
+        conditions.append("ovr.t0 <= CAST(? AS TIMESTAMP)")
+        params.append(to_ts)
+
+    join_sql = " ".join(joins)
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    distinct = "DISTINCT " if (magnet_name or part_name) else ""
 
     rows = con.execute(
-        f"SELECT filename, housing, mode, t0, duration, teb, bp, "
-        f"len(sources_overview) + len(sources_archive) + len(sources_pupitre) "
-        f"+ len(sources_default) + len(sources_trigger) + len(sources_spike) "
-        f"+ len(sources_hybrid_kHz) + len(sources_hybrid_rms) + len(sources_hybrid_trigger) "
+        f"SELECT {distinct}ovr.filename, ovr.housing, ovr.mode, ovr.t0, ovr.duration, ovr.teb, ovr.bp, "
+        f"len(ovr.sources_overview) + len(ovr.sources_archive) + len(ovr.sources_pupitre) "
+        f"+ len(ovr.sources_default) + len(ovr.sources_trigger) + len(ovr.sources_spike) "
+        f"+ len(ovr.sources_hybrid_kHz) + len(ovr.sources_hybrid_rms) + len(ovr.sources_hybrid_trigger) "
         f"  AS n_sources, "
-        f"signatures, sync_info "
-        f"FROM overview_records {where} ORDER BY t0 NULLS LAST, filename",
+        f"ovr.signatures, ovr.sync_info "
+        f"FROM overview_records ovr {join_sql} {where} ORDER BY ovr.t0 NULLS LAST, ovr.filename",
         params,
     ).fetchall()
 
+    labels = []
+    if site_name:
+        labels.append(f"site={site_name}")
+    if magnet_name:
+        labels.append(f"magnet={magnet_name}")
+    if part_name:
+        labels.append(f"part={part_name}")
+    if from_ts:
+        labels.append(f"from={from_ts}")
+    if to_ts:
+        labels.append(f"to={to_ts}")
+    qualifier = "  " + "  ".join(labels) if labels else ""
+
     if not rows:
-        msg = f"No overview_records for site '{site_name}'." if site_name else "No overview_records in database."
-        print(msg)
+        print(f"No overview_records{qualifier.replace('  ', ' for ', 1).replace('  ', ', ')}.")
         return
 
-    header = "overview_records"
-    if site_name:
-        header += f"  site={site_name}"
-    print(f"{header}  ({len(rows)} row(s))\n")
+    print(f"overview_records{qualifier}  ({len(rows)} row(s))\n")
 
     col_f = max((len(r[0]) for r in rows), default=20)
     col_m = max((len(r[2] or "") for r in rows), default=4)
@@ -867,6 +1056,16 @@ def view_overview_records(
 # ---------------------------------------------------------------------------
 # Delete helpers
 # ---------------------------------------------------------------------------
+
+
+def list_objects(con) -> dict[str, list[str]]:
+    """Return a dict mapping each entity type to its sorted list of names."""
+    return {
+        "materials": [r[0] for r in con.execute("SELECT name FROM materials ORDER BY name").fetchall()],
+        "magnets":   [r[0] for r in con.execute("SELECT name FROM magnets ORDER BY name").fetchall()],
+        "sites":     [r[0] for r in con.execute("SELECT name FROM sites ORDER BY name").fetchall()],
+        "housings":  [r[0] for r in con.execute("SELECT name FROM housing_config ORDER BY name").fetchall()],
+    }
 
 
 def delete_magnet(con, name: str) -> None:

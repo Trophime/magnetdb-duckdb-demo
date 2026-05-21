@@ -1,10 +1,12 @@
-# student_stress_map.py
+# Hoop-stress analysis (`magnetdb.py hoop-stress` / `stress_map.py`)
 
 Standalone hoop-stress analysis for a magnet site, using only the student
 DuckDB database and local YAML geometry files — **no Django, PostgreSQL, or
 MagnetDB service required**.
 
-The script replicates the full production chain from
+The implementation lives in `stress_map.py` and is exposed through the unified
+CLI via `magnetdb.py hoop-stress {barchart,history,stats,fatigue}`.
+It replicates the full production chain from
 `python_magnetdb/actions/compute_stress_map_chart.py` (and its helpers),
 replacing only the Django/ORM data-access layer with DuckDB queries.
 
@@ -51,39 +53,13 @@ The DuckDB file must contain at least:
 ## Subcommands
 
 ```
-student_stress_map.py {geometry,magnet-geometry,barchart,history,stats,fatigue} ...
+python magnetdb.py hoop-stress {barchart,history,stats,fatigue} <site> [options]
+# or equivalently:
+python stress_map.py           {barchart,history,stats,fatigue} <site> [options]
 ```
 
-### geometry
-
-Generate a `python_magnetgeo` MSite YAML from the DuckDB site record.
-
-```bash
-python student_stress_map.py geometry M9_M19061901_0 \
-    --db student_data/student_magnetdb.duckdb \
-    [--output-dir OUTPUT_DIR] \
-    [--geometries-dir FALLBACK_DIR]
-```
-
-Mirrors `Site.geometry_config_to_json()` in `python_magnetdb/models.py`.
-Prints the YAML to stdout unless `--output-dir` is given.
-
----
-
-### magnet-geometry
-
-Generate a magnet assembly YAML from the DuckDB magnet record.
-
-```bash
-python student_stress_map.py magnet-geometry M19061901 \
-    --db student_data/student_magnetdb.duckdb \
-    [--output-dir OUTPUT_DIR] \
-    [--geometries-dir FALLBACK_DIR]
-```
-
-Mirrors `Magnet.geometry_config_to_json()` in `python_magnetdb/models.py`.
-
----
+> **Note:** `geometry` and `magnet-geometry` remain available directly via
+> `stress_map.py` but are not yet wired into `magnetdb.py`.
 
 ### barchart
 
@@ -91,12 +67,11 @@ Bar chart of hoop stress per coil at a given current operating point, overlaid
 with the `Rpe` yield-stress reference from the DB.
 
 ```bash
-python student_stress_map.py barchart M9 \
+python magnetdb.py hoop-stress barchart M9 \
     --db student_data/student_magnetdb.duckdb \
     --geometries student_data/geometries \
     --i-h 20000 \
     [--i-b 0] [--i-s 0] \
-    [--magnet-type H] \
     [--debug]
 ```
 
@@ -113,7 +88,7 @@ Vectorised hoop-stress time series from one or more pupitre files.
 All values are normalised `[0, 1]` in the output plot.
 
 ```bash
-python student_stress_map.py history M9 \
+python magnetdb.py hoop-stress history M9 \
     --db student_data/student_magnetdb.duckdb \
     --geometries student_data/geometries \
     [--pupitre FILE [FILE ...]] \
@@ -137,7 +112,7 @@ Descriptive statistics (min, max, mean, std, p50, p95, p99) of the hoop-stress
 time series, per coil.
 
 ```bash
-python student_stress_map.py stats M9 \
+python magnetdb.py hoop-stress stats M9 \
     --db student_data/student_magnetdb.duckdb \
     --geometries student_data/geometries \
     [--pupitre FILE [FILE ...]] \
@@ -153,7 +128,7 @@ Prints the table to stdout; saves to CSV with `--output`.
 Rainflow cycle counting on the hoop-stress time series, one plot per coil.
 
 ```bash
-python student_stress_map.py fatigue M9 \
+python magnetdb.py hoop-stress fatigue M9 \
     --db student_data/student_magnetdb.duckdb \
     --geometries student_data/geometries \
     [--pupitre FILE [FILE ...]] \
@@ -188,8 +163,8 @@ The `barchart` subcommand prints the raw `rpe` column so you can check it.
 ## Architecture — how it replaces MagnetDB
 
 ```
-MagnetDB (production)          student_stress_map.py
-─────────────────────          ─────────────────────
+MagnetDB (production)          stress_map.py
+─────────────────────          ─────────────
 Django ORM (Magnet model)  →   load_site_config_from_duckdb()
 generate_magnet_directory()→   prepare_geometry_directory(site_name, config, ...)
                                (magnet_name derived from config["geom"])

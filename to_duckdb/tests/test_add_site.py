@@ -6,9 +6,8 @@ import json
 import duckdb
 import pytest
 
-import add_site as as_module
-from add_magnet import add_magnet
-from add_site import add_site
+import magnetdb
+from magnetdb import _add_magnet as add_magnet, _add_site as add_site, _validate_site
 from schema import ensure_schema
 from tests.conftest import MAGNET_JSON, SITE_JSON
 
@@ -164,12 +163,12 @@ def test_add_site_fails_when_db_missing(tmp_path):
 
 
 def test_add_site_validate_missing_name(tmp_path):
-    errors = as_module._validate({**SITE_JSON, "name": ""})
+    errors = _validate_site({**SITE_JSON, "name": ""})
     assert any("name" in e.lower() for e in errors)
 
 
 def test_add_site_validate_missing_magnets(tmp_path):
-    errors = as_module._validate({**SITE_JSON, "magnets": []})
+    errors = _validate_site({**SITE_JSON, "magnets": []})
     assert any("magnet" in e.lower() for e in errors)
 
 
@@ -185,15 +184,15 @@ def test_update_magnet_cli(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "sys.argv",
         [
-            "add_site.py",
-            "update-magnet",
+            "magnetdb.py",
+            "site", "update-magnet",
             "SITE_JSON_01",
             "MAG_JSON",
             "--db", str(db),
             "--z-offset", "7.5",
         ],
     )
-    as_module.main()
+    magnetdb.main()
 
     row = _fetch_one(db, "SELECT z_offset FROM site_magnets WHERE magnet_name = 'MAG_JSON'")
     assert row[0] == 7.5
@@ -205,8 +204,8 @@ def test_update_magnet_cli_missing_row_exits(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "sys.argv",
         [
-            "add_site.py",
-            "update-magnet",
+            "magnetdb.py",
+            "site", "update-magnet",
             "NONEXISTENT_SITE",
             "MAG_JSON",
             "--db", str(db),
@@ -214,4 +213,4 @@ def test_update_magnet_cli_missing_row_exits(tmp_path, monkeypatch):
         ],
     )
     with pytest.raises(SystemExit):
-        as_module.main()
+        magnetdb.main()

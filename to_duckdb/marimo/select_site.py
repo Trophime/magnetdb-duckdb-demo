@@ -10,13 +10,14 @@ def _():
     import duckdb
     import pandas as pd
     from pathlib import Path
+
     return Path, duckdb, mo, pd
 
 
 @app.cell
 def _(Path, mo):
     db_input = mo.ui.text(
-        value=str(Path(__file__).parent / "student_magnetdb-2604.duckdb"),
+        value=str(Path(__file__).parent / ".." / "magnetdb.duckdb"),
         label="DuckDB file",
         full_width=True,
     )
@@ -41,7 +42,10 @@ def _(db_input, duckdb, mo):
         site_rows = []
 
     if db_error:
-        mo.stop(True, mo.callout(mo.md(f"**Cannot open database:** {db_error}"), kind="danger"))
+        mo.stop(
+            True,
+            mo.callout(mo.md(f"**Cannot open database:** {db_error}"), kind="danger"),
+        )
     return db_error, db_path, site_rows
 
 
@@ -113,18 +117,38 @@ def _(db_path, duckdb, mo, pd, site_selector):
         [selected],
     ).df()
 
-    # --- Experiments ---
+    # --- Experiments with duration ---
     exp_df = con.execute(
         """
-        SELECT id, name, file, status
-        FROM experiments
-        WHERE site_name = ?
-        ORDER BY file
+        SELECT
+            e.id,
+            e.name,
+            e.file,
+            e.status,
+            ers.value AS duration_s
+        FROM experiments e
+        LEFT JOIN exp_run_scalars ers
+            ON ers.experiment_id = e.id AND ers.channel = 'duration_s'
+        WHERE e.site_name = ?
+        ORDER BY e.file
         """,
         [selected],
     ).df()
 
     con.close()
+
+    def _fmt_duration(seconds):
+        if seconds is None or (hasattr(seconds, '__class__') and seconds != seconds):
+            return "—"
+        s = int(seconds)
+        h, rem = divmod(s, 3600)
+        m, sec = divmod(rem, 60)
+        if h:
+            return f"{h}h {m:02d}m {sec:02d}s"
+        return f"{m}m {sec:02d}s"
+
+    exp_df["duration"] = exp_df["duration_s"].apply(_fmt_duration)
+    exp_df = exp_df.drop(columns=["duration_s"])
 
     # ── Display ──────────────────────────────────────────────────────────────
     name, housing, status, comm_at, decomm_at = site_row
@@ -143,20 +167,31 @@ def _(db_path, duckdb, mo, pd, site_selector):
 | Experiments | {len(exp_df)} |
 """)
 
-    magnets_section = mo.vstack([
-        mo.md("### Magnets"),
-        mo.ui.table(magnets_df, selection=None),
-    ])
+    magnets_section = mo.vstack(
+        [
+            mo.md("### Magnets"),
+            mo.ui.table(magnets_df, selection=None),
+        ]
+    )
 
-    hierarchy_section = mo.vstack([
-        mo.md("### Parts hierarchy"),
-        mo.ui.table(hierarchy_df, selection=None),
-    ])
+    hierarchy_section = mo.vstack(
+        [
+            mo.md("### Parts hierarchy"),
+            mo.ui.table(hierarchy_df, selection=None),
+        ]
+    )
 
-    exp_section = mo.vstack([
-        mo.md(f"### Experiments ({len(exp_df)})"),
-        mo.ui.table(exp_df, selection=None) if not exp_df.empty
-        else mo.callout(mo.md("No experiments registered for this site."), kind="info"),
-    ])
+    exp_section = mo.vstack(
+        [
+            mo.md(f"### Experiments ({len(exp_df)})"),
+            (
+                mo.ui.table(exp_df, selection=None)
+                if not exp_df.empty
+                else mo.callout(
+                    mo.md("No experiments registered for this site."), kind="info"
+                )
+            ),
+        ]
+    )
 
     mo.vstack([summary, magnets_section, hierarchy_section, exp_section])

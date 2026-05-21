@@ -104,8 +104,10 @@ CREATE TABLE IF NOT EXISTS experiments (
     status      VARCHAR DEFAULT 'pending'
 );
 
+CREATE SEQUENCE IF NOT EXISTS operationaldata_id_seq START 1;
+
 CREATE TABLE IF NOT EXISTS operationaldata (
-    id          INTEGER PRIMARY KEY,
+    id          INTEGER PRIMARY KEY DEFAULT nextval('operationaldata_id_seq'),
     name        VARCHAR,
     description VARCHAR,
     file        VARCHAR UNIQUE,
@@ -214,6 +216,114 @@ CREATE TABLE IF NOT EXISTS op_part_bin_stats (
     min_x               DOUBLE,
     max_x               DOUBLE,
     PRIMARY KEY (operationaldata_id, part_name, field_bin_low, channel)
+);
+
+-- ── Experiment statistics tables ─────────────────────────────────────────────
+
+-- Tracks which experiment files have been processed (idempotency guard).
+CREATE TABLE IF NOT EXISTS exp_stats_processed (
+    experiment_id   INTEGER PRIMARY KEY REFERENCES experiments(id),
+    processed_at    TIMESTAMP DEFAULT now(),
+    n_rows          INTEGER,
+    dt_median       DOUBLE,
+    bin_config      JSON
+);
+
+-- Per-run scalar quantities for experiments (not binned).
+-- Same intended channels as op_run_scalars:
+--   'energy_j', 'heat_extracted_j', 'duration_s', 'duration_field_on_s'
+CREATE TABLE IF NOT EXISTS exp_run_scalars (
+    experiment_id   INTEGER  REFERENCES experiments(id),
+    channel         VARCHAR  NOT NULL,
+    value           DOUBLE   NOT NULL,
+    PRIMARY KEY (experiment_id, channel)
+);
+
+-- Site-level field-bin distributions for experiments.
+-- One row per (experiment, field bin, channel).
+-- Derived at query time:
+--   operating time (h)   = SUM(sum_dt) / 3600
+--   time-weighted mean   = SUM(sum_x_dt) / SUM(sum_dt)
+--   time-weighted stddev = sqrt(SUM(sum_x2_dt)/SUM(sum_dt) - mean^2)
+--   peak value           = MAX(max_x)
+CREATE TABLE IF NOT EXISTS exp_site_bin_stats (
+    experiment_id   INTEGER  REFERENCES experiments(id),
+    field_bin_low   DOUBLE   NOT NULL,
+    field_bin_high  DOUBLE   NOT NULL,
+    channel         VARCHAR  NOT NULL,
+    n_samples       BIGINT   NOT NULL,
+    sum_dt          DOUBLE   NOT NULL,
+    sum_x_dt        DOUBLE,
+    sum_x2_dt       DOUBLE,
+    min_x           DOUBLE,
+    max_x           DOUBLE,
+    PRIMARY KEY (experiment_id, field_bin_low, channel)
+);
+
+-- Per-part field-bin distributions for experiments.
+-- One row per (experiment, part, field bin, channel).
+-- Channels: 'Icoil', 'Ucoil', 'hoop_stress_proxy' (= I^2, proportional to sigma_theta)
+-- Only rows where |Icoil| > current_threshold are included.
+CREATE TABLE IF NOT EXISTS exp_part_bin_stats (
+    experiment_id   INTEGER  REFERENCES experiments(id),
+    part_name       VARCHAR  REFERENCES parts(name),
+    field_bin_low   DOUBLE   NOT NULL,
+    field_bin_high  DOUBLE   NOT NULL,
+    channel         VARCHAR  NOT NULL,
+    n_samples       BIGINT   NOT NULL,
+    sum_dt          DOUBLE   NOT NULL,
+    sum_x_dt        DOUBLE,
+    sum_x2_dt       DOUBLE,
+    min_x           DOUBLE,
+    max_x           DOUBLE,
+    PRIMARY KEY (experiment_id, part_name, field_bin_low, channel)
+);
+
+-- ── Hoop-stress statistics tables ────────────────────────────────────────────
+
+-- Idempotency guard: one row per (experiment, bin_config) pair.
+-- bin_config is the canonical edges string, e.g. "0.0,100.0,200.0,300.0,400.0,500.0,600.0".
+-- Using a composite PK allows re-running with different bin configs without data loss.
+-- parquet_path stores the path to the Parquet file with the full time series.
+CREATE TABLE IF NOT EXISTS hoop_stress_processed (
+    experiment_id   INTEGER  REFERENCES experiments(id),
+    bin_config      VARCHAR  NOT NULL,
+    processed_at    TIMESTAMP DEFAULT now(),
+    magnet_type     VARCHAR  NOT NULL,
+    parquet_path    VARCHAR,
+    PRIMARY KEY (experiment_id, bin_config)
+);
+
+-- Per-part stress-bin distributions.
+-- One row per (experiment, part_name, stress_bin_low).
+-- Derived at query time:
+--   operating time (h)    = SUM(sum_dt) / 3600
+--   time-weighted mean    = SUM(sum_x_dt) / SUM(sum_dt)
+--   time-weighted stddev  = sqrt(SUM(sum_x2_dt)/SUM(sum_dt) - mean^2)
+--   peak stress           = MAX(max_x)
+CREATE TABLE IF NOT EXISTS hoop_stress_bin_stats (
+    experiment_id   INTEGER  REFERENCES experiments(id),
+    part_name       VARCHAR  REFERENCES parts(name),
+    stress_bin_low  DOUBLE   NOT NULL,
+    stress_bin_high DOUBLE   NOT NULL,
+    n_samples       BIGINT   NOT NULL,
+    sum_dt          DOUBLE   NOT NULL,
+    sum_x_dt        DOUBLE,
+    sum_x2_dt       DOUBLE,
+    min_x           DOUBLE,
+    max_x           DOUBLE,
+    PRIMARY KEY (experiment_id, part_name, stress_bin_low)
+);
+
+-- Per-part rainflow fatigue cycle counts.
+-- n_cycles: total number of counted half-cycles (rainflow)
+-- sum_range3: sum of (delta_sigma^3) — S-N fatigue proxy (Miner's rule with m=3)
+CREATE TABLE IF NOT EXISTS hoop_stress_fatigue (
+    experiment_id   INTEGER  REFERENCES experiments(id),
+    part_name       VARCHAR  REFERENCES parts(name),
+    n_cycles        DOUBLE   NOT NULL,
+    sum_range3      DOUBLE   NOT NULL,
+    PRIMARY KEY (experiment_id, part_name)
 );
 """
 
