@@ -134,4 +134,4 @@ def _(con, selected, mo):
 | `select_site.py` | Interactive exploration — browse structure, no coding required |
 | `tutorials/queries.py` | Static script — copy cells into Jupyter, adapt for analysis |
 | `tutorials/statheures_demo.py` | Field-time histogram — loads TSV files, no interactive UI |
-| `query_cumstats.py` | Query pre-computed `op_*` statistics — requires `compute_op_stats.py` to have run first |
+| `tutorials/query_cumstats.py` | Query pre-computed `op_*` statistics — requires `compute_op_stats.py` to have run first |

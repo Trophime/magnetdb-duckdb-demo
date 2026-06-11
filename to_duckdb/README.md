@@ -14,6 +14,7 @@ These scripts are **admin tools** — they are not part of `python_magnetdb`. On
 to_duckdb/
 ├── README.md                    ← this file
 ├── schema.py                    ← canonical DDL (single source of truth)
+├── schema_diagram.py            ← text summary + graphical ER diagram
 ├── crud.py                      ← low-level CRUD helpers
 ├── populate.py                  ← filesystem scanning for TDMS / pupitre files
 ├── magnetdb.py                  ← unified CLI entry point (use this)
@@ -162,6 +163,34 @@ python magnetdb.py hoop-stress fatigue  M9_A19061901_00 --db $DB
 | Database schema + JSON formats | [docs/schema.md](docs/schema.md) |
 | Deprecated scripts migration guide | [deprecated/DEPRECATED.md](deprecated/DEPRECATED.md) |
 | Tutorials | [tutorials/README.md](tutorials/README.md) |
+
+---
+
+## Viewing the database structure
+
+`schema_diagram.py` introspects a live `.duckdb` file (or falls back to
+`schema.py` if no file is found) and produces either a plain-text schema
+summary or a graphical ER diagram (PNG / SVG / PDF).
+
+```bash
+# Text summary — all 21 tables with columns, types, and PK/FK markers
+python schema_diagram.py --text
+
+# Graphical ER diagram saved to schema_diagram.png (default)
+python schema_diagram.py
+
+# Custom DB file and output path
+python schema_diagram.py --db /path/to/magnetdb.duckdb --output er.svg
+```
+
+The diagram colour-codes tables by role:
+
+| Colour | Group |
+|--------|-------|
+| Green  | Reference tables (`materials`, `housing_config`) |
+| Blue   | Assembly tables (`parts`, `magnets`, `sites`, junction tables) |
+| Yellow | Data tables (`experiments`, `operationaldata`, `overview_records`) |
+| Red    | Statistics tables (`*_processed`, `*_scalars`, `*_bin_stats`, `*_fatigue`) |
 
 ---
 
