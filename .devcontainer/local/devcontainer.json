@@ -6,7 +6,7 @@
   },
 
   "mounts": [
-    "source=/mnt/LNCMIG-Data/records,target=/mnt/LNCMI-G-Data/records,type=bind,consistency=cached"
+    "source=/home/LNCMI-G/christophe.trophime/LNCMIG-Data/records,target=/mnt/LNCMI-G-Data/records,type=bind,consistency=cached"
   ],
 
   "customizations": {
