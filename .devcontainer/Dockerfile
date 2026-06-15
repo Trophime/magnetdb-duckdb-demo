@@ -17,7 +17,7 @@ RUN echo '[ ! -z "$TERM" ] && cat /etc/motd' >> /etc/bash.bashrc
 
 RUN (getent group $USER_GID > /dev/null 2>&1 || groupadd --gid $USER_GID $USERNAME) \
     && (id -u $USERNAME > /dev/null 2>&1 || useradd -s /bin/bash --uid $USER_UID --gid $USER_GID -m $USERNAME) \
-    && (grep -qF "$USERNAME ALL=(ALL) NOPASSWD:ALL" /etc/sudoers || echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers)
+    && (grep -qF "$USERNAME ALL=(ALL) NOPASSWD:ALL" /etc/sudoers || echo "$USERNAME ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers) \
     && mkdir -p ~${USERNAME}/.ssh/ \
     && ssh-keyscan github.com >> ~${USERNAME}/.ssh/known_hosts \
     && chown -R ${USERNAME}.$USER_GID ~${USERNAME}/.ssh
@@ -29,4 +29,4 @@ RUN apt-get update \
     && apt-get -y autoremove --purge \
     && apt-get clean
 
-USER myuser
+USER ${USERNAME}
