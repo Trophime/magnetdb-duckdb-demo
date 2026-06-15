@@ -25,8 +25,7 @@ RUN apt-get update \
     && ssh-keyscan github.com >> ~${USERNAME}/.ssh/known_hosts \
     && chown -R ${USERNAME}.$USER_GID ~${USERNAME}/.ssh
 
-RUN 
-    && apt-get -y install texlive-latex-base texlive-latex-extra dvipng cm-super-minimal \
+RUN apt-get -y install texlive-latex-base texlive-latex-extra dvipng cm-super-minimal \
     && apt-get -y install git-lfs \
     && apt-get -y autoremove --purge \
     && apt-get clean
