@@ -16,15 +16,21 @@
         "ms-toolsai.jupyter"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
-        "jupyter.notebookEditor.defaultInterpreter": "${workspaceFolder}/.venv/bin/python"
+        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
       }
     }
   },
 
   "postCreateCommand": "chmod +x .devcontainer/setup-basic.sh && ./.devcontainer/setup-basic.sh",
+  "postStartCommand": "[ -d .venv ] || (chmod +x .devcontainer/setup-basic.sh && ./.devcontainer/setup-basic.sh)",
 
-  "remoteUser": "jovyan",
+  // Add a remote user (see Dockerfile) 
+  // and use it as the default user. On Linux, the container user's GID/UIDs
+  // will be updated to match your local UID/GID (when using the dockerFile property).
+  // See https://aka.ms/vscode-remote/containers/non-root-user for details.
+  // The default user in the base image is "jovyan", so we use that here. 
+  // If you change the user in the Dockerfile, make sure to update this value.
+  "remoteUser": "myuser",
 
   "forwardPorts": [8866],
   "portsAttributes": {
