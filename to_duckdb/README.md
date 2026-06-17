@@ -88,9 +88,9 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | `experiments view` | List experiment records | [populate.md](docs/populate.md#experiments-view) |
 | `operationaldata view` | List operationaldata records | [populate.md](docs/populate.md#operationaldata-view) |
 | `overview-records view` | List overview_records | [populate.md](docs/populate.md#overview-records-view) |
-| `populate operationaldata` | Register TDMS/pupitre files from filesystem | [populate.md](docs/populate.md) |
-| `populate experiments` | Discover additional pupitre TXT files | [populate.md](docs/populate.md) |
-| `populate overview-records` | Process Overview TDMS via python_magnetrun | [populate.md](docs/populate.md) |
+| `populate operationaldata [--site SITE\|--all]` | Register TDMS/pupitre files from filesystem | [populate.md](docs/populate.md) |
+| `populate experiments [--site SITE\|--all]` | Discover additional pupitre TXT files | [populate.md](docs/populate.md) |
+| `populate overview-records [--site SITE\|--all]` | Process Overview TDMS via python_magnetrun | [populate.md](docs/populate.md) |
 | `populate overview-records-from-json` | Load overview_records from a summary JSON | [populate.md](docs/populate.md) |
 | `hoop-stress compute` | Compute and persist hoop-stress bin stats + fatigue | [hoop-stress.md](docs/hoop-stress.md) |
 | `hoop-stress barchart` | Bar chart: stress at given currents vs Rpe | [hoop-stress.md](docs/hoop-stress.md) |
@@ -127,6 +127,9 @@ python magnetdb.py list --db $DB
 # 3. Populate operationaldata from the filesystem
 python magnetdb.py populate operationaldata --all --db $DB \
     --records-base $RECORDS --type Archive Overview Pupitre
+# or for a single site:
+# python magnetdb.py populate operationaldata --site M9_A19061901_00 --db $DB \
+#     --records-base $RECORDS --type Archive Overview Pupitre
 
 # 4. Ingest per-file operational statistics (idempotent)
 python -c "

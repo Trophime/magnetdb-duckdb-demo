@@ -31,12 +31,12 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py overview-records view [--site <site>] [--magnet <magnet>] [--part <part>]
                                              [--from DATETIME] [--to DATETIME] [--signatures] [--db ...]
 
-    python magnetdb.py populate operationaldata [SITE ...] [--all] [--type ...] [--records-base ...] [--dry-run]
-    python magnetdb.py populate experiments     [SITE ...] [--all] [--dry-run]
-    python magnetdb.py populate overview-records [SITE ...] [--all] [--reprocess] [--dry-run]
+    python magnetdb.py populate operationaldata [--site SITE ...] [--all] [--type ...] [--records-base ...] [--dry-run]
+    python magnetdb.py populate experiments     [--site SITE ...] [--all] [--dry-run]
+    python magnetdb.py populate overview-records [--site SITE ...] [--all] [--reprocess] [--dry-run]
     python magnetdb.py populate overview-records-from-json <json_file> [--site SITE] [--reprocess] [--dry-run] [--db ...]
 
-    python magnetdb.py hoop-stress compute  [SITE ...] [--all] [--db ...] [--magnet-type H|B|S|all]
+    python magnetdb.py hoop-stress compute  [--site SITE ...] [--all] [--db ...] [--magnet-type H|B|S|all]
                                             [--bins 0,100,200,...] [--parquet-dir ...] [--geometries ...]
                                             [--reprocess] [--dry-run] [--use-mrun]
                                             [--records-base ...] [--srv-subdir ...]
@@ -624,7 +624,7 @@ def _resolve_site_names(args, db_path: str) -> list[str]:
     if getattr(args, "all", False):
         with duckdb.connect(db_path, read_only=True) as con:
             return [r[0] for r in con.execute("SELECT name FROM sites ORDER BY name").fetchall()]
-    return list(args.site_names)
+    return list(args.site or [])
 
 
 # ---------------------------------------------------------------------------
@@ -645,7 +645,7 @@ def cmd_populate_operationaldata(args) -> None:
 
     site_names = _resolve_site_names(args, db_path)
     if not site_names:
-        print("No sites specified. Pass site name(s) or --all.")
+        print("No sites specified. Use --site SITE or --all.")
         sys.exit(1)
 
     records_base = Path(args.records_base)
@@ -684,7 +684,7 @@ def cmd_populate_experiments(args) -> None:
 
     site_names = _resolve_site_names(args, db_path)
     if not site_names:
-        print("No sites specified. Pass site name(s) or --all.")
+        print("No sites specified. Use --site SITE or --all.")
         sys.exit(1)
 
     records_base = Path(args.records_base)
@@ -786,7 +786,7 @@ def cmd_populate_overview_records(args) -> None:
 
     site_names = _resolve_site_names(args, db_path)
     if not site_names:
-        print("No sites specified. Pass site name(s) or --all.")
+        print("No sites specified. Use --site SITE or --all.")
         sys.exit(1)
 
     insert_fn = upsert_overview_record if args.reprocess else insert_overview_record
@@ -837,7 +837,7 @@ def cmd_hoop_stress_compute(args) -> None:
 
     site_names = _resolve_site_names(args, db_path)
     if not site_names:
-        print("No sites specified. Pass site name(s) or --all.")
+        print("No sites specified. Use --site SITE or --all.")
         sys.exit(1)
 
     bins = _parse_bins(args.bins) if args.bins else DEFAULT_STRESS_BINS
@@ -939,8 +939,10 @@ def _input_dir_arg(p: argparse.ArgumentParser) -> None:
 
 
 def _sites_arg(p: argparse.ArgumentParser) -> None:
-    p.add_argument("site_names", nargs="*", metavar="SITE",
-                   help="Site name(s). Use --all to process every site in the DB.")
+    p.add_argument(
+        "--site", action="append", metavar="SITE", dest="site",
+        help="Site name to process (repeat for multiple sites). Use --all instead to process every site.",
+    )
     p.add_argument("--all", action="store_true",
                    help="Process all sites in the database.")
 
