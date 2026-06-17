@@ -118,6 +118,8 @@ CREATE TABLE IF NOT EXISTS operationaldata (
 
 -- idempotent migration for databases that predate the type column
 ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'Archive';
+-- idempotent migration: ensure id has the sequence default (fixes DBs created before the DEFAULT was added)
+ALTER TABLE operationaldata ALTER COLUMN id SET DEFAULT nextval('operationaldata_id_seq');
 
 -- One row per processed overview file (OverviewRecord, data attribute excluded).
 -- sources_* columns hold the file-path lists from FileSet.

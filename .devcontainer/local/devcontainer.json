@@ -4,9 +4,25 @@
     "dockerfile": "../Dockerfile",
     "context": ".."
   },
-
+  
+  "runArgs": [
+		"--cap-add=SYS_PTRACE",
+		"--security-opt",
+		"seccomp=unconfined",
+		"--net",
+		"host",
+		"-e",
+		"DISPLAY=${env:DISPLAY}",
+		"-v",
+		"/tmp/.X11-unix:/tmp/.X11-unix",
+		"-v",
+		"${env:HOME}/.Xauthority:/home/feelpp/.Xauthority",
+		"--gpus",
+		"all"
+	],
+  
   "mounts": [
-    "source=${localEnv:HOME}/LNCMIG-Data/records,target=/mnt/LNCMI-G-Data/records,type=bind,consistency=cached"
+    "source=${localEnv:HOME}/LNCMIG-Data/records,target=/mnt/LNCMIG-Data/records,type=bind,consistency=cached"
   ],
 
   "customizations": {
