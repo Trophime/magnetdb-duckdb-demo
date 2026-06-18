@@ -16,13 +16,12 @@
 		"-v",
 		"/tmp/.X11-unix:/tmp/.X11-unix",
 		"-v",
-		"${env:HOME}/.Xauthority:/home/feelpp/.Xauthority",
-		"--gpus",
-		"all"
+		"${env:HOME}/.Xauthority:/home/feelpp/.Xauthority"
 	],
   
   "mounts": [
-    "source=${localEnv:HOME}/LNCMIG-Data/records,target=/mnt/LNCMIG-Data/records,type=bind,consistency=cached"
+    "source=${localEnv:HOME}/LNCMIG-Data/records,target=/mnt/LNCMIG-Data/records,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/Documents/hifimagnet-projects,target=/home/myuser/hifimagnet-projects,type=bind,consistency=cached"
   ],
 
   "customizations": {
