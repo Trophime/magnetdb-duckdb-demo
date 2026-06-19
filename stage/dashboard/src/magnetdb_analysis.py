@@ -1,66 +1,52 @@
 import duckdb
 import pandas as pd
+import os
+from python_magnetrun.MagnetRun import MagnetRun
+from python_magnetrun.magnetdata import MagnetData
 
+# Chemin absolu vers la base DuckDB
 DB_PATH = "/workspaces/2026-m1-hifimagnet/to_duckdb/magnetdb.duckdb"
 
+# --- UTILITAIRES DE BASE ---
 def get_all_tables():
-    """Get all table names from the DuckDB database."""
-    with duckdb.connect(DB_PATH) as conn:
-        query = "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
-        return conn.execute(query).df()['table_name'].tolist()
+    """Liste toutes les tables de la base."""
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        return conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'").df()['table_name'].tolist()
 
-def get_row_dropdown_data(selected_table):
-    """Generate the options and placeholder text for the second dropdown."""
-    if not selected_table:
-        return [], "Select a table first..."
-    
-    with duckdb.connect(DB_PATH) as conn:
-        columns = conn.execute(f"PRAGMA table_info('{selected_table}')").df()['name'].tolist()
-        
-        # Trouver la meilleure colonne pour le nommage
-        candidate_cols = ['file', 'filename', 'description', 'site', 'id']
-        display_col = next((c for c in candidate_cols if c in columns), columns[0])
-        
-        # Récupérer les valeurs
-        df_options = conn.execute(f"SELECT DISTINCT {display_col} FROM {selected_table} WHERE {display_col} IS NOT NULL").df()
-        
-        options = [{'label': str(val), 'value': str(val)} for val in df_options[display_col]]
-        placeholder = f"Choose an item from {selected_table} (based on {display_col})..."
-        
-        return options, placeholder
-def get_table_data(selected_table, selected_value):
-    """Get the columns and filtered data for the final table."""
-    if not selected_value or not selected_table:
-        return [], []
-    
+
+def get_all_sites():
+    """Récupère la liste de tous les sites pour le premier menu."""
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        return conn.execute("SELECT DISTINCT site_name FROM experiments WHERE site_name IS NOT NULL").df()['site_name'].tolist()
+
+def get_files_for_site(site_name, table_name):
+    """
+    Interroge la table choisie pour sortir tous les fichiers du site.
+    C'est ta nouvelle requête SQL clé.
+    """
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        query = f"SELECT DISTINCT file FROM {table_name} WHERE site_name = ? AND file IS NOT NULL"
+        df = conn.execute(query, [site_name]).df()
+        return df['file'].tolist()
+
+# --- CHARGEMENT DES DONNÉES ---
+def load_data(filepath, site_name):
+    """Charge et nettoie le fichier avec MagnetRun."""
+    if not os.path.exists(filepath):
+        print(f"File not found : {filepath}")
+        return pd.DataFrame()
+
     try:
-        with duckdb.connect(DB_PATH) as conn:
-            # 1. Retrouver la colonne qui a servi de filtre
-            columns = conn.execute(f"PRAGMA table_info('{selected_table}')").df()['name'].tolist()
-            candidate_cols = ['file', 'name', 'description', 'site_name', 'id', 'experiment_id', 'materials', 'part_name', 'status', 'type', 'rank', 'site_name', 'geometry']
-            display_col = next((c for c in candidate_cols if c in columns), columns[0])
-            
-            # --- DEBUG --- (Ceci s'affichera dans votre terminal VS Code)
-            print(f"DEBUG: Research in table '{selected_table}' where '{display_col}' = {selected_value}")
-            
-            # 2. Requête SQL
-            query = f"SELECT * FROM {selected_table} WHERE {display_col} = ?"
-            df_result = conn.execute(query, [selected_value]).df()
-            
-            print(f"DEBUG: {len(df_result)} line(s) found.")
-            
-            # 3. CONVERSION OBLIGATOIRE POUR DASH
-            # Convertit toutes les colonnes en chaînes de caractères (texte)
-            # Cela empêche Dash de planter sur des dates, des tableaux ou des BLOBs
-            df_result = df_result.astype(str)
-            
-            # 4. Préparation des données
-            cols = [{"name": i, "id": i} for i in df_result.columns]
-            data = df_result.to_dict('records')
-            
-            return cols, data
-            
+        filename = os.path.basename(filepath)
+        housing = os.path.basename(os.path.dirname(filepath))
+        
+        print(f"Loading {filename}...")
+        mrun = MagnetRun.fromtxt(housing, site_name, filepath)
+        
+        if hasattr(mrun, 'MagnetData') and mrun.MagnetData:
+            return mrun.MagnetData.Data
+        return pd.DataFrame()
+        
     except Exception as e:
-        # S'il y a une erreur SQL, on l'affiche dans le terminal au lieu qu'elle soit invisible
-        print(f"ERROR IN GET_TABLE_DATA : {e}")
-        return [{"name": "Error", "id": "Error"}], [{"Error": str(e)}]
+        print(f"Error loading file : {e}")
+        return pd.DataFrame()
