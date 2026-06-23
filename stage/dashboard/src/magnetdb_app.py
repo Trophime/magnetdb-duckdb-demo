@@ -108,26 +108,72 @@ def update_outputs(selected_file, selected_site, selected_table, selected_x, sel
 
     df = db.load_data(filepath, selected_site)
     
-    # --- CORRECTION 3 ---
     if df.empty:
         print("ERROR : The returned DataFrame is empty.")
         return px.scatter(title="File is empty or corrupted"), [], [], [], None
     
     print(f"DEBUG: Columns present : {df.columns.tolist()}")
 
-    # La magie de l'axe Y
     colonnes_dispo = df.columns.tolist()
     options_y = [{'label': col, 'value': col} for col in colonnes_dispo]
     
     if not selected_y or selected_y not in colonnes_dispo:
-        selected_y = colonnes_dispo[0] 
+        selected_y = colonnes_dispo[0]
     
+
+    UNITE_MAPPING = {
+    # --- Time and Index ---
+    't': 'Time (s)',
+    'timestamp': 'Date / Time',
+
+    # --- Global Physical Quantities ---
+    'Field': 'Magnetic Field (T)',
+    'Pmagnet': 'Magnet Power (MW)',
+    'Ptot': 'Total Power (MW)',
+    'Q': 'Heat Load / Thermal Power (MW)', 
+
+    # --- Electricity (Currents & Voltages) ---
+    'IH': 'Helix Current (A)',
+    'IB': 'Bitter Current (A)',
+    'IH_ref': 'Helix Current Setpoint (A)',
+    'IB_ref': 'Bitter Current Setpoint (A)',
+    'UH': 'Helix Voltage (V)',
+    'UB': 'Bitter Voltage (V)',
+    'Ucoil2': 'Coil 2 Voltage (V)',
+    'Ucoil3': 'Coil 3 Voltage (V)',
+    'Ucoil4': 'Coil 4 Voltage (V)',
+    'Ucoil5': 'Coil 5 Voltage (V)',
+    'Ucoil15': 'Coil 15 Voltage (V)',
+    'Ucoil16': 'Coil 16 Voltage (V)',
+
+    # --- Cooling (Temperatures) ---
+    'TinH': 'Helix Inlet Temperature (°C)',
+    'TinB': 'Bitter Inlet Temperature (°C)',
+    'Tout': 'Global Outlet Temperature (°C)',
+    'TAlimout': 'Power Supply Outlet Temp (°C)',
+    'Tcal2': 'Calculated Temperature 2 (°C)',
+    'teb': 'Coil Inlet Temperature (°C)',
+    'tsb': 'Coil Outlet Temperature (°C)',
+
+    # --- Hydraulics (Pressures & Flow Rates) ---
+    'HPH': 'Helix High Pressure (bar)',
+    'HPB': 'Bitter High Pressure (bar)',
+    'BP': 'Low Pressure (bar)',
+    'FlowH': 'Helix Flow Rate (L/s)',
+    'FlowB': 'Bitter Flow Rate (L/s)',
+    'debitbrut': 'Gross Flow Rate (L/s)',
+
+    # --- Pumps (Rotational Speeds) ---
+    'RpmH': 'Helix Pump Speed (rpm)',
+    'RpmB': 'Bitter Pump Speed (rpm)'
+}
     # Création du graphe
     fig = px.line(
         df, 
         x=selected_x,
         y=selected_y,
-        title=f"Visualization : {selected_file}"
+        title=f"Visualization : {selected_file}",
+        labels=UNITE_MAPPING
     )
     
     columns = [{"name": i, "id": i} for i in df.columns]
