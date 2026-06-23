@@ -4,6 +4,7 @@ import os
 from python_magnetrun.MagnetRun import MagnetRun
 from python_magnetrun.magnetdata import MagnetData
 
+
 # Chemin absolu vers la base DuckDB
 DB_PATH = "/workspaces/2026-m1-hifimagnet/to_duckdb/magnetdb.duckdb"
 
@@ -50,3 +51,4 @@ def load_data(filepath, site_name):
     except Exception as e:
         print(f"Error loading file : {e}")
         return pd.DataFrame()
+

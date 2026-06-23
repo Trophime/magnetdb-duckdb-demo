@@ -1,6 +1,7 @@
 from dash import Dash, html, dcc, dash_table, Input, Output
 import plotly.express as px
 import magnetdb_analysis as db # Ton fichier nettoyé
+from magnetdb_downsampling import apply_downsampling
 import os
 
 app = Dash(__name__)
@@ -40,6 +41,15 @@ app.layout = html.Div([
             html.Br(),
             html.Label("5. Choose Y-axis :", style={'fontWeight': 'bold', 'color': '#007bff'}),
             dcc.Dropdown( id='dd-y-axis', placeholder="Choose a column..."),
+
+            html.Br(),
+            html.Label("6. Downsampling Method:", style={'fontWeight': 'bold'}),
+            dcc.Dropdown(
+                id='dropdown-downsampling',
+                options=['naive', 'minmax', 'M4', 'LTTB', 'raw data'],
+                value='naive',
+                clearable=False
+)
             
         ], style={
             'width': '25%', 
@@ -88,10 +98,11 @@ def update_file_dropdown(selected_site, selected_table):
     Input('dd-site', 'value'),
     Input('dd-table', 'value'),
     Input('dd-x-axis', 'value'),
-    Input('dd-y-axis', 'value')
+    Input('dd-y-axis', 'value'),
+    Input('dropdown-downsampling', 'value')
 )
 
-def update_outputs(selected_file, selected_site, selected_table, selected_x, selected_y):
+def update_outputs(selected_file, selected_site, selected_table, selected_x, selected_y, selected_algo):
     
     # Si rien a été sélectionné, on retourne un graphe vide et un tableau vide
     if not selected_file or not selected_site:
@@ -106,20 +117,42 @@ def update_outputs(selected_file, selected_site, selected_table, selected_x, sel
         print(f"ERROR : File not found : {filepath}")
         return px.scatter(title="File not found"), [], [], [], None
 
-    df = db.load_data(filepath, selected_site)
+    df_raw = db.load_data(filepath, selected_site)
     
-    if df.empty:
+    if df_raw.empty:
         print("ERROR : The returned DataFrame is empty.")
         return px.scatter(title="File is empty or corrupted"), [], [], [], None
     
-    print(f"DEBUG: Columns present : {df.columns.tolist()}")
+    print(f"DEBUG: Columns present : {df_raw.columns.tolist()}")
 
-    colonnes_dispo = df.columns.tolist()
+    colonnes_dispo = df_raw.columns.tolist()
     options_y = [{'label': col, 'value': col} for col in colonnes_dispo]
     
     if not selected_y or selected_y not in colonnes_dispo:
         selected_y = colonnes_dispo[0]
-    
+
+    if not selected_algo:
+        selected_algo = 'naive'
+
+    if selected_algo == 'LTTB':
+        # Ton LTTB optimisé renvoie un dictionnaire de DataFrames
+        dict_lttb = apply_downsampling(df_raw, method=selected_algo)
+        
+        # On extrait uniquement le DataFrame correspondant à la colonne Y sélectionnée
+        # Ce DataFrame contient exactement deux colonnes : 't' et selected_y
+        if selected_y in dict_lttb:
+            df_reduce = dict_lttb[selected_y]
+        else:
+            # Sécurité : On garde t, timestamp ET la colonne Y demandée (si elle existe)
+            columns_to_keep = ['t', 'timestamp']
+            if selected_y in df_raw.columns:
+                columns_to_keep.append(selected_y)
+            df_reduce = df_raw[columns_to_keep]
+    else:
+        # Pour tes autres algorithmes (Décimation, Moyenne mobile...) 
+        # qui prennent un DataFrame global et renvoient un DataFrame global réduit
+        df_reduce = apply_downsampling(df_raw, method=selected_algo)
+        
 
     UNITE_MAPPING = {
     # --- Time and Index ---
@@ -167,17 +200,20 @@ def update_outputs(selected_file, selected_site, selected_table, selected_x, sel
     'RpmH': 'Helix Pump Speed (rpm)',
     'RpmB': 'Bitter Pump Speed (rpm)'
 }
+    
+    print(f"ALGO CHOISI: {selected_algo}")
+    print(f"COLONNES DANS DF_REDUCE: {df_reduce.columns.tolist()}")
     # Création du graphe
     fig = px.line(
-        df, 
+        df_reduce, 
         x=selected_x,
         y=selected_y,
-        title=f"Visualization : {selected_file}",
+        title=f"Visualization : {selected_file} (Algo: {selected_algo})",
         labels=UNITE_MAPPING
     )
     
-    columns = [{"name": i, "id": i} for i in df.columns]
-    data = df.to_dict('records')
+    columns = [{"name": i, "id": i} for i in df_raw.columns]
+    data = df_raw.to_dict('records')
     
     return fig, columns, data, options_y, selected_y
 
