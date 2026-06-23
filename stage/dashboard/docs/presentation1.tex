@@ -9,6 +9,7 @@
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{hyperref}
+\pdfstringdefDisableCommands{\renewcommand*\\{ }}
 \usepackage{listings}
 \usepackage{color}
 
@@ -27,12 +28,16 @@
 \sloppy
 \emergencystretch=3em
 
-\title{Nouvelle structure pour les données opérationnelles dans la base de données LNCMI}
-\author{Wolali KOFFI}
-\institute{Master CSMI \\
+\title[Database LNCMI]{New Structure for Operational Data in the LNCMI Database}
+
+\author[Wolali Koffi]{Wolali Koffi \\[0.3 cm]
+        Supervisors : Christophe Trophime and Joubine Aghili}
+
+\institute[Master CSMI -- Unistra]{Master CSMI \\
            Université de Strasbourg \\[0.3 cm]
-           En collaboration avec le CNRS et le LNCMI}
-\date{Année universitaire 2025--2026}
+           In collaboration with CNRS and LNCMI}
+
+\date[2025--2026]{Academic year 2025--2026}
 
 
 %=============================================================================================
@@ -44,31 +49,23 @@
     \titlepage
 \end{frame}
 
-\addtobeamertemplate{footline}{}{%
-    \begin{beamercolorbox}[wd=\paperwidth,ht=2.5ex,dp=1.2ex,leftskip=1em]{author in head/foot}
-        \usebeamerfont{author in head/foot}
-        Master CSMI -- Université de Strasbourg
-    \end{beamercolorbox}
-}
-
-
 %=============================================================================================
 
 
-\begin{frame}{Contexte : Environnement de recherche}
+\begin{frame}{Context : Research Environment}
     \begin{itemize}
 
         \item \textbf{CNRS} (Centre National de la Recherche Scientifique)
         \begin{itemize}
-            \item Plus grand centre de recherche de France 
+            \item Largest research center in France 
         \end{itemize}
 
         \item \textbf{LNCMI} (Laboratoire National des Champs Magnétiques Intenses)
         \begin{itemize}
-            \item Organisation nationale qui fournit des champs magnétiques intenses pour la recherche scientifique
-            \item Membre de l'\textbf{EMFL} (European Magnetic Field Laboratory)
+            \item National organization that provides intense magnetic fields for scientific research
+            \item Member of the \textbf{EMFL} (European Magnetic Field Laboratory)
             \begin{itemize}
-                \item Fournit des accès à des champs magnétiques intenses pour la recherche scientifique internationale
+                \item Provides access to intense magnetic fields for international scientific research
             \end{itemize}
         \end{itemize}
         
@@ -79,22 +76,22 @@
 %---------------------------------------------------------------------------------------------
 
 
-\begin{frame}{Contexte : Origine du projet}
+\begin{frame}{Context : Origin of the Project}
     \vspace{0.3cm}
     
     \begin{itemize}
-        \item \textbf{Continuité académique}
+        \item \textbf{Academic Continuity}
         \begin{itemize}
-            \item Suite directe des projets de développement réalisés en Master 1 CSMI.
-            \item Focus sur l'algorithmie et le traitement de données scientifiques.
+            \item Direct continuation of development projects carried out in Master 1 CSMI.
+            \item Focus on algorithmics and scientific data processing.
         \end{itemize}
         
         \vspace{0.4cm}
         
-        \item \textbf{Travaux préliminaires (Projets M1)}
+        \item \textbf{Preliminary Work (M1 Projects)}
         \begin{itemize}
-            \item Étude des problématiques liées aux séries temporelles massives.
-            \item Développement d'algorithmes de sous-échantillonnage intelligent pour la visualisation (LTTB, M4, Min-Max).
+            \item Study of the issues related to massive time series.
+            \item DDevelopment of intelligent downsampling algorithms for visualization (LTTB, M4, Min-Max).
         \end{itemize}
     \end{itemize}
 
@@ -105,42 +102,41 @@
 %---------------------------------------------------------------------------------------------
 
 
-\begin{frame}{Objectifs du stage (2 mois)}
+\begin{frame}{Objectives of the Internship (2 months)}
     
     \begin{itemize}
-        \item \textbf{Intégration des travaux de projets (M1)}
+        \item \textbf{Integration of Project Work (M1)}
         \begin{itemize}
-            \item Déployer les algorithmes et pipelines développés précédemment.
+            \item DDeploy the algorithms and pipelines developed previously.
         \end{itemize}
         
         \vspace{0.3cm}
         
-        \item \textbf{Restructuration des enregistrements en base de données}
+        \item \textbf{Record restructuring in the database}
         \begin{itemize}
-            \item \textbf{Architecture :} Intégration des vues TDMS (pupitre, archives, défauts), Site (Assembly), Housing (ex: M9), et paramètres d'alimentation.
-            \item \textbf{Enrichissement des métadonnées :}
+            \item \textbf{Architecture :} Integration of TDMS views (dashboard, archives, defects), Site (Assembly), Housing (e.g., M9), and power supply parameters.
+            \item \textbf{Metadata enrichment :}
             \begin{itemize}
-                \item Signatures du champ magnétique (pour le \textit{clustering}).
-                \item Signatures des courants de référence (modèles de circuits ODE via \textit{magnet-scipy}).
-                \item Statistiques globales (énergie) et suivi de la fatigue (cycles de contraintes).
+                \item Signatures of the magnetic field (for \textit{clustering}).
+                \item Signatures of the reference currents (circuits models via ODE \textit{magnet-scipy}).
+                \item globals statistics (energy) and fatigue monitoring (stress cycles).
             \end{itemize}
         \end{itemize}
         
         \vspace{0.3cm}
         
-        \item \textbf{Développement de tableaux de bord (Dashboards)}
+        \item \textbf{Development of dashboards and visualization tools}
         \begin{itemize}
-            \item Créer des interfaces visuelles interactives pour explorer et exploiter ces nouvelles structures de données.
+            \item Create interactive visual interfaces to explore and leverage these new data structures.
         \end{itemize}
     \end{itemize}
-
 \end{frame}
 
 %=============================================================================================
 
-\section{Réalisations}
+\section{Achievements and Results}
 
-\begin{frame}{Réalisations : Définition d'un « Site »}
+\begin{frame}{Achievements : « Site » definition and composition}
     \begin{columns}[T] % L'option [T] aligne le texte vers le haut
         
         % Colonne de gauche pour l'image
@@ -152,18 +148,18 @@
         
         % Colonne de droite pour les explications
         \begin{column}{0.55\textwidth}
-            \textbf{Le Site (ou Assemblage)}
+            \textbf{The Site (or Assembly)}
             \vspace{0.3cm}
             \begin{itemize}
-                \item Représente le \textbf{cœur actif} de l'aimant à haut champ.
-                \item S'insère dans une structure externe appelée \textit{Housing}.
+                \item Represents the \textbf{active core} of the high-field magnet.
+                \item Is inserted into an external structure called \textit{Housing}.
                 
                 \vspace{0.4cm}
                 
-                \item \textbf{Composition interne de l'assemblage :}
+                \item \textbf{Internal composition of the assembly :}
                 \begin{itemize}
-                    \item \textbf{Insert} : Composé d'un système d'hélices.
-                    \item \textbf{Bitters} : Empilement de disques de Bitter.
+                    \item \textbf{Insert} : Composed of a helix system.
+                    \item \textbf{Bitters} : Stack of Bitter disks.
                 \end{itemize}
             \end{itemize}
         \end{column}
@@ -173,72 +169,38 @@
 
 %---------------------------------------------------------------------------------------------
 
-\begin{frame}{Réalisations : Pipeline et hiérarchie des données}
+\begin{frame}{Achievements : Pipeline and data hierarchy}
     \begin{center}
         \Large
-        \textbf{Site} \quad $\xrightarrow{\text{utilisé pour}}$ \quad \textbf{Experiments} \quad $\xrightarrow{\text{génèrent}}$ \quad \textbf{Files}
+        \textbf{Site} \quad $\xrightarrow{\text{used for}}$ \quad \textbf{Experiments} \quad $\xrightarrow{\text{generate}}$ \quad \textbf{Files}
     \end{center}
     
     \vspace{0.8cm}
     
     \begin{itemize}
-        \item \textbf{1. Site (L'infrastructure matérielle)}
+        \item \textbf{1. Site (The physical infrastructure)}
         \begin{itemize}
-            \item La configuration physique exacte de l'aimant à un instant donné.
+            \item The exact physical configuration of the high-field magnet at a given time.
         \end{itemize}
         
         \vspace{0.4cm}
         
         \item \textbf{2. Experiments}
         \begin{itemize}
-            \item Les différentes sessions de recherche ou tests de mise en service menés sur ce Site précis.
+            \item The different research sessions or commissioning tests conducted on this specific Site.
         \end{itemize}
         
         \vspace{0.4cm}
         
-        \item \textbf{3. Files (Les données brutes opérationnelles)}
+        \item \textbf{3. Files (The raw operational data)}
         \begin{itemize}
-            \item Les enregistrements réels des capteurs rattachés à l'expérience.
+            \item The actual recordings of the sensors attached to the experiment.
         \end{itemize}
     \end{itemize}
 \end{frame}
 
-
-%=============================================================================================
-
-
-\begin{frame}{Remerciements}
-    \vspace{0.5cm}
-    Je tiens à exprimer ma plus profonde gratitude à mes superviseurs et collaborateurs pour leurs conseils, leur expertise et leur soutien tout au long de ce projet :
-    
-    \vspace{0.6cm}
-    
-    \begin{itemize}
-        \item[] \textbf{Christophe Trophime} (CNRS / LNCMI)
-        \vspace{0.3cm}
-        \item[] \textbf{Joubine Aghili} (IRMA)
-    \end{itemize}
-    
-    \vspace{0.8cm}
-    
-    \begin{center}
-        \small \textit{Un remerciement particulier à l'équipe pédagogique du Master CSMI de l'Université de Strasbourg.}
-    \end{center}
-\end{frame}
-
-
-%---------------------------------------------------------------------------------------------
-
-
-\begin{frame}
-    \vspace{1.5cm}
-    \begin{center}
-        \Huge{\textbf{Merci de votre attention !}}
-        
-        \vspace{1.5cm}
-        
-        \Large{\textbf{Avez-vous des questions ?}}
-    \end{center}
+\begin{frame}{Achievements : Visualization}
+    \includegraphics[height=0.85\textheight]{Dashboard.png}
 \end{frame}
 
 
