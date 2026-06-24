@@ -1,7 +1,7 @@
 from dash import Dash, html, dcc, dash_table, Input, Output
 import plotly.express as px
-import magnetdb_analysis as db # Ton fichier nettoyé
-from magnetdb_downsampling import apply_downsampling
+import stage.dashboard.src.Pupitre_app.magnetdb_analysis as db # Ton fichier nettoyé
+from stage.dashboard.src.Pupitre_app.magnetdb_downsampling import apply_downsampling
 import os
 
 app = Dash(__name__)
@@ -138,19 +138,9 @@ def update_outputs(selected_file, selected_site, selected_table, selected_x, sel
         # Ton LTTB optimisé renvoie un dictionnaire de DataFrames
         dict_lttb = apply_downsampling(df_raw, method=selected_algo)
         
-        # On extrait uniquement le DataFrame correspondant à la colonne Y sélectionnée
-        # Ce DataFrame contient exactement deux colonnes : 't' et selected_y
         if selected_y in dict_lttb:
             df_reduce = dict_lttb[selected_y]
-        else:
-            # Sécurité : On garde t, timestamp ET la colonne Y demandée (si elle existe)
-            columns_to_keep = ['t', 'timestamp']
-            if selected_y in df_raw.columns:
-                columns_to_keep.append(selected_y)
-            df_reduce = df_raw[columns_to_keep]
     else:
-        # Pour tes autres algorithmes (Décimation, Moyenne mobile...) 
-        # qui prennent un DataFrame global et renvoient un DataFrame global réduit
         df_reduce = apply_downsampling(df_raw, method=selected_algo)
         
 
@@ -201,8 +191,6 @@ def update_outputs(selected_file, selected_site, selected_table, selected_x, sel
     'RpmB': 'Bitter Pump Speed (rpm)'
 }
     
-    print(f"ALGO CHOISI: {selected_algo}")
-    print(f"COLONNES DANS DF_REDUCE: {df_reduce.columns.tolist()}")
     # Création du graphe
     fig = px.line(
         df_reduce, 
