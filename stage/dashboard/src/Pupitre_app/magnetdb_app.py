@@ -1,7 +1,7 @@
 from dash import Dash, html, dcc, dash_table, Input, Output
 import plotly.express as px
-import stage.dashboard.src.Pupitre_app.magnetdb_analysis as db # Ton fichier nettoyé
-from stage.dashboard.src.Pupitre_app.magnetdb_downsampling import apply_downsampling
+import magnetdb_analysis as db 
+from magnetdb_downsampling import apply_downsampling
 import os
 
 app = Dash(__name__)
@@ -83,7 +83,7 @@ app.layout = html.Div([
 def update_file_dropdown(selected_site, selected_table):
     if not selected_site or not selected_table:
         return []
-    # On récupère les fichiers via ta nouvelle fonction SQL
+    # On récupère les fichiers
     files = db.get_files_for_site(selected_site, selected_table)
     return [{'label': f, 'value': f} for f in files]
 
@@ -135,7 +135,6 @@ def update_outputs(selected_file, selected_site, selected_table, selected_x, sel
         selected_algo = 'naive'
 
     if selected_algo == 'LTTB':
-        # Ton LTTB optimisé renvoie un dictionnaire de DataFrames
         dict_lttb = apply_downsampling(df_raw, method=selected_algo)
         
         if selected_y in dict_lttb:
@@ -206,4 +205,4 @@ def update_outputs(selected_file, selected_site, selected_table, selected_x, sel
     return fig, columns, data, options_y, selected_y
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0')
+    app.run(debug=True, host='0.0.0.0', port=8051)

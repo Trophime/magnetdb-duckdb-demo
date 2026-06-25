@@ -8,7 +8,6 @@ from python_magnetrun.magnetdata import MagnetData
 # Chemin absolu vers la base DuckDB
 DB_PATH = "/workspaces/2026-m1-hifimagnet/to_duckdb/magnetdb.duckdb"
 
-# --- UTILITAIRES DE BASE ---
 def get_all_tables():
     """Liste toutes les tables de la base."""
     with duckdb.connect(DB_PATH, read_only=True) as conn:
@@ -23,14 +22,12 @@ def get_all_sites():
 def get_files_for_site(site_name, table_name):
     """
     Interroge la table choisie pour sortir tous les fichiers du site.
-    C'est ta nouvelle requête SQL clé.
     """
     with duckdb.connect(DB_PATH, read_only=True) as conn:
         query = f"SELECT DISTINCT file FROM {table_name} WHERE site_name = ? AND file IS NOT NULL"
         df = conn.execute(query, [site_name]).df()
         return df['file'].tolist()
 
-# --- CHARGEMENT DES DONNÉES ---
 def load_data(filepath, site_name):
     """Charge et nettoie le fichier avec MagnetRun."""
     if not os.path.exists(filepath):

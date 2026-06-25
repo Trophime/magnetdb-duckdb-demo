@@ -113,10 +113,7 @@ def M4_aggregation(data_input, nb_buckets) :
 def LTTB_subsampling_pupitre(df, nb_points):
     """
     Subsampling LTTB pour les fichiers Pupitre.
-    - Tous les calculs géométriques se font sur la colonne numérique 't'.
-    - Chaque DataFrame du dictionnaire de sortie contient 3 colonnes : ['t', 'timestamp', col]
     """
-    # Sécurité : Si le fichier a moins de points que demandé, on renvoie directement les 3 colonnes
     if len(df) <= nb_points:
         return {col: df[['t', 'timestamp', col]] for col in df.columns if col not in ['t', 'timestamp']}
     
@@ -137,9 +134,7 @@ def LTTB_subsampling_pupitre(df, nb_points):
 
     subsampled_dfs = {}
     
-    # --- BOUCLE SUR LES COLONNES DE DONNÉES Y ---
     for col in df.columns:
-        # Crucial : On ignore 't' ET 'timestamp' pour ne pas appliquer LTTB sur du temps
         if col in ['t', 'timestamp']:
             continue
             
@@ -150,7 +145,7 @@ def LTTB_subsampling_pupitre(df, nb_points):
         indexes = [0]
         idx_A = 0
 
-        # Calcul des aires des triangles (totalement numérique, donc aucun risque d'erreur)
+        # Calcul des aires des triangles (
         for i in range(len(buckets)):
             current_bucket = buckets[i]
             x_C = x_C_array[i]
@@ -174,7 +169,6 @@ def LTTB_subsampling_pupitre(df, nb_points):
 
         indexes.append(len(df) - 1)
 
-        # C'est ici que ça change ! On extrait les 3 valeurs demandées pour cette colonne
         subsampled_dfs[col] = df.iloc[indexes][['t', 'timestamp', col]]
 
     return subsampled_dfs
@@ -184,7 +178,6 @@ def apply_downsampling(df, method='naive', max_points=500, nb_buckets=250, nb_bu
     """
     Main function to reduce the size of the DataFrame.
     """
-    # If the DataFrame is already small enough or if we don't want downsampling
     if method == 'none' or len(df) <= max_points:
         return df
 
