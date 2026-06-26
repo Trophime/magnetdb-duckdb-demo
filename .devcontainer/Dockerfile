@@ -1,4 +1,4 @@
-FROM docker.io/trophime/magnettools:trixie
+FROM debian:trixie
 
 # This Dockerfile adds a non-root user with sudo access. Use the "remoteUser"
 # property in devcontainer.json to use it. On Linux, the container user's GID/UIDs
