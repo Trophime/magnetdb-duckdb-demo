@@ -16,12 +16,12 @@ def load_data():
     df = con.execute(
         """
             SELECT 
-                e.id, e.name, e.site_name, 
-                ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END), 2) AS energy_J,
-                ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END), 2) AS heat_extracted_J,
-                ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS duration_s,
-                ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS duration_field_on_s,
-            e.status
+                e.id AS ID, e.name AS Experiment, e.site_name AS Site, 
+                ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / 1e6, 2) AS "Energy (MJ)",
+                ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / 1e6, 2) AS "Extracted heat (MJ)",
+                ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
+                ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Field ON (s)",
+            e.status AS Status
             FROM experiments AS e
             LEFT JOIN exp_run_scalars AS s ON e.id = s.experiment_id
             GROUP BY e.id, e.name, e.site_name, e.status
@@ -53,7 +53,7 @@ app.layout = html.Div(
             [
                 html.B(f"Experiments: {len(df)}"),
                 html.Br(),
-                f"Processed: {(df['status'] == 'STATS DONE').sum()}",
+                f"Processed: {(df['Status'] == 'STATS DONE').sum()}",
             ]
         ),
         html.Br(),
