@@ -31,25 +31,25 @@
 -e ../python_magnetsetup
 
 # Core data stack
-duckdb
-numpy
-pandas
-pyyaml
+duckdb>=1.1.0,<2.0.0
+numpy>=1.26.0,<3.0.0
+pandas>=2.1.0,<4.0.0
+pyyaml>=6.0.1,<7.0.0
 
 # Plotting
-matplotlib
+matplotlib>=3.8.0,<4.0.0
 
 # Rainflow fatigue cycle counting  (tutorials/stress_map.py fatigue subcommand)
-rainflow
+rainflow>=3.1.0,<4.0.0
 
 # Parquet I/O with column-level metadata (compute_hoop_stats.py)
-pyarrow
+pyarrow>=14.0.0,<25.0.0
 
 # Testing
-pytest
+pytest>=8.0.0,<10.0.0
 
 # Notebook / interactive UI (optional)
-marimo
+marimo>=0.9.0,<1.0.0
 
 # Interactive UI for database management (optional, but recommended for ease of use)
-duckdb-cli
+duckdb-cli>=1.1.0,<2.0.0
