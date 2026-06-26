@@ -1,45 +1,81 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "⚡ Starting UV-powered Isolated Setup..."
 
-# 0. Initialize git submodules (required in GitHub Codespaces)
-echo "📥 Initializing git submodules..."
-git submodule update --init
+# --- Safeguards ---
 
-# 1. Create a clean virtual environment (No system-site-packages)
-# uv creates this in the .venv directory by default
-uv venv
+# Check required commands
+for cmd in git python3 uv; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "❌ Required command not found: $cmd" >&2
+        exit 1
+    fi
+done
 
-# 2. Activate the environment
-source .venv/bin/activate
+# Check minimum Python version (3.8+)
+python3 - <<'EOF'
+import sys
+if sys.version_info < (3, 8):
+    print(f"❌ Python 3.8+ required, found {sys.version}", file=sys.stderr)
+    sys.exit(1)
+EOF
 
-# 3. THE BRIDGE: Locate the private module in the base image
-# Replace 'private_module_name' with the actual name
-MODULE_NAME="private_module_name"
-
-# We ask the SYSTEM python where the module is
-SYSTEM_MODULE_PATH=$(/usr/bin/python3 -c "import $MODULE_NAME, os; print(os.path.dirname($MODULE_NAME.__file__))")
-
-if [ -z "$SYSTEM_MODULE_PATH" ]; then
-    echo "❌ Error: Could not find $MODULE_NAME in the base image."
+# Ensure we are running from the repository root
+if [[ ! -f ".devcontainer/setup-uv.sh" ]]; then
+    echo "❌ This script must be run from the repository root." >&2
     exit 1
 fi
 
-# Find the venv's site-packages directory
-VENV_SITE_PKGS=$(python3 -c "import site; print(site.getsitepackages()[0])")
+# --- Step 0: Initialize git submodules ---
+echo "📥 Initializing git submodules..."
+git submodule update --init --recursive
 
-# Create the symlink
-echo "🔗 Bridging $MODULE_NAME from $SYSTEM_MODULE_PATH..."
-ln -s "$SYSTEM_MODULE_PATH" "$VENV_SITE_PKGS/"
+# Verify expected submodule directories are present
+for pkg in python_magnetgeo python_magnetcooling python_magnetrun python_magnetsetup; do
+    if [[ ! -d "$pkg" ]]; then
+        echo "❌ Submodule directory '$pkg' is missing after submodule init." >&2
+        exit 1
+    fi
+    if [[ ! -f "$pkg/setup.py" && ! -f "$pkg/pyproject.toml" ]]; then
+        echo "❌ '$pkg' has no setup.py or pyproject.toml — submodule may not have initialized correctly." >&2
+        exit 1
+    fi
+done
 
-# 4. Install dependencies and submodules using 'uv sync' or 'uv pip'
-# 'uv pip install' is the most direct equivalent to your pip workflow
-echo "📦 Installing Jupyter, Voila, and Widgets..."
-uv pip install ipywidgets voila pandas
+# --- Step 1: Create or reuse venv ---
+if [[ -d ".venv" ]]; then
+    cfg=".venv/pyvenv.cfg"
+    if [[ ! -f "$cfg" ]]; then
+        echo "❌ .venv exists but pyvenv.cfg is missing — broken venv." >&2
+        echo "   Remove it with: rm -rf .venv" >&2
+        exit 1
+    fi
+    if ! grep -qi "include-system-site-packages = true" "$cfg"; then
+        echo "❌ Existing .venv was NOT created with --system-site-packages." >&2
+        echo "   Remove it with: rm -rf .venv  then rerun this script." >&2
+        exit 1
+    fi
+    echo "ℹ️  Virtual environment already exists with system-site-packages, reusing it."
+else
+    echo "🐍 Creating virtual environment with uv..."
+    uv venv --system-site-packages
+fi
 
-# 5. Install your 'Heavy Development' submodules in EDITABLE mode
-echo "🛠️ Linking development submodules..."
-uv pip install -e ./submodules/heavy-dev-pkg
+# shellcheck source=/dev/null
+source .venv/bin/activate
 
-echo "✅ UV Setup Complete!"
+# --- Step 2: Install interactive tools ---
+echo "📦 Installing Jupyter and Voila..."
+uv pip install ipyfilechooser ipywidgets voila pandas
+
+# --- Step 3: Install local submodules in editable mode ---
+echo "🛠️  Linking development submodules..."
+uv pip install -e "./python_magnetgeo"
+uv pip install -e "./python_magnetcooling[fitting]"
+uv pip install -e "./python_magnetrun[signal]"
+uv pip install -e "./python_magnetsetup"
+
+echo "✅ UV Setup Complete! Your environment is isolated but has access to system site packages."
+
+deactivate

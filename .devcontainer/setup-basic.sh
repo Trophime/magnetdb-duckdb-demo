@@ -1,28 +1,79 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "🚀 Starting Isolated Environment Setup..."
 
-# 0. Initialize git submodules (required in GitHub Codespaces)
+# --- Safeguards ---
+
+# Check required commands
+for cmd in git python3; do
+    if ! command -v "$cmd" &>/dev/null; then
+        echo "❌ Required command not found: $cmd" >&2
+        exit 1
+    fi
+done
+
+# Check minimum Python version (3.8+)
+python3 - <<'EOF'
+import sys
+if sys.version_info < (3, 8):
+    print(f"❌ Python 3.8+ required, found {sys.version}", file=sys.stderr)
+    sys.exit(1)
+EOF
+
+# Ensure we are running from the repository root
+if [[ ! -f ".devcontainer/setup-basic.sh" ]]; then
+    echo "❌ This script must be run from the repository root." >&2
+    exit 1
+fi
+
+# --- Step 0: Initialize git submodules ---
 echo "📥 Initializing git submodules..."
 git submodule update --init --recursive
 
-# 1. Create a clean venv (no system packages)
-python3 -m venv .venv --system-site-packages
+# Verify expected submodule directories are present
+for pkg in python_magnetgeo python_magnetcooling python_magnetrun python_magnetsetup; do
+    if [[ ! -d "$pkg" ]]; then
+        echo "❌ Submodule directory '$pkg' is missing after submodule init." >&2
+        exit 1
+    fi
+    if [[ ! -f "$pkg/setup.py" && ! -f "$pkg/pyproject.toml" ]]; then
+        echo "❌ '$pkg' has no setup.py or pyproject.toml — submodule may not have initialized correctly." >&2
+        exit 1
+    fi
+done
+
+# --- Step 1: Create or reuse venv ---
+if [[ -d ".venv" ]]; then
+    cfg=".venv/pyvenv.cfg"
+    if [[ ! -f "$cfg" ]]; then
+        echo "❌ .venv exists but pyvenv.cfg is missing — broken venv." >&2
+        echo "   Remove it with: rm -rf .venv" >&2
+        exit 1
+    fi
+    if ! grep -qi "include-system-site-packages = true" "$cfg"; then
+        echo "❌ Existing .venv was NOT created with --system-site-packages." >&2
+        echo "   Remove it with: rm -rf .venv  then rerun this script." >&2
+        exit 1
+    fi
+    echo "ℹ️  Virtual environment already exists with system-site-packages, reusing it."
+else
+    echo "🐍 Creating virtual environment..."
+    python3 -m venv .venv --system-site-packages
+fi
+
 # shellcheck source=/dev/null
 source .venv/bin/activate
 
-# 2. Upgrade pip to avoid old-version headaches
+# --- Step 2: Upgrade pip ---
 pip install --upgrade pip
 
-
-# 4. Install your interactive tools
+# --- Step 3: Install interactive tools ---
 echo "📦 Installing Jupyter and Voila..."
 pip install ipyfilechooser ipywidgets voila pandas
 
-# 5. Install your 'Heavy Development' submodules in EDITABLE mode
-# echo "🛠️ Linking development submodules..."
-# pip install -e ./submodules/my-interactive-pkg
+# --- Step 4: Install local submodules in editable mode ---
+echo "🛠️  Linking development submodules..."
 pip install -e "./python_magnetgeo"
 pip install -e "./python_magnetcooling[fitting]"
 pip install -e "./python_magnetrun[signal]"
