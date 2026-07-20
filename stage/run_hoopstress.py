@@ -21,7 +21,7 @@ def compute_and_export_m9_hoop_stress():
 
   print(f"Récupération des sites depuis : {db_file}...")
 
-  # 2. Lecture de la liste des sites (avec fermeture garantie)
+  # 2. Lecture de la liste des sites
   conn = duckdb.connect(db_file)
   try:
     query = (
@@ -29,16 +29,9 @@ def compute_and_export_m9_hoop_stress():
         " 'M9_%';"
     )
     df_sites = conn.execute(query).fetchdf()
-    
   except Exception as e:
-    print(f"Erreur avec site_name, tentative avec 'site'...")
-    try:
-      query = "SELECT DISTINCT site FROM experiments WHERE site LIKE 'M9_%';"
-      df_sites = conn.execute(query).fetchdf()
-      df_sites.columns = ["site_name"]
-    except Exception as e2:
-      print(f"Impossible de lire la table experiments : {e2}")
-      return
+    print(f"Impossible de lire la table experiments : {e}")
+    return
   finally:
     conn.close()  # Libère complètement la base pour la suite !
 
@@ -53,10 +46,9 @@ def compute_and_export_m9_hoop_stress():
 
   # 3. Boucle de calcul sur les sites
   for site in list_sites:
-    print(f"\n⚡ Calcul du hoop stress pour : {site}...")
+    print(f"\nCalcul du hoop stress pour : {site}...")
 
     try:
-      # On passe directement le chemin db_file réel
       summary = compute_hoop_stress_history(
           site_name=site,
           db_path=db_file,
@@ -81,7 +73,7 @@ def compute_and_export_m9_hoop_stress():
   # 4. Sauvegarde du fichier CSV
   df_results = pd.DataFrame(results)
   df_results.to_csv(output_csv, index=False, encoding="utf-8")
-  print(f"\n Résumé de l'opération sauvegardé dans : {output_csv}")
+  print(f"\nRésumé de l'opération sauvegardé dans : {output_csv}")
 
 
 if __name__ == "__main__":
