@@ -1,17 +1,19 @@
 import duckdb
 import pandas as pd
 
-from dash import Dash, html, dcc
+import dash
+from dash import html, dcc
 from dash.dash_table import DataTable
+from pint import UnitRegistry
 
 import plotly.express as px
 
-DB = "magnetdb.duckdb"
 
-app = Dash(__name__)
+dash.register_page(__name__, path = "/magnets", name = "Magnets")
+DB = "../magnetdb.duckdb"
+ureg = UnitRegistry()
+J_TO_MWH = (1 * ureg.joule).to("megawatt_hour").magnitude
 
-
-# load experiments table from DuckDB
 def load_data():
 
     con = duckdb.connect(DB)
@@ -38,6 +40,8 @@ def load_data():
     con.close()
 
     return df
+
+
 
 
 df = load_data()
@@ -73,18 +77,24 @@ fig_per_site = px.bar(
     title = "Energy per Site"
 )
 
-app.layout = html.Div(
+fig_per_site_pie = px.pie(
+    energy_by_site,
+    names = "Site",
+    values = "Energy (kWh)",
+    color_discrete_map = {"M9": "red", "M10": "blue"},
+    hole = 0.3,
+    title = "Energy per Site 2"
+)
+
+fig_per_site_pie.update_traces(
+    textposition = "inside",
+    textinfo = "percent+label"
+)
+
+layout = html.Div(
     [
-        html.H1("MagnetDB Dashboard"),
-        
- #       dcc.Dropdown(
- #           id = "site",
- #           options = [{"label": s, "value": s} for s in sorted(df["Site"].unique())],
- #           value = df["Site"].iloc[0],
- #           clearable = False,
- #           style = {"width": "400px"},
- #       ),
-        
+        html.H2("Magnets"),
+
         html.Div(
             [
                 html.B(f"Experiments: {len(df)}"),
@@ -94,12 +104,17 @@ app.layout = html.Div(
         ),
         html.Br(),
 
-        dcc.Graph(figure = fig_per_exp),
+        dcc.Graph(id = "energy-exp", figure = fig_per_exp),
         html.Br(),
-        dcc.Graph(figure = fig_per_site),
+
+        dcc.Graph(id = "energy-site", figure = fig_per_site),
+        html.Br(),
+
+        dcc.Graph(id = "energy-site-pie", figure = fig_per_site_pie),
         html.Br(),
 
         DataTable(
+            id = "exp_table", 
             data = df.to_dict("records"),
             columns = [{"name": c, "id": c} for c in df.columns],
             page_size = 20,
@@ -110,16 +125,10 @@ app.layout = html.Div(
             
             style_cell = {"textAlign": "center",
                           "padding": "6px"},
-
-            
-            style_header = {"fontWeight": "auto"}
         ),
+
     ],
 
     style = {"padding": "20px"},
 )
 
-
-if __name__ == "__main__":
-
-    app.run(debug = True, port = 8050)

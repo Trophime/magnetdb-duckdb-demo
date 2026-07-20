@@ -29,7 +29,7 @@
   // See https://aka.ms/vscode-remote/containers/non-root-user for details.
   // The default user in the base image is "jovyan", so we use that here. 
   // If you change the user in the Dockerfile, make sure to update this value.
-  "remoteUser": "jovyan",
+  "remoteUser": "myuser",
 
   "forwardPorts": [8866],
   "portsAttributes": {

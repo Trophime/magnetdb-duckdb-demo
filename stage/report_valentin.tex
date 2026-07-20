@@ -1,0 +1,154 @@
+\documentclass[english,10pt,a4paper]{article}
+
+\usepackage{geometry}
+\geometry{top=3cm, bottom=3cm, left=3cm , right=3cm}
+
+\usepackage[utf8]{inputenc}
+\usepackage[english]{babel}
+\usepackage{hyperref}
+
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{listings}
+
+\usepackage{indentfirst}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+}
+
+
+
+\begin{document}
+\title{Statistical Characterisation of High-Field Magnet Operations}
+\author{Valentin Levchenko \\
+        Student ID: 22422485 \\
+        \texttt{valentin.levchenko@etu.unistra.fr} \\ [0.5cm]
+        \textbf{Supervisors:} \\
+        Dr. Christophe Trophime (LNCMI, CNRS) \\
+        Prof. Christophe Prud'homme (University of Strasbourg) \\
+        Asst. Prof. Joubine Aghili (IRMA, University of Strasbourg)
+}
+\date{
+    Master CSMI \\
+    University of Strasbourg \\
+    In collaboration with CNRS and LNCMI \\
+    \today
+}
+
+\maketitle
+
+
+
+\begin{abstract}
+
+
+    GitHub repository:
+    \url{https://github.com/master-csmi/2026-m1-hifimagnet.git}
+
+    LNCMI website: \url{https://lncmi.cnrs.fr}
+
+    EMFL website: \url{https://emfl.eu}
+\end{abstract}
+
+
+
+\newpage
+\tableofcontents
+\newpage
+
+
+
+\section{Current progress}
+
+\begin{itemize}
+    \item Implemented autmoatic import of all 
+          \texttt{hosuing-summary-YYYY.json} files (M9/M10, 2024-2026) into 
+          DuckDB.
+    \item Created \texttt{housing_summary} table and enriched it with \texttt{site} 
+          and \texttt{year} metadata.
+    \item Performed an initial data audit:
+        \begin{itemize}
+            \item 855 records imported
+            \item no duplicate filenames detected
+            \item identified missing archive, Pupitre and trigger file references
+            \item verified tha t371 records can already be linked to existing
+                  experiments throught the corresponding Pupitre file name
+        \end{itemize}
+    \item Verified and extrated the 2023 Pupitre files for future processing 
+          and testing
+    \item Set up the development environment to support the new record workflow
+\end{itemize}
+
+
+\pagebreak
+
+\bibliographystyle{unsrt}
+\bibliography{references}
+
+
+\appendix
+
+\section{User Guide}
+
+The repository is organised into several main components:
+\begin{itemize}
+    \item \texttt{Dockerfile}
+    \item \texttt{README.md}
+    \item \texttt{requirements.txt}
+    \item \texttt{build.md}
+    \item \texttt{data}
+    \item \texttt{docs}
+    \item \texttt{results}
+    \item \texttt{src}
+\end{itemize}
+
+The main analysis is implemented in the notebook \texttt{src/main.ipynb}.
+
+Generated outputs are automatically exported into \texttt{results/<MAGNET\_NAME>/}.
+
+The project was developed using a standard Python scientific environment including
+\texttt{numpy, pandas, matplotlib} as well as additional libraries \texttt{duckdb, 
+json, polars, great-tables}.
+
+\subsection{Environment Setup}
+
+Clone the repository:
+\begin{verbatim}
+    git clone https://github.com/master-csmi/2026-m1-hifimagnet.git
+    cd 2026-m1-hifimagnet
+\end{verbatim}
+
+Create and activate a Python virtual environment:
+\begin{verbatim}
+    python3 -m venv .venv
+    source .venv/bin/activate
+\end{verbatim}
+
+Install the required dependencies:
+\begin{verbatim}
+    pip install -r project1/requirements.txt
+\end{verbatim}
+
+Run the main notebook:
+\begin{verbatim}
+    jupyter notebook project1/src/main.ipynb
+\end{verbatim}
+
+\subsection{Docker}
+
+Build the Docker image:
+\begin{verbatim}
+    docker build -t hifimagnet1 project1
+\end{verbatim}
+
+Run the container:
+\begin{verbatim}
+    docker run -it hifimagnet1
+\end{verbatim}
+
+\end{document}

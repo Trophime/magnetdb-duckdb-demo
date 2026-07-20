@@ -41,7 +41,7 @@
 
   "postCreateCommand": "chmod +x .devcontainer/setup-basic.sh && ./.devcontainer/setup-basic.sh",
 
-  "remoteUser": "jovyan",
+  "remoteUser": "myuser",
 
   "forwardPorts": [8866],
   "portsAttributes": {
