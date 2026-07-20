@@ -29,8 +29,9 @@ def compute_and_export_m9_hoop_stress():
         " 'M9_%';"
     )
     df_sites = conn.execute(query).fetchdf()
+    
   except Exception as e:
-    print(f"⚠️ Erreur avec site_name, tentative avec 'site'...")
+    print(f"Erreur avec site_name, tentative avec 'site'...")
     try:
       query = "SELECT DISTINCT site FROM experiments WHERE site LIKE 'M9_%';"
       df_sites = conn.execute(query).fetchdf()
@@ -47,7 +48,7 @@ def compute_and_export_m9_hoop_stress():
     print("Aucun site M9 trouvé.")
     return
 
-  print(f"📋 {len(list_sites)} sites M9 trouvés. Lancement des calculs...")
+  print(f"{len(list_sites)} sites M9 trouvés. Lancement des calculs...")
   results = []
 
   # 3. Boucle de calcul sur les sites
