@@ -10,14 +10,14 @@ import pandas as pd
 target_table = 'operationaldata'
 
 # Enregistrement de la page auprès de Dash
-# On ajoute suppress_callback_exceptions=True pour autoriser les composants dynamiques (la checklist) 🎯
+# On ajoute suppress_callback_exceptions=True pour autoriser les composants dynamiques 
 dash.register_page(
     __name__, 
     path='/comparison', 
     name="Comparaison Multi-fichiers"
 )
 
-# Le Layout obligatoire corrigéchecklist et aligné 🎯
+# Le Layout obligatoire corrig0 échecklist et aligné 
 layout = html.Div([
     html.H2("Visualisation et Comparaison Multi-fichiers"),
     html.P("Superposez les courants électriques de plusieurs fichiers (Pupitre et PigBrother)."),
