@@ -100,7 +100,11 @@ def _parse_bins(s: str) -> list[tuple[float, float]]:
 # ---------------------------------------------------------------------------
 
 
-def build_part_column_map(site_name: str, db_path: str) -> dict[str, str]:
+def build_part_column_map(
+    site_name: str,
+    db_path: str,
+    con: "duckdb.DuckDBPyConnection | None" = None,
+) -> dict[str, str]:
     """Return {column_name: part_name} for all coil parts at a site.
 
     Column names follow the same convention as validate_fast_from_pupitre():
@@ -110,8 +114,14 @@ def build_part_column_map(site_name: str, db_path: str) -> dict[str, str]:
 
     Magnets are ordered by commissioned_at DESC (same as load_site_config_from_duckdb).
     Within each magnet, parts are ordered by rank.
+
+    con : Reuse an already-open connection instead of opening a new read-only
+          one (avoids DuckDB's "different configuration" error when called
+          from within a caller's open connection).
     """
-    con = duckdb.connect(db_path, read_only=True)
+    owns_con = con is None
+    if con is None:
+        con = duckdb.connect(db_path, read_only=True)
 
     rows = con.execute("""
         SELECT m.name AS magnet_name, m.type AS magnet_type,
@@ -123,7 +133,8 @@ def build_part_column_map(site_name: str, db_path: str) -> dict[str, str]:
         WHERE sm.site_name = ?
         ORDER BY sm.commissioned_at DESC NULLS LAST, mp.rank
     """, [site_name]).fetchall()
-    con.close()
+    if owns_con:
+        con.close()
 
     h_idx = b_idx = s_idx = 1
     mapping: dict[str, str] = {}
@@ -395,13 +406,13 @@ def compute_hoop_stress_history(
 
     # ── Load site config and magnettools (shared across all experiments) ──────
     try:
-        housing, magnet_configs = load_site_config_from_duckdb(site_name, db_path)
+        housing, magnet_configs = load_site_config_from_duckdb(site_name, db_path, con=con)
     except ValueError as exc:
         print(f"[ERROR] Cannot load site config for '{site_name}': {exc}")
         con.close()
         return {"new": 0, "skipped": 0, "errors": [str(exc)]}
 
-    part_map = build_part_column_map(site_name, db_path)
+    part_map = build_part_column_map(site_name, db_path, con=con)
 
     # Parquet output directory
     pq_dir = Path(parquet_dir) if parquet_dir else Path(db_path).parent / "hoop_parquet"

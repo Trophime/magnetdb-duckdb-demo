@@ -6,7 +6,11 @@ Import ``SCHEMA_SQL`` or call ``ensure_schema(con)`` from any module that
 needs to create or migrate the database.
 """
 
-COIL_TYPES: frozenset[str] = frozenset({"helix", "bitter"})
+from enums import PartType
+
+COIL_TYPES: frozenset[str] = frozenset(
+    {PartType.HELIX.value, PartType.BITTER.value, PartType.SUPRA.value}
+)
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS materials (
