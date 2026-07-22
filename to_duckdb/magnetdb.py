@@ -5,6 +5,9 @@ Unified CLI entry point for the student MagnetDB DuckDB.
 
     python magnetdb.py list                  [--db ...]
 
+    python magnetdb.py check [--db ...] [--entity part|magnet|experiment|operationaldata|all]
+                             [--name NAME] [--fix]
+
     python magnetdb.py db create            [--db ...]
     python magnetdb.py db delete            [--db ...] [--yes]
 
@@ -13,7 +16,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py material delete <name>   [--db ...]
 
     python magnetdb.py magnet add <json_file> [--db ...] [--input-dir ...] [--part-dir ...] [--geometry ...] [--dry-run]
-    python magnetdb.py magnet view [<name>]             [--db ...] [--type insert|bitters|hybrid] [--status STATUS]
+    python magnetdb.py magnet view [<name>]             [--db ...] [--type insert|bitters|supras] [--status STATUS]
     python magnetdb.py magnet check-geometry [<name>]   [--db ...]
     python magnetdb.py magnet delete <name>             [--db ...]
 
@@ -68,6 +71,7 @@ except ImportError:
 
 import duckdb
 
+from checks import print_check_report, run_checks
 from crud import (
     check_geometry_data,
     delete_magnet,
@@ -132,6 +136,27 @@ def cmd_list(args) -> None:
                 print(f"  {name}")
         else:
             print("  (none)")
+
+
+# ---------------------------------------------------------------------------
+# check handler
+# ---------------------------------------------------------------------------
+
+
+def cmd_check(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path), read_only=not args.fix) as con:
+        try:
+            results = run_checks(con, entity=args.check_entity, name=args.name, fix=args.fix)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+    ok = print_check_report(results)
+    if not ok:
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -286,7 +311,11 @@ def _add_magnet(
         sys.exit(1)
 
     parts = data["parts"]
-    magnet_type = infer_magnet_type(parts)
+    try:
+        magnet_type = infer_magnet_type(parts)
+    except ValueError as exc:
+        print(f"Validation errors:\n  • {exc}")
+        sys.exit(1)
 
     if dry_run:
         coil_parts = [p for p in parts if p.get("type") in COIL_TYPES]
@@ -898,6 +927,7 @@ def cmd_hoop_stress_fatigue(args) -> None:
 
 _DISPATCH = {
     ("list",              None):              cmd_list,
+    ("check",             None):              cmd_check,
     ("db",                "create"):          cmd_db_create,
     ("db",                "delete"):          cmd_db_delete,
     ("material",          "add"):             cmd_material_add,
@@ -1014,12 +1044,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     entity = parser.add_subparsers(
         dest="entity", required=True,
-        metavar="{list,db,material,magnet,site,housing,experiments,operationaldata,overview-records,populate,hoop-stress}",
+        metavar="{list,check,db,material,magnet,site,housing,experiments,operationaldata,overview-records,populate,hoop-stress}",
     )
 
     # ── list ─────────────────────────────────────────────────────────────────
     list_p = entity.add_parser("list", help="List all objects (materials, magnets, sites, housings).")
     _db_arg(list_p)
+
+    # ── check ────────────────────────────────────────────────────────────────
+    check_p = entity.add_parser(
+        "check",
+        help="Validate database contents (geometry_data coverage, magnet type "
+             "consistency, experiment/operationaldata file existence).",
+    )
+    _db_arg(check_p)
+    check_p.add_argument(
+        "--entity", dest="check_entity", default="all",
+        choices=["all", "part", "magnet", "experiment", "operationaldata"],
+        help="Restrict the check to one entity type (default: all)",
+    )
+    check_p.add_argument(
+        "--name", default=None,
+        help="Restrict the check to one object (requires --entity other than 'all')",
+    )
+    check_p.add_argument(
+        "--fix", action="store_true",
+        help="For magnets: reconstruct missing geometry_data from parts' "
+             "geometry_data and write it back to the DB.",
+    )
 
     # ── db ───────────────────────────────────────────────────────────────────
     db_p = entity.add_parser("db", help="Manage the DuckDB database file.")
@@ -1081,7 +1133,7 @@ def build_parser() -> argparse.ArgumentParser:
     m_view.add_argument("name", nargs="?", default=None,
                         help="Magnet name (omit to list all)")
     m_view.add_argument("--type", default=None,
-                        choices=["insert", "bitters", "hybrid", "unknown"],
+                        choices=["insert", "bitters", "supras"],
                         help="Filter list by magnet type (ignored when <name> is given)")
     m_view.add_argument("--status", default=None,
                         help="Filter list by status (ignored when <name> is given)")

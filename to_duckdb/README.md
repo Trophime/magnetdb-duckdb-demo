@@ -78,6 +78,7 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | Command | Description | Detail |
 |---------|-------------|--------|
 | `list` | List all objects in the DB | — |
+| `check [--entity ...] [--name ...] [--fix]` | Validate DB contents (geometry_data coverage, magnet type consistency, file existence) | below |
 | `db create` | Create DB and initialise schema | [loading.md](docs/loading.md) |
 | `db delete [--yes]` | Delete DB file | [loading.md](docs/loading.md) |
 | `material add/view/delete` | Manage materials | [loading.md](docs/loading.md) |
@@ -97,6 +98,40 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | `hoop-stress history` | Normalised stress vs time from pupitre file | [hoop-stress.md](docs/hoop-stress.md) |
 | `hoop-stress stats` | Descriptive statistics of stress time series | [hoop-stress.md](docs/hoop-stress.md) |
 | `hoop-stress fatigue` | Rainflow cycle counting | [hoop-stress.md](docs/hoop-stress.md) |
+
+---
+
+## Validating the database — `check`
+
+`magnetdb.py check` scans the DB for data that is present but not usable, so
+problems surface before they break `hoop-stress compute` or a query further
+down the pipeline:
+
+- **parts** — flags rows missing `geometry` and/or `geometry_data`.
+- **magnets** — flags rows missing `geometry_data`, a `type` that isn't a
+  valid `MagnetType` (`insert`/`bitters`/`supras`), or a linked part whose
+  `type` doesn't belong to that magnet type.
+- **experiments** / **operationaldata** — flags rows whose `file` is unset or
+  doesn't exist on disk.
+
+```bash
+# Check everything
+python magnetdb.py check --db $DB
+
+# Restrict to one entity, or one named object
+python magnetdb.py check --db $DB --entity magnet
+python magnetdb.py check --db $DB --entity magnet --name M19071101
+
+# Reconstruct missing magnets.geometry_data from parts' geometry_data
+# (requires every linked part to already have its own geometry_data)
+python magnetdb.py check --db $DB --entity magnet --fix
+```
+
+`check` exits non-zero if any problem remains unresolved, so it can gate a
+setup script. `--fix` only ever touches `magnets.geometry_data`; it never
+invents data for parts, experiments, or operationaldata, and it refuses (with
+a clear error) to "fix" a magnet whose `type` isn't a valid `MagnetType` —
+that's a data-inconsistency bug to fix by hand, not something to paper over.
 
 ---
 
@@ -123,6 +158,7 @@ done
 
 # 2. Verify
 python magnetdb.py list --db $DB
+python magnetdb.py check --db $DB   # flags missing geometry_data, bad file paths, etc.
 
 # 3. Populate operationaldata from the filesystem
 python magnetdb.py populate operationaldata --all --db $DB \

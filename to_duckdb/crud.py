@@ -43,6 +43,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from enums import COIL_PART_TO_MAGNET_TYPE
 from schema import COIL_TYPES
 
 # ---------------------------------------------------------------------------
@@ -129,15 +130,24 @@ def load_geometry_json(geometry_path) -> str | None:
 
 
 def infer_magnet_type(parts: list[dict]) -> str:
-    """Infer magnet assembly type from the types of its constituent parts."""
+    """Infer magnet assembly type from the types of its constituent parts.
+
+    Exactly one coil part type (helix, bitter, or supra) must be present —
+    mixed (hybrid) or coil-less assemblies are not supported by the schema.
+
+    Raises
+    ------
+    ValueError
+        If zero or more than one distinct coil part type is found.
+    """
     coil_types = {p.get("type") for p in parts if p.get("type") in COIL_TYPES}
-    if coil_types == {"helix"}:
-        return "insert"
-    if coil_types == {"bitter"}:
-        return "bitters"
-    if len(coil_types) > 1:
-        return "hybrid"
-    return "unknown"
+    if len(coil_types) != 1:
+        raise ValueError(
+            "Parts must contain exactly one coil type (helix, bitter, or "
+            f"supra); found {sorted(coil_types) or 'none'}. Mixed/hybrid or "
+            "coil-less assemblies are not supported."
+        )
+    return COIL_PART_TO_MAGNET_TYPE[coil_types.pop()].value
 
 
 # ---------------------------------------------------------------------------

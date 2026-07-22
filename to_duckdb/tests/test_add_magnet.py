@@ -158,7 +158,6 @@ def test_add_magnet_validate_part_missing_material(tmp_path):
 @pytest.mark.parametrize("part_types,expected_magnet_type", [
     (["helix", "ring"], "insert"),
     (["bitter", "bitter"], "bitters"),
-    (["helix", "bitter"], "hybrid"),
 ])
 def test_add_magnet_infers_type(tmp_path, part_types, expected_magnet_type):
     data = copy.deepcopy(MAGNET_JSON)
@@ -172,6 +171,19 @@ def test_add_magnet_infers_type(tmp_path, part_types, expected_magnet_type):
     add_magnet(data, db)
     row = _fetch_one(db, "SELECT type FROM magnets WHERE name = 'MAG_JSON'")
     assert row[0] == expected_magnet_type
+
+
+def test_add_magnet_rejects_mixed_coil_types(tmp_path):
+    """Mixed helix+bitter parts (hybrid) are not a supported MagnetType."""
+    data = copy.deepcopy(MAGNET_JSON)
+    template_part = data["parts"][0]
+    data["parts"] = [
+        {**template_part, "name": "P_00", "type": "helix"},
+        {**template_part, "name": "P_01", "type": "bitter"},
+    ]
+    db = tmp_path / "test.duckdb"
+    with pytest.raises(SystemExit):
+        add_magnet(data, db)
 
 
 # ---------------------------------------------------------------------------

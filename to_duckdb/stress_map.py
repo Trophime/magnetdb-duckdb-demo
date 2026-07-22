@@ -33,7 +33,6 @@ Verify the unit for your dataset before interpreting ratio_rpe values.
 """
 
 import argparse
-import enum
 import glob as _glob
 import json
 import re
@@ -49,36 +48,13 @@ import pandas as pd
 import magnettools.Bmap as bmap
 import magnettools.magnettools as mt
 from config import DEFAULT_DB
+from enums import MagnetType, PartType
 from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE, _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
 from python_magnetrun.magnetdata import load_magnetdata
 from python_magnetrun.runetl import prepareData
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
 from python_magnetsetup.ana import msite_setup
 from python_magnetsetup.config import appenv
-
-
-class PartType(str, enum.Enum):
-    SUPRA = "supra"
-    HELIX = "helix"
-    RING = "ring"
-    SCREEN = "screen"
-    LEAD = "lead"
-    BITTER = "bitter"
-
-    @classmethod
-    def choices(cls):
-        return [(item.value, item.name) for item in cls]
-
-
-class MagnetType(str, enum.Enum):
-    INSERT = "insert"
-    BITTERS = "bitters"
-    SUPRAS = "supras"
-    HYBRID = "hybrid"
-
-    @classmethod
-    def choices(cls):
-        return [(item.value, item.name) for item in cls]
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +87,7 @@ def load_site_config_from_duckdb(
     site_name: str,
     db_path: str,
     magnet_override: str | None = None,
+    con: "duckdb.DuckDBPyConnection | None" = None,
 ) -> tuple[str, list[tuple[str, dict, str | None]]]:
     """
     Return (housing, [(magnet_name, config, geometry_data), ...]) for every magnet at a site.
@@ -125,6 +102,9 @@ def load_site_config_from_duckdb(
     db_path         : Path to the DuckDB file
     magnet_override : Explicit magnet name; returns only that magnet.
                       A warning is printed if it is not linked to the site.
+    con             : Reuse an already-open connection instead of opening a new
+                       read-only one (avoids DuckDB's "different configuration"
+                       error when called from within a caller's open connection).
 
     Returns
     -------
@@ -139,14 +119,17 @@ def load_site_config_from_duckdb(
     ValueError : site not found, no magnet linked, MAT_ISOLANT missing,
                  or no magnet has parts in the DB.
     """
-    con = duckdb.connect(db_path, read_only=True)
+    owns_con = con is None
+    if con is None:
+        con = duckdb.connect(db_path, read_only=True)
 
     # ── 1. Site housing ───────────────────────────────────────────────────────
     site_row = con.execute(
         "SELECT housing FROM sites WHERE name = ?", [site_name]
     ).fetchone()
     if site_row is None:
-        con.close()
+        if owns_con:
+            con.close()
         raise ValueError(
             f"Site '{site_name}' not found in DB. "
             "Check the site name and ensure seeds are loaded."
@@ -164,7 +147,8 @@ def load_site_config_from_duckdb(
         [site_name],
     ).fetchall()
     if not rows:
-        con.close()
+        if owns_con:
+            con.close()
         raise ValueError(
             f"No magnet linked to site '{site_name}'. "
             "Check the site name and ensure seeds are loaded."
@@ -179,7 +163,8 @@ def load_site_config_from_duckdb(
         FROM materials WHERE name = 'MAT_ISOLANT'
     """).fetchone()
     if isolant_row is None:
-        con.close()
+        if owns_con:
+            con.close()
         raise ValueError(
             "MAT_ISOLANT not found in the database. "
             "Run seeds_to_duckdb.py to populate structural data first."
@@ -271,7 +256,8 @@ def load_site_config_from_duckdb(
             )
         results.append((magnet_name, config, geometry_data))
 
-    con.close()
+    if owns_con:
+        con.close()
 
     if not results:
         raise ValueError(
@@ -573,7 +559,7 @@ def magnet_geometry_config_to_yaml(
     else:
         raise ValueError(
             f"Unsupported magnet type '{magnet_type}' for '{magnet_name}'. "
-            f"Expected one of: {[t.value for t in MagnetType if t != MagnetType.HYBRID]}."
+            f"Expected one of: {[t.value for t in MagnetType]}."
         )
 
     if output_dir is not None:
