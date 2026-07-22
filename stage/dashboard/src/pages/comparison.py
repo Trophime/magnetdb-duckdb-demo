@@ -14,7 +14,7 @@ target_table = 'operationaldata'
 dash.register_page(
     __name__, 
     path='/comparison', 
-    name="Comparaison Multi-fichiers"
+    name="Multi-file comparison"
 )
 
 # Le Layout obligatoire corrig0 échecklist et aligné 
