@@ -5,6 +5,7 @@ import functools
 from python_magnetrun.MagnetRun import load_mrun
 import re
 from datetime import datetime
+import numpy as np
 
 # Chemin absolu vers la base DuckDB
 DB_PATH = "/workspaces/2026-m1-hifimagnet/to_duckdb/magnetdb.duckdb"
