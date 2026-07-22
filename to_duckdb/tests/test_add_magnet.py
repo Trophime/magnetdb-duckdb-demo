@@ -6,8 +6,8 @@ import copy
 import duckdb
 import pytest
 
-import add_magnet as am_module
-from add_magnet import add_magnet
+import magnetdb
+from magnetdb import _add_magnet as add_magnet, _validate_magnet
 from schema import ensure_schema
 from tests.conftest import MAGNET_JSON
 
@@ -139,14 +139,14 @@ def test_add_magnet_validate_missing_parts(tmp_path):
 def test_add_magnet_validate_part_missing_type(tmp_path):
     data = copy.deepcopy(MAGNET_JSON)
     del data["parts"][0]["type"]
-    errors = am_module._validate(data)
+    errors = _validate_magnet(data)
     assert any("type" in e for e in errors)
 
 
 def test_add_magnet_validate_part_missing_material(tmp_path):
     data = copy.deepcopy(MAGNET_JSON)
     data["parts"][0]["material"] = {}
-    errors = am_module._validate(data)
+    errors = _validate_magnet(data)
     assert any("material" in e for e in errors)
 
 
@@ -158,7 +158,6 @@ def test_add_magnet_validate_part_missing_material(tmp_path):
 @pytest.mark.parametrize("part_types,expected_magnet_type", [
     (["helix", "ring"], "insert"),
     (["bitter", "bitter"], "bitters"),
-    (["helix", "bitter"], "hybrid"),
 ])
 def test_add_magnet_infers_type(tmp_path, part_types, expected_magnet_type):
     data = copy.deepcopy(MAGNET_JSON)
@@ -174,6 +173,19 @@ def test_add_magnet_infers_type(tmp_path, part_types, expected_magnet_type):
     assert row[0] == expected_magnet_type
 
 
+def test_add_magnet_rejects_mixed_coil_types(tmp_path):
+    """Mixed helix+bitter parts (hybrid) are not a supported MagnetType."""
+    data = copy.deepcopy(MAGNET_JSON)
+    template_part = data["parts"][0]
+    data["parts"] = [
+        {**template_part, "name": "P_00", "type": "helix"},
+        {**template_part, "name": "P_01", "type": "bitter"},
+    ]
+    db = tmp_path / "test.duckdb"
+    with pytest.raises(SystemExit):
+        add_magnet(data, db)
+
+
 # ---------------------------------------------------------------------------
 # CLI entry point smoke test
 # ---------------------------------------------------------------------------
@@ -184,7 +196,7 @@ def test_add_magnet_cli(tmp_path, monkeypatch, capsys):
     json_path.write_text(json.dumps(MAGNET_JSON))
     db_path = tmp_path / "cli.duckdb"
 
-    monkeypatch.setattr("sys.argv", ["add_magnet.py", str(json_path), "--db", str(db_path)])
-    am_module.main()
+    monkeypatch.setattr("sys.argv", ["magnetdb.py", "magnet", "add", str(json_path), "--db", str(db_path)])
+    magnetdb.main()
 
     assert _count(db_path, "magnets") == 1

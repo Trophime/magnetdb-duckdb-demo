@@ -39,8 +39,11 @@ pyyaml
 # Plotting
 matplotlib
 
-# Rainflow fatigue cycle counting  (student_stress_map.py fatigue subcommand)
+# Rainflow fatigue cycle counting  (tutorials/stress_map.py fatigue subcommand)
 rainflow
+
+# Parquet I/O with column-level metadata (compute_hoop_stats.py)
+pyarrow
 
 # Testing
 pytest

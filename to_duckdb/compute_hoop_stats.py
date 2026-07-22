@@ -1,0 +1,631 @@
+"""
+compute_hoop_stats.py
+=====================
+Compute per-part hoop-stress statistics for every experiment at a site and
+persist the results in DuckDB.
+
+For each experiment file not yet processed this module:
+  1. Calls validate_fast_from_pupitre() to get the full hoop-stress time series
+     (columns H1_fast, B1_fast, Supra1_fast, … depending on magnet_type).
+  2. Saves the time series to a Parquet file with per-column and table-level
+     PyArrow metadata (t0 timestamp, site name, unit/symbol per column, part map).
+  3. Computes per-part stress-bin distributions    → hoop_stress_bin_stats
+  4. Computes per-part rainflow fatigue cycle counts → hoop_stress_fatigue
+  5. Marks the experiment as processed in hoop_stress_processed (idempotent).
+
+Bin format
+----------
+Bins are specified as a comma-separated list of edge values in MPa:
+
+    --bins 0,100,200,300,400,500,600
+
+N edges define N-1 consecutive bins.  The legacy pair format
+"l1:h1,l2:h2,..." is still accepted for backward compatibility.
+
+Default bins span 0–600 MPa in 100 MPa steps (6 bins).
+
+Usage
+-----
+    # via magnetdb.py (recommended):
+    python magnetdb.py hoop-stress compute --site M9_M19061901 --db magnetdb.duckdb
+
+    # standalone:
+    python compute_hoop_stats.py --site M9_M19061901 --db magnetdb.duckdb
+"""
+
+import argparse
+import json
+import re
+import sys
+import tempfile
+from pathlib import Path
+
+import duckdb
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
+
+sys.path.insert(0, str(Path(__file__).parent))
+from config import DEFAULT_DB
+from populate import _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
+from schema import ensure_schema
+
+# ---------------------------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------------------------
+
+DEFAULT_SRV_SUBDIR = _DEFAULT_SRV_SUBDIR
+DEFAULT_MAGNET_TYPE  = "all"
+
+DEFAULT_BIN_EDGES: list[float] = [0.0, 100.0, 200.0, 300.0, 400.0, 500.0, 600.0]
+DEFAULT_STRESS_BINS: list[tuple[float, float]] = [
+    (DEFAULT_BIN_EDGES[i], DEFAULT_BIN_EDGES[i + 1])
+    for i in range(len(DEFAULT_BIN_EDGES) - 1)
+]
+
+_HOOP_COL_RE = re.compile(r"^(H|B|Supra)\d+_fast$")
+
+# ---------------------------------------------------------------------------
+# Bin helpers
+# ---------------------------------------------------------------------------
+
+
+def bins_to_key(bins: list[tuple[float, float]]) -> str:
+    """Return the canonical edges string used as the DB key, e.g. '0.0,100.0,200.0,...'."""
+    edges = [bins[0][0]] + [hi for _, hi in bins]
+    return ",".join(str(e) for e in edges)
+
+
+def _parse_bins(s: str) -> list[tuple[float, float]]:
+    """Parse bin specification into a list of (lo, hi) pairs.
+
+    Accepts two formats:
+      edges:  '0,100,200,300'         → [(0,100),(100,200),(200,300)]
+      pairs:  '0:100,100:200,200:300' → same (legacy, still accepted)
+    """
+    if ":" in s:
+        bins = []
+        for pair in s.split(","):
+            lo, hi = pair.strip().split(":")
+            bins.append((float(lo), float(hi)))
+        return bins
+    edges = [float(x.strip()) for x in s.split(",")]
+    if len(edges) < 2:
+        raise ValueError(f"--bins needs at least 2 edge values, got: {s!r}")
+    return [(edges[i], edges[i + 1]) for i in range(len(edges) - 1)]
+
+
+# ---------------------------------------------------------------------------
+# Part-column mapping
+# ---------------------------------------------------------------------------
+
+
+def build_part_column_map(
+    site_name: str,
+    db_path: str,
+    con: "duckdb.DuckDBPyConnection | None" = None,
+) -> dict[str, str]:
+    """Return {column_name: part_name} for all coil parts at a site.
+
+    Column names follow the same convention as validate_fast_from_pupitre():
+      - helices  → H1_fast, H2_fast, …  (parts ordered by rank within insert magnets)
+      - bitters  → B1_fast, B2_fast, …  (parts ordered by rank within bitter magnets)
+      - supras   → Supra1_fast, …        (parts ordered by rank within supra magnets)
+
+    Magnets are ordered by commissioned_at DESC (same as load_site_config_from_duckdb).
+    Within each magnet, parts are ordered by rank.
+
+    con : Reuse an already-open connection instead of opening a new read-only
+          one (avoids DuckDB's "different configuration" error when called
+          from within a caller's open connection).
+    """
+    owns_con = con is None
+    if con is None:
+        con = duckdb.connect(db_path, read_only=True)
+
+    rows = con.execute("""
+        SELECT m.name AS magnet_name, m.type AS magnet_type,
+               p.name AS part_name,  p.type  AS part_type, mp.rank
+        FROM site_magnets sm
+        JOIN magnets      m  ON m.name         = sm.magnet_name
+        JOIN magnet_parts mp ON mp.magnet_name = m.name
+        JOIN parts        p  ON p.name         = mp.part_name
+        WHERE sm.site_name = ?
+        ORDER BY sm.commissioned_at DESC NULLS LAST, mp.rank
+    """, [site_name]).fetchall()
+    if owns_con:
+        con.close()
+
+    h_idx = b_idx = s_idx = 1
+    mapping: dict[str, str] = {}
+    for _magnet, magnet_type, part_name, part_type, _rank in rows:
+        mt = (magnet_type or "").lower()
+        pt = (part_type  or "").lower()
+        if mt in ("insert",) and pt in ("helix",):
+            mapping[f"H{h_idx}_fast"] = part_name
+            h_idx += 1
+        elif mt in ("bitters",) and pt in ("bitter",):
+            mapping[f"B{b_idx}_fast"] = part_name
+            b_idx += 1
+        elif mt in ("supras",) and pt in ("supra",):
+            mapping[f"Supra{s_idx}_fast"] = part_name
+            s_idx += 1
+
+    return mapping
+
+
+# ---------------------------------------------------------------------------
+# Parquet I/O
+# ---------------------------------------------------------------------------
+
+
+def _column_meta(col: str) -> dict[bytes, bytes]:
+    """Return PyArrow field-level metadata for a hoop-stress column."""
+    m = re.match(r"^(H|B|Supra)(\d+)_fast$", col)
+    if not m:
+        return {}
+    prefix, idx = m.group(1), m.group(2)
+    symbol = {"H": "σ_H", "B": "σ_B", "Supra": "σ_S"}[prefix]
+    return {b"unit": b"MPa", b"symbol": f"{symbol}{idx}".encode()}
+
+
+def save_hoop_parquet(
+    df: pd.DataFrame,
+    path: Path,
+    *,
+    site_name: str,
+    housing: str,
+    t0: str,
+    experiment_file: str,
+    part_map: dict[str, str],
+) -> Path:
+    """Write *df* to a Parquet file with rich PyArrow metadata.
+
+    Table-level metadata: site_name, housing, t0 (ISO timestamp string),
+    experiment_file, part_map (JSON).
+    Field-level metadata: unit and symbol for each *_fast column.
+    """
+    table = pa.Table.from_pandas(df, preserve_index=False)
+
+    # Per-field metadata
+    new_fields = []
+    for field in table.schema:
+        extra = _column_meta(field.name)
+        if extra:
+            new_fields.append(field.with_metadata(extra))
+        else:
+            new_fields.append(field)
+
+    # Table-level metadata
+    table_meta = {
+        b"site_name":       site_name.encode(),
+        b"housing":         (housing or "").encode(),
+        b"t0":              (t0 or "").encode(),
+        b"experiment_file": experiment_file.encode(),
+        b"part_map":        json.dumps(part_map).encode(),
+    }
+    new_schema = pa.schema(new_fields, metadata=table_meta)
+    table = table.cast(new_schema)
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, path, compression="snappy")
+    return path
+
+
+# ---------------------------------------------------------------------------
+# Bin statistics (same additive pattern as compute_op_stats)
+# ---------------------------------------------------------------------------
+
+
+def _bin_series(
+    sigma: pd.Series,
+    dt: pd.Series,
+    bins: list[tuple[float, float]],
+) -> list[dict]:
+    """Return rows for hoop_stress_bin_stats for one part column."""
+    rows = []
+    sigma = sigma.astype(float)
+    dt = dt.astype(float)
+    for low, high in bins:
+        mask = (sigma >= low) & (sigma < high)
+        sub_s = sigma[mask]
+        sub_dt = dt[mask]
+        if sub_s.empty:
+            continue
+        rows.append({
+            "stress_bin_low":  low,
+            "stress_bin_high": high,
+            "n_samples":  len(sub_s),
+            "sum_dt":     float(sub_dt.sum()),
+            "sum_x_dt":   float((sub_s * sub_dt).sum()),
+            "sum_x2_dt":  float((sub_s**2 * sub_dt).sum()),
+            "min_x":      float(sub_s.min()),
+            "max_x":      float(sub_s.max()),
+        })
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Rainflow fatigue
+# ---------------------------------------------------------------------------
+
+
+def _rainflow_stats(sigma: pd.Series) -> dict[str, float]:
+    """Return {n_cycles, sum_range3} from a rainflow count of *sigma*."""
+    try:
+        import rainflow
+    except ImportError:
+        return {"n_cycles": 0.0, "sum_range3": 0.0}
+
+    cycles = rainflow.count_cycles(sigma.to_numpy().astype(float))
+    n_cycles = 0.0
+    sum_range3 = 0.0
+    for rng, _mean, count, *_ in cycles:
+        n_cycles += count
+        sum_range3 += count * float(rng) ** 3
+    return {"n_cycles": n_cycles, "sum_range3": sum_range3}
+
+
+# ---------------------------------------------------------------------------
+# DuckDB helpers
+# ---------------------------------------------------------------------------
+
+
+def _get_experiments(con, site_name: str) -> pd.DataFrame:
+    return con.execute(
+        "SELECT id, name, file FROM experiments "
+        "WHERE site_name = ? AND file IS NOT NULL ORDER BY id",
+        [site_name],
+    ).df()
+
+
+def _check_processed(
+    con, exp_id: int, bin_key: str
+) -> tuple[bool, set[str]]:
+    """Check whether this (experiment, bin_key) pair has already been processed.
+
+    Returns (already_done, other_keys) where:
+      already_done  – True if this exact bin_key is recorded for exp_id
+      other_keys    – set of different bin keys already stored for exp_id
+    """
+    rows = con.execute(
+        "SELECT bin_config FROM hoop_stress_processed WHERE experiment_id = ?", [exp_id]
+    ).fetchall()
+    stored = {r[0] for r in rows}
+    return bin_key in stored, stored - {bin_key}
+
+
+def _mark_processed(
+    con, exp_id: int, magnet_type: str, bin_key: str, parquet_path: str | None
+) -> None:
+    con.execute(
+        """
+        INSERT OR REPLACE INTO hoop_stress_processed
+            (experiment_id, bin_config, magnet_type, parquet_path)
+        VALUES (?, ?, ?, ?)
+        """,
+        [exp_id, bin_key, magnet_type, parquet_path],
+    )
+
+
+def _insert_bin_stats(con, exp_id: int, part_name: str, rows: list[dict]) -> None:
+    for r in rows:
+        con.execute(
+            """
+            INSERT OR REPLACE INTO hoop_stress_bin_stats
+                (experiment_id, part_name, stress_bin_low, stress_bin_high,
+                 n_samples, sum_dt, sum_x_dt, sum_x2_dt, min_x, max_x)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
+            """,
+            [exp_id, part_name,
+             r["stress_bin_low"], r["stress_bin_high"],
+             r["n_samples"], r["sum_dt"], r["sum_x_dt"],
+             r["sum_x2_dt"], r["min_x"], r["max_x"]],
+        )
+
+
+def _insert_fatigue(con, exp_id: int, part_name: str, stats: dict) -> None:
+    con.execute(
+        """
+        INSERT OR REPLACE INTO hoop_stress_fatigue
+            (experiment_id, part_name, n_cycles, sum_range3)
+        VALUES (?, ?, ?, ?)
+        """,
+        [exp_id, part_name, stats["n_cycles"], stats["sum_range3"]],
+    )
+
+
+# ---------------------------------------------------------------------------
+# dt helper (same logic as compute_op_stats._compute_dt)
+# ---------------------------------------------------------------------------
+
+
+def _compute_dt(df: pd.DataFrame) -> pd.Series:
+    if "t" in df.columns:
+        return df["t"].diff().fillna(0.0).clip(lower=0.0)
+    return pd.Series(1.0, index=df.index)
+
+
+# ---------------------------------------------------------------------------
+# Main pipeline
+# ---------------------------------------------------------------------------
+
+
+def compute_hoop_stress_history(
+    site_name: str,
+    db_path: str,
+    *,
+    magnet_type: str = DEFAULT_MAGNET_TYPE,
+    bins: list[tuple[float, float]] = DEFAULT_STRESS_BINS,
+    parquet_dir: str | None = None,
+    geometries_dir: str | None = None,
+    reprocess: bool = False,
+    dry_run: bool = False,
+    use_mrun: bool = False,
+    pupitre_datadir: str = "",
+    verbose: bool = True,
+) -> dict:
+    """Process all experiment files for *site_name* and persist hoop-stress stats.
+
+    Parameters
+    ----------
+    site_name      : site FK (must exist in the sites table)
+    db_path        : path to the DuckDB file
+    magnet_type    : "H", "B", "S", or "all"
+    bins           : list of (low, high) stress bins in MPa
+    parquet_dir    : directory for Parquet output files (default: <db dir>/hoop_parquet)
+    geometries_dir : override for geometry YAML directory
+    reprocess      : if True, overwrite already-processed files
+    dry_run        : discover files but do not write to DB or disk
+    use_mrun       : pass to validate_fast_from_pupitre
+    pupitre_datadir: root for pupitre files
+    verbose        : print progress lines
+    """
+    from stress_map import (
+        load_site_config_from_duckdb,
+        load_magnettools,
+        prepare_geometry_directory,
+        validate_fast_from_pupitre,
+    )
+    try:
+        from python_magnetrun.utils.timestamps import parse_filename_timestamp
+    except ImportError:
+        parse_filename_timestamp = None
+
+    db_path = str(db_path)
+    con = duckdb.connect(db_path)
+    ensure_schema(con)
+
+    experiments = _get_experiments(con, site_name)
+    if experiments.empty:
+        if verbose:
+            print(f"[INFO] No experiments found for site '{site_name}'.")
+        con.close()
+        return {"new": 0, "skipped": 0, "errors": []}
+
+    # ── Load site config and magnettools (shared across all experiments) ──────
+    try:
+        housing, magnet_configs = load_site_config_from_duckdb(site_name, db_path, con=con)
+    except ValueError as exc:
+        print(f"[ERROR] Cannot load site config for '{site_name}': {exc}")
+        con.close()
+        return {"new": 0, "skipped": 0, "errors": [str(exc)]}
+
+    part_map = build_part_column_map(site_name, db_path, con=con)
+
+    # Parquet output directory
+    pq_dir = Path(parquet_dir) if parquet_dir else Path(db_path).parent / "hoop_parquet"
+    if not dry_run:
+        pq_dir.mkdir(parents=True, exist_ok=True)
+
+    results: dict = {"new": 0, "skipped": 0, "errors": []}
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir_path = Path(tmpdir)
+
+        # Build the geometry directory once per site
+        for magnet_name, config, geometry_data in magnet_configs:
+            try:
+                prepare_geometry_directory(
+                    magnet_name, config, tmpdir_path,
+                    geometry_data=geometry_data,
+                    geometries_dir=geometries_dir,
+                )
+            except Exception as exc:
+                if verbose:
+                    print(f"  [WARN] geometry prep for '{magnet_name}': {exc}")
+
+        # Load magnettools objects (Tubes, Helices, BMagnets, UMagnets, …)
+        try:
+            combined_config = magnet_configs[0][1] if len(magnet_configs) == 1 else _merge_configs(magnet_configs)
+            data = load_magnettools(combined_config, tmpdir_path)
+        except Exception as exc:
+            print(f"[ERROR] Cannot load magnettools for '{site_name}': {exc}")
+            con.close()
+            return {"new": 0, "skipped": 0, "errors": [str(exc)]}
+
+        for _, exp_row in experiments.iterrows():
+            exp_id   = int(exp_row["id"])
+            exp_name = str(exp_row["name"])
+            _f = Path(str(exp_row["file"]))
+            if not _f.is_absolute() and pupitre_datadir:
+                exp_file = str(Path(pupitre_datadir) / housing / _f.name)
+            else:
+                exp_file = str(_f)
+
+            bin_key = bins_to_key(bins)
+            already_done, other_keys = _check_processed(con, exp_id, bin_key)
+            if other_keys:
+                print(
+                    f"  [WARN] [{exp_id}] {exp_name}: previously processed with "
+                    f"different bin(s): {sorted(other_keys)}. "
+                    f"Use --reprocess to overwrite."
+                )
+            if already_done and not reprocess:
+                results["skipped"] += 1
+                continue
+
+            if verbose:
+                print(f"  processing [{exp_id}] {exp_name}")
+
+            if dry_run:
+                results["new"] += 1
+                continue
+
+            try:
+                df = validate_fast_from_pupitre(
+                    data, exp_file, housing,
+                    magnet_type=magnet_type,
+                    use_mrun=use_mrun,
+                    site=site_name,
+                )
+            except Exception as exc:
+                if verbose:
+                    print(f"  [ERROR] {exp_name}: {exc}")
+                results["errors"].append((exp_name, str(exc)))
+                continue
+
+            # Hoop stress columns present in this DataFrame
+            hoop_cols = [c for c in df.columns if _HOOP_COL_RE.match(c)]
+            if not hoop_cols:
+                if verbose:
+                    print(f"  [SKIP] {exp_name}: no hoop-stress columns in output")
+                results["errors"].append((exp_name, "no hoop columns"))
+                continue
+
+            dt = _compute_dt(df)
+
+            # t0 timestamp from filename
+            t0_str = ""
+            if parse_filename_timestamp is not None:
+                try:
+                    t0_dt = parse_filename_timestamp(Path(exp_file).name)
+                    if t0_dt is not None:
+                        t0_str = t0_dt.isoformat()
+                except Exception:
+                    pass
+
+            # Save Parquet
+            pq_path = pq_dir / f"{exp_name}.parquet"
+            try:
+                save_hoop_parquet(
+                    df, pq_path,
+                    site_name=site_name,
+                    housing=housing,
+                    t0=t0_str,
+                    experiment_file=exp_file,
+                    part_map={k: v for k, v in part_map.items() if k in hoop_cols},
+                )
+            except Exception as exc:
+                if verbose:
+                    print(f"  [WARN] Parquet write failed for {exp_name}: {exc}")
+                pq_path = None
+
+            # Bin stats + rainflow per part
+            for col in hoop_cols:
+                part_name = part_map.get(col, col)
+                sigma = df[col]
+
+                bin_rows = _bin_series(sigma, dt, bins)
+                _insert_bin_stats(con, exp_id, part_name, bin_rows)
+
+                fatigue = _rainflow_stats(sigma)
+                _insert_fatigue(con, exp_id, part_name, fatigue)
+
+            _mark_processed(
+                con, exp_id, magnet_type, bin_key,
+                str(pq_path) if pq_path else None,
+            )
+            results["new"] += 1
+
+    con.close()
+
+    if verbose:
+        print(
+            f"\nDone — {results['new']} processed, "
+            f"{results['skipped']} skipped, "
+            f"{len(results['errors'])} errors"
+        )
+    return results
+
+
+def _merge_configs(magnet_configs: list) -> dict:
+    """Merge multiple magnet configs into one combined dict for load_magnettools."""
+    combined: dict = {}
+    for _name, config, _geo in magnet_configs:
+        for key, val in config.items():
+            if isinstance(val, list) and key in combined:
+                combined[key] = combined[key] + val
+            else:
+                combined[key] = val
+    return combined
+
+
+# ---------------------------------------------------------------------------
+# CLI (standalone entry point)
+# ---------------------------------------------------------------------------
+
+
+def _parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Compute per-part hoop-stress statistics and persist to DuckDB.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    parser.add_argument("--db",           default=DEFAULT_DB,
+                        help=f"DuckDB file (default: {DEFAULT_DB})")
+    parser.add_argument("--site",         required=True,
+                        help="Site name (FK in sites table)")
+    parser.add_argument("--magnet-type",  default=DEFAULT_MAGNET_TYPE,
+                        choices=["H", "B", "S", "all"],
+                        dest="magnet_type",
+                        help="Coil type(s) to compute (default: all)")
+    parser.add_argument("--bins",         default=None,
+                        help="Bin edges in MPa as a comma-separated list, e.g. "
+                             f"'0,100,200,300,400,500,600' (default: {','.join(str(int(e)) for e in DEFAULT_BIN_EDGES)}). "
+                             "Legacy pair format 'l1:h1,l2:h2,...' is also accepted.")
+    parser.add_argument("--parquet-dir",  default=None, dest="parquet_dir",
+                        help="Output directory for Parquet files (default: <db dir>/hoop_parquet)")
+    parser.add_argument("--geometries",   default=None,
+                        help="Override geometry YAML directory")
+    parser.add_argument("--reprocess",    action="store_true",
+                        help="Re-compute already-processed experiments")
+    parser.add_argument("--dry-run",      action="store_true", dest="dry_run",
+                        help="Discover files but do not write to DB or disk")
+    parser.add_argument("--use-mrun",     action="store_true", dest="use_mrun",
+                        help="Load files via python_magnetrun.MagnetRun.load_mrun()")
+    parser.add_argument("--records-base",    default="", dest="records_base",
+                        help="Root of the records tree (parent of --srv-subdir)")
+    parser.add_argument("--srv-subdir",      default=DEFAULT_SRV_SUBDIR, dest="srv_subdir",
+                        help=f"Subdirectory of records-base for pupitre TXT files "
+                             f"(default: {DEFAULT_SRV_SUBDIR})")
+    parser.add_argument("--quiet",        action="store_true",
+                        help="Suppress per-file output")
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> None:
+    args = _parse_args(argv)
+    bins = _parse_bins(args.bins) if args.bins else DEFAULT_STRESS_BINS
+    pupitre_datadir = (
+        str(Path(args.records_base) / args.srv_subdir) if args.records_base else ""
+    )
+
+    compute_hoop_stress_history(
+        site_name=args.site,
+        db_path=args.db,
+        magnet_type=args.magnet_type,
+        bins=bins,
+        parquet_dir=args.parquet_dir,
+        geometries_dir=args.geometries,
+        reprocess=args.reprocess,
+        dry_run=args.dry_run,
+        use_mrun=args.use_mrun,
+        pupitre_datadir=pupitre_datadir,
+        verbose=not args.quiet,
+    )
+
+
+if __name__ == "__main__":
+    main()

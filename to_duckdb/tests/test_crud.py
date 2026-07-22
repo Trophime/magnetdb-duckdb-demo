@@ -110,12 +110,20 @@ def test_insert_part_accepts_nested_material_dict(con):
 @pytest.mark.parametrize("parts,expected", [
     ([{"type": "helix"}, {"type": "helix"}, {"type": "ring"}], "insert"),
     ([{"type": "bitter"}, {"type": "bitter"}], "bitters"),
-    ([{"type": "helix"}, {"type": "bitter"}], "hybrid"),
-    ([{"type": "ring"}, {"type": "lead"}], "unknown"),
-    ([], "unknown"),
+    ([{"type": "supra"}, {"type": "supra"}], "supras"),
 ])
 def test_infer_magnet_type(parts, expected):
     assert infer_magnet_type(parts) == expected
+
+
+@pytest.mark.parametrize("parts", [
+    [{"type": "helix"}, {"type": "bitter"}],  # mixed/hybrid — unsupported
+    [{"type": "ring"}, {"type": "lead"}],     # no coil part at all
+    [],
+])
+def test_infer_magnet_type_raises_for_invalid_coil_types(parts):
+    with pytest.raises(ValueError):
+        infer_magnet_type(parts)
 
 
 # ---------------------------------------------------------------------------

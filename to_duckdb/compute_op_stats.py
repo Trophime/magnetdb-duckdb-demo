@@ -19,9 +19,9 @@ For each operationaldata file not yet processed this script:
 
 Usage
 -----
-    python compute_op_stats.py --db student.duckdb --records ../data/M9 \\
+    python compute_op_stats.py --db magnetdb.duckdb --records-base ../data/M9 \\
         --site M9_M19061901
-    python compute_op_stats.py --db student.duckdb --records ../data/M9 \\
+    python compute_op_stats.py --db magnetdb.duckdb --records-base ../data/M9 \\
         --site M9_M19061901 --type pupitre --reprocess
 
 Physical constants
@@ -41,30 +41,32 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
+from config import DEFAULT_DB
 from schema import ensure_schema
 
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
 
-DEFAULT_DB = "student.duckdb"
-DEFAULT_RECORDS_DIR = "records"
-DEFAULT_SITE = "M9_M19061901"
+DEFAULT_RECORDS_BASE = "records"
 
 FIELD_COL = "Field"
-FIELD_THRESHOLD = 0.1        # T  — minimum field to count as "field on"
-CURRENT_THRESHOLD = 0.1      # A  — minimum |Icoil| to count as "coil on"
+FIELD_THRESHOLD = 0.1  # T  — minimum field to count as "field on"
+CURRENT_THRESHOLD = 0.1  # A  — minimum |Icoil| to count as "coil on"
 FLOW_TO_M3S = 1.0 / 3600.0  # m³/h → m³/s
 RHO_CP = 1_000.0 * 4_186.0  # J / (m³·K)  water
 
 DEFAULT_BINS: list[tuple[float, float]] = [
-    (0.0,   0.1),
-    (0.1,   5.0),
-    (5.0,  10.0),
-    (10.0, 20.0),
-    (20.0, 30.0),
-    (30.0, 50.0),
-    (50.0, 100.0),
+    (0.0, 0.1),
+    (0.1, 5.0),
+    (5.0, 10.0),
+    (10.0, 15.0),
+    (15.0, 20.0),
+    (20.0, 25.0),
+    (25.0, 30.0),
+    (30.0, 35.0),
+    (35.0, 40.0),
+    (40.0, 45.0),
 ]
 
 SITE_CHANNELS = ["Pmagnet", "Ptot", "tsb", "teb", "debitbrut"]
@@ -72,6 +74,7 @@ SITE_CHANNELS = ["Pmagnet", "Ptot", "tsb", "teb", "debitbrut"]
 # ---------------------------------------------------------------------------
 # File loading
 # ---------------------------------------------------------------------------
+
 
 def _compute_dt(df: pd.DataFrame) -> pd.Series:
     """Return a dt Series (seconds) using Date+Time columns or a 't' column."""
@@ -93,7 +96,9 @@ def _compute_dt(df: pd.DataFrame) -> pd.Series:
     if "t" in df.columns:
         median_dt = df["t"].diff().dropna()
         median_dt = median_dt[median_dt > 0].median()
-        return pd.Series(float(median_dt) if pd.notna(median_dt) else 1.0, index=df.index)
+        return pd.Series(
+            float(median_dt) if pd.notna(median_dt) else 1.0, index=df.index
+        )
     return pd.Series(1.0, index=df.index)
 
 
@@ -108,6 +113,7 @@ def load_file(path: Path) -> pd.DataFrame | None:
         return None
     try:
         from python_magnetrun.magnetdata import load_magnetdata
+
         md = load_magnetdata(str(path))
         df = md.Data.copy()
     except Exception:
@@ -129,6 +135,7 @@ def load_file(path: Path) -> pd.DataFrame | None:
 # Database helpers
 # ---------------------------------------------------------------------------
 
+
 def get_operationaldata(con, site_name: str, od_type: str | None) -> pd.DataFrame:
     """Return operationaldata rows for a site, optionally filtered by type."""
     q = "SELECT id, name, file FROM operationaldata WHERE site_name = ?"
@@ -142,7 +149,8 @@ def get_operationaldata(con, site_name: str, od_type: str | None) -> pd.DataFram
 
 def get_site_parts(con, site_name: str) -> pd.DataFrame:
     """Return parts with their coil_index for all magnets at a site."""
-    return con.execute("""
+    return con.execute(
+        """
         SELECT p.name AS part_name, mp.coil_index, mp.magnet_name
         FROM site_magnets sm
         JOIN magnet_parts mp ON mp.magnet_name = sm.magnet_name
@@ -150,13 +158,18 @@ def get_site_parts(con, site_name: str) -> pd.DataFrame:
         WHERE sm.site_name = ?
           AND mp.coil_index IS NOT NULL
         ORDER BY mp.coil_index
-    """, [site_name]).df()
+    """,
+        [site_name],
+    ).df()
 
 
 def is_processed(con, od_id: int) -> bool:
-    return con.execute(
-        "SELECT 1 FROM op_stats_processed WHERE operationaldata_id = ?", [od_id]
-    ).fetchone() is not None
+    return (
+        con.execute(
+            "SELECT 1 FROM op_stats_processed WHERE operationaldata_id = ?", [od_id]
+        ).fetchone()
+        is not None
+    )
 
 
 def mark_processed(con, od_id: int, df: pd.DataFrame, bins: list[tuple]) -> None:
@@ -175,6 +188,7 @@ def mark_processed(con, od_id: int, df: pd.DataFrame, bins: list[tuple]) -> None
 # Stat computation
 # ---------------------------------------------------------------------------
 
+
 def _assign_bins(field: pd.Series, bins: list[tuple]) -> pd.Series:
     """Return the bin_low for each row, or NaN if outside every bin."""
     out = pd.Series(np.nan, index=field.index)
@@ -190,15 +204,16 @@ def _bin_agg(x: pd.Series, dt: pd.Series) -> dict:
     dt = dt.astype(float)
     return {
         "n_samples": len(x),
-        "sum_dt":    float(dt.sum()),
-        "sum_x_dt":  float((x * dt).sum()),
+        "sum_dt": float(dt.sum()),
+        "sum_x_dt": float((x * dt).sum()),
         "sum_x2_dt": float((x**2 * dt).sum()),
-        "min_x":     float(x.min()),
-        "max_x":     float(x.max()),
+        "min_x": float(x.min()),
+        "max_x": float(x.max()),
     }
 
 
 # ── Scalars ─────────────────────────────────────────────────────────────────
+
 
 def compute_scalars(
     df: pd.DataFrame,
@@ -219,9 +234,9 @@ def compute_scalars(
         scalars["energy_j"] = float((ptot * dt).sum())
 
     if all(c in df.columns for c in ("tsb", "teb", "debitbrut")):
-        delta_t  = df["tsb"].astype(float) - df["teb"].astype(float)
+        delta_t = df["tsb"].astype(float) - df["teb"].astype(float)
         flow_m3s = df["debitbrut"].astype(float) * flow_to_m3s
-        heat_w   = delta_t * flow_m3s * rho_cp
+        heat_w = delta_t * flow_m3s * rho_cp
         scalars["heat_extracted_j"] = float((heat_w * dt).sum())
 
     return scalars
@@ -236,6 +251,7 @@ def insert_scalars(con, od_id: int, scalars: dict[str, float]) -> None:
 
 
 # ── Site-level bin stats ─────────────────────────────────────────────────────
+
 
 def compute_site_bin_stats(
     df: pd.DataFrame,
@@ -255,7 +271,9 @@ def compute_site_bin_stats(
             if ch not in sub.columns:
                 continue
             agg = _bin_agg(sub[ch], sub["dt"])
-            rows.append({"field_bin_low": low, "field_bin_high": high, "channel": ch, **agg})
+            rows.append(
+                {"field_bin_low": low, "field_bin_high": high, "channel": ch, **agg}
+            )
     return rows
 
 
@@ -268,13 +286,23 @@ def insert_site_bin_stats(con, od_id: int, rows: list[dict]) -> None:
                  n_samples, sum_dt, sum_x_dt, sum_x2_dt, min_x, max_x)
             VALUES (?,?,?,?,?,?,?,?,?,?)
             """,
-            [od_id, r["field_bin_low"], r["field_bin_high"], r["channel"],
-             r["n_samples"], r["sum_dt"], r["sum_x_dt"], r["sum_x2_dt"],
-             r["min_x"], r["max_x"]],
+            [
+                od_id,
+                r["field_bin_low"],
+                r["field_bin_high"],
+                r["channel"],
+                r["n_samples"],
+                r["sum_dt"],
+                r["sum_x_dt"],
+                r["sum_x2_dt"],
+                r["min_x"],
+                r["max_x"],
+            ],
         )
 
 
 # ── Per-part bin stats ────────────────────────────────────────────────────────
+
 
 def compute_part_bin_stats(
     df: pd.DataFrame,
@@ -297,15 +325,15 @@ def compute_part_bin_stats(
     if i_col not in df.columns:
         return []
 
-    field   = df[FIELD_COL].astype(float)
-    icoil   = df[i_col].astype(float)
-    active  = icoil.abs() > CURRENT_THRESHOLD
+    field = df[FIELD_COL].astype(float)
+    icoil = df[i_col].astype(float)
+    active = icoil.abs() > CURRENT_THRESHOLD
     bin_low = _assign_bins(field, bins)
 
     rows = []
     for low, high in bins:
         mask = (bin_low == low) & active
-        sub  = df[mask]
+        sub = df[mask]
         if sub.empty:
             continue
 
@@ -313,23 +341,38 @@ def compute_part_bin_stats(
         dt_sub = sub["dt"]
 
         # Icoil
-        rows.append({
-            "part_name": part_name, "field_bin_low": low, "field_bin_high": high,
-            "channel": "Icoil", **_bin_agg(i_sub, dt_sub),
-        })
+        rows.append(
+            {
+                "part_name": part_name,
+                "field_bin_low": low,
+                "field_bin_high": high,
+                "channel": "Icoil",
+                **_bin_agg(i_sub, dt_sub),
+            }
+        )
 
         # Ucoil
         if u_col in sub.columns:
-            rows.append({
-                "part_name": part_name, "field_bin_low": low, "field_bin_high": high,
-                "channel": "Ucoil", **_bin_agg(sub[u_col].astype(float), dt_sub),
-            })
+            rows.append(
+                {
+                    "part_name": part_name,
+                    "field_bin_low": low,
+                    "field_bin_high": high,
+                    "channel": "Ucoil",
+                    **_bin_agg(sub[u_col].astype(float), dt_sub),
+                }
+            )
 
         # Hoop stress proxy (I^2)
-        rows.append({
-            "part_name": part_name, "field_bin_low": low, "field_bin_high": high,
-            "channel": "hoop_stress_proxy", **_bin_agg(i_sub**2, dt_sub),
-        })
+        rows.append(
+            {
+                "part_name": part_name,
+                "field_bin_low": low,
+                "field_bin_high": high,
+                "channel": "hoop_stress_proxy",
+                **_bin_agg(i_sub**2, dt_sub),
+            }
+        )
 
     return rows
 
@@ -343,15 +386,26 @@ def insert_part_bin_stats(con, od_id: int, rows: list[dict]) -> None:
                  n_samples, sum_dt, sum_x_dt, sum_x2_dt, min_x, max_x)
             VALUES (?,?,?,?,?,?,?,?,?,?,?)
             """,
-            [od_id, r["part_name"], r["field_bin_low"], r["field_bin_high"], r["channel"],
-             r["n_samples"], r["sum_dt"], r["sum_x_dt"], r["sum_x2_dt"],
-             r["min_x"], r["max_x"]],
+            [
+                od_id,
+                r["part_name"],
+                r["field_bin_low"],
+                r["field_bin_high"],
+                r["channel"],
+                r["n_samples"],
+                r["sum_dt"],
+                r["sum_x_dt"],
+                r["sum_x2_dt"],
+                r["min_x"],
+                r["max_x"],
+            ],
         )
 
 
 # ---------------------------------------------------------------------------
 # Top-level ingestion
 # ---------------------------------------------------------------------------
+
 
 def ingest_site(
     site_name: str,
@@ -383,14 +437,14 @@ def ingest_site(
     con = duckdb.connect(db_path)
     ensure_schema(con)
 
-    od_df   = get_operationaldata(con, site_name, od_type)
-    parts   = get_site_parts(con, site_name)
+    od_df = get_operationaldata(con, site_name, od_type)
+    parts = get_site_parts(con, site_name)
     records_path = Path(records_dir)
 
     results = {"new": 0, "skipped": 0, "errors": []}
 
     for _, row in od_df.iterrows():
-        od_id    = int(row["id"])
+        od_id = int(row["id"])
         filename = row["file"]
 
         if not reprocess and is_processed(con, od_id):
@@ -445,6 +499,7 @@ def ingest_site(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _parse_bins(s: str) -> list[tuple[float, float]]:
     """Parse '0:0.1,0.1:5,5:10' into [(0.0, 0.1), (0.1, 5.0), (5.0, 10.0)]."""
     bins = []
@@ -460,27 +515,46 @@ def main() -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--db",          default=DEFAULT_DB,          help="DuckDB file path")
-    parser.add_argument("--records",     default=DEFAULT_RECORDS_DIR, help="Directory of record files")
-    parser.add_argument("--site",        default=DEFAULT_SITE,        help="Site name (FK)")
-    parser.add_argument("--type",        default=None,                help="Filter operationaldata by type, e.g. 'pupitre'")
-    parser.add_argument("--bins",        default=None,
-                        help="Field bins as 'low1:high1,low2:high2,...' (default: built-in 7-bin set)")
-    parser.add_argument("--channels",    default=",".join(SITE_CHANNELS),
-                        help="Comma-separated site-level channels (default: Pmagnet,Ptot,tsb,teb,debitbrut)")
-    parser.add_argument("--flow-to-m3s", type=float, default=FLOW_TO_M3S,
-                        help="Unit conversion: debitbrut → m³/s (default 1/3600 for m³/h input)")
-    parser.add_argument("--reprocess",   action="store_true", help="Re-compute already-processed files")
-    parser.add_argument("--quiet",       action="store_true", help="Suppress per-file output")
+    parser.add_argument("--db", default=DEFAULT_DB, help="DuckDB file path")
+    parser.add_argument(
+        "--records-base",
+        default=DEFAULT_RECORDS_BASE,
+        dest="records_base",
+        help="Directory of record files",
+    )
+    parser.add_argument("--site", required=True, help="Site name (FK)")
+    parser.add_argument(
+        "--type", default=None, help="Filter operationaldata by type, e.g. 'pupitre'"
+    )
+    parser.add_argument(
+        "--bins",
+        default=None,
+        help="Field bins as 'low1:high1,low2:high2,...' (default: built-in 7-bin set)",
+    )
+    parser.add_argument(
+        "--channels",
+        default=",".join(SITE_CHANNELS),
+        help="Comma-separated site-level channels (default: Pmagnet,Ptot,tsb,teb,debitbrut)",
+    )
+    parser.add_argument(
+        "--flow-to-m3s",
+        type=float,
+        default=FLOW_TO_M3S,
+        help="Unit conversion: debitbrut → m³/s (default 1/3600 for m³/h input)",
+    )
+    parser.add_argument(
+        "--reprocess", action="store_true", help="Re-compute already-processed files"
+    )
+    parser.add_argument("--quiet", action="store_true", help="Suppress per-file output")
     args = parser.parse_args()
 
-    bins     = _parse_bins(args.bins) if args.bins else DEFAULT_BINS
+    bins = _parse_bins(args.bins) if args.bins else DEFAULT_BINS
     channels = [c.strip() for c in args.channels.split(",") if c.strip()]
 
     ingest_site(
         site_name=args.site,
         db_path=args.db,
-        records_dir=args.records,
+        records_dir=args.records_base,
         od_type=args.type,
         bins=bins,
         site_channels=channels,

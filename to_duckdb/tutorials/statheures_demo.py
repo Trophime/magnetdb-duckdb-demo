@@ -1,20 +1,20 @@
 """
-student_statheures_demo.py
-==========================
+statheures_demo.py
+==================
 Demonstrates the statheures field-time statistics workflow using the
-student DuckDB database and TSV record files, without python_magnetrun.
+MagnetDB DuckDB database and TSV record files, without python_magnetrun.
 
 This script adapts the plan from statheures_stats_implementation.md:
 - PandasMagnetData.getData()  →  pd.read_csv(filepath, sep='\\t')
 - run.getMagnetRef()          →  experiments.site_name from DuckDB
 - run.getRunRef()             →  experiments.name from DuckDB
 
-Usage
------
-    python student_statheures_demo.py
-    python student_statheures_demo.py --site M10_M19071101_13 --step 1.0
-    python student_statheures_demo.py --site M10_M19071101_13 --year 2025
-    python student_statheures_demo.py --site M10_M19071101_13 \\
+Usage (run from to_duckdb/)
+--------------------------
+    python tutorials/statheures_demo.py
+    python tutorials/statheures_demo.py --site M10_M19071101_13 --step 1.0
+    python tutorials/statheures_demo.py --site M10_M19071101_13 --year 2025
+    python tutorials/statheures_demo.py --site M10_M19071101_13 \\
         --compare 2025 2026
 
 Requirements
@@ -33,8 +33,9 @@ import pandas as pd
 # ---------------------------------------------------------------------------
 # Configuration — adjust to match your local paths
 # ---------------------------------------------------------------------------
-DEFAULT_DB      = "student_magnetdb.duckdb"
-DEFAULT_RECORDS = "records"          # directory containing TSV files
+_HERE           = Path(__file__).resolve().parent.parent
+DEFAULT_DB      = str(_HERE / "magnetdb.duckdb")
+DEFAULT_RECORDS = str(_HERE / "records")  # directory containing TSV files
 DEFAULT_SITE    = "M10_M19071101_13"
 FIELD_COL       = "Field"            # column name for central field in T
 TIME_COL        = "t"                # elapsed time column in seconds

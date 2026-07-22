@@ -40,19 +40,22 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
 from config import DEFAULT_DB
-from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE, _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
+from populate import (
+    _RECORDS_BASE as _DEFAULT_RECORDS_BASE,
+    _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR,
+)
 from schema import ensure_schema
 
 DEFAULT_RECORDS_BASE = str(_DEFAULT_RECORDS_BASE)
-DEFAULT_SRV_SUBDIR   = _DEFAULT_SRV_SUBDIR
+DEFAULT_SRV_SUBDIR = _DEFAULT_SRV_SUBDIR
 
 # ---------------------------------------------------------------------------
 # Defaults  (same as compute_op_stats)
 # ---------------------------------------------------------------------------
 
 FIELD_COL = "Field"
-FIELD_THRESHOLD = 0.1       # T  — minimum field to count as "field on"
-CURRENT_THRESHOLD = 0.1     # A  — minimum |Icoil| to count as "coil on"
+FIELD_THRESHOLD = 0.1  # T  — minimum field to count as "field on"
+CURRENT_THRESHOLD = 0.1  # A  — minimum |Icoil| to count as "coil on"
 FLOW_TO_M3S = 1.0 / 3600.0  # m³/h → m³/s
 RHO_CP = 1_000.0 * 4_186.0  # J / (m³·K)  water
 
@@ -94,10 +97,11 @@ def _compute_dt(df: pd.DataFrame) -> pd.Series:
 
 def load_file(path: Path) -> pd.DataFrame | None:
     if not path.exists():
-        print(f"  [ERROR] not found: {path}")
+        print(f"  [SKIP] not found: {path}")
         return None
     try:
         from python_magnetrun.magnetdata import load_magnetdata
+
         md = load_magnetdata(str(path))
         df = md.Data.copy()
     except Exception:
@@ -242,7 +246,9 @@ def compute_site_bin_stats(
             if ch not in sub.columns:
                 continue
             agg = _bin_agg(sub[ch], sub["dt"])
-            rows.append({"field_bin_low": low, "field_bin_high": high, "channel": ch, **agg})
+            rows.append(
+                {"field_bin_low": low, "field_bin_high": high, "channel": ch, **agg}
+            )
     return rows
 
 
@@ -257,9 +263,15 @@ def insert_site_bin_stats(con, exp_id: int, rows: list[dict]) -> None:
             """,
             [
                 exp_id,
-                r["field_bin_low"], r["field_bin_high"], r["channel"],
-                r["n_samples"], r["sum_dt"], r["sum_x_dt"], r["sum_x2_dt"],
-                r["min_x"], r["max_x"],
+                r["field_bin_low"],
+                r["field_bin_high"],
+                r["channel"],
+                r["n_samples"],
+                r["sum_dt"],
+                r["sum_x_dt"],
+                r["sum_x2_dt"],
+                r["min_x"],
+                r["max_x"],
             ],
         )
 
@@ -287,21 +299,36 @@ def compute_part_bin_stats(
         i_sub = sub[i_col].astype(float)
         dt_sub = sub["dt"]
 
-        rows.append({
-            "part_name": part_name, "field_bin_low": low, "field_bin_high": high,
-            "channel": "Icoil", **_bin_agg(i_sub, dt_sub),
-        })
+        rows.append(
+            {
+                "part_name": part_name,
+                "field_bin_low": low,
+                "field_bin_high": high,
+                "channel": "Icoil",
+                **_bin_agg(i_sub, dt_sub),
+            }
+        )
 
         if u_col in sub.columns:
-            rows.append({
-                "part_name": part_name, "field_bin_low": low, "field_bin_high": high,
-                "channel": "Ucoil", **_bin_agg(sub[u_col].astype(float), dt_sub),
-            })
+            rows.append(
+                {
+                    "part_name": part_name,
+                    "field_bin_low": low,
+                    "field_bin_high": high,
+                    "channel": "Ucoil",
+                    **_bin_agg(sub[u_col].astype(float), dt_sub),
+                }
+            )
 
-        rows.append({
-            "part_name": part_name, "field_bin_low": low, "field_bin_high": high,
-            "channel": "hoop_stress_proxy", **_bin_agg(i_sub**2, dt_sub),
-        })
+        rows.append(
+            {
+                "part_name": part_name,
+                "field_bin_low": low,
+                "field_bin_high": high,
+                "channel": "hoop_stress_proxy",
+                **_bin_agg(i_sub**2, dt_sub),
+            }
+        )
 
     return rows
 
@@ -317,9 +344,16 @@ def insert_part_bin_stats(con, exp_id: int, rows: list[dict]) -> None:
             """,
             [
                 exp_id,
-                r["part_name"], r["field_bin_low"], r["field_bin_high"], r["channel"],
-                r["n_samples"], r["sum_dt"], r["sum_x_dt"], r["sum_x2_dt"],
-                r["min_x"], r["max_x"],
+                r["part_name"],
+                r["field_bin_low"],
+                r["field_bin_high"],
+                r["channel"],
+                r["n_samples"],
+                r["sum_dt"],
+                r["sum_x_dt"],
+                r["sum_x2_dt"],
+                r["min_x"],
+                r["max_x"],
             ],
         )
 
@@ -359,14 +393,18 @@ def ingest_site(
     for _, row in exp_df.iterrows():
         exp_id = int(row["id"])
         filename = row["file"]
-        housing  = row["housing"]
+        housing = row["housing"]
 
         if not reprocess and is_processed(con, exp_id):
             results["skipped"] += 1
             continue
 
         f = Path(filename)
-        path = f if f.is_absolute() else Path(records_base) / srv_subdir / housing / filename
+        path = (
+            f
+            if f.is_absolute()
+            else Path(records_base) / srv_subdir / housing / filename
+        )
         df = load_file(path)
         if df is None:
             results["errors"].append(filename)

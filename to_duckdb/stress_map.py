@@ -1,84 +1,38 @@
 """
-student_stress_map.py
-=====================
-Demonstrates how to compute a hoop stress map for a magnet using the
-student DuckDB database and local YAML geometry files, without any
-Django or MagnetDB infrastructure.
+stress_map.py
+=============
+Hoop-stress analysis for a site using DuckDB + YAML geometry files.
 
-This script replicates the full chain of:
+Replaces the Django/ORM data-access layer of the MagnetDB production chain
+with DuckDB queries; everything from magnet_setup() onwards is identical.
 
-    python_magnetdb/actions/compute_stress_map_chart.py
-    python_magnetdb/actions/generate_simulation_config.py
-    python_magnetdb/actions/generate_magnet_directory.py
-    python_magnetdb/actions/object_geometries.py
+Public API
+----------
+    load_site_config_from_duckdb(site_name, db_path)
+    prepare_geometry_directory(site_name, magnets, geometries_dir, tempdir)
+    load_magnettools(config, tempdir, debug)
+    compute_hoop_at_currents(data, i_h, i_b, i_s)
+    annotate_with_rpe(result, site_name, db_path)
+    compute_stress_stats(df)
+    compute_fatigue(df, col)
+    plot_stress_map(df, magnet_name, i_h)
+    plot_stress_history(df, site_name)
+    plot_fatigue(df, cycles_df, site_name, col, bins)
 
-replacing only the Django/ORM data access layer with DuckDB queries.
-Everything from magnet_setup() onwards is identical to the production code.
-
-MagnetDB production chain
---------------------------
-    Django ORM (Magnet model)
-        │
-        ├── generate_magnet_config(magnet_id)
-        │       → config dict {"geom": ..., "Helix": [...], "Ring": [...]}
-        │
-        ├── generate_site_directory(site_id, tempdir)
-        │       → writes {site_name}.yaml files to tempdir/data/geometries/
-        │
-        ├── appenv(yaml_repo=..., ...)
-        │       → environment object pointing at file locations
-        │
-        ├── msite_setup(env, config, debug)
-        │       → (Tubes, Helices, OHelices, BMagnets, UMagnets, Shims)
-        │
-        └── compute_stress_map_chart(data, i_h, i_b, i_s, magnet_type)
-                → {"x": [...], "y": [...], "ymax": [...]}
-
-Student chain (this script)
------------------------------
-    DuckDB + YAML files on disk
-        │
-        ├── load_site_config_from_duckdb(site_name)        ← replaces generate_magnet_config
-        │
-        ├── prepare_geometry_directory(site_name, ...)   ← replaces generate_site_directory
-        │
-        ├── appenv(...)                                    ← identical
-        │
-        ├── msite_setup(env, config, debug)               ← identical
-        │
-        └── compute_stress_map(data, i_h, i_b, i_s)       ← identical logic
-
-Required files on disk (shipped with the student dataset)
-----------------------------------------------------------
-    student_data/
-    ├── student_magnetdb.duckdb
-    ├── geometries/               ← YAML files from python_magnetsetup/data/geometries/
-    │   ├── HL-31.yaml
-    │   ├── HL-31_H1.yaml
-    │   ├── ...
-    │   ├── Ring-H1H2.yaml
-    │   └── ...
-    └── records/
-        └── *.txt
-
-Requirements
-------------
-    pip install duckdb pandas matplotlib
-    # Plus system packages:
-    #   python3-magnettools  (provides magnettools.magnettools, magnettools.Bmap)
-    #   python_magnetsetup   (provides python_magnetsetup.ana, python_magnetsetup.config)
+CLI (also accessible via ``magnetdb.py hoop-stress``)
+-----------------------------------------------------
+    python stress_map.py barchart <site> [--i-h ...] [--i-b ...] [--i-s ...]
+    python stress_map.py history  <site> [--pupitre ...] [--use-mrun]
+    python stress_map.py stats    <site> [--pupitre ...] [--output ...]
+    python stress_map.py fatigue  <site> [--pupitre ...] [--bins ...]
 
 Note on Rpe units
 -----------------
-In the DuckDB database, Rpe is stored as-is from the seed files.
-Some seed files store it in Pa (e.g. 481e6), others in MPa (e.g. 481).
-The config passed to magnet_setup() carries this value unchanged, exactly
-as generate_simulation_config.py does. Verify the unit for your specific
-dataset before interpreting ratio_rpe values.
+Rpe is stored as-is from the seed files (Pa in some, MPa in others).
+Verify the unit for your dataset before interpreting ratio_rpe values.
 """
 
 import argparse
-import enum
 import glob as _glob
 import json
 import re
@@ -93,36 +47,14 @@ import pandas as pd
 
 import magnettools.Bmap as bmap
 import magnettools.magnettools as mt
-from python_magnetrun.data_dirs import PUPITRE_DATA_DIR
+from config import DEFAULT_DB
+from enums import MagnetType, PartType
+from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE, _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
 from python_magnetrun.magnetdata import load_magnetdata
 from python_magnetrun.runetl import prepareData
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
 from python_magnetsetup.ana import msite_setup
 from python_magnetsetup.config import appenv
-
-
-class PartType(str, enum.Enum):
-    SUPRA = "supra"
-    HELIX = "helix"
-    RING = "ring"
-    SCREEN = "screen"
-    LEAD = "lead"
-    BITTER = "bitter"
-
-    @classmethod
-    def choices(cls):
-        return [(item.value, item.name) for item in cls]
-
-
-class MagnetType(str, enum.Enum):
-    INSERT = "insert"
-    BITTERS = "bitters"
-    SUPRAS = "supras"
-    HYBRID = "hybrid"
-
-    @classmethod
-    def choices(cls):
-        return [(item.value, item.name) for item in cls]
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +87,7 @@ def load_site_config_from_duckdb(
     site_name: str,
     db_path: str,
     magnet_override: str | None = None,
+    con: "duckdb.DuckDBPyConnection | None" = None,
 ) -> tuple[str, list[tuple[str, dict, str | None]]]:
     """
     Return (housing, [(magnet_name, config, geometry_data), ...]) for every magnet at a site.
@@ -169,6 +102,9 @@ def load_site_config_from_duckdb(
     db_path         : Path to the DuckDB file
     magnet_override : Explicit magnet name; returns only that magnet.
                       A warning is printed if it is not linked to the site.
+    con             : Reuse an already-open connection instead of opening a new
+                       read-only one (avoids DuckDB's "different configuration"
+                       error when called from within a caller's open connection).
 
     Returns
     -------
@@ -183,14 +119,17 @@ def load_site_config_from_duckdb(
     ValueError : site not found, no magnet linked, MAT_ISOLANT missing,
                  or no magnet has parts in the DB.
     """
-    con = duckdb.connect(db_path, read_only=True)
+    owns_con = con is None
+    if con is None:
+        con = duckdb.connect(db_path, read_only=True)
 
     # ── 1. Site housing ───────────────────────────────────────────────────────
     site_row = con.execute(
         "SELECT housing FROM sites WHERE name = ?", [site_name]
     ).fetchone()
     if site_row is None:
-        con.close()
+        if owns_con:
+            con.close()
         raise ValueError(
             f"Site '{site_name}' not found in DB. "
             "Check the site name and ensure seeds are loaded."
@@ -208,7 +147,8 @@ def load_site_config_from_duckdb(
         [site_name],
     ).fetchall()
     if not rows:
-        con.close()
+        if owns_con:
+            con.close()
         raise ValueError(
             f"No magnet linked to site '{site_name}'. "
             "Check the site name and ensure seeds are loaded."
@@ -223,7 +163,8 @@ def load_site_config_from_duckdb(
         FROM materials WHERE name = 'MAT_ISOLANT'
     """).fetchone()
     if isolant_row is None:
-        con.close()
+        if owns_con:
+            con.close()
         raise ValueError(
             "MAT_ISOLANT not found in the database. "
             "Run seeds_to_duckdb.py to populate structural data first."
@@ -315,7 +256,8 @@ def load_site_config_from_duckdb(
             )
         results.append((magnet_name, config, geometry_data))
 
-    con.close()
+    if owns_con:
+        con.close()
 
     if not results:
         raise ValueError(
@@ -379,7 +321,6 @@ def geometry_config_to_yaml(
 
     print(f"  ── Preparing geometry directory for site '{site_name}' …")
     geo_dir = Path(geometries_dir) if geometries_dir else None
-    print(f"geo_dir: {geo_dir}")
 
     con = duckdb.connect(db_path, read_only=True)
 
@@ -618,7 +559,7 @@ def magnet_geometry_config_to_yaml(
     else:
         raise ValueError(
             f"Unsupported magnet type '{magnet_type}' for '{magnet_name}'. "
-            f"Expected one of: {[t.value for t in MagnetType if t != MagnetType.HYBRID]}."
+            f"Expected one of: {[t.value for t in MagnetType]}."
         )
 
     if output_dir is not None:
@@ -758,8 +699,15 @@ def validate_fast_from_pupitre(
     data         : MagnetTools tuple from load_magnettools()
     pupitre_file : Path to the pupitre file (.txt, .tdms, or .csv)
     housing      : Housing name (e.g. "M9")
-    magnet_type  : "H" for insert helices, "B" for bitters (used in sanity check)
+    magnet_type  : which coil type(s) to compute hoop stress for:
+                     "H"   — insert helices only (columns H1_fast, H2_fast, …)
+                     "B"   — bitter plates only  (columns B1_fast, B2_fast, …)
+                     "S"   — supras only         (columns Supra1_fast, Supra2_fast, …)
+                     "all" — all present types (H + B + S columns combined)
+                   Also controls which reference magnet type is used in the
+                   bmap.getHoop sanity check (ignored when check=False).
     check        : If True, validate fast results against bmap.getHoop row by row
+                   (only supported for single types "H", "B", "S", not "all")
     use_mrun     : If True, load via python_magnetrun.MagnetRun.load_mrun() instead
                    of load_magnetdata() + prepareData(); supports .tdms in addition
                    to .txt/.csv and handles path auto-resolution.
@@ -767,20 +715,47 @@ def validate_fast_from_pupitre(
 
     Returns
     -------
-    DataFrame with time series columns: t, IH, IB, [IS,] H1_fast, H2_fast, ...
+    DataFrame with time series columns: t, IH, IB, [IS,] and a subset of
+    H1_fast…HN_fast, B1_fast…BM_fast, Supra1_fast…Supra K_fast
+    depending on magnet_type and which magnet groups are present in *data*.
     """
     Tubes, Helices, OHelices, BMagnets, UMagnets, Shims = data
     icurrents = mt.get_currents(Tubes, Helices, BMagnets, UMagnets)
     n_tubes = len(Tubes)
+    n_bmag = len(BMagnets)
+    n_umag = len(UMagnets)
+
+    # Which types to compute (gate early so we skip unnecessary work)
+    _do_h = (magnet_type in ("H", "all")) and n_tubes > 0
+    _do_b = (magnet_type in ("B", "all")) and n_bmag > 0
+    _do_s = (magnet_type in ("S", "all")) and n_umag > 0
 
     # ------------------------------------------------------------------
-    # 1. Precompute unit-current quantities for every tube
+    # 1. Precompute unit-current quantities for every magnet type
+    #
+    # Inner radii are pure geometry — extract before any set_currents call.
+    # Current densities require set_currents(group=1 A).
+    # Bz contributions are evaluated at ALL requested positions in each
+    # single-group pass so no extra set_currents calls are needed.
     # ------------------------------------------------------------------
-    r = np.zeros(n_tubes)
-    j_unit = np.zeros(n_tubes)
-    Bz_tubes = np.zeros(n_tubes)
-    Bz_bmag = np.zeros(n_tubes) if len(BMagnets) else None
-    Bz_umag = np.zeros(n_tubes) if len(UMagnets) else None
+    r_h = np.array([Tube.get_R_int() for Tube in Tubes]) if n_tubes else np.zeros(0)
+    r_b = np.array([BMag.get_R_int() for BMag in BMagnets]) if n_bmag else np.zeros(0)
+    r_s = np.array([UMag.get_R_int() for UMag in UMagnets]) if n_umag else np.zeros(0)
+
+    j_unit_h = np.zeros(n_tubes)
+    j_unit_b = np.zeros(n_bmag)
+    j_unit_s = np.zeros(n_umag)
+
+    # Bz[src_at_tgt]: Bz at *tgt* inner radii when *src* current = 1 A, rest = 0
+    Bz_h_at_rh = np.zeros(n_tubes)
+    Bz_b_at_rh = np.zeros(n_tubes)
+    Bz_s_at_rh = np.zeros(n_tubes)
+    Bz_h_at_rb = np.zeros(n_bmag)
+    Bz_b_at_rb = np.zeros(n_bmag)
+    Bz_s_at_rb = np.zeros(n_bmag)
+    Bz_h_at_rs = np.zeros(n_umag)
+    Bz_b_at_rs = np.zeros(n_umag)
+    Bz_s_at_rs = np.zeros(n_umag)
 
     def _zero_vcurrents():
         v = mt.DoubleVector(icurrents)
@@ -788,39 +763,62 @@ def validate_fast_from_pupitre(
             v[i] = 0.0
         return v
 
+    def _bz_at(radii):
+        return np.array(
+            [
+                mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, r, 0)[1]
+                for r in radii
+            ]
+        )
+
     num = 0
-    if len(Tubes):
+    if n_tubes:
         v = _zero_vcurrents()
         v[num] = 1.0  # IH = 1 A
         mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices, v)
         for i, Tube in enumerate(Tubes):
-            r[i] = Tube.get_R_int()
             n_elem = Tube.get_n_elem()
             mid_elem = int(n_elem / 2) if (n_elem % 2) == 0 else int((n_elem + 1) / 2)
-            j_unit[i] = Helices[mid_elem + Tube.get_index()].get_CurrentDensity()
-        Bz_tubes = np.array(
-            [mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, ri, 0)[1] for ri in r]
-        )
+            j_unit_h[i] = Helices[mid_elem + Tube.get_index()].get_CurrentDensity()
+        if _do_h:
+            Bz_h_at_rh = _bz_at(r_h)
+        if _do_b:
+            Bz_h_at_rb = _bz_at(r_b)
+        if _do_s:
+            Bz_h_at_rs = _bz_at(r_s)
         num += 1
 
-    if len(BMagnets):
+    if n_bmag:
         v = _zero_vcurrents()
         v[num] = 1.0  # IB = 1 A
         mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices, v)
-        Bz_bmag = np.array(
-            [mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, ri, 0)[1] for ri in r]
-        )
+        for j, BMag in enumerate(BMagnets):
+            j_unit_b[j] = BMag.get_CurrentDensity()
+        if _do_h:
+            Bz_b_at_rh = _bz_at(r_h)
+        if _do_b:
+            Bz_b_at_rb = _bz_at(r_b)
+        if _do_s:
+            Bz_b_at_rs = _bz_at(r_s)
         num += 1
 
-    if len(UMagnets):
+    if n_umag:
         v = _zero_vcurrents()
         v[num] = 1.0  # IS = 1 A
         mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices, v)
-        Bz_umag = np.array(
-            [mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, ri, 0)[1] for ri in r]
-        )
+        for k, UMag in enumerate(UMagnets):
+            j_unit_s[k] = UMag.get_CurrentDensity()
+        if _do_h:
+            Bz_s_at_rh = _bz_at(r_h)
+        if _do_b:
+            Bz_s_at_rb = _bz_at(r_b)
+        if _do_s:
+            Bz_s_at_rs = _bz_at(r_s)
 
-    print(f"   Precomputed unit-current quantities for {n_tubes} tube(s).")
+    print(
+        f"   Precomputed unit-current quantities: "
+        f"{n_tubes} helix tube(s), {n_bmag} bitter plate(s), {n_umag} supra(s)."
+    )
 
     # ------------------------------------------------------------------
     # 2. Load pupitre data
@@ -851,74 +849,120 @@ def validate_fast_from_pupitre(
     IB_arr = df["IB"].to_numpy() if "IB" in df.columns else np.zeros(n_t)
     IS_arr = df["IS"].to_numpy() if "IS" in df.columns else np.zeros(n_t)
 
-    Bz_bmag_arr = Bz_bmag if Bz_bmag is not None else np.zeros(n_tubes)
-    Bz_umag_arr = Bz_umag if Bz_umag is not None else np.zeros(n_tubes)
-
     # ------------------------------------------------------------------
-    # 3. Vectorised hoop stress — shapes (N, 1) broadcast against (1, T)
-    #    sigma[i, k] = r[i] * (j_unit[i] * IH[k])
-    #                        * (Bz_tubes[i]*IH[k] + Bz_bmag[i]*IB[k] + Bz_umag[i]*IS[k])
+    # 3. Vectorised hoop stress — (N, 1) broadcast against (1, T)
+    #
+    #    For each magnet group X ∈ {H, B, S} with driver current I_X:
+    #      sigma_X[j, k] = r_X[j] * j_unit_X[j] * I_X[k]
+    #                           * (Bz_h_at_rX[j]*IH[k]
+    #                              + Bz_b_at_rX[j]*IB[k]
+    #                              + Bz_s_at_rX[j]*IS[k])
     # ------------------------------------------------------------------
     IH = IH_arr[np.newaxis, :]  # (1, T)
     IB = IB_arr[np.newaxis, :]
     IS = IS_arr[np.newaxis, :]
 
-    r2 = r[:, np.newaxis]  # (N, 1)
-    j_unit2 = j_unit[:, np.newaxis]
-    Bz_t2 = Bz_tubes[:, np.newaxis]
-    Bz_b2 = Bz_bmag_arr[:, np.newaxis]
-    Bz_u2 = Bz_umag_arr[:, np.newaxis]
+    sigma_h: np.ndarray | None = None
+    sigma_b: np.ndarray | None = None
+    sigma_s: np.ndarray | None = None
 
-    Bz_total = Bz_t2 * IH + Bz_b2 * IB + Bz_u2 * IS  # (N, T)
-    j_real = j_unit2 * IH  # (N, T)
-    sigma = r2 * j_real * Bz_total  # (N, T) [Pa]
-    sigma_MPa = sigma * 1e-6
+    if _do_h:
+        _Bz = (
+            Bz_h_at_rh[:, np.newaxis] * IH
+            + Bz_b_at_rh[:, np.newaxis] * IB
+            + Bz_s_at_rh[:, np.newaxis] * IS
+        )
+        sigma_h = (
+            r_h[:, np.newaxis] * (j_unit_h[:, np.newaxis] * IH) * _Bz * 1e-6
+        )  # MPa
+
+    if _do_b:
+        _Bz = (
+            Bz_h_at_rb[:, np.newaxis] * IH
+            + Bz_b_at_rb[:, np.newaxis] * IB
+            + Bz_s_at_rb[:, np.newaxis] * IS
+        )
+        sigma_b = (
+            r_b[:, np.newaxis] * (j_unit_b[:, np.newaxis] * IB) * _Bz * 1e-6
+        )  # MPa
+
+    if _do_s:
+        _Bz = (
+            Bz_h_at_rs[:, np.newaxis] * IH
+            + Bz_b_at_rs[:, np.newaxis] * IB
+            + Bz_s_at_rs[:, np.newaxis] * IS
+        )
+        sigma_s = (
+            r_s[:, np.newaxis] * (j_unit_s[:, np.newaxis] * IS) * _Bz * 1e-6
+        )  # MPa
 
     # ------------------------------------------------------------------
-    # 3b. Optional sanity check: fast sigma_MPa vs bmap.getHoop row by row
+    # 3b. Optional sanity check: fast sigma vs bmap.getHoop row by row.
+    #     Skipped for magnet_type="all" — run single-type checks instead.
     # ------------------------------------------------------------------
     if check:
-        print("\n── Sanity check: fast vs bmap.getHoop …")
-        mdata_type = {"H": Helices, "B": BMagnets, "S": UMagnets}
-        max_err = np.zeros(n_tubes)
-
-        for k, row in enumerate(df.itertuples(index=False)):
-            v = _zero_vcurrents()
-            num = 0
-            if len(Tubes):
-                v[num] = row.IH
-                num += 1
-            if len(BMagnets):
-                v[num] = row.IB
-                num += 1
-            if len(UMagnets):
-                v[num] = getattr(row, "IS", 0.0)
-            mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices, v)
-
-            headers, hoop_values = bmap.getHoop(
-                mdata_type[magnet_type], Tubes, Helices, BMagnets, UMagnets, magnet_type
+        if magnet_type == "all":
+            print(
+                "\n── Sanity check skipped for magnet_type='all' — run H/B/S separately."
             )
-            ref_df = pd.DataFrame.from_records(hoop_values, columns=headers)
-            ref_hoop = ref_df["Hoop[MPa]"].to_numpy()
+        else:
+            print("\n── Sanity check: fast vs bmap.getHoop …")
+            _sigma_check = {"H": sigma_h, "B": sigma_b, "S": sigma_s}[magnet_type]
+            _n_check = {"H": n_tubes, "B": n_bmag, "S": n_umag}[magnet_type]
+            _label_prefix = {"H": "H", "B": "B", "S": "Supra"}[magnet_type]
+            max_err = np.zeros(_n_check)
 
-            for i in range(n_tubes):
-                err = abs(sigma_MPa[i, k] - ref_hoop[i])
-                max_err[i] = max(max_err[i], err)
+            for k, row in enumerate(df.itertuples(index=False)):
+                v = _zero_vcurrents()
+                _cnum = 0
+                if n_tubes:
+                    v[_cnum] = getattr(row, "IH", 0.0)
+                    _cnum += 1
+                if n_bmag:
+                    v[_cnum] = getattr(row, "IB", 0.0)
+                    _cnum += 1
+                if n_umag:
+                    v[_cnum] = getattr(row, "IS", 0.0)
+                mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices, v)
 
-        print("   Max absolute error per tube [MPa]:")
-        for i in range(n_tubes):
-            print(f"     H{i+1}: {max_err[i]:.4e} MPa")
+                headers, hoop_values = bmap.getHoop(Tubes, Helices, BMagnets, UMagnets)
+                ref_df = pd.DataFrame.from_records(hoop_values, columns=headers)
+                # Filter to rows belonging to the selected type (by label prefix)
+                mask = ref_df["label"].str.startswith(_label_prefix)
+                ref_hoop = ref_df.loc[mask, "Hoop[MPa]"].to_numpy()
+
+                for i in range(_n_check):
+                    if i < len(ref_hoop):
+                        max_err[i] = max(
+                            max_err[i], abs(_sigma_check[i, k] - ref_hoop[i])
+                        )
+
+            col_prefix = {"H": "H", "B": "B", "S": "Supra"}[magnet_type]
+            print(f"   Max absolute error per {magnet_type} element [MPa]:")
+            for i in range(_n_check):
+                print(f"     {col_prefix}{i+1}: {max_err[i]:.4e} MPa")
 
     # ------------------------------------------------------------------
     # 4. Store results in DataFrame
     # ------------------------------------------------------------------
-    for i in range(n_tubes):
-        df[f"H{i+1}_fast"] = sigma_MPa[i, :]
+    if _do_h and sigma_h is not None:
+        for i in range(n_tubes):
+            df[f"H{i+1}_fast"] = sigma_h[i, :]
+
+    if _do_b and sigma_b is not None:
+        for j in range(n_bmag):
+            df[f"B{j+1}_fast"] = sigma_b[j, :]
+
+    if _do_s and sigma_s is not None:
+        for k in range(n_umag):
+            df[f"Supra{k+1}_fast"] = sigma_s[k, :]
 
     return df
 
 
-def _expand_pupitre_pattern(pattern: str, pupitre_datadir: str, housing: str) -> list[str]:
+def _expand_pupitre_pattern(
+    pattern: str, pupitre_datadir: str, housing: str
+) -> list[str]:
     """Expand a glob pattern to matching pupitre file paths.
 
     For patterns with an explicit directory component, glob them directly.
@@ -968,7 +1012,7 @@ def resolve_pupitre_files(
                      - Non-empty     → validate each against the experiments table;
                                        files absent from the table trigger a warning
                                        but are still included.
-    pupitre_datadir: Root directory for pupitre files (e.g. PUPITRE_DATA_DIR).
+    pupitre_datadir: Root directory for pupitre files (records_base / srv_subdir).
                      Used to resolve bare filenames from the DB.
     housing        : Housing name (e.g. "M9") appended as a subdirectory fallback.
 
@@ -1016,7 +1060,9 @@ def resolve_pupitre_files(
                 [site_name, f, f"%/{basename}"],
             ).fetchone()
             if row is None:
-                print(f"  [WARN] '{f}' not found in experiments for site '{site_name}'.")
+                print(
+                    f"  [WARN] '{f}' not found in experiments for site '{site_name}'."
+                )
         resolved.extend(expanded)
     con.close()
     return resolved
@@ -1187,7 +1233,7 @@ def compute_hoop_at_currents(
 
 def compute_stress_stats(df: pd.DataFrame) -> pd.DataFrame:
     """Return per-coil descriptive statistics from a validate_fast_from_pupitre DataFrame."""
-    fast_cols = [c for c in df.columns if re.match(r"H\d+_fast", c)]
+    fast_cols = [c for c in df.columns if re.match(r"(H|B|Supra)\d+_fast", c)]
     rows = []
     for col in fast_cols:
         s = df[col]
@@ -1289,7 +1335,11 @@ def plot_stress_history(
             return pd.Series(np.zeros(len(s)), index=s.index)
         return (s - lo) / (hi - lo)
 
-    x = df["t_abs"] if "t_abs" in df.columns else (df["t"] if "t" in df.columns else df.index)
+    x = (
+        df["t_abs"]
+        if "t_abs" in df.columns
+        else (df["t"] if "t" in df.columns else df.index)
+    )
 
     plt.figure(figsize=(10, 5))
     if "IH" in df.columns:
@@ -1336,8 +1386,8 @@ def _add_shared_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("site_name", help="Site name as registered in DuckDB (e.g. M9)")
     p.add_argument(
         "--db",
-        default="student_magnetdb.duckdb",
-        help="Path to the student DuckDB (default: student_magnetdb.duckdb)",
+        default=DEFAULT_DB,
+        help=f"Path to the DuckDB file (default: {DEFAULT_DB})",
     )
     p.add_argument(
         "--geometries",
@@ -1360,15 +1410,22 @@ def _add_pupitre_args(p: argparse.ArgumentParser) -> None:
         "Omit to use all experiment files registered for the site.",
     )
     p.add_argument(
-        "--pupitre-datadir",
-        default=PUPITRE_DATA_DIR,
+        "--records-base",
+        default=str(_DEFAULT_RECORDS_BASE),
+        dest="records_base",
         metavar="DIR",
         help=(
-            "Root directory for pupitre .txt files used to resolve bare filenames "
-            "from the experiments table. Search order: cwd → DIR → DIR/<housing>. "
-            "(overrides MAGNETRUN_PUPITRE_DATA_DIR / PUPITRE_DATADIR; "
-            f"default: {PUPITRE_DATA_DIR!r})"
+            "Root of the records tree. pupitre files are resolved under "
+            "records-base/srv-subdir[/<housing>]. "
+            f"(default: {_DEFAULT_RECORDS_BASE!r})"
         ),
+    )
+    p.add_argument(
+        "--srv-subdir",
+        default=_DEFAULT_SRV_SUBDIR,
+        dest="srv_subdir",
+        help=f"Subdirectory of records-base for pupitre TXT files "
+             f"(default: {_DEFAULT_SRV_SUBDIR!r})",
     )
     p.add_argument(
         "--use-mrun",
@@ -1383,9 +1440,14 @@ def _add_pupitre_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--magnet-type",
-        default="H",
-        choices=["H", "B", "S"],
-        help="Coil type for --check validation (default: H)",
+        default="all",
+        choices=["H", "B", "S", "all"],
+        help=(
+            "Coil type(s) to compute hoop stress for: "
+            "H (insert helices), B (bitter plates), S (supras), "
+            "all (H + B + S combined). Also selects the reference type for "
+            "--check validation (ignored when magnet-type=all). Default: all"
+        ),
     )
 
 
@@ -1445,11 +1507,16 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
             "Check that sites.housing is set in the DB."
         )
 
+    records_base = getattr(args, "records_base", "")
+    srv_subdir   = getattr(args, "srv_subdir", _DEFAULT_SRV_SUBDIR)
+    pupitre_datadir = (
+        str(Path(records_base) / srv_subdir) if records_base else ""
+    )
     files = resolve_pupitre_files(
         args.site_name,
         args.db,
         args.pupitre or None,
-        pupitre_datadir=getattr(args, "pupitre_datadir", "") or "",
+        pupitre_datadir=pupitre_datadir,
         housing=housing,
     )
     print(
@@ -1482,7 +1549,11 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
         for df, fs in zip(dfs, file_starts):
             offset = (fs - t0) if (fs is not None and t0 is not None) else 0.0
             df["t_abs"] = df["t"] + offset
-        result = pd.concat(dfs, ignore_index=True).sort_values("t_abs").reset_index(drop=True)
+        result = (
+            pd.concat(dfs, ignore_index=True)
+            .sort_values("t_abs")
+            .reset_index(drop=True)
+        )
     else:
         result = dfs[0] if len(dfs) == 1 else pd.concat(dfs, ignore_index=True)
         if "t" in result.columns:
