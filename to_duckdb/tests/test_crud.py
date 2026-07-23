@@ -1,17 +1,23 @@
 """Unit tests for crud.py — one function per concern."""
 
+from datetime import datetime
+
 import pytest
 
 from crud import (
+    _find_site_for_timestamp,
+    _parse_overview_filename,
     delete_magnet,
     delete_site,
     exists,
     infer_magnet_type,
+    infer_overview_record_fields,
     insert_experiments,
     insert_magnet,
     insert_magnet_part_row,
     insert_magnet_parts,
     insert_material,
+    insert_overview_record_from_dict,
     insert_part,
     insert_site,
     insert_site_magnets,
@@ -22,6 +28,7 @@ from crud import (
     view_site,
     view_sites,
 )
+from populate import FILE_TZ
 from tests.conftest import (
     MAGNET_DATA,
     MATERIAL_COPPER,
@@ -488,3 +495,117 @@ def test_delete_site_removes_experiments(con_populated):
 def test_delete_site_not_found(con, capsys):
     delete_site(con, "NONEXISTENT")
     assert "not found" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# _parse_overview_filename()
+# ---------------------------------------------------------------------------
+
+
+def test_parse_overview_filename_valid():
+    housing, t0 = _parse_overview_filename("M9_Overview_220127-1756")
+    assert housing == "M9"
+    assert t0 == datetime(2022, 1, 27, 17, 56, tzinfo=FILE_TZ)
+
+
+def test_parse_overview_filename_bad_timestamp():
+    housing, t0 = _parse_overview_filename("M9_Overview_notatimestamp")
+    assert housing == "M9"
+    assert t0 is None
+
+
+# ---------------------------------------------------------------------------
+# _find_site_for_timestamp()
+# ---------------------------------------------------------------------------
+
+
+def _insert_m9_sites(con):
+    """Two consecutive M9 operational windows, with a gap in between."""
+    insert_site(con, {
+        "name": "M9_SITE_A", "housing": "M9",
+        "commissioned_at": "2022-01-01 00:00:00",
+        "decommissioned_at": "2022-01-10 00:00:00",
+    }, verbose=False)
+    insert_site(con, {
+        "name": "M9_SITE_B", "housing": "M9",
+        "commissioned_at": "2022-01-18 00:00:00",
+        "decommissioned_at": None,
+    }, verbose=False)
+
+
+def test_find_site_for_timestamp_matches_unique_site(con):
+    _insert_m9_sites(con)
+    t0 = datetime(2022, 1, 27, 17, 56, tzinfo=FILE_TZ)
+    assert _find_site_for_timestamp(con, "M9", t0, FILE_TZ) == "M9_SITE_B"
+
+
+def test_find_site_for_timestamp_matches_open_ended_window(con):
+    _insert_m9_sites(con)
+    t0 = datetime(2022, 1, 5, 12, 0, tzinfo=FILE_TZ)
+    assert _find_site_for_timestamp(con, "M9", t0, FILE_TZ) == "M9_SITE_A"
+
+
+def test_find_site_for_timestamp_no_match_in_gap(con):
+    _insert_m9_sites(con)
+    t0 = datetime(2022, 1, 14, 0, 0, tzinfo=FILE_TZ)
+    assert _find_site_for_timestamp(con, "M9", t0, FILE_TZ) is None
+
+
+def test_find_site_for_timestamp_ambiguous_match(con):
+    _insert_m9_sites(con)
+    insert_site(con, {
+        "name": "M9_SITE_OVERLAP", "housing": "M9",
+        "commissioned_at": "2022-01-20 00:00:00",
+        "decommissioned_at": None,
+    }, verbose=False)
+    t0 = datetime(2022, 1, 27, 17, 56, tzinfo=FILE_TZ)
+    assert _find_site_for_timestamp(con, "M9", t0, FILE_TZ) is None
+
+
+def test_find_site_for_timestamp_no_housing_match(con):
+    _insert_m9_sites(con)
+    t0 = datetime(2022, 1, 27, 17, 56, tzinfo=FILE_TZ)
+    assert _find_site_for_timestamp(con, "M10", t0, FILE_TZ) is None
+
+
+# ---------------------------------------------------------------------------
+# infer_overview_record_fields()
+# ---------------------------------------------------------------------------
+
+
+def test_infer_overview_record_fields_resolves_site_and_t0(con):
+    _insert_m9_sites(con)
+    insert_overview_record_from_dict(con, {"filename": "M9_Overview_220127-1756"}, verbose=False)
+
+    status = infer_overview_record_fields(con, "M9_Overview_220127-1756", FILE_TZ, verbose=False)
+
+    assert status == "resolved"
+    row = con.execute(
+        "SELECT site_name, housing, t0, duration, teb, bp FROM overview_records "
+        "WHERE filename = 'M9_Overview_220127-1756'"
+    ).fetchone()
+    assert row == ("M9_SITE_B", "M9", datetime(2022, 1, 27, 17, 56), 0.0, 0.0, 0.0)
+
+
+def test_infer_overview_record_fields_no_site_match_leaves_site_name_null(con):
+    _insert_m9_sites(con)
+    insert_overview_record_from_dict(con, {"filename": "M9_Overview_220114-0000"}, verbose=False)
+
+    status = infer_overview_record_fields(con, "M9_Overview_220114-0000", FILE_TZ, verbose=False)
+
+    assert status == "no_site_match"
+    row = con.execute(
+        "SELECT site_name FROM overview_records WHERE filename = 'M9_Overview_220114-0000'"
+    ).fetchone()
+    assert row == (None,)
+
+
+def test_infer_overview_record_fields_bad_filename(con):
+    insert_overview_record_from_dict(con, {"filename": "not_a_valid_filename"}, verbose=False)
+    status = infer_overview_record_fields(con, "not_a_valid_filename", FILE_TZ, verbose=False)
+    assert status == "bad_filename"
+
+
+def test_infer_overview_record_fields_not_found(con):
+    status = infer_overview_record_fields(con, "does_not_exist", FILE_TZ, verbose=False)
+    assert status == "not_found"

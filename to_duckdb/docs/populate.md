@@ -164,6 +164,38 @@ Each `sources_*` field accepts either a Python list of paths or a comma-separate
 
 ---
 
+## `populate overview-records-infer`
+
+Fills in `housing`, `t0`, `site_name`, `duration`, `teb`, and `bp` for `overview_records` rows that were loaded bare from a manifest (typically via `populate overview-records-from-json`) and still have `site_name IS NULL`. Requires `python_magnetrun` to be installed.
+
+`housing` and `t0` are parsed directly from the row's `filename`, which must follow python_magnetrun's `<housing>_Overview_<YYMMDD-HHMM>` convention (e.g. `M9_Overview_220127-1756`). `site_name` is the unique `sites` row of that `housing` whose `commissioned_at`/`decommissioned_at` window contains `t0`; if zero or more than one site matches, the row is skipped (left for manual resolution, e.g. via `overview-records-from-json --site` or `attach_site_to_overview_record`).
+
+`duration` is read from the first entry in `sources_overview` via `python_magnetrun`'s `getDuration()`. `teb` and `bp` are the samples-weighted mean of the `teb`/`BP` columns across **every** existing file in `sources_pupitre` (files are concatenated before averaging, so longer runs contribute more samples — not averaged per-file).
+
+The remaining fields (`mode`, `signatures`, `sync_info`, `flow_params`, `metrics`, `debitbrut`) are left untouched — they require the full `populate overview-records` processing pipeline.
+
+```bash
+# Preview which rows would be processed
+python magnetdb.py populate overview-records-infer --dry-run --db student.duckdb
+
+# Infer fields for all rows still missing a site_name
+python magnetdb.py populate overview-records-infer --db student.duckdb
+
+# Re-infer rows that already have a site_name too
+python magnetdb.py populate overview-records-infer --reprocess --db student.duckdb
+
+# DB timestamps stored as French local time instead of UTC
+python magnetdb.py populate overview-records-infer --db-tz Europe/Paris --db student.duckdb
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--db-tz` | `UTC` | Timezone of `commissioned_at` / `decommissioned_at` in the DB |
+| `--reprocess` | — | Re-infer rows that already have a `site_name` (default: only `NULL` ones) |
+| `--dry-run` | — | List rows that would be processed without writing to the DB |
+
+---
+
 ## Inspecting the data tables
 
 ### `experiments view`

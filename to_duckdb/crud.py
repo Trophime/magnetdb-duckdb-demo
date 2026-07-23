@@ -36,14 +36,17 @@ insert_overview_record(con, record, site_name, verbose)
 upsert_overview_record(con, record, site_name, verbose)
 insert_overview_record_from_dict(con, data, site_name, verbose, upsert)
 attach_site_to_overview_record(con, filename, site_name, verbose)
+infer_overview_record_fields(con, filename, db_tz, verbose)
 """
 
 import json
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from enums import COIL_PART_TO_MAGNET_TYPE
+from populate import FILE_TZ, as_aware
 from schema import COIL_TYPES
 
 # ---------------------------------------------------------------------------
@@ -1683,6 +1686,186 @@ def attach_site_to_overview_record(
     )
     if verbose:
         print(f"  ~ overview_record  {filename}  site_name → {site_name}  housing → {housing}")
+
+
+# overview_records.filename follows python_magnetrun's
+# "<housing>_Overview_<YYMMDD-HHMM>" convention (no extension).
+_OVERVIEW_FILENAME_TS_RE = re.compile(r"(\d{6}-\d{4})$")
+_OVERVIEW_FILENAME_TS_FMT = "%y%m%d-%H%M"
+
+
+def _parse_overview_filename(filename: str) -> tuple[str, datetime | None]:
+    """Split an overview_records filename into ``(housing, t0)``.
+
+    Parameters
+    ----------
+    filename : str
+        Value of ``overview_records.filename``.
+
+    Returns
+    -------
+    tuple[str, datetime | None]
+        ``housing`` is the ``_``-separated prefix.  ``t0`` is timezone-aware
+        (Europe/Paris), or ``None`` if the trailing timestamp segment does
+        not match the expected ``YYMMDD-HHMM`` pattern.
+    """
+    housing = filename.split("_")[0]
+    m = _OVERVIEW_FILENAME_TS_RE.search(filename)
+    if not m:
+        return housing, None
+    try:
+        naive = datetime.strptime(m.group(1), _OVERVIEW_FILENAME_TS_FMT)
+    except ValueError:
+        return housing, None
+    return housing, naive.replace(tzinfo=FILE_TZ)
+
+
+def _find_site_for_timestamp(con, housing: str, t0: datetime, db_tz) -> str | None:
+    """Return the unique site whose operational window contains *t0*.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    housing : str
+        Housing identifier (e.g. ``"M9"``).
+    t0 : datetime
+        Timezone-aware timestamp (Europe/Paris) to match.
+    db_tz : zoneinfo.ZoneInfo
+        Timezone the ``sites.commissioned_at`` / ``decommissioned_at``
+        columns are stored in.
+
+    Returns
+    -------
+    str or None
+        The matching ``sites.name``, or ``None`` if zero or more than one
+        site matches (ambiguous — left for manual resolution).
+    """
+    rows = con.execute(
+        "SELECT name, commissioned_at, decommissioned_at FROM sites WHERE housing = ?",
+        [housing],
+    ).fetchall()
+
+    matches = []
+    for name, commissioned_at, decommissioned_at in rows:
+        t_start = as_aware(commissioned_at, db_tz)
+        t_end = as_aware(decommissioned_at, db_tz)
+        if t_start is not None:
+            t_start = t_start.astimezone(FILE_TZ)
+        if t_end is not None:
+            t_end = t_end.astimezone(FILE_TZ)
+        if (t_start is None or t0 >= t_start) and (t_end is None or t0 <= t_end):
+            matches.append(name)
+
+    return matches[0] if len(matches) == 1 else None
+
+
+def _mean_across_frames(dfs: list, column: str) -> float:
+    """Samples-weighted mean of *column* across every frame in *dfs*."""
+    total, count = 0.0, 0
+    for df in dfs:
+        if column not in df.columns:
+            continue
+        values = df[column].dropna()
+        total += float(values.sum())
+        count += len(values)
+    return total / count if count else 0.0
+
+
+def infer_overview_record_fields(
+    con, filename: str, db_tz, verbose: bool = True
+) -> str:
+    """Infer ``housing``/``t0``/``site_name``/``duration``/``teb``/``bp`` for one row.
+
+    ``housing`` and ``t0`` are parsed from *filename* (python_magnetrun's
+    ``<housing>_Overview_<YYMMDD-HHMM>`` convention); ``site_name`` is the
+    unique ``sites`` row whose commissioned/decommissioned window contains
+    ``t0``.  ``duration`` is read from the first ``sources_overview`` file;
+    ``teb``/``bp`` are the samples-weighted mean of the ``teb``/``BP``
+    columns across every existing ``sources_pupitre`` file.  Requires
+    ``python_magnetrun`` to be installed when either source list is
+    non-empty.  Rich fields (``mode``, ``signatures``, ``sync_info``,
+    ``flow_params``, ``metrics``, ``debitbrut``) are left untouched.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    filename : str
+        Primary key of the ``overview_records`` row to update.
+    db_tz : zoneinfo.ZoneInfo
+        Timezone of the DB's ``commissioned_at``/``decommissioned_at``
+        columns.
+    verbose : bool
+        Print a status line.
+
+    Returns
+    -------
+    str
+        ``"resolved"``, ``"no_site_match"``, ``"bad_filename"``, or
+        ``"not_found"``.
+    """
+    row = con.execute(
+        "SELECT sources_overview, sources_pupitre FROM overview_records WHERE filename = ?",
+        [filename],
+    ).fetchone()
+    if row is None:
+        if verbose:
+            print(f"  ! overview_record {filename}: not found")
+        return "not_found"
+    sources_overview, sources_pupitre = row
+
+    housing, t0 = _parse_overview_filename(filename)
+    if t0 is None:
+        if verbose:
+            print(f"  ! overview_record {filename}: could not parse timestamp from filename")
+        return "bad_filename"
+
+    site_name = _find_site_for_timestamp(con, housing, t0, db_tz)
+    if site_name is None:
+        if verbose:
+            print(
+                f"  ! overview_record {filename}: no unique site match "
+                f"for housing={housing} t0={t0}"
+            )
+        return "no_site_match"
+
+    duration = 0.0
+    if sources_overview:
+        from python_magnetrun.magnetdata import load_magnetdata
+
+        try:
+            duration = float(load_magnetdata(sources_overview[0]).getDuration())
+        except Exception as exc:
+            print(
+                f"  ! overview_record {filename}: could not read duration "
+                f"from {sources_overview[0]}: {exc}"
+            )
+
+    pupitre_frames = []
+    for pupitre_path in sources_pupitre or []:
+        from python_magnetrun.magnetdata import load_magnetdata
+
+        try:
+            pupitre_frames.append(load_magnetdata(pupitre_path).Data)
+        except Exception as exc:
+            print(f"  ! overview_record {filename}: could not read {pupitre_path}: {exc}")
+
+    teb = _mean_across_frames(pupitre_frames, "teb")
+    bp = _mean_across_frames(pupitre_frames, "BP")
+
+    t0_db = t0.astimezone(db_tz).replace(tzinfo=None)
+    con.execute(
+        "UPDATE overview_records SET site_name = ?, housing = ?, t0 = ?, "
+        "duration = ?, teb = ?, bp = ? WHERE filename = ?",
+        [site_name, housing, t0_db, duration, teb, bp, filename],
+    )
+    if verbose:
+        print(
+            f"  ~ overview_record  {filename}  site_name → {site_name}  t0={t0_db}  "
+            f"duration={duration:.1f}s  teb={teb:.2f}  bp={bp:.2f}"
+        )
+    return "resolved"
 
 
 def update_site_magnet(con, site_name: str, magnet_name: str, **kwargs) -> None:

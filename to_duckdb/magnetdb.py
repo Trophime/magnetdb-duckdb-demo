@@ -78,6 +78,7 @@ from crud import (
     delete_material,
     delete_site,
     infer_magnet_type,
+    infer_overview_record_fields,
     insert_experiments,
     insert_magnet,
     insert_magnet_parts,
@@ -798,6 +799,54 @@ def cmd_populate_overview_records_from_json(args) -> None:
     print("\nDone.")
 
 
+def cmd_populate_overview_records_infer(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    try:
+        db_tz = ZoneInfo(args.db_tz)
+    except Exception:
+        print(f"Error: Unknown timezone '{args.db_tz}'")
+        sys.exit(1)
+
+    try:
+        import python_magnetrun  # noqa: F401
+    except ImportError:
+        print("Error: python_magnetrun is not installed.")
+        print("Install it with:  pip install python_magnetrun")
+        sys.exit(1)
+
+    with duckdb.connect(str(db_path), read_only=True) as con:
+        if args.reprocess:
+            filenames = [
+                r[0] for r in con.execute("SELECT filename FROM overview_records").fetchall()
+            ]
+        else:
+            filenames = [
+                r[0] for r in con.execute(
+                    "SELECT filename FROM overview_records WHERE site_name IS NULL"
+                ).fetchall()
+            ]
+
+    if not filenames:
+        print("No overview_records rows to infer (all already have a site_name).")
+        return
+
+    print(f"\nInferring {len(filenames)} overview_record(s) …\n")
+
+    if args.dry_run:
+        for fname in filenames:
+            print(f"  [dry-run] would infer: {fname}")
+        return
+
+    with duckdb.connect(str(db_path)) as con:
+        for fname in filenames:
+            infer_overview_record_fields(con, fname, db_tz, verbose=True)
+
+    print("\nDone.")
+
+
 def cmd_populate_overview_records(args) -> None:
     try:
         from python_magnetrun.analysis.processing import (
@@ -952,6 +1001,7 @@ _DISPATCH = {
     ("populate",          "experiments"):     cmd_populate_experiments,
     ("populate",          "overview-records"):           cmd_populate_overview_records,
     ("populate",          "overview-records-from-json"): cmd_populate_overview_records_from_json,
+    ("populate",          "overview-records-infer"):     cmd_populate_overview_records_infer,
     ("hoop-stress",       "compute"):                    cmd_hoop_stress_compute,
     ("hoop-stress",       "barchart"):                  cmd_hoop_stress_barchart,
     ("hoop-stress",       "history"):                   cmd_hoop_stress_history,
@@ -1362,6 +1412,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ov_json.add_argument("--dry-run", action="store_true",
                            help="Preview records without writing to the DB.")
+
+    # populate overview-records-infer
+    p_ov_infer = pop_sub.add_parser(
+        "overview-records-infer",
+        help=(
+            "Infer housing/t0/site_name/duration/teb/bp for overview_records rows "
+            "missing a site_name, via python_magnetrun."
+        ),
+    )
+    _db_arg(p_ov_infer)
+    p_ov_infer.add_argument(
+        "--db-tz", default="UTC", dest="db_tz",
+        help="Timezone of commissioned_at / decommissioned_at in the DB (default: UTC)",
+    )
+    p_ov_infer.add_argument(
+        "--reprocess", action="store_true",
+        help="Re-infer rows that already have a site_name (default: only NULL ones).",
+    )
+    p_ov_infer.add_argument("--dry-run", action="store_true",
+                            help="List rows that would be processed without writing to the DB.")
 
     # ── hoop-stress ───────────────────────────────────────────────────────────
     hs_p = entity.add_parser("hoop-stress",
