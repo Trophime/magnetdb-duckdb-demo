@@ -27,7 +27,6 @@ The notebook:
     - `field_mean`
     - `field_time_on`
     - `field_signature`
-    These values are then available for the cumulative statistics.
 - imports `proposals.csv` into the `proposals` table
 - links proposals to the `experiments` table
 
@@ -48,7 +47,10 @@ SELECT * FROM housing_summary LIMIT 10;
 
 # Dashboard
 
-A first dashboard prototype is available in  `dash_site_stats.py`.
+A first dashboard prototype is available in  `dash_site_stats.py`. It reads 
+data directly from the existing tables `experiments` and `exp_run_scalars` of 
+`magnetdb.duckdb`. The current version does not yet use the statistics calculated 
+by `import_housing_summary` and stored in the `housing_summary` table.
 
 Current functionality:
 - loads experiment information directly from `magnetdb.duckdb`
@@ -64,4 +66,5 @@ Current functionality:
     - field-on duration
     - processing status 
 
-The dashboard is currently read-only and intended as an initial visualisation of the statistics stored in the database.
+The dashboard is currently read-only and intended as an initial visualisation 
+of the experiment statistics stored in the database.
