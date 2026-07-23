@@ -1,32 +1,57 @@
 import duckdb
 import pandas as pd
 import os
+import glob
 import functools
 from python_magnetrun.MagnetRun import load_mrun
 import re
 from datetime import datetime
 
-# Chemin absolu vers la base DuckDB
-DB_PATH = "/workspaces/2026-m1-hifimagnet/to_duckdb/magnetdb.duckdb"
+# Chemin absolu vers la base DuckDB (surchargable via variable d'environnement)
+DB_PATH = os.environ.get("MAGNETDB_DB_PATH", "/workspaces/2026-m1-hifimagnet/to_duckdb/magnetdb.duckdb")
+# Répertoire scanné pour lister les bases sélectionnables dans le dropdown
+DB_DIR = os.environ.get("MAGNETDB_DB_DIR", os.path.dirname(DB_PATH))
+RECORDS_DIR = os.environ.get("MAGNETDB_RECORDS_DIR", "/mnt/LNCMIG-Data/records")
 
 
-def get_all_tables():
+def get_available_databases(db_dir=None):
+    """List the DuckDB database files selectable in the database dropdown.
+
+    Parameters
+    ----------
+    db_dir : str or :class:`~pathlib.Path`, optional
+        Directory to scan for ``*.duckdb`` files. Defaults to `DB_DIR`.
+
+    Returns
+    -------
+    list of dict
+        Each item has ``label`` (filename) and ``value`` (absolute path),
+        suitable for a Dash ``dcc.Dropdown`` ``options`` argument.
+    """
+    directory = db_dir or DB_DIR
+    if not os.path.isdir(directory):
+        return []
+    paths = sorted(glob.glob(os.path.join(directory, "*.duckdb")))
+    return [{'label': os.path.basename(p), 'value': p} for p in paths]
+
+
+def get_all_tables(db_path=None):
     """Lists all the tables of the database."""
-    with duckdb.connect(DB_PATH, read_only=True) as conn:
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         return conn.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'").df()['table_name'].tolist()
 
 
-def get_all_sites():
+def get_all_sites(db_path=None):
     """Select the list of all sites for the first menu."""
-    with duckdb.connect(DB_PATH, read_only=True) as conn:
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         return conn.execute("SELECT DISTINCT site_name FROM experiments WHERE site_name IS NOT NULL").df()['site_name'].tolist()
 
-def get_files_for_site(site_name, table_name):
+def get_files_for_site(site_name, table_name, db_path=None):
     """
     Interroge la table choisie pour sortir tous les fichiers du site.
     C'est ta nouvelle requête SQL clé.
     """
-    with duckdb.connect(DB_PATH, read_only=True) as conn:
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = f"SELECT DISTINCT file FROM {table_name} WHERE site_name = ? AND file IS NOT NULL"
         df = conn.execute(query, [site_name]).df()
         return df['file'].tolist()
@@ -35,10 +60,7 @@ def get_files_for_site(site_name, table_name):
 @functools.lru_cache(maxsize=5)
 def load_mrun_object(filename, housing):
     """Charge et retourne l'objet MagnetRun complet."""
-    # Attention : il faut que filename contienne le chemin complet
-    # Vous pouvez réutiliser la logique de chemin que vous aviez dans votre app
-    base_dir = "/mnt/LNCMIG-Data/records"
-    filepath = os.path.join(base_dir, filename)
+    filepath = os.path.join(RECORDS_DIR, filename)
     return load_mrun(filename=filepath, housing=housing)
 
 @functools.lru_cache(maxsize=5)

@@ -4,7 +4,6 @@ import plotly.express as px
 from plotly import graph_objects as go
 import magnetdb_analysis as db
 import magnetdb_plot as plot
-import os
 import pandas as pd
 
 dash.register_page(__name__, path='/')
@@ -15,7 +14,7 @@ layout = html.Div([
         html.Hr(),
         
         html.Label("1. Choose Site :", style={'fontWeight': 'bold'}),
-        dcc.Dropdown(id='dd-site', options=db.get_all_sites(), placeholder="Choose a site..."),
+        dcc.Dropdown(id='dd-site', options=[], placeholder="Choose a site..."),
         
         html.Br(),
         html.Label("2. Choose Table :", style={'fontWeight': 'bold'}),
@@ -54,16 +53,28 @@ layout = html.Div([
     ], style={'padding': '20px', 'backgroundColor': '#f8f9fa', 'minHeight': '100vh'})
 ])
 
+# CALLBACK 0 : Met à jour la liste des sites en fonction de la Database sélectionnée
+@dash.callback(
+    Output('dd-site', 'options'),
+    Input('dd-database', 'value')
+)
+def update_site_dropdown(selected_db):
+    if not selected_db:
+        return []
+    return db.get_all_sites(selected_db)
+
+
 # CALLBACK 1 : Met à jour la liste des fichiers en fonction du Site ET de la Table
 @dash.callback(
     Output('dd-file', 'options'),
     Input('dd-site', 'value'),
-    Input('dd-table', 'value')
+    Input('dd-table', 'value'),
+    Input('dd-database', 'value')
 )
-def update_file_dropdown(selected_site, selected_table):
+def update_file_dropdown(selected_site, selected_table, selected_db):
     if not selected_site or not selected_table:
         return []
-    files = db.get_files_for_site(selected_site, selected_table)
+    files = db.get_files_for_site(selected_site, selected_table, selected_db)
     return [{'label': f, 'value': f} for f in files]
 
 
@@ -181,9 +192,7 @@ def update_outputs(selected_file, selected_site, selected_table, selected_x, all
     if not selected_file or not selected_site:
         return [[] for _ in all_sensors_ids]
     
-    base_dir = "/mnt/LNCMIG-Data/records"
-    filepath = os.path.join(base_dir, selected_file)
-    housing = selected_site.split('_')[0] 
+    housing = selected_site.split('_')[0]
     
     mrun = db.load_mrun_object(selected_file, housing)
     if mrun is None:

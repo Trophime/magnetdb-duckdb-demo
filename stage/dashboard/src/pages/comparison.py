@@ -29,7 +29,7 @@ layout = html.Div([
             html.Div([
                 html.Hr(),
                 html.Label("1. Choose Site :", style={'fontWeight': 'bold'}),
-                dcc.Dropdown(id='dd-site', options=db.get_all_sites(), placeholder="Choose a site..."),
+                dcc.Dropdown(id='dd-site-compare', options=[], placeholder="Choose a site..."),
             ], style={"padding": "10px"}),
 
             html.Div([
@@ -83,14 +83,25 @@ layout = html.Div([
 ])
 
 @dash.callback(
-    Output('dd-files-compare', 'options'),
-    Input('dd-site', 'value')
+    Output('dd-site-compare', 'options'),
+    Input('dd-database', 'value')
 )
-def update_file_dropdown(selected_site, target_table='operationaldata'):
+def update_site_dropdown(selected_db):
+    if not selected_db:
+        return []
+    return db.get_all_sites(selected_db)
+
+
+@dash.callback(
+    Output('dd-files-compare', 'options'),
+    Input('dd-site-compare', 'value'),
+    Input('dd-database', 'value')
+)
+def update_file_dropdown(selected_site, selected_db, target_table='operationaldata'):
     if not selected_site:
         return []
 
-    files = db.get_files_for_site(selected_site, target_table)
+    files = db.get_files_for_site(selected_site, target_table, selected_db)
     
     pupitre_files = [f for f in files if f.endswith('.txt')]
     pigbrother_files = [f for f in files if f.endswith('.tdms')]
@@ -128,7 +139,7 @@ def limit_selection(selected_values):
     Output('checklist-sensors', 'value'),
     Output('sensors-message', 'children'), # Pour effacer ou afficher le message
     Input('dd-files-compare', 'value'),
-    Input('dd-site', 'value')
+    Input('dd-site-compare', 'value')
 )
 def update_comparison_sensors(selected_files, selected_site):
     if not selected_files or not selected_site:
@@ -176,15 +187,12 @@ def update_comparison_sensors(selected_files, selected_site):
     return options, value, ""
 
 
-# Variables globales pour maintenir la limite (ou utilisez dcc.Store pour une approche stateless)
-current_mruns = {} # Dictionnaire {filename: mrun_object}
-
 @dash.callback(
     Output('comparison-main-graph', 'figure'),
     [Input('dd-files-compare', 'value'),
      Input('checklist-sensors', 'value'),
      Input('comp-xaxis-selector', 'value'),
-     Input('dd-site', 'value')]
+     Input('dd-site-compare', 'value')]
 )
 def update_graph(selected_files, selected_sensors, xaxis_type, selected_site):
     if selected_sensors is None or selected_files is None:

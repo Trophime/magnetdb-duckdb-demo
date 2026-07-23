@@ -1,6 +1,9 @@
+import logging
 import plotly.graph_objects as go
 import pandas as pd
 from python_magnetrun.utils.downsampling import downsample_dataframe, DownsampleConfig
+
+logger = logging.getLogger(__name__)
 
 def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", mrun=None, group_name: str = "") -> go.Figure:
     """
@@ -8,22 +11,25 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
     """
 
     # 1. Récupération dynamique de l'unité
-    unit = "Valeur" 
+    unit = "Valeur"
     if mrun and len(y_cols) > 0:
         sensor = y_cols[0]
         try:
             # Tentative 1 : Format Pupitre (Recherche directe)
             _, unit_str = mrun.getUnit(sensor)
-            if unit_str: 
-                unit = str(unit_str) 
-        except:
+            if unit_str:
+                unit = str(unit_str)
+        except RuntimeError:
             try:
                 # Tentative 2 : Format PigBrother (Groupe/Capteur)
                 _, unit_str = mrun.getUnit(f"{group_name}/{sensor}")
                 if unit_str:
                     unit = str(unit_str)
-            except:
-                pass
+            except RuntimeError:
+                logger.debug(
+                    "No unit found for sensor %r (group %r) in either Pupitre or PigBrother key format",
+                    sensor, group_name,
+                )
 
     # 2. Gestion du Sous-échantillonnage
     # On vérifie bien qu'une méthode est choisie et que ce n'est PAS "raw data"

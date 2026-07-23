@@ -13,14 +13,12 @@ Ensure the required database (`magnetdb.duckdb`) is located in the `to_duckdb/` 
 1. Open a terminal and navigate to the dashboard folder:
    ```bash
    cd stage/dashboard/src
-
-```
+   ```
 
 2. Run the Dash server:
-```bash
-python magnetdb_app.py
-
-```
+   ```bash
+   python magnetdb_app.py
+   ```
 
 
 3. Open your web browser at: **localhost**
@@ -49,7 +47,7 @@ Select options in the control panel from top to bottom:
 5. **Sensors (Y-Axis):** Expand categories and check the desired sensors.
 6. **Downsampling:** Choose the reduction algorithm (e.g., *LTTB*, *Decimation*, *Mean*).
 
-> *Note: Downsampling is mandatory to maintain a fluid display and prevent browser crashes with large datasets.*
+> [!Note] Downsampling is mandatory to maintain a fluid display and prevent browser crashes with large datasets.
 
 ### B. "Multi-file Comparison" Page
 
