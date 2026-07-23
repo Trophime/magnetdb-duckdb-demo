@@ -3,6 +3,11 @@
 This notebook imports the housing summary files into `magnetdb.duckdb` and 
 computes additional quantities used by the statistics pipeline.
 
+## Requirements
+
+- An up-to-date `magnetdb.duckdb` database.
+- Housing summary JSON files (`M9_summary-*.json`, `M10_summary-*.json`)
+
 ## Usage
 
 - Update `magnetdb.duckdb`.
