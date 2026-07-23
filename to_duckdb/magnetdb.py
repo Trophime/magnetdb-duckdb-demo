@@ -112,6 +112,7 @@ from populate import (
     find_and_register_pupitre as _pupitre_find_and_register,
     find_and_register_tdms as _tdms_find_and_register,
     load_site as _load_site,
+    resolve_operationaldata_path as _resolve_operationaldata_path,
 )
 from config import DEFAULT_DB
 from schema import COIL_TYPES, ensure_schema
@@ -818,6 +819,7 @@ def cmd_populate_overview_records(args) -> None:
         print("No sites specified. Use --site SITE or --all.")
         sys.exit(1)
 
+    records_base = Path(args.records_base)
     insert_fn = upsert_overview_record if args.reprocess else insert_overview_record
     config = ProcessingConfig(dry_run=args.dry_run)
 
@@ -835,20 +837,21 @@ def cmd_populate_overview_records(args) -> None:
             continue
 
         print(f"\nSite: {site_name}  ({len(rows)} Overview file(s))")
-        for (fpath,) in rows:
-            if not Path(fpath).exists():
-                print(f"  [SKIP] {Path(fpath).name} — file not found")
+        for (relpath,) in rows:
+            fpath = _resolve_operationaldata_path(relpath, records_base=records_base)
+            if not fpath.exists():
+                print(f"  [SKIP] {fpath.name} — file not found")
                 continue
             if args.dry_run:
-                print(f"  [DRY RUN] would process {Path(fpath).name}")
+                print(f"  [DRY RUN] would process {fpath.name}")
                 continue
             try:
-                record = process_overview_file(fpath, config)
+                record = process_overview_file(str(fpath), config)
                 with duckdb.connect(db_path) as con:
                     ensure_schema(con)
                     insert_fn(con, record, site_name=site_name, verbose=True)
             except Exception as exc:
-                print(f"  [ERROR] {Path(fpath).name}: {exc}")
+                print(f"  [ERROR] {fpath.name}: {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -1323,6 +1326,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _db_arg(p_ov)
     _sites_arg(p_ov)
+    p_ov.add_argument(
+        "--records-base", default=str(_DEFAULT_RECORDS_BASE), dest="records_base",
+        help=f"Root of the records tree (default: {_DEFAULT_RECORDS_BASE})",
+    )
     p_ov.add_argument(
         "--reprocess", action="store_true",
         help="Overwrite existing overview_records rows (upsert instead of skip).",

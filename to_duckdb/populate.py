@@ -18,6 +18,7 @@ Public API
     load_site(site_name, db_path)          → dict | None
     find_and_register_pupitre(...)         → list[(Path, datetime)]
     find_and_register_tdms(...)            → list[(Path, datetime, str)]
+    resolve_operationaldata_path(...)      → Path
 """
 
 import re
@@ -108,19 +109,45 @@ def load_site(site_name: str, db_path: str) -> dict | None:
     }
 
 
-def _insert_operationaldata(con, site_name: str, fpath: Path, file_type: str) -> bool:
+def _insert_operationaldata(
+    con, site_name: str, fpath: Path, file_type: str, records_base: Path
+) -> bool:
     """Insert one file record. Returns True if newly inserted, False if already present."""
+    try:
+        relpath = str(fpath.relative_to(records_base))
+    except ValueError:
+        relpath = str(fpath)
     already = con.execute(
-        "SELECT COUNT(*) FROM operationaldata WHERE file = ?", [str(fpath)]
+        "SELECT COUNT(*) FROM operationaldata WHERE file = ?", [relpath]
     ).fetchone()[0]
     if already:
         return False
     con.execute(
         "INSERT INTO operationaldata (name, description, file, site_name, type, status) "
         "VALUES (?, '', ?, ?, ?, 'pending')",
-        [fpath.stem, str(fpath), site_name, file_type],
+        [fpath.stem, relpath, site_name, file_type],
     )
     return True
+
+
+def resolve_operationaldata_path(relpath: str, records_base: Path = _RECORDS_BASE) -> Path:
+    """Rebuild the on-disk path for a value stored in ``operationaldata.file``.
+
+    Parameters
+    ----------
+    relpath : str
+        Value of the ``file`` column: a path relative to *records_base*
+        (an already-absolute legacy path is also accepted and returned
+        unchanged).
+    records_base : :class:`~pathlib.Path`, optional
+        Root of the records tree (default: :data:`_RECORDS_BASE`).
+
+    Returns
+    -------
+    Path
+        Absolute path where the file is expected to live on disk.
+    """
+    return records_base / relpath
 
 
 def _site_window(
@@ -194,7 +221,7 @@ def find_and_register_pupitre(
         with duckdb.connect(db_path) as con:
             ensure_schema(con)
             new_count = sum(
-                _insert_operationaldata(con, site["name"], fpath, "Pupitre")
+                _insert_operationaldata(con, site["name"], fpath, "Pupitre", records_base)
                 for fpath, _ in matches
             )
         skipped = len(matches) - new_count
@@ -285,7 +312,7 @@ def find_and_register_tdms(
         with duckdb.connect(db_path) as con:
             ensure_schema(con)
             new_count = sum(
-                _insert_operationaldata(con, site["name"], fpath, file_type)
+                _insert_operationaldata(con, site["name"], fpath, file_type, records_base)
                 for fpath, _, file_type in matches
             )
         skipped = len(matches) - new_count
