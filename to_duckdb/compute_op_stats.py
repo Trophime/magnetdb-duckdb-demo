@@ -19,10 +19,10 @@ For each operationaldata file not yet processed this script:
 
 Usage
 -----
-    python compute_op_stats.py --db magnetdb.duckdb --records-base ../data/M9 \\
+    python compute_op_stats.py --db magnetdb.duckdb --records-base /mnt/LNCMIG-Data/records \\
         --site M9_M19061901
-    python compute_op_stats.py --db magnetdb.duckdb --records-base ../data/M9 \\
-        --site M9_M19061901 --type pupitre --reprocess
+    python compute_op_stats.py --db magnetdb.duckdb --records-base /mnt/LNCMIG-Data/records \\
+        --site M9_M19061901 --type Pupitre --reprocess
 
 Physical constants
 ------------------
@@ -42,6 +42,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
 from config import DEFAULT_DB
+from populate import resolve_operationaldata_path
 from schema import ensure_schema
 
 # ---------------------------------------------------------------------------
@@ -423,16 +424,32 @@ def ingest_site(
 
     Parameters
     ----------
-    site_name:    site FK (must exist in the sites table)
-    db_path:      path to the DuckDB file
-    records_dir:  directory containing the raw record files
-    od_type:      filter operationaldata by type (e.g. 'pupitre'), or None for all
-    bins:         list of (low, high) field bins in Tesla
-    site_channels: columns to track in op_site_bin_stats
-    flow_to_m3s:  unit conversion for debitbrut → m³/s (default: 1/3600 for m³/h)
-    rho_cp:       water rho*cp in J/(m³·K) (default: 4 186 000)
-    reprocess:    if True, overwrite already-processed files
-    verbose:      print progress lines
+    site_name : str
+        Site FK (must exist in the ``sites`` table).
+    db_path : str
+        Path to the DuckDB file.
+    records_dir : str
+        Root of the records tree; ``operationaldata.file`` values are
+        resolved relative to it (see :func:`populate.resolve_operationaldata_path`).
+    od_type : str, optional
+        Filter operationaldata by type (e.g. ``"Pupitre"``), or None for all.
+    bins : list of tuple
+        List of (low, high) field bins in Tesla.
+    site_channels : list of str
+        Columns to track in ``op_site_bin_stats``.
+    flow_to_m3s : float
+        Unit conversion for debitbrut → m³/s (default: 1/3600 for m³/h).
+    rho_cp : float
+        Water rho*cp in J/(m³·K) (default: 4 186 000).
+    reprocess : bool
+        If True, overwrite already-processed files.
+    verbose : bool
+        Print progress lines.
+
+    Returns
+    -------
+    dict
+        ``{"new": int, "skipped": int, "errors": list}``.
     """
     con = duckdb.connect(db_path)
     ensure_schema(con)
@@ -451,7 +468,7 @@ def ingest_site(
             results["skipped"] += 1
             continue
 
-        path = records_path / filename
+        path = resolve_operationaldata_path(filename, records_base=records_path)
         df = load_file(path)
         if df is None:
             results["errors"].append(filename)
