@@ -1,77 +1,96 @@
 import plotly.graph_objects as go
 import pandas as pd
-from python_magnetrun.utils.downsampling import downsample_dataframe, DownsampleConfig
+from magnetdb_downsampling import apply_downsampling
 
 def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", mrun=None, group_name: str = "") -> go.Figure:
     """
-    Gère le sous-échantillonnage et génère la figure Plotly.
+    Gère le sous-échantillonnage et génère la figure Plotly pour Pupitre ET PigBrother.
     """
+    if df is None or df.empty:
+        return go.Figure()
 
     # 1. Récupération dynamique de l'unité
     unit = "Valeur" 
     if mrun and len(y_cols) > 0:
         sensor = y_cols[0]
         try:
-            # Tentative 1 : Format Pupitre (Recherche directe)
             _, unit_str = mrun.getUnit(sensor)
-            if unit_str: 
-                unit = str(unit_str) 
+            if unit_str: unit = str(unit_str) 
         except:
             try:
-                # Tentative 2 : Format PigBrother (Groupe/Capteur)
                 _, unit_str = mrun.getUnit(f"{group_name}/{sensor}")
-                if unit_str:
-                    unit = str(unit_str)
+                if unit_str: unit = str(unit_str)
             except:
                 pass
 
-    # 2. Gestion du Sous-échantillonnage
-    # On vérifie bien qu'une méthode est choisie et que ce n'est PAS "raw data"
-    if method and method != 'raw data':
-        config = DownsampleConfig(method=method, n_out=1000)
-        try:
-            df_plot = downsample_dataframe(df, x_col, y_cols, config)
-        except Exception as e:
-            print(f"Erreur lors du downsampling avec {method}: {e}")
-            df_plot = df
-    else:
-        # Si 'raw data' ou aucune méthode, on ne touche pas au DataFrame
+    # 2. Gestion du Downsampling
+    downsample_method = 'none' if (not method or method in ['raw data', 'raw', 'none']) else method
+
+    try:
+        df_plot = apply_downsampling(df, method=downsample_method)
+    except Exception as e:
+        print(f"Erreur downsampling sur {filename}: {e}")
         df_plot = df
 
-
-    x_label_mapping = {
-        't': 't(s)',
-        'timestamp': 'Date / Time'
-    }
-    
-    # On récupère le label personnalisé, ou on garde le nom de la colonne par défaut
+    x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time'}
     x_title = x_label_mapping.get(x_col, x_col)
 
-    # 3. Création de la figure
     fig = go.Figure()
 
-
-    # On boucle directement sur y_cols (qui est déjà garanti d'être une liste)
+    # 3. Traitement robuste des colonnes (Gère 'Groupe/Capteur' ET 'Capteur')
     for sensor in y_cols:
-        if sensor in df_plot.columns: 
-            fig.add_trace(go.Scattergl(
-                x=df_plot[x_col],
-                y=df_plot[sensor],
-                mode='lines',
-                name=sensor, # Utilise directement le nom du capteur
-                line=dict(width=2)
-            ))
+        target_col = None
+        
+        # CAS A : Dictionnaire LTTB
+        if isinstance(df_plot, dict):
+            if sensor in df_plot:
+                sub_df = df_plot[sensor]
+                # Chercher le nom exact ou le nom court
+                short_name = sensor.split('/')[-1]
+                if sensor in sub_df.columns:
+                    target_col = sensor
+                elif short_name in sub_df.columns:
+                    target_col = short_name
 
-    # 4. Mise en forme
+                if target_col and x_col in sub_df.columns:
+                    fig.add_trace(go.Scattergl(
+                        x=sub_df[x_col],
+                        y=sub_df[target_col],
+                        mode='lines',
+                        name=sensor,
+                        line=dict(width=2)
+                    ))
+
+        # CAS B : DataFrame classique (M4, MinMax, Naive, Raw)
+        else:
+            short_name = sensor.split('/')[-1]
+            
+            # Vérifier si la colonne s'appelle 'Group/Capteur' ou juste 'Capteur'
+            if sensor in df_plot.columns:
+                target_col = sensor
+            elif short_name in df_plot.columns:
+                target_col = short_name
+
+            if target_col and x_col in df_plot.columns:
+                fig.add_trace(go.Scattergl(
+                    x=df_plot[x_col],
+                    y=df_plot[target_col],
+                    mode='lines',
+                    name=sensor,
+                    line=dict(width=2)
+                ))
+
+    # 4. Layout
     fig.update_layout(
         title=f"Visualization : {filename} (Algo: {method})",
         template="plotly_white",
         margin=dict(l=40, r=40, t=60, b=40),
-        xaxis=dict(title=x_title), # Utilise directement le nom de la colonne X ('t' ou 'timestamp')
+        xaxis=dict(title=x_title),
         yaxis=dict(title=f"Value : {unit}"),
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-        hovermode="x unified"
+        hovermode="x unified",
+        uirevision='constant',
     )
 
     return fig
