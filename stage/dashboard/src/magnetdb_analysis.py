@@ -44,7 +44,7 @@ def load_mrun_object(filename, housing):
     # Vous pouvez réutiliser la logique de chemin que vous aviez dans votre app
     base_dir = "/mnt/LNCMIG-Data/records"
     filepath = os.path.join(base_dir, filename)
-    print(f"⏱️ [DEBUG] Chargement LOURD depuis le disque : {filepath}")
+    print(f"[DEBUG] Chargement LOURD depuis le disque : {filepath}")
     return load_mrun(filename=filepath, housing=housing)
 
 @functools.lru_cache(maxsize=2)
