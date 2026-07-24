@@ -1,5 +1,6 @@
-from dash import Dash, html, dcc, Input, Output, no_update, ALL, State, register_page
+from dash import Dash, html, dcc, Input, Output, no_update, ALL, State, register_page, MATCH, Patch, ctx
 import dash
+from dash.exceptions import PreventUpdate
 import plotly.express as px
 from plotly import graph_objects as go
 import magnetdb_analysis as db
@@ -46,8 +47,8 @@ layout = html.Div([
         html.Label("7. Downsampling Method:", style={'fontWeight': 'bold'}),
         dcc.Dropdown(
             id='dropdown-downsampling',
-            options=['raw data', 'lttb', 'minmax', 'm4', 'nan_m4', 'minmax_lttb', 'stride'],
-            value='lttb',
+            options=['raw data', 'LTTB', 'minmax', 'M4', 'naive'],
+            value='LTTB',
             clearable=False
         )
         
@@ -142,11 +143,16 @@ def update_sensors_menus(selected_file, selected_site, current_sensor_values, cu
                 
                 # --- PARTIE DROITE : Le conteneur du Graphique (Prend tout le reste de la place) ---
                 html.Div(
-                    id={'type': 'group-graph-container', 'index': group_name}, 
-                    children=[], 
+                    children=[
+                        # ⚡ On place le dcc.Graph directement ici !
+                        dcc.Graph(
+                            id={'type': 'dynamic-graph', 'index': group_name},
+                            style={'height': '350px'}
+                        )
+                    ], 
                     style={
-                        'flexGrow': 1, # Magie Flexbox : prend 100% de l'espace restant !
-                        'minWidth': '0', # Force Plotly à s'adapter sans dépasser
+                        'flexGrow': 1, 
+                        'minWidth': '0', 
                         'padding': '10px'
                     }
                 )
@@ -165,55 +171,77 @@ def update_sensors_menus(selected_file, selected_site, current_sensor_values, cu
     return menus_blocks
 
 @dash.callback(
-    # On cible l'ID dynamique de la boîte à graphique créée juste au-dessus
-    Output({'type': 'group-graph-container', 'index': ALL}, 'children'),
+    Output({'type': 'dynamic-graph', 'index': ALL}, 'figure'),
+    
     Input('dd-file', 'value'),
     Input('dd-site', 'value'),
     Input('dd-table', 'value'),
     Input('dd-x-axis', 'value'),
     Input({'type': 'group-sensors-checklist', 'index': ALL}, 'value'), 
     Input({'type': 'group-sensors-checklist', 'index': ALL}, 'id'), 
-    Input('dropdown-downsampling', 'value')
+    Input('dropdown-downsampling', 'value'),
+    State({'type': 'dynamic-graph', 'index': ALL}, 'relayoutData') 
 )
-def update_outputs(selected_file, selected_site, selected_table, selected_x, all_sensors_lists, all_sensors_ids, selected_algo):
+def update_outputs(selected_file, selected_site, selected_table, selected_x, all_sensors_lists, all_sensors_ids, selected_algo, all_relayout_data):
     
-    # Si aucun fichier n'est sélectionné, on renvoie une liste de composants vides pour chaque Checklist présente
-    if not selected_file or not selected_site:
-        return [[] for _ in all_sensors_ids]
-    
-    base_dir = "/mnt/LNCMIG-Data/records"
-    filepath = os.path.join(base_dir, selected_file)
-    housing = selected_site.split('_')[0] 
-    
-    mrun = db.load_mrun_object(selected_file, housing)
-    if mrun is None:
-        return [[] for _ in all_sensors_ids]
+    empty_fig = go.Figure()
+    empty_fig.update_layout(
+        annotations=[{'text': "Cochez un capteur pour afficher la courbe", 'xref': "paper", 'yref': "paper", 'showarrow': False, 'font': {'color': '#888888'}}],
+        xaxis={'visible': False}, yaxis={'visible': False}, template="plotly_white", margin=dict(l=20, r=20, t=30, b=20)
+    )
 
-    # Cartographie des capteurs
+    if not selected_file or not selected_site:
+        return [empty_fig for _ in all_sensors_ids]
+    
+    # --- ETAPE 1 : DETERMINER SI ON DOIT CONSERVER LE ZOOM ---
+    maintain_zoom = False
+    triggered_id = ctx.triggered_id
+    
+    # On maintient le zoom SEULEMENT si l'action vient d'une case a cocher ou d'un changement d'algo de downsampling.
+    # Si on change de fichier ou d'axe X, on veut que le graphique s'autoscale (remise a zero).
+    if triggered_id == 'dropdown-downsampling' or (isinstance(triggered_id, dict) and triggered_id.get('type') == 'group-sensors-checklist'):
+        maintain_zoom = True
+
+    # --- ETAPE 2 : EXTRAIRE LES LIMITES DU ZOOM ACTUEL ---
+    x_range = None
+    if maintain_zoom and all_relayout_data:
+        # On cherche le premier graphique qui possede des informations de zoom
+        for relayout in all_relayout_data:
+            if relayout:
+                if 'xaxis.range[0]' in relayout:
+                    x_range = [relayout['xaxis.range[0]'], relayout['xaxis.range[1]']]
+                    break
+                elif 'xaxis.range' in relayout:
+                    x_range = [relayout['xaxis.range'][0], relayout['xaxis.range'][1]]
+                    break
+
+    housing = selected_site.split('_')[0] 
+    mrun = db.load_mrun_object(selected_file, housing)
+    
+    if mrun is None:
+        return [empty_fig for _ in all_sensors_ids]
+
     sensors_map = {
         sensor_id['index']: sensor_values 
         for sensor_id, sensor_values in zip(all_sensors_ids, all_sensors_lists)
         if sensor_values is not None
     }
 
-    # Dash attend qu'on retourne une liste de réponses ordonnée de la même façon que all_sensors_ids
-    outputs_blocks = []
+    outputs_figures = []
     
     for sensor_id in all_sensors_ids:
         group_name = sensor_id['index']
 
         if group_name == 'Infos' or group_name not in mrun.MagnetData.Groups:
-            outputs_blocks.append([])
+            outputs_figures.append(empty_fig)
             continue
         
         sensors_in_this_group = sensors_map.get(group_name, [])
         
-        # S'il n'y a aucun capteur coché pour ce groupe, on laisse la boîte vide
         if not sensors_in_this_group:
-            outputs_blocks.append([])
+            outputs_figures.append(empty_fig)
             continue
         
-        # Extraction des données
         if isinstance(mrun.MagnetData.Data, pd.DataFrame):
             df = mrun.MagnetData.Data
         elif isinstance(mrun.MagnetData.Data, dict) and group_name in mrun.MagnetData.Data:
@@ -222,32 +250,96 @@ def update_outputs(selected_file, selected_site, selected_table, selected_x, all
             try:
                 df = mrun.getDataFrame()
             except:
-                outputs_blocks.append([])
+                outputs_figures.append(empty_fig)
                 continue
                 
         if not isinstance(df, pd.DataFrame):
-            outputs_blocks.append([])
+            outputs_figures.append(empty_fig)
             continue 
             
-        # Création du plot
+        # Creation du plot normal
         fig = plot.create_plot(df, selected_x, sensors_in_this_group, selected_algo, filename=f"{selected_file} - {group_name}", mrun=mrun, group_name=group_name)
         
-        # On ajoute le graphique à notre liste de composants pour ce groupe
-        outputs_blocks.append(
-            dcc.Graph(
-                id={'type': 'dynamic-graph', 'index': group_name},
-                figure=fig
-            )
-        )
+        # --- ETAPE 3 : INJECTER LE ZOOM DANS LA NOUVELLE FIGURE ---
+        if x_range is not None:
+            fig.update_layout(xaxis=dict(range=x_range, autorange=False))
         
-    return outputs_blocks
+        outputs_figures.append(fig)
+        
+    return outputs_figures
+
+# CALLBACK 5 : Synchronisation du zoom entre tous les graphiques de la page Home
+@dash.callback(
+    Output({'type': 'dynamic-graph', 'index': ALL}, 'figure', allow_duplicate=True),
+    Input({'type': 'dynamic-graph', 'index': ALL}, 'relayoutData'),
+    State({'type': 'dynamic-graph', 'index': ALL}, 'id'),
+    prevent_initial_call=True
+)
+def sync_zoom_home(relayout_data_list, graph_ids):
+    # 1. Identifier quel graphique a déclenché l'événement
+    triggered_id = ctx.triggered_id
+    if not triggered_id:
+        raise PreventUpdate
+
+    trigger_index = graph_ids.index(triggered_id)
+    relayout_data = relayout_data_list[trigger_index]
+
+    if not relayout_data:
+        raise PreventUpdate
+
+    patches = []
+    x_min, x_max = None, None
+    autoscale = False
+    
+    # --- ANALYSE DE L'ÉVÉNEMENT PLOTLY ---
+    
+    # Cas A : Zoom avec le rectangle de sélection 
+    if 'xaxis.range[0]' in relayout_data:
+        x_min = relayout_data['xaxis.range[0]']
+        x_max = relayout_data['xaxis.range[1]']
+        
+    # Cas B : Déplacement avec l'outil "Pan" 
+    elif 'xaxis.range' in relayout_data:
+        x_min = relayout_data['xaxis.range'][0]
+        x_max = relayout_data['xaxis.range'][1]
+        
+    # Cas C : Double-clic pour réinitialiser le zoom (Autoscale)
+    elif 'xaxis.autorange' in relayout_data:
+        autoscale = True
+        
+    # Cas D : Autre événement 
+        raise PreventUpdate
+
+    # --- APPLICATION DES MISES À JOUR (PATCH) ---
+    
+    for g_id in graph_ids:
+        # On ne met pas à jour le graphique qui a déclenché l'action 
+        if g_id == triggered_id:
+            patches.append(dash.no_update)
+            continue
+            
+        patched_fig = Patch()
+        
+        if autoscale:
+            patched_fig['layout']['xaxis']['autorange'] = True
+        else:
+            patched_fig['layout']['xaxis']['range'] = [x_min, x_max]
+            patched_fig['layout']['xaxis']['autorange'] = False
+            
+        patches.append(patched_fig)
+        
+    return patches
 
 @dash.callback(
     Output({'type': 'group-sensors-checklist', 'index': ALL}, 'value'),
-    Input('dd-file', 'value'), # Dès que le fichier change
+    Input('dd-file', 'value'),
+    State({'type': 'group-sensors-checklist', 'index': ALL}, 'id'),
     prevent_initial_call=True
 )
-def reset_checklists(selected_file):
-    # On renvoie une liste vide pour chaque checklist existante
-    # Dash va automatiquement décocher toutes les cases
-    return []
+def reset_checklists(selected_file, all_checklists_ids):
+    if not all_checklists_ids:
+        return dash.no_update
+        
+    num_checklists = len(all_checklists_ids)
+    
+    return [[] for _ in range(num_checklists)]
