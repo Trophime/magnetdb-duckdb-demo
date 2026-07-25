@@ -1,30 +1,68 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[10]:
+
+
 import json
 import duckdb
 import pandas as pd
+import numpy as np
 from pathlib import Path
 import time
 
-from python_magnetrun.magnetdata import MagnetData
+from rich.progress import Progress
+
+from python_magnetrun.MagnetRun import MagnetRun, load_mrun
 
 
 
 
-DATA_DIR = Path("../Data for Stage")
-PUPITRE_ROOT = Path("../pupitre_2023/srv-data-install")
-PUPITRE_DIR = Path("../pupitre_2023/srv-data-install/M9")
-DB = "magnetdb.duckdb"
+DATA_DIR = Path("../Data")
+PUPITRE_ROOT = Path("~/LNCMIG-Data/records/srv-data-install").expanduser()
+PUPITRE_DIR = Path("~/LNCMIG-Data/records/srv-data-install/M9").expanduser()
+PIGBROTHER = Path("../pigbrother_2025/M10_Overview_251201-0909.tdms")
+DB = "test-magnetdb.duckdb"
 
 FIELD_THRESHOLD = 0.1
 
-### HOUSING SUMMARY
-# Load and merge the housing summary files
+
+# In[11]:
+
+
+# Sample the field at 20 points -> representation of the field profile
+def compute_field_signature(field):
+
+    values = field.to_numpy()
+
+    if len(values) == 0:
+        return ""
+    
+    idx = np.linspace(0, len(values) - 1, 20, dtype = int)
+    signature = values[idx]
+
+    return ",".join(f"{x:.2f}" for x in signature)
+
+
+# # HOUSING SUMMARY
+# ### Load and merge the housing summary files
+# 
+
+# In[12]:
+
+
+PATH_COLUMNS = [
+    "overview", "archive", "pupitre", "default", "trigger", "spike",
+    "hybrid_kHz", "hybrid_rms", "hybrid_trigger", "hybrid_vprocess",
+    "pigbrother_runlog", "pupitre_runlog",
+]
 
 rows = []
 for file in sorted(DATA_DIR.glob("*_summary-*.json")):
 
     print(f"Loading {file.name}")
 
-    site = file.stem.split("_")[0]
+    housing = file.stem.split("_")[0]
     year = int(file.stem[-4: ])
 
     with open(file, "r") as f:
@@ -32,14 +70,32 @@ for file in sorted(DATA_DIR.glob("*_summary-*.json")):
 
     df = pd.json_normalize(data)
 
-    df["site"] = site
+    for col in PATH_COLUMNS:
+        df[col] = df[col].apply(lambda x: Path(x).name if x else x)
+
+    df["housing"] = housing
     df["year"] = year
 
     rows.append(df)
 
 summary_df = pd.concat(rows, ignore_index = True)
 
-# Refresh the housing summary table and display basic stats
+summary_df["experiment_id"]       = None
+summary_df["field_max"]           = pd.Series(dtype = "float64")
+summary_df["field_mean"]          = pd.Series(dtype = "float64")
+summary_df["field_time_on"]       = pd.Series(dtype = "float64")
+summary_df["mode"]                = ""
+summary_df["field_signature"]     = ""
+summary_df["reference_signature"] = ""
+
+print(f"Found {len(summary_df)} summary files")
+print(summary_df.head())
+
+
+# ### Refresh the housing summary table and display basic stats
+
+# In[13]:
+
 
 con = duckdb.connect(DB)
 con.execute(
@@ -59,15 +115,20 @@ con.execute(
 print("\nRows:\n",
     con.execute(
         """
-            SELECT site, year, COUNT(*) AS n
+            SELECT housing, year, COUNT(*) AS n
             FROM housing_summary
-            GROUP BY site, year
-            ORDER BY site, year
+            GROUP BY housing, year
+            ORDER BY housing, year
         """
     ).fetchdf()
 )
 
-# Data quality audit
+
+# ### Data quality audit
+
+# In[17]:
+
+
 ## Check the date schema
 print("\nTABLE SCHEMA: ",
     con.execute(
@@ -94,6 +155,11 @@ print("NUMBER OF MATCHES:",
             ON h.pupitre LIKE '%' || e.file
         """).fetchone()[0]
 )
+
+
+# In[ ]:
+
+
 # Check for missing files
 print("\nMISSING FILES:\n",
     con.execute(
@@ -101,8 +167,7 @@ print("\nMISSING FILES:\n",
             SELECT
                 SUM(CASE WHEN overview = '' THEN 1 ELSE 0 END) AS overview,
                 SUM(CASE WHEN archive  = '' THEN 1 ELSE 0 END) AS archive,
-                SUM(CASE WHEN pupitre  = '' THEN 1 ELSE 0 END) AS pupiter,
-                SUM(CASE WHEN trigger  = '' THEN 1 ELSE 0 END) AS trigger
+                SUM(CASE WHEN pupitre  = '' THEN 1 ELSE 0 END) AS pupiter
             from housing_summary
         """
     ).fetchdf()
@@ -120,32 +185,12 @@ print("\nDUPLICATE FILENAMES:\n",
     ).fetchdf()
 )
 
-con.execute(
-    """
-        ALTER TABLE housing_summary
-        ADD COLUMN field_max DOUBLE
-    """
-)
-con.execute(
-    """
-        ALTER TABLE housing_summary
-        ADD COLUMN field_mean DOUBLE
-    """
-)
-con.execute(
-    """
-        ALTER TABLE housing_summary
-        ADD COLUMN field_time_on DOUBLE
-    """
-)
 
-# Link with the user DB : Add foreign key column and populate
-con.execute(
-    """
-        ALTER TABLE housing_summary
-        ADD COLUMN experiment_id INTEGER
-    """
-)
+# ### Link with the user DB : Add foreign key column and populate
+
+# In[16]:
+
+
 con.execute(
     """
         UPDATE housing_summary AS h
@@ -188,55 +233,75 @@ print(
 
 rows = con.execute(
     """
-        SELECT rowid, site, pupitre
+        SELECT rowid, housing, pupitre
         FROM housing_summary
         WHERE pupitre <> ''
     """
 ).fetchall()
 
+
+# In[19]:
+
+
+print(
+    con.execute("""
+        DESCRIBE housing_summary
+    """).fetchdf()
+)
+
+
+# In[20]:
+
+
 start = time.perf_counter()
-for i, (rowid, site, pupitre) in enumerate (rows, start = 1):
+with Progress() as progress:
+    task = progress.add_task("Updating field stats", total=len(rows))
+    for rowid, housing, pupitre in rows:
+        filename = Path(pupitre).name
+        filepath = PUPITRE_ROOT / housing / filename
+        progress.update(task, description=f"{housing}/{filename}")
 
-    filename = Path(pupitre).name
-    filepath = PUPITRE_ROOT / site / filename
+        if not filepath.exists():
+            progress.advance(task)
+            continue
 
-    if not filepath.exists():
-        continue
+        try:
+            md = load_mrun(str(filepath), housing=housing)
+            df = md.getMData().Data
 
-    try: 
+            field = df["Field"]
+            field_signature = compute_field_signature(field)
 
-        md = MagnetData.fromtxt(str(filepath))
-        df = md.getPandasData(None)
+            con.execute(
+                """
+                    UPDATE housing_summary
+                    SET 
+                        field_max = ?,
+                        field_mean = ?,
+                        field_time_on = ?,
+                        field_signature = ?
+                    WHERE rowid = ?
+                """, 
+                (float(field.max()), float(field.mean()), int((field > FIELD_THRESHOLD).sum()), field_signature, int(rowid))
+            )
 
-        field = df["Field"]
+        except Exception as e:
+            progress.console.print(f"[red]{filename}: {e}[/red]")
 
-        con.execute(
-            """
-                UPDATE housing_summary
-                SET 
-                    field_max = ?,
-                    field_mean = ?,
-                    field_time_on = ?
-                WHERE rowid = ?
-            """, 
-            (float(field.max()), float(field.mean()), int((field > FIELD_THRESHOLD).sum()), int(rowid))
-        )
-
-        if i % 100 == 0:
-            print(f"{i}/{len(rows)}")
-
-    except Exception as e:
-        
-        print(filename, e)
-
+        progress.advance(task)
 
 end = time.perf_counter()
-print(f"Dataframe updated in: {end - start} s")
+print(f"Dataframe updated in {int((end - start) // 60)} m {((end - start) % 60):.2f} s")
 
+
+# In[10]:
+
+
+# Validate update
 print(
     con.execute(
         """
-            SELECT COUNT(field_max), COUNT(field_mean), COUNT(field_time_on)
+            SELECT COUNT(field_max) AS field_stats, COUNT(field_signature) AS signatures
             FROM housing_summary
         """
     ).fetchdf()
@@ -244,35 +309,243 @@ print(
 print(
     con.execute(
         """
-            SELECT experiment_id, field_max, field_mean, field_time_on
+            SELECT experiment_id, field_max, field_signature
             FROM housing_summary
-            WHERE field_max IS NOT NULL
+            WHERE field_signature <> ''
             LIMIT 10
         """
     ).fetchdf()
 )
 
+print(
+    con.execute(
+        """
+            SELECT experiment_id, field_signature
+            FROM housing_summary
+            WHERE field_signature IS NOT NULL
+            LIMIT 5
+        """
+    ).fetchdf()
+)
+
+
+# In[ ]:
+
+
 con.close()
-
-
-
-### INFER MODE
-# Inspect a Pupiter file
 
 files = sorted(PUPITRE_DIR.glob("*.txt"))
 
-print(f"\n\nFound {len(files)} files")
-file0 = files[0]
-print(f"Loading: {file0.name}")
+print(f"Found {len(files)} files")
+print(f"Loading: {files[0].name}")
 
-md = MagnetData.fromtxt(str(file0))
-df = md.getPandasData(None)
+md = load_mrun(str(files[0]))
+df = md.getMData().Data
 
 print("\nAVAILABLE CHANNELS:", md.getKeys())
 print("\nCOLUMNS:", df.columns.tolist())
 print("\nFIRST ROWS:\n", df.head())
 
-for k in md.getKeys():
 
-    if "Idcct" in k or "Icoil" in k:
-        print(k)
+# # MODE INFERRING
+
+# In[ ]:
+
+
+mrun = MagnetRun.fromtdms(housing = "M10", filename = str(PIGBROTHER))
+mdata = mrun.getMData()
+print(mdata)
+
+print(mdata.Data["Courants_Alimentations"].columns)
+
+
+# # PROPOSALS
+
+# In[ ]:
+
+
+# Load proposals metadata and parse experiment date ranges
+
+proposals_df = pd.read_csv(DATA_DIR / "proposals.csv")
+proposals_df["Debut"] = pd.to_datetime(proposals_df["Debut"], errors = "coerce")
+proposals_df["Fin"]   = pd.to_datetime(proposals_df["Fin"],   errors = "coerce")
+
+
+# In[ ]:
+
+
+# Connect to the database and recreate the proposals table
+
+con = duckdb.connect(DB)
+
+con.execute(
+    """
+        DROP TABLE IF EXISTS proposals
+    """
+)
+con.register("proposals_df", proposals_df)
+con.execute(
+    """
+        CREATE TABLE proposals AS
+        SELECT * FROM proposals_df
+    """
+)
+
+
+# In[ ]:
+
+
+# Inspect imported proposal schema as well as the experiments table
+ 
+print(
+    con.execute(
+        """
+            DESCRIBE proposals
+        """
+    ).fetchdf()
+)
+print(
+    con.execute(
+        """
+            SELECT * FROM proposals 
+            LIMIT 10
+        """
+    ).fetchdf()
+)
+
+print(
+    con.execute(
+        """
+            DESCRIBE experiments
+        """
+    )
+)
+print(
+    con.execute(
+        """
+            SELECT * FROM experiments
+            LIMIT 10
+        """
+    ).fetchdf()
+)
+
+
+# In[ ]:
+
+
+# Check temporal coverage of the proposal metadata
+
+print(
+    con.execute(
+        """
+            SELECT MIN(file), MAX(file), COUNT(*)
+            FROM experiments
+        """
+    ).fetchdf()
+)
+print(
+    con.execute(
+        """
+            SELECT DISTINCT year
+            FROM housing_summary
+            ORDER BY year
+        """
+    ).fetchdf()
+)
+print(
+    con.execute(
+        """
+            SELECT MIN(Debut), MAX(Fin), COUNT(*)
+            FROM proposals
+        """
+    ).fetchdf()
+)
+
+
+# In[ ]:
+
+
+# Add proposal column to housing_summary unless it already exists
+
+con.execute(
+    """
+        ALTER TABLE housing_summary
+        ADD COLUMN IF NOT EXISTS proposal VARCHAR;
+    """
+)
+
+# Link housing records to proposals by magnet site and experiment date
+
+con.execute(
+    """
+        UPDATE housing_summary AS h
+        SET proposal = p.Acronym
+        FROM proposals AS p
+        WHERE h.pupitre <> '' AND h.pupitre IS NOT NULL
+            AND h.site = regexp_replace(p.Site, '[ie]$', '')
+            AND strptime(right(replace(h.pupitre, '.txt', ''), 19), '%y.%m.%d - %H:%M:%S')
+        BETWEEN CAST(p.Debut AS TIMESTAMP) AND CAST(p.Fin AS TIMESTAMP);
+    """
+)
+
+
+# In[ ]:
+
+
+# Validate propsal linkage
+
+print(
+    con.execute(
+        """
+            SELECT COUNT(*) AS total, COUNT(proposal) AS linked
+            FROM housing_summary;
+        """
+    ).fetchdf()
+)
+
+
+# In[47]:
+
+
+con.close()
+
+
+# In[ ]:
+
+
+proposals_df = pd.read_csv(DATA_DIR / "proposals_2026-07-22.csv")
+proposals_df["Experiment Start Date"] = pd.to_datetime(proposals_df["Experiment Start Date"], errors = "coerce")
+proposals_df["Experiment End Date"]   = pd.to_datetime(proposals_df["Experiment End Date"], errors = "coerce")
+
+print(proposals_df[["Acronym", "Magnet Sites", "Experiment Start Date", "Experiment End Date"]].head(), proposals_df.shape)
+
+
+# In[ ]:
+
+
+# Check Magent Sites in new proposals_2026-07-26.csv
+
+print(proposals_df["Magnet Sites"].dtype)
+print(len(proposals_df))
+print(proposals_df["Magnet Sites"].notna().sum())
+
+
+# In[ ]:
+
+
+###
+print(
+    con.execute("""
+        SELECT year, COUNT(*)
+        FROM housing_summary
+        GROUP BY year
+        ORDER BY year
+    """).fetchdf()
+)
+
+
+# In[ ]:
+
+
+
+

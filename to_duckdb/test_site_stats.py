@@ -1,44 +1,39 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[1]:
+
+
 import duckdb
 from compute_exp_stats import ingest_site
 
-#site = "M9_A250730_00"
+site = "M10_A251112_00"
 db = "magnetdb.duckdb"
+
+
+# In[2]:
+
 
 con = duckdb.connect(db)
 
-sites = [
-    s[0] for s in con.execute(
+files = con.execute(
     """
-        SELECT name FROM sites ORDER BY name
-    """).fetchall()
-]
+        SELECT file FROM experiments WHERE site_name = ?
+    """,
+    [site]
+).fetchall()
+
+for f in files:
+
+    print(f[0])
+
+print(f"Number of files: {len(files)}")
+
+ingest_site(site_name = site, db_path = db)
 
 
-for site in sites:
-
-    n_files = con.execute(
-        """
-            SELECT COUNT(*) FROM experiments WHERE site_name = ?
-        """,
-        [site]
-    ).fetchone()[0]
-    
-    print(f"Processing site {site} ({n_files} files):")
-    ingest_site(site_name = site, db_path = db)
+# In[ ]:
 
 
-rows = con.execute(
-    """
-        SELECT DISTINCT id, name, site_name, status 
-        FROM experiments
-        ORDER BY name
-    """).fetchall()
 
-print(f"\n{"id":>4} {"name":25} {"site":15} status")
-print("-" * 80)
 
-for id, name, site, status in rows:
-
-    print(f"{id:4d} {name:25} {site:15} {status}")
-
-con.close()
