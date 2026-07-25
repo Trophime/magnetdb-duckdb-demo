@@ -99,6 +99,20 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | `hoop-stress stats` | Descriptive statistics of stress time series | [hoop-stress.md](docs/hoop-stress.md) |
 | `hoop-stress fatigue` | Rainflow cycle counting | [hoop-stress.md](docs/hoop-stress.md) |
 
+### View filters
+
+| Command | Filter options |
+|---|---|
+| `experiments view` | `--site`, `--magnet`, `--part`, `--from`/`--to` |
+| `operationaldata view` | `--site`, `--type`, `--magnet`, `--part`, `--from`/`--to` |
+| `overview-records view` | `--site`, `--magnet`, `--part`, `--from`/`--to`, `--signatures` (extra output flag, not a filter) |
+| `material view [name]` | positional `name`, `--nuance` |
+| `magnet view [name]` | positional `name`, `--type`, `--status` |
+| `site view [name]` | positional `name`, `--housing`, `--status` |
+| `housing view [name]` | positional `name` only |
+
+`--from`/`--to` accept `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`, filtering on the timestamp encoded in the record's filename. See [populate.md](docs/populate.md) and [loading.md](docs/loading.md) for details.
+
 ---
 
 ## Validating the database — `check`

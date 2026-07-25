@@ -42,14 +42,14 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).parent))
 from config import DEFAULT_DB
-from populate import resolve_operationaldata_path
+from populate import _RECORDS_BASE, resolve_operationaldata_path
 from schema import ensure_schema
 
 # ---------------------------------------------------------------------------
 # Defaults
 # ---------------------------------------------------------------------------
 
-DEFAULT_RECORDS_BASE = "records"
+DEFAULT_RECORDS_BASE = str(_RECORDS_BASE)
 
 FIELD_COL = "Field"
 FIELD_THRESHOLD = 0.1  # T  — minimum field to count as "field on"

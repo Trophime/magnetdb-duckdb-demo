@@ -22,6 +22,7 @@ Public API
 """
 
 import re
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -32,16 +33,46 @@ except ImportError:
 
 import duckdb
 
+from python_magnetrun.data_dirs import PIGBROTHER_DATA_DIR, PUPITRE_DATA_DIR
 from schema import ensure_schema
 
 # ---------------------------------------------------------------------------
 # Shared constants
 # ---------------------------------------------------------------------------
 
-_RECORDS_BASE = Path("/mnt/LNCMIG-Data/records")
 _SRV_SUBDIR   = "srv-data-install"   # pupitre TXT:  records_base / srv_subdir / housing
 _PBSURV       = "pbsurv"             # TDMS files:   records_base / pbsurv    / housing / subdir
 FILE_TZ       = ZoneInfo("Europe/Paris")
+
+# Default records root follows python_magnetrun's data-directory resolution
+# (MAGNETRUN_PUPITRE_DATA_DIR env var > data_dirs.json > hard-coded default),
+# so `MAGNETRUN_PUPITRE_DATA_DIR=/x/srv-data-install` also redirects to_duckdb.
+_RECORDS_BASE = Path(PUPITRE_DATA_DIR).parent
+
+if Path(PUPITRE_DATA_DIR).name != _SRV_SUBDIR:
+    print(
+        f"[WARN] populate.py: PUPITRE_DATA_DIR ({PUPITRE_DATA_DIR!r}) does not end "
+        f"with the conventional {_SRV_SUBDIR!r} subdir; _RECORDS_BASE={_RECORDS_BASE} "
+        "may not be what you expect. Check MAGNETRUN_PUPITRE_DATA_DIR / "
+        "~/.config/python_magnetrun/data_dirs.json.",
+        file=sys.stderr,
+    )
+if Path(PIGBROTHER_DATA_DIR).name != _PBSURV:
+    print(
+        f"[WARN] populate.py: PIGBROTHER_DATA_DIR ({PIGBROTHER_DATA_DIR!r}) does not "
+        f"end with the conventional {_PBSURV!r} subdir. Check "
+        "MAGNETRUN_PIGBROTHER_DATA_DIR / ~/.config/python_magnetrun/data_dirs.json.",
+        file=sys.stderr,
+    )
+if Path(PIGBROTHER_DATA_DIR).parent != _RECORDS_BASE:
+    print(
+        f"[WARN] populate.py: PIGBROTHER_DATA_DIR's root ({Path(PIGBROTHER_DATA_DIR).parent}) "
+        f"does not match _RECORDS_BASE ({_RECORDS_BASE}) derived from PUPITRE_DATA_DIR. "
+        "TDMS lookups under _RECORDS_BASE / _PBSURV may point at the wrong tree. "
+        "Check MAGNETRUN_PUPITRE_DATA_DIR / MAGNETRUN_PIGBROTHER_DATA_DIR / "
+        "~/.config/python_magnetrun/data_dirs.json.",
+        file=sys.stderr,
+    )
 
 # ---------------------------------------------------------------------------
 # TDMS type registry

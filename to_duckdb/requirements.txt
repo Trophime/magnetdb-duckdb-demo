@@ -51,5 +51,8 @@ pytest
 # Notebook / interactive UI (optional)
 marimo
 
+# Notebook-only helpers (optional — used inside .ipynb cells, e.g. rich progress bars in import_housing_summary.ipynb)
+rich
+
 # Interactive UI for database management (optional, but recommended for ease of use)
 duckdb-cli
