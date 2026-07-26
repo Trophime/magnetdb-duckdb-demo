@@ -1,3 +1,4 @@
+import os
 import dash
 from dash import html, dcc, Output, Input, State, MATCH, ALL, Patch, ctx
 from dash.exceptions import PreventUpdate
@@ -6,7 +7,7 @@ import plotly.graph_objects as go
 import magnetdb_analysis as db
 from magnetdb_plot import create_plot
 
-target_table = 'operationaldata'
+TARGET_TABLE = 'operationaldata'
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
 dash.register_page(
@@ -90,7 +91,6 @@ layout = html.Div([
     Output('dd-site-compare', 'options'),
     Input('dd-database', 'value')
 )
-<<<<<<< HEAD
 def update_site_dropdown(selected_db):
     if not selected_db:
         return []
@@ -99,25 +99,19 @@ def update_site_dropdown(selected_db):
 
 @dash.callback(
     Output('dd-files-compare', 'options'),
+    Output('dd-files-compare', 'value'),
     Input('dd-site-compare', 'value'),
     Input('dd-database', 'value')
 )
-def update_file_dropdown(selected_site, selected_db, target_table='operationaldata'):
+def update_file_dropdown(selected_site, selected_db):
     if not selected_site:
-        return []
+        return [], []
 
-    files = db.get_files_for_site(selected_site, target_table, selected_db)
-    
-=======
-def update_file_dropdown(selected_site):
-    if not selected_site:
-        return []
+    files = db.get_files_for_site(selected_site, TARGET_TABLE, selected_db)
 
-    files = db.get_files_for_site(selected_site, target_table)
->>>>>>> 68912974210b05d46746ea6ff5e3d50a3fde3fcf
     pupitre_files = [f for f in files if f.endswith('.txt')]
     pigbrother_files = [f for f in files if f.endswith('.tdms')]
-    
+
     options = []
     for p_file in pupitre_files:
         matched_pb_file = None
@@ -125,71 +119,81 @@ def update_file_dropdown(selected_site):
             if db.check_same_date(p_file, pb_file):
                 matched_pb_file = pb_file
                 break
-        
-        if matched_pb_file:
-            options.append({'label': f"Pupitre: {p_file}", 'value': p_file})
-            options.append({'label': f"PigBrother: {matched_pb_file}", 'value': matched_pb_file})
-            pigbrother_files.remove(matched_pb_file)
-        
-    return options
 
-# CALLBACK 2 : Ne propose QUE les groupes qui possedent des alias
+        if matched_pb_file:
+            options.append({'label': f"Pupitre: {os.path.basename(p_file)}", 'value': os.path.basename(p_file)})
+            options.append({'label': f"PigBrother: {os.path.basename(matched_pb_file)}", 'value': os.path.basename(matched_pb_file)})
+            pigbrother_files.remove(matched_pb_file)
+
+    return options, []
+
+# CALLBACK 2 : Propose tous les groupes presents dans au moins un fichier selectionne
+# get_common_groups() loads every selected file via load_mrun_object() sequentially,
+# which also warms the shared cache that generate_pair_blocks() and
+# update_single_pair_graph() rely on — dd-group's value can only reach them
+# after this callback finishes, so they never see a cold cache.
 @dash.callback(
     Output('dd-group', 'options'),
     Output('dd-group', 'value'),
     Input('dd-files-compare', 'value'),
-<<<<<<< HEAD
-    Input('dd-site-compare', 'value')
-=======
-    Input('dd-site', 'value'),
-    State('dd-group', 'value')  
->>>>>>> 68912974210b05d46746ea6ff5e3d50a3fde3fcf
+    Input('dd-site-compare', 'value'),
+    State('dd-group', 'value')
 )
+@db.chrono_callback
 def update_group_dropdown(selected_files, selected_site, current_group):
     if not selected_files or not selected_site:
         return [], None
-    
-    valid_groups = db.get_comparable_groups()
+
+    housing = selected_site.split('_')[0]
+    valid_groups = db.get_common_groups(selected_files, housing)
     if not valid_groups:
         return [], None
 
     options = [{'label': g, 'value': g} for g in valid_groups]
-    
+
     # <-- MAGIE : Si un groupe est déjà choisi, on refuse de le remettre à zéro !
     if current_group in valid_groups:
-        return options, dash.no_update 
-        
-    default_value = valid_groups[0] 
+        return options, dash.no_update
+
+    default_value = valid_groups[0]
     return options, default_value
+
 
 # CALLBACK 3 : Generation des blocs
 @dash.callback(
     Output('accordion-container', 'children'),
     Output('sensors-message', 'children'),
-    Input('dd-group', 'value'),                  # <-- UNIQUE DÉCLENCHEUR (Input)
-    State('dd-files-compare', 'value')           # <-- SIMPLE LECTURE (State)
+    Input('dd-group', 'value'),
+    State('dd-files-compare', 'value'),
+    State('dd-site-compare', 'value'),
 )
 @db.chrono_callback
-def generate_pair_blocks(selected_group, selected_files):
-    if not selected_files or not selected_group:
+def generate_pair_blocks(selected_group, selected_files, selected_site):
+    if not selected_files or not selected_group or not selected_site:
         return None, "Selectionnez vos fichiers et un groupe."
-    
-    pairs = db.get_comparable_pairs_for_group(selected_group)
-    
+
+    housing = selected_site.split('_')[0]
+    pairs = db.get_comparable_pairs_for_group(selected_group, selected_files, housing)
+    print(f"[comparison] generate_pair_blocks: selected_group={selected_group}, selected_files={selected_files}, housing={housing}")
+    print(f"[comparison] generate_pair_blocks: pairs={len(pairs)}")
+    for pair in pairs:
+        print(f"[comparison] pair: {pair['label']} -> channels={pair['channels']}")
+
     if not pairs:
-        return None, f"Aucune paire comparable trouvee pour le groupe '{selected_group}'."
-    
+        return None, f"Aucune donnee trouvee pour le groupe '{selected_group}' dans les fichiers selectionnes."
+
     blocks = []
     for pair in pairs:
         pair_id = pair['id']
-        pair_title = f"{pair['label']} ({pair['pupitre']} ↔ {pair['pigbrother']})"
-        
+        channels = pair['channels']  # {'pupitre': 'Idcct1', 'pigbrother': 'Courant_A1', ...}
+        pair_title = f"{pair['label']} (" + ", ".join(f"{fmt}: {ch}" for fmt, ch in channels.items()) + ")"
+
         options = [
-            {'label': f" Pupitre ({pair['pupitre']})", 'value': f"pupitre:{pair['pupitre']}"},
-            {'label': f" PigBrother ({pair['pigbrother']})", 'value': f"pigbrother:{pair['pigbrother']}"}
+            {'label': f" {fmt.capitalize()} ({ch})", 'value': f"{fmt}:{ch}"}
+            for fmt, ch in channels.items()
         ]
 
-        default_values = []
+        default_values = [opt['value'] for opt in options]
 
         block = html.Div([
             html.Div([
@@ -251,12 +255,12 @@ def generate_pair_blocks(selected_group, selected_files):
 # CALLBACK 4 : Trace unifie avec Heritage du Zoom
 @dash.callback(
     Output({'type': 'pair-graph', 'index': MATCH}, 'figure'),
-    
+
     Input({'type': 'pair-checklist', 'index': MATCH}, 'value'),
     Input('dd-files-compare', 'value'),
     Input('comp-xaxis-selector', 'value'),
-    Input('comp-method-selector', 'value'), 
-    Input('dd-site', 'value'),
+    Input('comp-method-selector', 'value'),
+    Input('dd-site-compare', 'value'),
     State('dd-group', 'value'),
     State({'type': 'pair-graph', 'index': ALL}, 'relayoutData')
 )
@@ -303,6 +307,7 @@ def update_single_pair_graph(selected_pair_channels, selected_files, xaxis_type,
     pupitre_sensors = []
     pigbrother_sensors = []
 
+    print(f"[comparison] update_single_pair_graph: selected_pair_channels={selected_pair_channels}, selected_files={selected_files}, xaxis_type={xaxis_type}, selected_method={selected_method}, selected_site={selected_site}, selected_group={selected_group}, x_range={x_range}")
     for val in selected_pair_channels:
         file_type, sensor = val.split(':', 1)
         if file_type == 'pupitre':
@@ -314,20 +319,25 @@ def update_single_pair_graph(selected_pair_channels, selected_files, xaxis_type,
     housing = selected_site.split('_')[0]
 
     # --- BOUCLE SUR LES FICHIERS POUR SUPERPOSER ---
+    print(f"[comparison] selected_files={selected_files}, housing={housing}, site={selected_site}")
     for file in selected_files:
         is_pupitre = file.endswith('.txt')
         sensors_to_plot = pupitre_sensors if is_pupitre else pigbrother_sensors
-        
+
         if not sensors_to_plot:
+            print(f"[comparison] {file}: no sensors_to_plot (pupitre={pupitre_sensors}, pigbrother={pigbrother_sensors}), skipping")
             continue
 
         try:
             mrun = db.load_mrun_object(file, housing)
+            print(f"[comparison] load_mrun_object({file!r}, {housing!r})")
             if mrun is None:
                 continue
-                
-            df = db.load_data(file, selected_site, housing) 
-            
+
+            df = db.get_group_dataframe(file, housing, selected_group)
+            print(f"[comparison] get_group_dataframe({selected_group!r}) for {file!r} -> shape={df.shape}, columns={list(df.columns)}")
+            # print(df.head())
+
             sub_fig = create_plot(
                 df=df, 
                 x_col=xaxis_type, 
@@ -363,21 +373,6 @@ def update_single_pair_graph(selected_pair_channels, selected_files, xaxis_type,
     if x_range is not None:
         main_fig.update_layout(xaxis=dict(range=x_range, autorange=False))
 
-<<<<<<< HEAD
-    options = [{'label': s, 'value': s} for s in sensors_list]
-    value = [sensors_list[0]] 
-
-    # options remplies, 1ère valeur cochée, et on vide le message textuel !
-    return options, value, ""
-
-
-@dash.callback(
-    Output('comparison-main-graph', 'figure'),
-    [Input('dd-files-compare', 'value'),
-     Input('checklist-sensors', 'value'),
-     Input('comp-xaxis-selector', 'value'),
-     Input('dd-site-compare', 'value')]
-=======
     return main_fig
 
 # CALLBACK 5 : Synchronisation du zoom a la souris avec sécurité Anti-Boucle
@@ -388,7 +383,6 @@ def update_single_pair_graph(selected_pair_channels, selected_files, xaxis_type,
     State({'type': 'pair-graph', 'index': ALL}, 'id'),
     State('zoom-state', 'data'),   # <-- NOUVEAU STATE
     prevent_initial_call=True
->>>>>>> 68912974210b05d46746ea6ff5e3d50a3fde3fcf
 )
 @db.chrono_callback
 def sync_zoom_comparison(relayout_data_list, graph_ids, current_zoom):
@@ -396,6 +390,8 @@ def sync_zoom_comparison(relayout_data_list, graph_ids, current_zoom):
     if not triggered_id:
         raise PreventUpdate
 
+    if triggered_id not in graph_ids:
+        raise PreventUpdate
     trigger_index = graph_ids.index(triggered_id)
     relayout_data = relayout_data_list[trigger_index]
 

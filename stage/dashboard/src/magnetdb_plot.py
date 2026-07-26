@@ -5,6 +5,14 @@ from python_magnetrun.utils.downsampling import downsample_dataframe, Downsample
 
 logger = logging.getLogger(__name__)
 
+_METHOD_MAP = {
+    'lttb': 'lttb', 'LTTB': 'lttb',
+    'minmax': 'minmax',
+    'm4': 'm4', 'M4': 'm4',
+    'naive': 'stride', 'stride': 'stride',
+}
+_DEFAULT_N_OUT = 1000
+
 def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", mrun=None, group_name: str = "") -> go.Figure:
     """
     Gère le sous-échantillonnage et génère la figure Plotly pour Pupitre ET PigBrother.
@@ -34,11 +42,15 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
     # 2. Gestion du Downsampling
     downsample_method = 'none' if (not method or method in ['raw data', 'raw', 'none']) else method
 
-    try:
-        df_plot = apply_downsampling(df, method=downsample_method)
-    except Exception as e:
-        print(f"Erreur downsampling sur {filename}: {e}")
+    if downsample_method == 'none':
         df_plot = df
+    else:
+        try:
+            config = DownsampleConfig(n_out=_DEFAULT_N_OUT, method=_METHOD_MAP.get(downsample_method, 'stride'))
+            df_plot = downsample_dataframe(df, time_col=x_col, value_cols=list(y_cols), config=config)
+        except Exception as e:
+            print(f"Erreur downsampling sur {filename}: {e}")
+            df_plot = df
 
     x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time'}
     x_title = x_label_mapping.get(x_col, x_col)
