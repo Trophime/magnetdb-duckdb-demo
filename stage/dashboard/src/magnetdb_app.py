@@ -1,3 +1,4 @@
+import os
 import dash
 from dash import Dash, html, dcc
 import magnetdb_analysis as db
@@ -5,6 +6,19 @@ import magnetdb_analysis as db
 
 app = Dash(__name__, use_pages=True, suppress_callback_exceptions=True)
 server = app.server
+
+# Opt-in cProfile instrumentation — one .prof file per callback request.
+# Enable with: MAGNETDB_PROFILE=1 python magnetdb_app.py
+# Inspect with: snakeviz profiles/<file>.prof  (pip install snakeviz)
+if os.environ.get("MAGNETDB_PROFILE"):
+    from werkzeug.middleware.profiler import ProfilerMiddleware
+
+    os.makedirs("profiles", exist_ok=True)
+    server.wsgi_app = ProfilerMiddleware(
+        server.wsgi_app,
+        profile_dir="profiles",
+        stream=None,
+    )
 
 _db_options = db.get_available_databases()
 _default_db_values = [o['value'] for o in _db_options]
