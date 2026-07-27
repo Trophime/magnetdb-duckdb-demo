@@ -1,0 +1,209 @@
+\documentclass[professionalfonts,aspectratio=169]{beamer}
+
+\usetheme{Madrid}
+\usecolortheme{default}
+
+% Changement ici : on passe le document en français pour la gestion des espaces et de la typographie
+\usepackage[english]{babel} 
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\pdfstringdefDisableCommands{\renewcommand*\\{ }}
+\usepackage{listings}
+\usepackage{color}
+
+\lstset{language = Python,
+        basicstyle = \ttfamily\small,
+        keywordstyle = \color{blue},
+        commentstyle = \color{gray},
+        showstringspaces = false,
+        breaklines = true}
+
+
+%=============================================================================================
+
+
+\setbeamersize{text margin left=5mm, text margin right=5mm}
+\sloppy
+\emergencystretch=3em
+
+\title[Database LNCMI]{New Structure for Operational Data in the LNCMI Database}
+
+\author[Wolali Koffi]{Wolali Koffi \\[0.3 cm]
+        Supervisors : Christophe Trophime and Joubine Aghili}
+
+\institute[Master CSMI -- Unistra]{Master CSMI \\
+           Université de Strasbourg \\[0.3 cm]
+           In collaboration with CNRS and LNCMI}
+
+\date[2025--2026]{Academic year 2025--2026}
+
+
+%=============================================================================================
+
+
+\begin{document}
+
+\begin{frame}
+    \titlepage
+\end{frame}
+
+%=============================================================================================
+
+
+\begin{frame}{Context : Research Environment}
+    \begin{itemize}
+
+        \item \textbf{CNRS} (Centre National de la Recherche Scientifique)
+        \begin{itemize}
+            \item Largest research center in France 
+        \end{itemize}
+
+        \item \textbf{LNCMI} (Laboratoire National des Champs Magnétiques Intenses)
+        \begin{itemize}
+            \item National organization that provides intense magnetic fields for scientific research
+            \item Member of the \textbf{EMFL} (European Magnetic Field Laboratory)
+            \begin{itemize}
+                \item Provides access to intense magnetic fields for international scientific research
+            \end{itemize}
+        \end{itemize}
+        
+    \end{itemize}
+\end{frame}
+
+
+%---------------------------------------------------------------------------------------------
+
+
+\begin{frame}{Context : Origin of the Project}
+    \vspace{0.3cm}
+    
+    \begin{itemize}
+        \item \textbf{Academic Continuity}
+        \begin{itemize}
+            \item Direct continuation of development projects carried out in Master 1 CSMI.
+            \item Focus on algorithmics and scientific data processing.
+        \end{itemize}
+        
+        \vspace{0.4cm}
+        
+        \item \textbf{Preliminary Work (M1 Projects)}
+        \begin{itemize}
+            \item Study of the issues related to massive time series.
+            \item DDevelopment of intelligent downsampling algorithms for visualization (LTTB, M4, Min-Max).
+        \end{itemize}
+    \end{itemize}
+
+\end{frame}
+
+
+
+%---------------------------------------------------------------------------------------------
+
+
+\begin{frame}{Objectives of the Internship (2 months)}
+    
+    \begin{itemize}
+        \item \textbf{Integration of Project Work (M1)}
+        \begin{itemize}
+            \item DDeploy the algorithms and pipelines developed previously.
+        \end{itemize}
+        
+        \vspace{0.3cm}
+        
+        \item \textbf{Record restructuring in the database}
+        \begin{itemize}
+            \item \textbf{Architecture :} Integration of TDMS views (dashboard, archives, defects), Site (Assembly), Housing (e.g., M9), and power supply parameters.
+            \item \textbf{Metadata enrichment :}
+            \begin{itemize}
+                \item Signatures of the magnetic field (for \textit{clustering}).
+                \item Signatures of the reference currents (circuits models via ODE \textit{magnet-scipy}).
+                \item globals statistics (energy) and fatigue monitoring (stress cycles).
+            \end{itemize}
+        \end{itemize}
+        
+        \vspace{0.3cm}
+        
+        \item \textbf{Development of dashboards and visualization tools}
+        \begin{itemize}
+            \item Create interactive visual interfaces to explore and leverage these new data structures.
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+
+%=============================================================================================
+
+\section{Achievements and Results}
+
+\begin{frame}{Achievements : « Site » definition and composition}
+    \begin{columns}[T] % L'option [T] aligne le texte vers le haut
+        
+        % Colonne de gauche pour l'image
+        \begin{column}{0.45\textwidth}
+            \centering
+            % Assure-toi que l'image site.png est dans le même dossier que ton fichier .tex
+            \includegraphics[height=0.75\textheight]{site.png}
+        \end{column}
+        
+        % Colonne de droite pour les explications
+        \begin{column}{0.55\textwidth}
+            \textbf{The Site (or Assembly)}
+            \vspace{0.3cm}
+            \begin{itemize}
+                \item Represents the \textbf{active core} of the high-field magnet.
+                \item Is inserted into an external structure called \textit{Housing}.
+                
+                \vspace{0.4cm}
+                
+                \item \textbf{Internal composition of the assembly :}
+                \begin{itemize}
+                    \item \textbf{Insert} : Composed of a helix system.
+                    \item \textbf{Bitters} : Stack of Bitter disks.
+                \end{itemize}
+            \end{itemize}
+        \end{column}
+        
+    \end{columns}
+\end{frame}
+
+%---------------------------------------------------------------------------------------------
+
+\begin{frame}{Achievements : Pipeline and data hierarchy}
+    \begin{center}
+        \Large
+        \textbf{Site} \quad $\xrightarrow{\text{used for}}$ \quad \textbf{Experiments} \quad $\xrightarrow{\text{generate}}$ \quad \textbf{Files}
+    \end{center}
+    
+    \vspace{0.8cm}
+    
+    \begin{itemize}
+        \item \textbf{1. Site (The physical infrastructure)}
+        \begin{itemize}
+            \item The exact physical configuration of the high-field magnet at a given time.
+        \end{itemize}
+        
+        \vspace{0.4cm}
+        
+        \item \textbf{2. Experiments}
+        \begin{itemize}
+            \item The different research sessions or commissioning tests conducted on this specific Site.
+        \end{itemize}
+        
+        \vspace{0.4cm}
+        
+        \item \textbf{3. Files (The raw operational data)}
+        \begin{itemize}
+            \item The actual recordings of the sensors attached to the experiment.
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Achievements : Interactive Dashboard for Data Exploration}
+    \centering
+    \includegraphics[height=0.90\textheight]{Dashboard.png}
+\end{frame}
+
+
+%=============================================================================================
+\end{document}

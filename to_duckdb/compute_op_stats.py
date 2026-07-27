@@ -20,7 +20,10 @@ For each operationaldata file not yet processed this script:
 Usage
 -----
     python compute_op_stats.py --db magnetdb.duckdb --records-base /mnt/LNCMIG-Data/records \\
+    python compute_op_stats.py --db magnetdb.duckdb --records-base /mnt/LNCMIG-Data/records \\
         --site M9_M19061901
+    python compute_op_stats.py --db magnetdb.duckdb --records-base /mnt/LNCMIG-Data/records \\
+        --site M9_M19061901 --type Pupitre --reprocess
     python compute_op_stats.py --db magnetdb.duckdb --records-base /mnt/LNCMIG-Data/records \\
         --site M9_M19061901 --type Pupitre --reprocess
 
@@ -33,17 +36,15 @@ Physical constants
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import duckdb
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
 from config import DEFAULT_DB
-from populate import _RECORDS_BASE, resolve_operationaldata_path
 from schema import ensure_schema
+from populate import _RECORDS_BASE, resolve_operationaldata_path
 
 # ---------------------------------------------------------------------------
 # Defaults

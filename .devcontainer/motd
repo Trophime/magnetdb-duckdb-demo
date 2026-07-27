@@ -7,7 +7,7 @@ Available tools:
   - Jupyter notebooks (Voila on port 8866)
 
 Workspace: /workspaces/2026-m1-hifimagnet
-Datasets: /data
+Datasets: /LNCMIG-Data/records
 
 !!! Do not forget to start the python virtualenv !!!:
 source .venv/bin/activate
