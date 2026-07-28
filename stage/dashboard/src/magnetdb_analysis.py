@@ -1,9 +1,9 @@
 import duckdb
-import pandas as pd
 import os
 import glob
 import functools
 from python_magnetrun.MagnetRun import load_mrun
+from python_magnetrun.field_defs import match_channels_across_formats
 import re
 from datetime import datetime
 import numpy as np
@@ -15,8 +15,8 @@ DB_PATH = os.environ.get(
 )
 # Répertoire scanné pour lister les bases sélectionnables dans le dropdown
 DB_DIR = os.environ.get("MAGNETDB_DB_DIR", os.path.dirname(DB_PATH))
-RECORDS_DIR = os.environ.get("MAGNETDB_RECORDS_DIR", "/mnt/LNCMIG-Data/records")
 
+print(f"Using DuckDB database: {DB_PATH}")
 
 def get_available_databases(db_dir=None):
     """List the DuckDB database files selectable in the database dropdown.
@@ -51,16 +51,38 @@ def get_all_tables(db_path=None):
         )
 
 
+_SITE_DATE_RE = re.compile(r"_A(\d{6})_\d{2}$")
+
+
+def _site_sort_key(site_name):
+    """Sort key extracting the YYMMDD date from a ``housing_AYYMMDD_NN`` site name."""
+    match = _SITE_DATE_RE.search(site_name)
+    return match.group(1) if match else site_name
+
+
 def get_all_sites(db_path=None):
-    """Select the list of all sites for the first menu."""
+    """Select the list of all sites for the first menu, sorted chronologically by their YYMMDD date."""
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        return (
+        sites = (
             conn.execute(
                 "SELECT DISTINCT site_name FROM experiments WHERE site_name IS NOT NULL"
             )
             .df()["site_name"]
             .tolist()
         )
+    return sorted(sites, key=_site_sort_key)
+
+
+def get_magnet_types_for_site(site_name, db_path=None):
+    """Return the distinct magnet types (e.g. 'insert', 'bitters') defined for a site."""
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT DISTINCT m.type
+            FROM site_magnets sm
+            JOIN magnets m ON m.name = sm.magnet_name
+            WHERE sm.site_name = ? AND m.type IS NOT NULL
+        """
+        return conn.execute(query, [site_name]).df()["type"].tolist()
 
 
 def get_files_for_site(site_name, table_name, db_path=None):
@@ -74,36 +96,40 @@ def get_files_for_site(site_name, table_name, db_path=None):
         return df["file"].tolist()
 
 
-@functools.lru_cache(maxsize=2)
+def get_overview_records_for_site(site_name, db_path=None):
+    """Return overview_records rows for a site, ordered chronologically.
+
+    Unlike operationaldata, overview_records keys its files under
+    ``filename`` (not ``file``) and each row is already a fully processed
+    summary, so there is no pupitre/pigbrother pairing to do here.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT filename, housing, mode, t0
+            FROM overview_records
+            WHERE site_name = ?
+            ORDER BY t0 NULLS LAST, filename
+        """
+        return conn.execute(query, [site_name]).df().to_dict("records")
+
+
+@functools.lru_cache(maxsize=16)
 def load_mrun_object(filename, housing):
     """Charge et retourne l'objet MagnetRun complet."""
-    filepath = os.path.join(RECORDS_DIR, filename)
-    return load_mrun(filename=filepath, housing=housing)
+    return load_mrun(filename=os.path.basename(filename), housing=housing)
 
 
-@functools.lru_cache(maxsize=2)
-def load_data(filepath, site_name, housing):
-    """Charge le fichier via load_mrun et retourne un DataFrame propre pour Dash."""
-    if not os.path.exists(filepath):
-        return pd.DataFrame()
+@functools.lru_cache(maxsize=64)
+def get_group_dataframe(filename, housing, group_name):
+    """Return get_group_data(group_name) for filename, cached per (filename, housing, group_name).
 
-    try:
-        mrun = load_mrun(filename=filepath, housing=housing, site=site_name)
-
-        donnees = mrun.getDataFrame()
-
-        # On renvoie le tableau (en gérant le cas des fichiers TDMS qui renvoient une liste)
-        if isinstance(donnees, list):
-            if len(donnees) > 0:
-                return donnees[0]
-            else:
-                return pd.DataFrame()
-        else:
-            return donnees
-
-    except Exception as e:
-        print(f"Error loading file: {e}")
-        return pd.DataFrame()
+    get_group_data() re-slices/rebuilds a DataFrame on every call (for TDMS,
+    via getTdmsData) — it isn't free even when load_mrun_object is a cache
+    hit. Comparison-page callers all request the same group for the same
+    files repeatedly (once per pair-graph), so this is cached separately.
+    """
+    mrun = load_mrun_object(filename, housing)
+    return mrun.MagnetData.get_group_data(group_name)
 
 
 def parse_magnet_filename(filename):
@@ -158,90 +184,38 @@ def load_json_config(filepath):
     return {}
 
 
-import json
+def get_common_groups(selected_files, housing):
+    """Groups present (per list_groups()) in every selected file.
 
-
-def get_comparable_groups(pigbrother_defs_path=PIGBROTHER_DEF):
-    """Retourne uniquement la liste des groupes ayant au moins un alias vers Pupitre."""
-    try:
-        with open(pigbrother_defs_path, "r", encoding="utf-8") as f:
-            pb_defs = json.load(f)
-
-        groups = set()
-        for key, info in pb_defs.items():
-            if key.startswith("_"):
-                continue
-
-            # Si le canal possède un alias vers pupitre, son groupe est comparable
-            if "aliases" in info and "pupitre" in info["aliases"]:
-                group_name = key.split("/")[0]
-                groups.add(group_name)
-
-        return sorted(list(groups))
-    except Exception as e:
-        print(f"Erreur lors de la lecture des groupes comparables: {e}")
-        return ["Courants_Alimentations", "Tensions_Aimant"]
-
-
-import json
-
-# Assure-toi que les constantes de chemin vers tes JSON sont définies
-# Ex: PUPITRE_DEF = 'pupitre-defs.json'
-#     PIGBROTHER_DEF = 'pigbrother-defs.json'
-
-
-def get_comparable_pairs_for_group(
-    group_name, pigbrother_defs_path=PIGBROTHER_DEF, pupitre_defs_path=PUPITRE_DEF
-):
+    A group must exist in all selected files to be offered — files that fail
+    to load are skipped rather than collapsing the intersection to empty.
     """
-    Lit pigbrother-defs.json et pupitre-defs.json pour retourner
-    la liste des dictionnaire(s) des paires comparables pour un groupe donné.
+    groups = None
+    for filename in selected_files or []:
+        mrun = load_mrun_object(filename, housing)
+        if mrun is None:
+            continue
+        file_groups = {g for g in mrun.MagnetData.list_groups() if g != "Infos"}
+        groups = file_groups if groups is None else groups & file_groups
+    return sorted(groups) if groups else []
+
+
+def get_comparable_pairs_for_group(group_name, selected_files, housing):
+    """Build one entry per comparable channel in *group_name* for the selected files.
+
+    Delegates the cross-format alias matching to
+    ``python_magnetrun.field_defs.match_channels_across_formats``.
     """
-    try:
-        with open(pigbrother_defs_path, "r", encoding="utf-8") as f:
-            pb_defs = json.load(f)
-        with open(pupitre_defs_path, "r", encoding="utf-8") as f:
-            pup_defs = json.load(f)
-    except Exception as e:
-        print(f"Erreur de lecture des définitions JSON : {e}")
-        return []
-
-    pairs = []
-
-    for pb_key, pb_info in pb_defs.items():
-        if pb_key.startswith("_"):
+    channels_by_type = {}
+    for filename in selected_files or []:
+        mrun = load_mrun_object(filename, housing)
+        if mrun is None or group_name not in mrun.MagnetData.list_groups():
             continue
-
-        parts = pb_key.split("/")
-        if len(parts) != 2:
-            continue
-
-        pb_group, pb_channel = parts[0], parts[1]
-
-        # On extrait uniquement les capteurs du groupe sélectionné
-        if pb_group == group_name:
-            aliases = pb_info.get("aliases", {})
-            pupitre_channel = aliases.get("pupitre")
-
-            # S'il existe une correspondance (alias) vers un capteur Pupitre
-            if pupitre_channel:
-                pup_info = pup_defs.get(pupitre_channel, {})
-                unit = pb_info.get("unit") or pup_info.get("unit") or ""
-                unit_str = f" [{unit}]" if unit else ""
-
-                # Ce dictionnaire contient exactement la clé 'id' attendue par comparison.py
-                pairs.append(
-                    {
-                        "id": f"{pupitre_channel}_vs_{pb_channel}",
-                        "label": f"{pb_info.get('label', pb_channel)}{unit_str}",
-                        "pupitre": pupitre_channel,
-                        "pigbrother": pb_channel,
-                        "description": pb_info.get("description")
-                        or pup_info.get("description", ""),
-                    }
-                )
-
-    return pairs
+        columns = get_group_dataframe(filename, housing, group_name).columns
+        channels_by_type.setdefault(mrun.MagnetData.Type, set()).update(
+            c for c in columns if c not in ("t", "timestamp")
+        )
+    return match_channels_across_formats(channels_by_type, group_name)
 
 
 import time

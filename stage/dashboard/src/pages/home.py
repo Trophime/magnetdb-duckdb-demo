@@ -75,6 +75,10 @@ def update_site_dropdown(selected_db):
 def update_file_dropdown(selected_site, selected_table, selected_db):
     if not selected_site or not selected_table:
         return []
+
+    magnet_types = db.get_magnet_types_for_site(selected_site, selected_db)
+    print(f"[home.py] selected_site={selected_site!r} magnet_types={magnet_types}")
+
     files = db.get_files_for_site(selected_site, selected_table, selected_db)
     return [{'label': f, 'value': f} for f in files]
 
@@ -90,12 +94,13 @@ def update_sensors_menus(selected_file, selected_site, current_sensor_values, cu
     if not selected_file or not selected_site:
         return []
         
-    housing = selected_site.split('_')[0] 
+    housing = selected_site.split('_')[0]
+    print(f"[home.py] update_sensors_menus: Loading data file: {selected_file} (site={selected_site}, housing={housing})")
     mrun = db.load_mrun_object(selected_file, housing)
-    
+
     if mrun is None:
         return []
-    
+
     # Mémorisation des cases cochées
     saved_state_map = {}
     if current_sensor_ids and current_sensor_values:
@@ -108,15 +113,13 @@ def update_sensors_menus(selected_file, selected_site, current_sensor_values, cu
     menus_blocks = []
     
     # On boucle sur TOUS les groupes existants dans le fichier
-    for group_name, sensors in mrun.MagnetData.Groups.items():
+    for group_name in mrun.MagnetData.list_groups():
         if group_name == 'Infos':
             continue
-            
-        if isinstance(sensors, dict):
-            options = [{'label': s, 'value': s} for s in sensors.keys()]
-        else:
-            options = [{'label': s, 'value': s} for s in sensors]
-            
+
+        sensors = [c for c in mrun.MagnetData.get_group_data(group_name).columns if c not in ('t', 'timestamp')]
+        options = [{'label': s, 'value': s} for s in sensors]
+
         saved_values_for_this_group = saved_state_map.get(group_name, [])
             
         # Création du menu Accordéon (Details/Summary)
@@ -195,17 +198,6 @@ def update_sensors_menus(selected_file, selected_site, current_sensor_values, cu
 )
 def update_outputs(selected_file, selected_site, selected_table, selected_x, all_sensors_lists, all_sensors_ids, selected_algo, all_relayout_data):
     
-<<<<<<< HEAD
-    # Si aucun fichier n'est sélectionné, on renvoie une liste de composants vides pour chaque Checklist présente
-    if not selected_file or not selected_site:
-        return [[] for _ in all_sensors_ids]
-    
-    housing = selected_site.split('_')[0]
-    
-    mrun = db.load_mrun_object(selected_file, housing)
-    if mrun is None:
-        return [[] for _ in all_sensors_ids]
-=======
     empty_fig = go.Figure()
     empty_fig.update_layout(
         annotations=[{'text': "Cochez un capteur pour afficher la courbe", 'xref': "paper", 'yref': "paper", 'showarrow': False, 'font': {'color': '#888888'}}],
@@ -237,12 +229,12 @@ def update_outputs(selected_file, selected_site, selected_table, selected_x, all
                     x_range = [relayout['xaxis.range'][0], relayout['xaxis.range'][1]]
                     break
 
-    housing = selected_site.split('_')[0] 
+    housing = selected_site.split('_')[0]
+    print(f"[home.py] Loading data file: {selected_file} (site={selected_site}, housing={housing})")
     mrun = db.load_mrun_object(selected_file, housing)
-    
+
     if mrun is None:
         return [empty_fig for _ in all_sensors_ids]
->>>>>>> 68912974210b05d46746ea6ff5e3d50a3fde3fcf
 
     sensors_map = {
         sensor_id['index']: sensor_values 
@@ -255,31 +247,26 @@ def update_outputs(selected_file, selected_site, selected_table, selected_x, all
     for sensor_id in all_sensors_ids:
         group_name = sensor_id['index']
 
-        if group_name == 'Infos' or group_name not in mrun.MagnetData.Groups:
+        if group_name == 'Infos' or group_name not in mrun.MagnetData.list_groups():
             outputs_figures.append(empty_fig)
             continue
-        
+
         sensors_in_this_group = sensors_map.get(group_name, [])
-        
+
         if not sensors_in_this_group:
             outputs_figures.append(empty_fig)
             continue
-        
-        if isinstance(mrun.MagnetData.Data, pd.DataFrame):
-            df = mrun.MagnetData.Data
-        elif isinstance(mrun.MagnetData.Data, dict) and group_name in mrun.MagnetData.Data:
-            df = mrun.MagnetData.Data[group_name]
-        else:
-            try:
-                df = mrun.getDataFrame()
-            except:
-                outputs_figures.append(empty_fig)
-                continue
-                
+
+        try:
+            df = mrun.MagnetData.get_group_data(group_name)
+        except KeyError:
+            outputs_figures.append(empty_fig)
+            continue
+
         if not isinstance(df, pd.DataFrame):
             outputs_figures.append(empty_fig)
-            continue 
-            
+            continue
+
         # Creation du plot normal
         fig = plot.create_plot(df, selected_x, sensors_in_this_group, selected_algo, filename=f"{selected_file} - {group_name}", mrun=mrun, group_name=group_name)
         
