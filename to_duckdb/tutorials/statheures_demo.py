@@ -27,7 +27,6 @@ from pathlib import Path
 
 import duckdb
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 
 # ---------------------------------------------------------------------------
@@ -494,7 +493,7 @@ def main():
 
     if args.persist:
         # Store pre-computed bin counts back to DuckDB
-        print(f"\n── Ingesting records into DuckDB …")
+        print("\n── Ingesting records into DuckDB …")
         process_and_store(site_name, db_path, records_dir,
                           args.step, args.champmin, args.champmax)
 

@@ -13,7 +13,6 @@ Requirements:
 from pathlib import Path
 
 import duckdb
-import pandas as pd
 
 try:
     DB_PATH = str(Path(__file__).resolve().parent.parent / "magnetdb.duckdb")

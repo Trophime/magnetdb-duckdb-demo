@@ -5,10 +5,8 @@ import json
 import duckdb
 import pytest
 
-import magnetdb as cli_module
 from magnetdb import main
 from magnetdb import _add_magnet as add_magnet, _add_site as add_site
-from schema import ensure_schema
 from tests.conftest import MAGNET_JSON, SITE_JSON
 
 

@@ -16,7 +16,7 @@ J_TO_MWH = (1 * ureg.joule).to("megawatt_hour").magnitude
 
 def load_data():
 
-    con = duckdb.connect(DB)
+    con = duckdb.connect(DB, read_only=True)
 
     df = con.execute(
         """

@@ -6,7 +6,7 @@ import pandas as pd
 # 1. Base du projet
 base_dir = os.getcwd()  # "/workspaces/2026-m1-hifimagnet"
 print(f"Base du projet : {base_dir}")
-# sys.path.insert(0, os.path.join(base_dir, "to_duckdb"))
+sys.path.insert(0, os.path.join(base_dir, "to_duckdb"))
 
 from compute_hoop_stats import compute_hoop_stress_history
 from stress_map import magnet_geometry_config_to_yaml
@@ -86,7 +86,6 @@ def compute_and_export_m9_hoop_stress():
     print(f"{len(list_sites)} sites M9 trouvés. Lancement des calculs...")
     print(f"Liste des sites : {list_sites}")
     results = []
-
 
     # 3. Boucle de calcul sur les sites
     for site in list_sites:

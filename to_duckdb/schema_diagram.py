@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import re
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -118,7 +117,6 @@ def _load_from_db(db_path: str) -> tuple[list[Table], list[ForeignKey]]:
 
 
 def _load_from_sql() -> tuple[list[Table], list[ForeignKey]]:
-    sys.path.insert(0, str(Path(__file__).parent))
     from schema import SCHEMA_SQL  # noqa: PLC0415
 
     tables: list[Table] = []

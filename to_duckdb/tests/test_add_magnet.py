@@ -8,7 +8,6 @@ import pytest
 
 import magnetdb
 from magnetdb import _add_magnet as add_magnet, _validate_magnet
-from schema import ensure_schema
 from tests.conftest import MAGNET_JSON
 
 

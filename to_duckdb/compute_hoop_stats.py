@@ -36,7 +36,6 @@ Usage
 import argparse
 import json
 import re
-import sys
 import tempfile
 from pathlib import Path
 
@@ -45,7 +44,6 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-sys.path.insert(0, str(Path(__file__).parent))
 from config import DEFAULT_DB
 from populate import _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
 from schema import ensure_schema

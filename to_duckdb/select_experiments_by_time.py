@@ -25,7 +25,6 @@ from pathlib import Path
 
 import duckdb
 
-sys.path.insert(0, str(Path(__file__).parent))
 from config import DEFAULT_DB
 from crud import view_experiments
 from populate import FILE_TZ

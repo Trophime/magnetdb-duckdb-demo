@@ -3,14 +3,13 @@ import pandas as pd
 
 import dash
 from dash import html, dcc
-from dash.dash_table import DataTable
 import plotly.express as px
 
 dash.register_page(__name__, path = "/", name = "Home")
 DB = "../magnetdb.duckdb"
 
 ###
-con = duckdb.connect(DB)
+con = duckdb.connect(DB, read_only=True)
 
 df = con.execute("""
     SELECT

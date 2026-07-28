@@ -39,7 +39,7 @@ def test_check_parts_name_filter(con_populated):
 
 
 def test_check_parts_ok_when_both_fields_set(con):
-    from crud import insert_material, insert_part
+    from crud import insert_material
     insert_material(con, {"name": "MAT_X"}, verbose=False)
     con.execute(
         "INSERT INTO parts (name, type, material_name, geometry, geometry_data) "

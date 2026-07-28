@@ -49,7 +49,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from config import DEFAULT_DB
 
 # optional imports — used only for plotting

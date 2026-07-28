@@ -31,14 +31,12 @@ Physical constants
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import duckdb
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).parent))
 from config import DEFAULT_DB
 from populate import (
     _RECORDS_BASE as _DEFAULT_RECORDS_BASE,
