@@ -27,21 +27,16 @@ DB = "test-magnetdb.duckdb"
 FIELD_THRESHOLD = 0.1
 
 
-# In[11]:
+# In[ ]:
 
 
 # Sample the field at 20 points -> representation of the field profile
-def compute_field_signature(field):
-
-    values = field.to_numpy()
-
-    if len(values) == 0:
-        return ""
+def compute_field_signature(mdata, field, threshold):
+    from python_magnetrun.signature import Signature
     
-    idx = np.linspace(0, len(values) - 1, 20, dtype = int)
-    signature = values[idx]
-
-    return ",".join(f"{x:.2f}" for x in signature)
+    signature = Signature.from_mdata(mdata, field, threshold)
+    
+    return ",".join(signature.to_dict())
 
 
 # # HOUSING SUMMARY
@@ -188,7 +183,7 @@ print("\nDUPLICATE FILENAMES:\n",
 
 # ### Link with the user DB : Add foreign key column and populate
 
-# In[16]:
+# In[ ]:
 
 
 con.execute(
@@ -239,6 +234,9 @@ rows = con.execute(
     """
 ).fetchall()
 
+print(f"rows to process: {len(rows)}")
+print(f"Pupitre files to process: {len([r for r in rows if r[2] != ''])}")
+
 
 # In[19]:
 
@@ -250,7 +248,7 @@ print(
 )
 
 
-# In[20]:
+# In[ ]:
 
 
 start = time.perf_counter()
@@ -267,10 +265,11 @@ with Progress() as progress:
 
         try:
             md = load_mrun(str(filepath), housing=housing)
-            df = md.getMData().Data
+            mdata = md.getMData()
+            df = mdata.Data
 
             field = df["Field"]
-            field_signature = compute_field_signature(field)
+            field_signature = compute_field_signature(mdata, "Field", 1.e-3)
 
             con.execute(
                 """
@@ -352,11 +351,11 @@ print("\nFIRST ROWS:\n", df.head())
 # In[ ]:
 
 
-mrun = MagnetRun.fromtdms(housing = "M10", filename = str(PIGBROTHER))
+mrun = load_mrun(str(PIGBROTHER), housing = "M10")
 mdata = mrun.getMData()
 print(mdata)
 
-print(mdata.Data["Courants_Alimentations"].columns)
+print("Courants_Alimentations columns:", mdata.Data["Courants_Alimentations"].columns)
 
 
 # # PROPOSALS
@@ -366,7 +365,7 @@ print(mdata.Data["Courants_Alimentations"].columns)
 
 # Load proposals metadata and parse experiment date ranges
 
-proposals_df = pd.read_csv(DATA_DIR / "proposals.csv")
+proposals_df = pd.read_csv(DATA_DIR / "proposals_2026-07-22_with_sites.csv")
 proposals_df["Debut"] = pd.to_datetime(proposals_df["Debut"], errors = "coerce")
 proposals_df["Fin"]   = pd.to_datetime(proposals_df["Fin"],   errors = "coerce")
 
