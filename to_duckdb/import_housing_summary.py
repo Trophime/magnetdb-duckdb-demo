@@ -34,7 +34,7 @@ FIELD_THRESHOLD = 0.1
 def compute_field_signature(mdata, field, threshold):
     from python_magnetrun.signature import Signature
     
-    signature = Signature.from_mdata(mdata, field, threshold)
+    signature = Signature.from_mdata(mdata, field, "t", threshold)
     
     return ",".join(signature.to_dict())
 
