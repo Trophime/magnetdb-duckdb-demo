@@ -2,6 +2,8 @@ import dash
 import duckdb
 import pandas as pd
 
+from urllib.parse import quote
+
 from dash import Dash, html, dcc
 from dash.dash_table import DataTable
 
@@ -16,6 +18,7 @@ EXP_RUN_SCALARS_COLUMNS = [
     "ID",
     "Experiment",
     "Site",
+    "File",
     "Energy (kWh)",
     "Extracted heat (kWh)",
     "Duration (s)",
@@ -53,8 +56,8 @@ def load_data():
         _warn_exp_run_scalars("is empty")
 
     df = con.execute("""
-            SELECT 
-                e.id AS ID, e.name AS Experiment, e.site_name AS Site, 
+            SELECT
+                e.id AS ID, e.name AS Experiment, e.site_name AS Site, e.file AS File,
                 ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / 3.6e6, 2) AS "Energy (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / 3.6e6, 2) AS "Extracted heat (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
@@ -62,7 +65,7 @@ def load_data():
             e.status AS Status
             FROM experiments AS e
             LEFT JOIN exp_run_scalars AS s ON e.id = s.experiment_id
-            GROUP BY e.id, e.name, e.site_name, e.status
+            GROUP BY e.id, e.name, e.site_name, e.file, e.status
             ORDER BY e.site_name, e.name
         """).fetchdf()
 
@@ -96,6 +99,23 @@ fig_per_site = px.bar(
     energy_by_site, x="Site", y="Energy (kWh)", title="Energy per Site"
 )
 
+
+def _experiment_link(row):
+    """Render the Experiment cell as a markdown link pre-loading Home with this row's site/file."""
+    label = (
+        row["Experiment"].strftime("%Y-%m-%d")
+        if pd.notna(row["Experiment"])
+        else str(row["Experiment"])
+    )
+    if pd.isna(row["File"]) or not row["File"]:
+        return label
+    href = f"/?site={quote(str(row['Site']), safe='')}&file={quote(str(row['File']), safe='')}"
+    return f"[{label}]({href})"
+
+
+table_df = df.drop(columns=["File"])
+table_df["Experiment"] = df.apply(_experiment_link, axis=1)
+
 layout = html.Div(
     [
         html.H1("MagnetDB Dashboard"),
@@ -119,8 +139,13 @@ layout = html.Div(
         dcc.Graph(figure=fig_per_site),
         html.Br(),
         DataTable(
-            data=df.to_dict("records"),
-            columns=[{"name": c, "id": c} for c in df.columns],
+            data=table_df.to_dict("records"),
+            columns=[
+                {"name": c, "id": c, "presentation": "markdown"}
+                if c == "Experiment"
+                else {"name": c, "id": c}
+                for c in table_df.columns
+            ],
             page_size=20,
             sort_action="native",
             style_table={"overflowX": "auto"},

@@ -1,3 +1,4 @@
+import os
 import dash
 from dash import Dash, html, dcc
 import magnetdb_analysis as db
@@ -5,6 +6,25 @@ import magnetdb_analysis as db
 
 app = Dash(__name__, use_pages=True, suppress_callback_exceptions=True)
 server = app.server
+
+if os.environ.get("PROFILE"):
+    # cProfile per request, gated by env var so it's opt-in.
+    # Dumps one .prof per HTTP request (assets, page loads, and every callback
+    # invocation via POST /_dash-update-component) into profile_dir.
+    # Filenames embed the path, so callback profiles can be picked out with
+    # e.g. `ls profiles/ | grep update-component`.
+    # Open a .prof file with: snakeviz profiles/<file>.prof
+    from pathlib import Path
+    from werkzeug.middleware.profiler import ProfilerMiddleware
+
+    profile_dir = Path(os.environ.get("PROFILE_DIR", "profiles"))
+    profile_dir.mkdir(exist_ok=True)
+    server.wsgi_app = ProfilerMiddleware(
+        server.wsgi_app,
+        stream=None,
+        profile_dir=str(profile_dir),
+        filename_format="{time:.0f}-{method}-{path}-{elapsed:.0f}ms.prof",
+    )
 
 _db_options = db.get_available_databases()
 _default_db_values = [o['value'] for o in _db_options]
