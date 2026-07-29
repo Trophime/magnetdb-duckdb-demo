@@ -9,50 +9,61 @@ import pandas as pd
 
 dash.register_page(__name__, path='/')
 
-layout = html.Div([
-    html.Div([
-        html.H2("Magnetdb Dashboard", style={'marginTop': '0px', 'marginBottom': '20px'}),
-        html.Hr(),
-        
-        html.Label("1. Choose Site :", style={'fontWeight': 'bold'}),
-        dcc.Dropdown(id='dd-site', options=[], placeholder="Choose a site..."),
-        
-        html.Br(),
-        html.Label("2. Choose Table :", style={'fontWeight': 'bold'}),
-        dcc.Dropdown(id='dd-table', options=['experiments', 'operationaldata'], value='experiments'),
-        
-        html.Br(),
-        html.Label("3. Choose File :", style={'fontWeight': 'bold'}),
-        dcc.Dropdown(id='dd-file', placeholder="Choose a file..."),
 
-        html.Br(),
-        html.Label("4. Choose X-axis :", style={'fontWeight': 'bold', 'color':'#007bff'}),
-        dcc.Dropdown(
-            id='dd-x-axis',
-            options=[
-                {'label': 'Real Time (timestamp)', 'value': 'timestamp'},
-                {'label': 'Elapsed Time (t)', 'value': 't'}
-            ],
-            value='timestamp', 
-            clearable=False    
-        ),
+# `site`/`file` are populated by Dash Pages from the URL's query string (e.g. the
+# links generated on the "Assembly stats" page: /?site=...&file=...), so the
+# dropdowns get their initial value at first render instead of via a callback
+# racing against the (async) options-loading callbacks below. Seeding `options`
+# with the value itself guarantees the label is shown immediately, rather than
+# a blank/placeholder box until the real option list (loaded from DuckDB by the
+# callbacks further down) happens to include a matching entry.
+def layout(site=None, file=None, **kwargs):
+    return html.Div([
+        dcc.Store(id='pending-auto-plot', data=['Field'] if (site and file) else []),
+        html.Div([
+            html.H2("Magnetdb Dashboard", style={'marginTop': '0px', 'marginBottom': '20px'}),
+            html.Hr(),
 
-        html.Br(),
-        html.Label("5. Choose Sensors :", style={'fontWeight': 'bold'}),
-        # C'est ce conteneur unique qui contiendra tout (Groupes + Checklist + Graphiques associés)
-        html.Div(id='sensors-selectors-container', children=[], style={'marginTop': '10px'}),
+            html.Label("1. Choose Site :", style={'fontWeight': 'bold'}),
+            dcc.Dropdown(id='dd-site', options=[site] if site else [], value=site, placeholder="Choose a site..."),
 
-        html.Br(),
-        html.Label("7. Downsampling Method:", style={'fontWeight': 'bold'}),
-        dcc.Dropdown(
-            id='dropdown-downsampling',
-            options=['raw data', 'LTTB', 'minmax', 'M4', 'naive'],
-            value='LTTB',
-            clearable=False
-        )
-        
-    ], style={'padding': '20px', 'backgroundColor': '#f8f9fa', 'minHeight': '100vh'})
-])
+            html.Br(),
+            html.Label("2. Choose Table :", style={'fontWeight': 'bold'}),
+            dcc.Dropdown(id='dd-table', options=['experiments', 'operationaldata'], value='experiments'),
+
+            html.Br(),
+            html.Label("3. Choose File :", style={'fontWeight': 'bold'}),
+            dcc.Dropdown(id='dd-file', options=[file] if file else [], value=file, placeholder="Choose a file..."),
+
+            html.Br(),
+            html.Label("4. Choose X-axis :", style={'fontWeight': 'bold', 'color':'#007bff'}),
+            dcc.Dropdown(
+                id='dd-x-axis',
+                options=[
+                    {'label': 'Real Time (timestamp)', 'value': 'timestamp'},
+                    {'label': 'Elapsed Time (t)', 'value': 't'}
+                ],
+                value='timestamp',
+                clearable=False
+            ),
+
+            html.Br(),
+            html.Label("5. Choose Sensors :", style={'fontWeight': 'bold'}),
+            # C'est ce conteneur unique qui contiendra tout (Groupes + Checklist + Graphiques associés)
+            html.Div(id='sensors-selectors-container', children=[], style={'marginTop': '10px'}),
+
+            html.Br(),
+            html.Label("7. Downsampling Method:", style={'fontWeight': 'bold'}),
+            dcc.Dropdown(
+                id='dropdown-downsampling',
+                options=['raw data', 'LTTB', 'minmax', 'M4', 'naive'],
+                value='LTTB',
+                clearable=False
+            )
+
+        ], style={'padding': '20px', 'backgroundColor': '#f8f9fa', 'minHeight': '100vh'})
+    ])
+
 
 # CALLBACK 0 : Met à jour la liste des sites en fonction de la Database sélectionnée
 @dash.callback(
@@ -84,34 +95,41 @@ def update_file_dropdown(selected_site, selected_table, selected_db):
 
 
 @dash.callback(
-    Output('sensors-selectors-container', 'children'), 
+    Output('sensors-selectors-container', 'children'),
+    Output('pending-auto-plot', 'data'),
     Input('dd-file', 'value'), # Plus de dd-group ici !
     Input('dd-site', 'value'),
     State({'type': 'group-sensors-checklist', 'index': ALL}, 'value'),
-    State({'type': 'group-sensors-checklist', 'index': ALL}, 'id')
+    State({'type': 'group-sensors-checklist', 'index': ALL}, 'id'),
+    State('pending-auto-plot', 'data'),
 )
-def update_sensors_menus(selected_file, selected_site, current_sensor_values, current_sensor_ids):
+def update_sensors_menus(selected_file, selected_site, current_sensor_values, current_sensor_ids, pending_auto_plot):
     if not selected_file or not selected_site:
-        return []
-        
+        return [], no_update
+
     housing = selected_site.split('_')[0]
     print(f"[home.py] update_sensors_menus: Loading data file: {selected_file} (site={selected_site}, housing={housing})")
     mrun = db.load_mrun_object(selected_file, housing)
 
     if mrun is None:
-        return []
+        return [], no_update
 
     # Mémorisation des cases cochées
     saved_state_map = {}
     if current_sensor_ids and current_sensor_values:
         saved_state_map = {
-            s_id['index']: s_vals 
+            s_id['index']: s_vals
             for s_id, s_vals in zip(current_sensor_ids, current_sensor_values)
             if s_vals is not None
         }
-    
+
+    # Sensors to auto-check on the first render after landing via a deep link
+    # (e.g. from the "Assembly stats" page). Consumed once, then cleared below,
+    # so it doesn't keep overriding the user's own choices on later file switches.
+    pending_auto_plot = pending_auto_plot or []
+
     menus_blocks = []
-    
+
     # On boucle sur TOUS les groupes existants dans le fichier
     for group_name in mrun.MagnetData.list_groups():
         if group_name == 'Infos':
@@ -121,7 +139,10 @@ def update_sensors_menus(selected_file, selected_site, current_sensor_values, cu
         options = [{'label': s, 'value': s} for s in sensors]
 
         saved_values_for_this_group = saved_state_map.get(group_name, [])
-            
+        for target in pending_auto_plot:
+            if target in sensors and target not in saved_values_for_this_group:
+                saved_values_for_this_group = saved_values_for_this_group + [target]
+
         # Création du menu Accordéon (Details/Summary)
         # Création du conteneur Flexbox pour mettre le menu et le graphe côte à côte
         menus_blocks.append(
@@ -182,7 +203,7 @@ def update_sensors_menus(selected_file, selected_site, current_sensor_values, cu
             })
         )
         
-    return menus_blocks
+    return menus_blocks, []
 
 @dash.callback(
     Output({'type': 'dynamic-graph', 'index': ALL}, 'figure'),
