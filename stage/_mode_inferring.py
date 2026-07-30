@@ -7,6 +7,7 @@ def main():
 
     mrun = MagnetRun.fromtdms(housing = "M10", site = "M10", filename = str(PIGBROTHER))
     mdata = mrun.getMData()
+<<<<<<< HEAD
     df = mdata.Data["Courants_Alimentations"]
 
     print("\nAvailable channels:", df.columns)
@@ -30,6 +31,11 @@ def main():
     plt.colorbar(label = "time")
     plt.grid(True)
     plt.savefig("IH_IB_relation.png", dpi = 500)
+=======
+    print(mdata)
+
+    print(mdata.Data["Courants_Alimentations"].columns)
+>>>>>>> fb9d561 (feat: refactor housing summary pipeline)
 
 
 

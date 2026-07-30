@@ -2,7 +2,10 @@ import json
 import duckdb
 import pandas as pd
 import numpy as np
+<<<<<<< HEAD
 import matplotlib.pyplot as plt
+=======
+>>>>>>> fb9d561 (feat: refactor housing summary pipeline)
 from pathlib import Path
 import time
 
