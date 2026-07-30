@@ -6,6 +6,7 @@ from plotly import graph_objects as go
 import magnetdb_analysis as db
 import magnetdb_plot as plot
 import pandas as pd
+from natsort import natsorted
 
 dash.register_page(__name__, path='/')
 
@@ -90,7 +91,7 @@ def update_file_dropdown(selected_site, selected_table, selected_db):
     magnet_types = db.get_magnet_types_for_site(selected_site, selected_db)
     print(f"[home.py] selected_site={selected_site!r} magnet_types={magnet_types}")
 
-    files = db.get_files_for_site(selected_site, selected_table, selected_db)
+    files = natsorted(db.get_files_for_site(selected_site, selected_table, selected_db))
     return [{'label': f, 'value': f} for f in files]
 
 

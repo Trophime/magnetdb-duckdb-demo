@@ -4,15 +4,18 @@ import pandas as pd
 
 from urllib.parse import quote
 
-from dash import Dash, html, dcc
+from dash import Dash, html, dcc, Input, Output
 from dash.dash_table import DataTable
 
 import plotly.express as px
+from plotly import graph_objects as go
 import magnetdb_analysis as db
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
 dash.register_page(__name__, path="/site_stats", name="Assembly stats")
 
+
+J_TO_KWH = 3.6e6
 
 EXP_RUN_SCALARS_COLUMNS = [
     "ID",
@@ -24,42 +27,47 @@ EXP_RUN_SCALARS_COLUMNS = [
     "Duration (s)",
     "Field ON (s)",
     "Status",
-    "Magnet",
+    "Housing",
 ]
 
 
-def _warn_exp_run_scalars(reason: str) -> None:
+def _warn_exp_run_scalars(reason: str, db_path: str) -> None:
     print(
         f"[site_stats] Table 'exp_run_scalars' {reason}.\n"
         "  Populate it by running, for each site:\n"
         "    to_duckdb/venv-systempackages/bin/python3 to_duckdb/compute_exp_stats.py "
-        f"--db {db.DB_PATH} --site <SITE_NAME>"
+        f"--db {db_path} --site <SITE_NAME>"
     )
 
 
 # load experiments table from DuckDB
-def load_data():
+def load_data(db_path=None):
 
-    con = duckdb.connect(db.DB_PATH, read_only=True)
+    db_path = db_path or db.DB_PATH
+    con = duckdb.connect(db_path, read_only=True)
 
-    tables = con.execute(
-        "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
-    ).df()["table_name"].tolist()
+    tables = (
+        con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        )
+        .df()["table_name"]
+        .tolist()
+    )
 
     if "exp_run_scalars" not in tables:
         con.close()
-        _warn_exp_run_scalars("does not exist")
+        _warn_exp_run_scalars("does not exist", db_path)
         return pd.DataFrame(columns=EXP_RUN_SCALARS_COLUMNS)
 
     n_scalars = con.execute("SELECT COUNT(*) FROM exp_run_scalars").fetchone()[0]
     if n_scalars == 0:
-        _warn_exp_run_scalars("is empty")
+        _warn_exp_run_scalars("is empty", db_path)
 
-    df = con.execute("""
+    df = con.execute(f"""
             SELECT
                 e.id AS ID, e.name AS Experiment, e.site_name AS Site, e.file AS File,
-                ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / 3.6e6, 2) AS "Energy (kWh)",
-                ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / 3.6e6, 2) AS "Extracted heat (kWh)",
+                ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Energy (kWh)",
+                ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Extracted heat (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Field ON (s)",
             e.status AS Status
@@ -70,40 +78,28 @@ def load_data():
         """).fetchdf()
 
     df["Experiment"] = pd.to_datetime(df["Experiment"])
-    df["Magnet"] = df["Site"].str.extract(r"^(M\d+)")
+    df["Housing"] = df["Site"].str.extract(r"^(M\d+)")
 
     con.close()
 
     return df
 
 
-df = load_data()
-
-fig_per_exp = px.bar(
-    df.sort_values("Experiment"),
-    x="Experiment",
-    y="Energy (kWh)",
-    color="Magnet",
-    color_discrete_map={"M9": "red", "M10": "blue"},
-    hover_data=["Site"],
-    title="Energy per Experiment",
-)
-
-fig_per_exp.update_xaxes(tickformat="%b %Y", dtick="M1", title="Experiment Date")
-
-fig_per_exp.update_traces(width=1000 * 60 * 60 * 24)
-
-energy_by_site = df.groupby("Site", as_index=False)["Energy (kWh)"].sum()
-
-fig_per_site = px.bar(
-    energy_by_site, x="Site", y="Energy (kWh)", title="Energy per Site"
-)
+TABLE_COLUMNS = [
+    (
+        {"name": c, "id": c, "presentation": "markdown"}
+        if c == "Experiment"
+        else {"name": c, "id": c}
+    )
+    for c in EXP_RUN_SCALARS_COLUMNS
+    if c != "File"
+]
 
 
 def _experiment_link(row):
     """Render the Experiment cell as a markdown link pre-loading Home with this row's site/file."""
     label = (
-        row["Experiment"].strftime("%Y-%m-%d")
+        row["Experiment"].strftime("%Y-%m-%d - %H:%M:%S")
         if pd.notna(row["Experiment"])
         else str(row["Experiment"])
     )
@@ -113,45 +109,92 @@ def _experiment_link(row):
     return f"[{label}]({href})"
 
 
-table_df = df.drop(columns=["File"])
-table_df["Experiment"] = df.apply(_experiment_link, axis=1)
+def _build_page_content(df):
+    """Build the figures, table rows, and summary text for a loaded experiments dataframe."""
+    fig_per_exp = px.bar(
+        df.sort_values("Experiment"),
+        x="Experiment",
+        y="Energy (kWh)",
+        color="Housing",
+        color_discrete_map={"M9": "red", "M10": "blue"},
+        hover_data=["Site"],
+        title="Energy per Experiment",
+    )
 
-layout = html.Div(
-    [
-        html.H1("MagnetDB Dashboard"),
-        #       dcc.Dropdown(
-        #           id = "site",
-        #           options = [{"label": s, "value": s} for s in sorted(df["Site"].unique())],
-        #           value = df["Site"].iloc[0],
-        #           clearable = False,
-        #           style = {"width": "400px"},
-        #       ),
-        html.Div(
-            [
-                html.B(f"Experiments: {len(df)}"),
-                html.Br(),
-                f"Processed: {(df['Status'] == 'STATS DONE').sum()}",
-            ]
-        ),
+    fig_per_exp.update_xaxes(tickformat="%b %Y", dtick="M1", title="Experiment Date")
+
+    fig_per_exp.update_traces(width=1000 * 60 * 60 * 24)
+
+    energy_by_site = df.groupby("Site", as_index=False)["Energy (kWh)"].sum()
+
+    fig_per_site = px.bar(
+        energy_by_site, x="Site", y="Energy (kWh)", title="Energy per Site"
+    )
+
+    table_df = df.drop(columns=["File"])
+    table_df["Experiment"] = df.apply(_experiment_link, axis=1)
+
+    summary = [
+        html.B(f"Experiments: {len(df)}"),
         html.Br(),
-        dcc.Graph(figure=fig_per_exp),
-        html.Br(),
-        dcc.Graph(figure=fig_per_site),
-        html.Br(),
-        DataTable(
-            data=table_df.to_dict("records"),
-            columns=[
-                {"name": c, "id": c, "presentation": "markdown"}
-                if c == "Experiment"
-                else {"name": c, "id": c}
-                for c in table_df.columns
-            ],
-            page_size=20,
-            sort_action="native",
-            style_table={"overflowX": "auto"},
-            style_cell={"textAlign": "center", "padding": "6px"},
-            style_header={"fontWeight": "auto"},
-        ),
-    ],
-    style={"padding": "20px"},
+        f"Processed: {(df['Status'] == 'STATS DONE').sum()}",
+    ]
+
+    return fig_per_exp, fig_per_site, table_df.to_dict("records"), summary
+
+
+def layout(**kwargs):
+    return html.Div(
+        [
+            html.H1("MagnetDB Dashboard"),
+            dcc.Dropdown(
+                id="site-stats-site-filter",
+                options=[],
+                value=None,
+                placeholder="Filter by site...",
+                clearable=True,
+                style={"width": "400px", "marginBottom": "15px"},
+            ),
+            html.Div(id="site-stats-summary"),
+            html.Br(),
+            dcc.Graph(id="fig-per-exp"),
+            html.Br(),
+            dcc.Graph(id="fig-per-site"),
+            html.Br(),
+            DataTable(
+                id="site-stats-table",
+                columns=TABLE_COLUMNS,
+                data=[],
+                page_size=20,
+                sort_action="native",
+                style_table={"overflowX": "auto"},
+                style_cell={"textAlign": "center", "padding": "6px"},
+                style_header={"fontWeight": "auto"},
+            ),
+        ],
+        style={"padding": "20px"},
+    )
+
+
+@dash.callback(
+    Output("fig-per-exp", "figure"),
+    Output("fig-per-site", "figure"),
+    Output("fig-per-site", "style"),
+    Output("site-stats-table", "data"),
+    Output("site-stats-summary", "children"),
+    Output("site-stats-site-filter", "options"),
+    Input("dd-database", "value"),
+    Input("site-stats-site-filter", "value"),
 )
+def update_site_stats(selected_db, selected_site):
+    if not selected_db:
+        return go.Figure(), go.Figure(), {}, [], [], []
+
+    df = load_data(selected_db)
+    site_options = sorted(df["Site"].unique())
+
+    plot_df = df[df["Site"] == selected_site] if selected_site else df
+    fig_per_site_style = {"display": "none"} if selected_site else {}
+
+    fig_per_exp, fig_per_site, table_records, summary = _build_page_content(plot_df)
+    return fig_per_exp, fig_per_site, fig_per_site_style, table_records, summary, site_options

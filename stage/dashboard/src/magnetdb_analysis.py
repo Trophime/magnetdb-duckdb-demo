@@ -55,26 +55,17 @@ def get_all_tables(db_path=None):
         )
 
 
-_SITE_DATE_RE = re.compile(r"_A(\d{6})_\d{2}$")
-
-
-def _site_sort_key(site_name):
-    """Sort key extracting the YYMMDD date from a ``housing_AYYMMDD_NN`` site name."""
-    match = _SITE_DATE_RE.search(site_name)
-    return match.group(1) if match else site_name
-
-
 def get_all_sites(db_path=None):
-    """Select the list of all sites for the first menu, sorted chronologically by their YYMMDD date."""
+    """Select the list of all sites for the first menu, sorted by ascending commissioning date."""
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        sites = (
-            conn.execute(
-                "SELECT DISTINCT site_name FROM experiments WHERE site_name IS NOT NULL"
-            )
-            .df()["site_name"]
-            .tolist()
-        )
-    return sorted(sites, key=_site_sort_key)
+        query = """
+            SELECT DISTINCT e.site_name
+            FROM experiments AS e
+            JOIN sites AS s ON s.name = e.site_name
+            WHERE e.site_name IS NOT NULL
+            ORDER BY s.commissioned_at ASC
+        """
+        return conn.execute(query).df()["site_name"].tolist()
 
 
 def get_magnet_types_for_site(site_name, db_path=None):
