@@ -8,7 +8,7 @@ import magnetdb_analysis as db
 from magnetdb_plot import create_plot, create_comparison_plot
 import pandas as pd
 from plotly.subplots import make_subplots
-from metrics import evaluate_mean, generate_metrics_report
+from metrics import evaluate_metrics, generate_metrics_report
 
 
 TARGET_TABLE = 'operationaldata'
@@ -372,12 +372,13 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
     t0_str = sync_data.get('t0_absolu')
     t0_absolu = pd.to_datetime(t0_str) if t0_str else None
 
-    # ---  CONTENEUR POUR STOCKER LES DONNÉES DES MÉTRIQUES ---
+# --- CONTENEUR POUR STOCKER LES DONNÉES DES MÉTRIQUES ---
     metrics_data = {
-        'ref_file': None, 'ref_y': None,
-        'sec_file': None, 'sec_y_unaligned': None, 'sec_y_aligned': None
+        'ref_file': None, 'ref_sensor': None, 'ref_y': None,          
+        'sec_file': None, 'sec_sensor': None, 'sec_y_unaligned': None,
+        'sec_y_aligned': None,
+        'sec_lag': 0.0                                                 
     }
-
     # --- CRÉATION DU CONTENEUR PRINCIPAL ---
     main_fig = make_subplots(
         rows=2, cols=1, 
@@ -410,19 +411,23 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
             # --- 2. PRÉPARATION DU DF ALIGNÉ ---
             df_aligned = df_base.copy()
             if not is_pupitre and file in offsets:
-                df_aligned['timestamp'] = df_aligned['timestamp'] + pd.to_timedelta(offsets[file], unit='s')
+                # --- Sauvegarde du lag ---
+                lag_val = offsets[file]
+                metrics_data['sec_lag'] = lag_val
+                df_aligned['timestamp'] = df_aligned['timestamp'] + pd.to_timedelta(lag_val, unit='s')
             
             if xaxis_type == 't' and t0_absolu is not None:
                 df_aligned['t'] = (df_aligned['timestamp'] - t0_absolu).dt.total_seconds()
 
             # --- EXTRACTION DES VECTEURS POUR LES MÉTRIQUES ---
-            # On prend la première colonne sélectionnée pour le calcul
             col_metric = sensors_to_plot[0] 
             if is_pupitre:
                 metrics_data['ref_file'] = file
+                metrics_data['ref_sensor'] = col_metric  
                 metrics_data['ref_y'] = df_aligned[col_metric].values 
             else:
                 metrics_data['sec_file'] = file
+                metrics_data['sec_sensor'] = col_metric  
                 metrics_data['sec_y_unaligned'] = df_unaligned[col_metric].values
                 metrics_data['sec_y_aligned'] = df_aligned[col_metric].values
 
@@ -448,22 +453,26 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
         except Exception as e:
             print(f"Erreur lors du tracé du fichier {file}: {e}")
 
-    # --- GÉNÉRATION DU RAPPORT DE MÉTRIQUES ---
+   # --- GÉNÉRATION DU RAPPORT DE MÉTRIQUES ---
     if metrics_data['ref_y'] is not None and metrics_data['sec_y_aligned'] is not None:
         try:
-            results = evaluate_mean(
+            results = evaluate_metrics(
                 metrics_data['ref_y'], 
                 metrics_data['sec_y_unaligned'], 
                 metrics_data['sec_y_aligned']
             )
+            # --- NOUVEAU : On passe les capteurs et le lag_seconds ---
             report_path = generate_metrics_report(
                 metrics_data['ref_file'], 
+                metrics_data['ref_sensor'], 
                 metrics_data['sec_file'], 
-                results
+                metrics_data['sec_sensor'], 
+                results,
+                lag_seconds=metrics_data['sec_lag']
             )
-            print(f"Rapport généré avec succès : {report_path}")
+            print(f"Report generated: {report_path}")
         except Exception as e:
-            print(f"Erreur lors de la génération des métriques: {e}")
+            print(f"Error occurred while generating metrics: {e}")
 
     # --- 5. MISE EN FORME GLOBALE ---
     main_fig.update_layout(
