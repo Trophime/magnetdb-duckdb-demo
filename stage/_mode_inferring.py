@@ -31,6 +31,15 @@ def main():
     plt.grid(True)
     plt.savefig("IH_IB_relation.png", dpi = 500)
 
+    con = duckdb.connect(DB)
+    rows = con.execute(
+        """
+            SELECT rowid, housing, pupitre
+            FROM housing_summary
+            WHERE pupitre <> '' AND (field_signature = '' OR field_signature IS NULL)
+        """
+    ).fetchall()
+
 
 
 
