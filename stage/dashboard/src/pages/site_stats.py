@@ -16,6 +16,7 @@ dash.register_page(__name__, path="/site_stats", name="Assembly stats")
 
 
 J_TO_KWH = 3.6e6
+S_TO_H = 3600
 
 EXP_RUN_SCALARS_COLUMNS = [
     "ID",
@@ -40,9 +41,20 @@ def _warn_exp_run_scalars(reason: str, db_path: str) -> None:
     )
 
 
-# load experiments table from DuckDB
 def load_data(db_path=None):
+    """Load per-experiment energy stats joined with site commissioning dates.
 
+    Parameters
+    ----------
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per experiment, with columns matching
+        ``EXP_RUN_SCALARS_COLUMNS`` plus ``Housing`` and ``Commissioned``.
+    """
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
 
@@ -66,14 +78,16 @@ def load_data(db_path=None):
     df = con.execute(f"""
             SELECT
                 e.id AS ID, e.name AS Experiment, e.site_name AS Site, e.file AS File,
-                ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Energy (kWh)",
+                ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / 1, 7) AS "Energy (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Extracted heat (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Field ON (s)",
-            e.status AS Status
+            e.status AS Status,
+            st.commissioned_at AS Commissioned
             FROM experiments AS e
             LEFT JOIN exp_run_scalars AS s ON e.id = s.experiment_id
-            GROUP BY e.id, e.name, e.site_name, e.file, e.status
+            LEFT JOIN sites AS st ON e.site_name = st.name
+            GROUP BY e.id, e.name, e.site_name, e.file, e.status, st.commissioned_at
             ORDER BY e.site_name, e.name
         """).fetchdf()
 
@@ -125,10 +139,35 @@ def _build_page_content(df):
 
     fig_per_exp.update_traces(width=1000 * 60 * 60 * 24)
 
-    energy_by_site = df.groupby("Site", as_index=False)["Energy (kWh)"].sum()
+    energy_by_site = df.groupby(["Site", "Housing"], as_index=False).agg(
+        {"Energy (kWh)": "sum", "Commissioned": "min"}
+    )
+    energy_by_site = energy_by_site.sort_values("Commissioned")
 
     fig_per_site = px.bar(
-        energy_by_site, x="Site", y="Energy (kWh)", title="Energy per Site"
+        energy_by_site,
+        x="Site",
+        y="Energy (kWh)",
+        color="Housing",
+        color_discrete_map={"M9": "red", "M10": "blue"},
+        category_orders={"Site": energy_by_site["Site"].tolist()},
+        title="Energy per Site",
+    )
+
+    field_on_by_site = df.groupby(["Site", "Housing"], as_index=False).agg(
+        {"Field ON (s)": "sum", "Commissioned": "min"}
+    )
+    field_on_by_site = field_on_by_site.sort_values("Commissioned")
+    field_on_by_site["Field ON (h)"] = field_on_by_site["Field ON (s)"] / S_TO_H
+
+    fig_field_on = px.bar(
+        field_on_by_site,
+        x="Site",
+        y="Field ON (h)",
+        color="Housing",
+        color_discrete_map={"M9": "red", "M10": "blue"},
+        category_orders={"Site": field_on_by_site["Site"].tolist()},
+        title="Magnet Time per Site (h)",
     )
 
     table_df = df.drop(columns=["File"])
@@ -140,7 +179,13 @@ def _build_page_content(df):
         f"Processed: {(df['Status'] == 'STATS DONE').sum()}",
     ]
 
-    return fig_per_exp, fig_per_site, table_df.to_dict("records"), summary
+    return (
+        fig_per_exp,
+        fig_per_site,
+        fig_field_on,
+        table_df.to_dict("records"),
+        summary,
+    )
 
 
 def layout(**kwargs):
@@ -161,6 +206,8 @@ def layout(**kwargs):
             html.Br(),
             dcc.Graph(id="fig-per-site"),
             html.Br(),
+            dcc.Graph(id="fig-field-on"),
+            html.Br(),
             DataTable(
                 id="site-stats-table",
                 columns=TABLE_COLUMNS,
@@ -180,6 +227,8 @@ def layout(**kwargs):
     Output("fig-per-exp", "figure"),
     Output("fig-per-site", "figure"),
     Output("fig-per-site", "style"),
+    Output("fig-field-on", "figure"),
+    Output("fig-field-on", "style"),
     Output("site-stats-table", "data"),
     Output("site-stats-summary", "children"),
     Output("site-stats-site-filter", "options"),
@@ -188,7 +237,7 @@ def layout(**kwargs):
 )
 def update_site_stats(selected_db, selected_site):
     if not selected_db:
-        return go.Figure(), go.Figure(), {}, [], [], []
+        return go.Figure(), go.Figure(), {}, go.Figure(), {}, [], [], []
 
     df = load_data(selected_db)
     site_options = sorted(df["Site"].unique())
@@ -196,5 +245,16 @@ def update_site_stats(selected_db, selected_site):
     plot_df = df[df["Site"] == selected_site] if selected_site else df
     fig_per_site_style = {"display": "none"} if selected_site else {}
 
-    fig_per_exp, fig_per_site, table_records, summary = _build_page_content(plot_df)
-    return fig_per_exp, fig_per_site, fig_per_site_style, table_records, summary, site_options
+    fig_per_exp, fig_per_site, fig_field_on, table_records, summary = (
+        _build_page_content(plot_df)
+    )
+    return (
+        fig_per_exp,
+        fig_per_site,
+        fig_per_site_style,
+        fig_field_on,
+        fig_per_site_style,
+        table_records,
+        summary,
+        site_options,
+    )
