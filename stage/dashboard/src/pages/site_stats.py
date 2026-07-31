@@ -78,7 +78,7 @@ def load_data(db_path=None):
     df = con.execute(f"""
             SELECT
                 e.id AS ID, e.name AS Experiment, e.site_name AS Site, e.file AS File,
-                ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / 1, 7) AS "Energy (kWh)",
+                ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 7) AS "Energy (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Extracted heat (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Field ON (s)",
@@ -170,6 +170,43 @@ def _build_page_content(df):
         title="Magnet Time per Site (h)",
     )
 
+    df["Year"] = df["Experiment"].dt.year
+
+    energy_by_housing_year = df.groupby(["Year", "Housing"], as_index=False)[
+        "Energy (kWh)"
+    ].sum()
+    energy_by_housing_year = energy_by_housing_year.sort_values("Year")
+
+    fig_energy_year = px.bar(
+        energy_by_housing_year,
+        x="Year",
+        y="Energy (kWh)",
+        color="Housing",
+        color_discrete_map={"M9": "red", "M10": "blue"},
+        barmode="group",
+        title="Energy per Housing per Year",
+    )
+    fig_energy_year.update_xaxes(dtick=1, title="Year")
+
+    field_on_by_housing_year = df.groupby(["Year", "Housing"], as_index=False)[
+        "Field ON (s)"
+    ].sum()
+    field_on_by_housing_year = field_on_by_housing_year.sort_values("Year")
+    field_on_by_housing_year["Field ON (h)"] = (
+        field_on_by_housing_year["Field ON (s)"] / S_TO_H
+    )
+
+    fig_field_on_year = px.bar(
+        field_on_by_housing_year,
+        x="Year",
+        y="Field ON (h)",
+        color="Housing",
+        color_discrete_map={"M9": "red", "M10": "blue"},
+        barmode="group",
+        title="Magnet Time per Housing per Year (h)",
+    )
+    fig_field_on_year.update_xaxes(dtick=1, title="Year")
+
     table_df = df.drop(columns=["File"])
     table_df["Experiment"] = df.apply(_experiment_link, axis=1)
 
@@ -183,6 +220,8 @@ def _build_page_content(df):
         fig_per_exp,
         fig_per_site,
         fig_field_on,
+        fig_energy_year,
+        fig_field_on_year,
         table_df.to_dict("records"),
         summary,
     )
@@ -208,6 +247,10 @@ def layout(**kwargs):
             html.Br(),
             dcc.Graph(id="fig-field-on"),
             html.Br(),
+            dcc.Graph(id="fig-energy-year"),
+            html.Br(),
+            dcc.Graph(id="fig-field-on-year"),
+            html.Br(),
             DataTable(
                 id="site-stats-table",
                 columns=TABLE_COLUMNS,
@@ -229,6 +272,8 @@ def layout(**kwargs):
     Output("fig-per-site", "style"),
     Output("fig-field-on", "figure"),
     Output("fig-field-on", "style"),
+    Output("fig-energy-year", "figure"),
+    Output("fig-field-on-year", "figure"),
     Output("site-stats-table", "data"),
     Output("site-stats-summary", "children"),
     Output("site-stats-site-filter", "options"),
@@ -237,7 +282,18 @@ def layout(**kwargs):
 )
 def update_site_stats(selected_db, selected_site):
     if not selected_db:
-        return go.Figure(), go.Figure(), {}, go.Figure(), {}, [], [], []
+        return (
+            go.Figure(),
+            go.Figure(),
+            {},
+            go.Figure(),
+            {},
+            go.Figure(),
+            go.Figure(),
+            [],
+            [],
+            [],
+        )
 
     df = load_data(selected_db)
     site_options = sorted(df["Site"].unique())
@@ -245,15 +301,23 @@ def update_site_stats(selected_db, selected_site):
     plot_df = df[df["Site"] == selected_site] if selected_site else df
     fig_per_site_style = {"display": "none"} if selected_site else {}
 
-    fig_per_exp, fig_per_site, fig_field_on, table_records, summary = (
-        _build_page_content(plot_df)
-    )
+    (
+        fig_per_exp,
+        fig_per_site,
+        fig_field_on,
+        fig_energy_year,
+        fig_field_on_year,
+        table_records,
+        summary,
+    ) = _build_page_content(plot_df)
     return (
         fig_per_exp,
         fig_per_site,
         fig_per_site_style,
         fig_field_on,
         fig_per_site_style,
+        fig_energy_year,
+        fig_field_on_year,
         table_records,
         summary,
         site_options,
