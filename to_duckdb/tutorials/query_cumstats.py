@@ -50,7 +50,7 @@ import duckdb
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from config import DEFAULT_DB
+from config import DEFAULT_DB, J_TO_MWH
 
 # optional imports — used only for plotting
 try:
@@ -423,8 +423,8 @@ def query_exp_part_bins(
 _SCALAR_LABELS = {
     "duration_s":          ("Total duration",         "h",   1/3600),
     "duration_field_on_s": ("Field-on duration",      "h",   1/3600),
-    "energy_j":            ("Electrical energy",      "MWh", 1/3.6e9),
-    "heat_extracted_j":    ("Heat extracted",         "MWh", 1/3.6e9),
+    "energy_j":            ("Electrical energy",      "MWh", 1/J_TO_MWH),
+    "heat_extracted_j":    ("Heat extracted",         "MWh", 1/J_TO_MWH),
 }
 
 

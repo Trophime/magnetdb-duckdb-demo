@@ -1,3 +1,6 @@
+import sys
+from pathlib import Path
+
 import duckdb
 import pandas as pd
 
@@ -5,16 +8,19 @@ import dash
 from dash import html, dcc
 import plotly.express as px
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
+from config import J_TO_KWH
+
 dash.register_page(__name__, path = "/", name = "Home")
 DB = "../magnetdb.duckdb"
 
 ###
 con = duckdb.connect(DB, read_only=True)
 
-df = con.execute("""
+df = con.execute(f"""
     SELECT
     name,
-    MAX(CASE WHEN channel='energy_j' THEN value END) / 3.6e6 AS energy_kwh
+    MAX(CASE WHEN channel='energy_j' THEN value END) / {J_TO_KWH} AS energy_kwh
     FROM experiments e
     LEFT JOIN exp_run_scalars s
         ON e.id = s.experiment_id

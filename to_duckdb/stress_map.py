@@ -669,6 +669,24 @@ def load_magnettools(config: dict, tempdir: Path, debug: bool = False) -> tuple:
 # ---------------------------------------------------------------------------
 
 
+def _assert_current_units(units: dict, cols: list[str], ureg) -> None:
+    """Verify each of *cols* (e.g. IH, IB, IS) is declared as a current unit.
+
+    Skips columns with no declared unit (unit metadata unavailable). Only
+    the current inputs are checked here — the geometry-derived quantities
+    (r, j_unit, Bz) come from magnettools, which exposes no unit metadata
+    to check against.
+    """
+    for col in cols:
+        entry = units.get(col)
+        if not entry or entry[1] is None:
+            continue
+        if entry[1].dimensionality != ureg.ampere.dimensionality:
+            raise ValueError(
+                f"validate_fast_from_pupitre: expected a current unit for {col!r}, got {entry[1]}"
+            )
+
+
 def validate_fast_from_pupitre(
     data: tuple,
     pupitre_file: str,
@@ -828,15 +846,24 @@ def validate_fast_from_pupitre(
         from python_magnetrun.MagnetRun import load_mrun
 
         mrun = load_mrun(pupitre_file, housing=housing, site=site)
+        mrun.MagnetData.Units()
         df = mrun.MagnetData.Data
+        units = mrun.MagnetData.units
     else:
         mdata = load_magnetdata(pupitre_file)
         prepareData(mdata, housing)
+        mdata.Units()
         df = mdata.Data
+        units = mdata.units
 
     # Drop rows where all current columns are NaN — they would propagate NaN
     # into the stress computation and produce broken plots.
     current_cols = [c for c in ("IH", "IB", "IS") if c in df.columns]
+
+    from python_magnetrun.magnetdata_base import _make_ureg
+
+    _assert_current_units(units, current_cols, _make_ureg())
+
     if current_cols:
         n_before = len(df)
         df = df.dropna(subset=current_cols, how="all").reset_index(drop=True)

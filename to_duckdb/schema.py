@@ -172,16 +172,19 @@ CREATE TABLE IF NOT EXISTS op_stats_processed (
 
 -- Per-run scalar quantities (not binned).
 -- Intended use cases:
---   'energy_j'            = sum(Ptot * dt)                  electricity billing
+--   'energy_j'            = sum(Ptot[W] * dt)  (Ptot stored in MW, ×1e6)   electricity billing
 --   'heat_extracted_j'    = sum((tsb-teb) * Q_m3s * rho_cp * dt)  fatal heat
 --   'duration_s'          = sum(dt)                          total run length
 --   'duration_field_on_s' = sum(dt) where Field > threshold  magnet-on time
+-- unit: SI unit of `value` for this channel (see config.SCALAR_CHANNEL_UNITS).
 CREATE TABLE IF NOT EXISTS op_run_scalars (
     operationaldata_id  INTEGER  REFERENCES operationaldata(id),
     channel             VARCHAR  NOT NULL,
     value               DOUBLE   NOT NULL,
+    unit                VARCHAR,
     PRIMARY KEY (operationaldata_id, channel)
 );
+ALTER TABLE op_run_scalars ADD COLUMN IF NOT EXISTS unit VARCHAR;
 
 -- Site-level field-bin distributions.
 -- One row per (file, field bin, channel).
@@ -207,7 +210,7 @@ CREATE TABLE IF NOT EXISTS op_site_bin_stats (
 
 -- Per-part field-bin distributions.
 -- One row per (file, part, field bin, channel).
--- Channels: 'Icoil', 'Ucoil', 'hoop_stress_proxy' (= I^2, proportional to sigma_theta)
+-- Channels: 'Icoil', 'Ucoil', 'hoop_stress_proxy' (= I^2 [A^2], proportional to sigma_theta -- NOT MPa, see hoop_stress_bin_stats for actual stress)
 -- Only rows where |Icoil| > current_threshold are included.
 CREATE TABLE IF NOT EXISTS op_part_bin_stats (
     operationaldata_id  INTEGER  REFERENCES operationaldata(id),
@@ -238,12 +241,15 @@ CREATE TABLE IF NOT EXISTS exp_stats_processed (
 -- Per-run scalar quantities for experiments (not binned).
 -- Same intended channels as op_run_scalars:
 --   'energy_j', 'heat_extracted_j', 'duration_s', 'duration_field_on_s'
+-- unit: SI unit of `value` for this channel (see config.SCALAR_CHANNEL_UNITS).
 CREATE TABLE IF NOT EXISTS exp_run_scalars (
     experiment_id   INTEGER  REFERENCES experiments(id),
     channel         VARCHAR  NOT NULL,
     value           DOUBLE   NOT NULL,
+    unit            VARCHAR,
     PRIMARY KEY (experiment_id, channel)
 );
+ALTER TABLE exp_run_scalars ADD COLUMN IF NOT EXISTS unit VARCHAR;
 
 -- Site-level field-bin distributions for experiments.
 -- One row per (experiment, field bin, channel).
@@ -268,7 +274,7 @@ CREATE TABLE IF NOT EXISTS exp_site_bin_stats (
 
 -- Per-part field-bin distributions for experiments.
 -- One row per (experiment, part, field bin, channel).
--- Channels: 'Icoil', 'Ucoil', 'hoop_stress_proxy' (= I^2, proportional to sigma_theta)
+-- Channels: 'Icoil', 'Ucoil', 'hoop_stress_proxy' (= I^2 [A^2], proportional to sigma_theta -- NOT MPa, see hoop_stress_bin_stats for actual stress)
 -- Only rows where |Icoil| > current_threshold are included.
 CREATE TABLE IF NOT EXISTS exp_part_bin_stats (
     experiment_id   INTEGER  REFERENCES experiments(id),
@@ -302,6 +308,7 @@ CREATE TABLE IF NOT EXISTS hoop_stress_processed (
 
 -- Per-part stress-bin distributions.
 -- One row per (experiment, part_name, stress_bin_low).
+-- x = hoop stress [MPa].  stress_bin_low/high are also in MPa (see --bins in compute_hoop_stats.py).
 -- Derived at query time:
 --   operating time (h)    = SUM(sum_dt) / 3600
 --   time-weighted mean    = SUM(sum_x_dt) / SUM(sum_dt)
@@ -323,7 +330,7 @@ CREATE TABLE IF NOT EXISTS hoop_stress_bin_stats (
 
 -- Per-part rainflow fatigue cycle counts.
 -- n_cycles: total number of counted half-cycles (rainflow)
--- sum_range3: sum of (delta_sigma^3) — S-N fatigue proxy (Miner's rule with m=3)
+-- sum_range3: sum of (delta_sigma^3) [MPa^3] — S-N fatigue proxy (Miner's rule with m=3)
 CREATE TABLE IF NOT EXISTS hoop_stress_fatigue (
     experiment_id   INTEGER  REFERENCES experiments(id),
     part_name       VARCHAR  REFERENCES parts(name),

@@ -6,6 +6,8 @@ from dash.dash_table import DataTable
 
 import plotly.express as px
 
+from config import J_TO_KWH
+
 DB = "magnetdb.duckdb"
 
 app = Dash(__name__)
@@ -17,11 +19,11 @@ def load_data():
     con = duckdb.connect(DB)
 
     df = con.execute(
-        """
+        f"""
             SELECT 
                 e.id AS ID, e.name AS Experiment, e.site_name AS Site, 
-                ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / 3.6e6, 2) AS "Energy (kWh)",
-                ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / 3.6e6, 2) AS "Extracted heat (kWh)",
+                ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Energy (kWh)",
+                ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Extracted heat (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Field ON (s)",
             e.status AS Status

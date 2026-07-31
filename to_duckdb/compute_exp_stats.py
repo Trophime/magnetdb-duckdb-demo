@@ -6,7 +6,7 @@ Ingest per-file experiment statistics into DuckDB.
 For each experiments file not yet processed this script:
   1. Loads the record file (via python_magnetrun or pandas fallback).
   2. Computes per-run scalar stats   → exp_run_scalars
-       'energy_j'            = sum(Ptot * dt)
+       'energy_j'            = sum(Ptot[W] * dt)  (Ptot stored in MW, ×1e6)
        'heat_extracted_j'    = sum((tsb - teb) * Q_m3s * rho_cp * dt)
        'duration_s'          = sum(dt)
        'duration_field_on_s' = sum(dt) where Field > field_threshold
@@ -37,7 +37,7 @@ import duckdb
 import numpy as np
 import pandas as pd
 
-from config import DEFAULT_DB
+from config import DEFAULT_DB, MW_TO_W, SCALAR_CHANNEL_UNITS
 from populate import (
     _RECORDS_BASE as _DEFAULT_RECORDS_BASE,
     _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR,
@@ -93,7 +93,7 @@ def _compute_dt(df: pd.DataFrame) -> pd.Series:
     return pd.Series(1.0, index=df.index)
 
 
-def load_file(path: Path) -> pd.DataFrame | None:
+def load_file(path: Path) -> tuple[pd.DataFrame, dict] | None:
     if not path.exists():
         print(f"  [SKIP] not found: {path}")
         return None
@@ -101,10 +101,13 @@ def load_file(path: Path) -> pd.DataFrame | None:
         from python_magnetrun.magnetdata import load_magnetdata
 
         md = load_magnetdata(str(path))
+        md.Units()
         df = md.Data.copy()
+        units = md.units
     except Exception:
         try:
             df = pd.read_csv(path, sep="\t", low_memory=False)
+            units = {}
         except Exception as exc:
             print(f"  [ERROR] cannot read {path.name}: {exc}")
             return None
@@ -114,7 +117,7 @@ def load_file(path: Path) -> pd.DataFrame | None:
         return None
 
     df["dt"] = _compute_dt(df)
-    return df
+    return df, units
 
 
 # ---------------------------------------------------------------------------
@@ -197,11 +200,32 @@ def _bin_agg(x: pd.Series, dt: pd.Series) -> dict:
     }
 
 
+def _conversion_factor(units: dict, key: str, target_unit, ureg) -> float | None:
+    """Scalar multiplier from ``key``'s declared field unit to ``target_unit``.
+
+    Returns ``None`` when ``key``'s unit is unknown (e.g. CSV fallback load
+    path), so the caller can fall back to its historical default. Raises
+    ``pint.DimensionalityError`` if the declared unit is incompatible with
+    ``target_unit``.
+    """
+    entry = units.get(key)
+    declared_unit = entry[1] if entry else None
+    if declared_unit is None:
+        return None
+    return (1.0 * declared_unit).to(target_unit).magnitude
+
+
 def compute_scalars(
     df: pd.DataFrame,
     flow_to_m3s: float = FLOW_TO_M3S,
     rho_cp: float = RHO_CP,
+    units: dict | None = None,
 ) -> dict[str, float]:
+    from python_magnetrun.magnetdata_base import _make_ureg
+
+    ureg = _make_ureg()
+    units = units or {}
+
     dt = df["dt"].astype(float)
     scalars: dict[str, float] = {}
 
@@ -211,11 +235,27 @@ def compute_scalars(
     scalars["duration_field_on_s"] = float(dt[field_on].sum())
 
     if "Ptot" in df.columns:
-        scalars["energy_j"] = float((df["Ptot"].astype(float) * dt).sum())
+        ptot_to_w = _conversion_factor(units, "Ptot", ureg.watt, ureg)
+        if ptot_to_w is None:
+            ptot_to_w = MW_TO_W
+        scalars["energy_j"] = float((df["Ptot"].astype(float) * ptot_to_w * dt).sum())
 
     if all(c in df.columns for c in ("tsb", "teb", "debitbrut")):
+        for key in ("tsb", "teb"):
+            entry = units.get(key)
+            if entry and entry[1] is not None:
+                if entry[1].dimensionality != ureg.degC.dimensionality:
+                    raise ValueError(
+                        f"compute_scalars: expected a temperature unit for {key!r}, got {entry[1]}"
+                    )
         delta_t = df["tsb"].astype(float) - df["teb"].astype(float)
-        flow_m3s = df["debitbrut"].astype(float) * flow_to_m3s
+
+        debit_to_m3s = _conversion_factor(
+            units, "debitbrut", ureg.meter**3 / ureg.second, ureg
+        )
+        if debit_to_m3s is None:
+            debit_to_m3s = flow_to_m3s
+        flow_m3s = df["debitbrut"].astype(float) * debit_to_m3s
         scalars["heat_extracted_j"] = float((delta_t * flow_m3s * rho_cp * dt).sum())
 
     return scalars
@@ -224,8 +264,8 @@ def compute_scalars(
 def insert_scalars(con, exp_id: int, scalars: dict[str, float]) -> None:
     for channel, value in scalars.items():
         con.execute(
-            "INSERT OR REPLACE INTO exp_run_scalars VALUES (?, ?, ?)",
-            [exp_id, channel, value],
+            "INSERT OR REPLACE INTO exp_run_scalars VALUES (?, ?, ?, ?)",
+            [exp_id, channel, value, SCALAR_CHANNEL_UNITS.get(channel)],
         )
 
 
@@ -403,16 +443,17 @@ def ingest_site(
             if f.is_absolute()
             else Path(records_base) / srv_subdir / housing / filename
         )
-        df = load_file(path)
-        if df is None:
+        result = load_file(path)
+        if result is None:
             results["errors"].append(filename)
             continue
+        df, units = result
 
         if verbose:
             print(f"  processing {path.name}  ({len(df)} rows)")
 
         try:
-            scalars = compute_scalars(df, flow_to_m3s, rho_cp)
+            scalars = compute_scalars(df, flow_to_m3s, rho_cp, units)
             insert_scalars(con, exp_id, scalars)
 
             site_rows = compute_site_bin_stats(df, bins, site_channels)
