@@ -1,0 +1,11 @@
+# ── Local packages (editable installs from sibling directories) ───────────────
+-e ../../python_magnetgeo
+-e ../../python_magnetcooling
+-e ../../python_magnetrun
+
+# Dashboard stack
+dash>=2.17,<3
+dash-bootstrap-components>=1.5
+gunicorn>=22.0
+pandas>=2.0
+plotly>=5.20
