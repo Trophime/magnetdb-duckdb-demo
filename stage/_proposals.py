@@ -30,7 +30,7 @@ def main():
 
     # Inspect imported proposal table and compare with the experiments table
 
-    print(
+    print("\n" + " PROPOSALS.CSV ".center(80, "=") + "\n",
         con.execute(
             """
                 DESCRIBE proposals
@@ -46,7 +46,7 @@ def main():
         ).fetchdf()
     )
 
-    print(
+    print("\n" + " EXPERIMENTS ".center(80, "=") + "\n",
         con.execute(
             """
                 DESCRIBE experiments
@@ -64,7 +64,7 @@ def main():
 
     # Check temporal coverage of the proposal metadata
 
-    print(
+    print("\n" + " EXPERIMENTS TIMESPAN ".center(80, "=") + "\n",
         con.execute(
             """
                 SELECT MIN(file), MAX(file), COUNT(*)
@@ -72,7 +72,7 @@ def main():
             """
         ).fetchdf()
     )
-    print(
+    print("\n" + " HOUSING YEARSPAN ".center(80, "=") + "\n",
         con.execute(
             """
                 SELECT DISTINCT year
@@ -81,7 +81,7 @@ def main():
             """
         ).fetchdf()
     )
-    print(
+    print("\n" + " PROPOSAL TIMESPAN ".center(80, "=") + "\n",
         con.execute(
             """
                 SELECT MIN(Debut), MAX(Fin), COUNT(*)
@@ -89,10 +89,6 @@ def main():
             """
         ).fetchdf()
     )
-
-
-    # In[ ]:
-
 
     # Add proposal column to housing_summary unless it already exists
 
@@ -119,7 +115,7 @@ def main():
 
     # Validate the proposal linkage.
 
-    print(
+    print("\n" + " LINKAGE RESULTS ".center(80, "=") + "\n",
         con.execute(
             """
                 SELECT COUNT(*) AS total, COUNT(proposal) AS linked
@@ -139,14 +135,15 @@ def main():
     proposals_df["Experiment Start Date"] = pd.to_datetime(proposals_df["Experiment Start Date"], errors = "coerce")
     proposals_df["Experiment End Date"]   = pd.to_datetime(proposals_df["Experiment End Date"], errors = "coerce")
 
+    print("\n" + " PROPOSALS_2026.CSV ".center(80, "="),)
     print(proposals_df[["Acronym", "Magnet Sites", "Experiment Start Date", "Experiment End Date"]].head(), proposals_df.shape)
 
 
     # Check Magnet Sites in new proposals_2026-07-26.csv
 
-    print(proposals_df["Magnet Sites"].dtype)
-    print(len(proposals_df))
-    print(proposals_df["Magnet Sites"].notna().sum())
+    # print(proposals_df["Magnet Sites"].dtype)
+    print("NUMBER OF ENTRIES:", len(proposals_df))
+    print("OF WHICH 'Magnet Sites' non-empty:", proposals_df["Magnet Sites"].notna().sum())
 
 
 
