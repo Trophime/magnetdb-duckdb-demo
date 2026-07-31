@@ -17,7 +17,8 @@ TARGET_TABLE = 'operationaldata'
 dash.register_page(
     __name__, 
     path='/comparison', 
-    name="Multi-file comparison"
+    name="Multi-file comparison",
+    order=5
 )
 
 layout = html.Div([

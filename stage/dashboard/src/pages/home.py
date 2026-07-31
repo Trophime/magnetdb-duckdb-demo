@@ -7,7 +7,7 @@ import magnetdb_analysis as db
 import magnetdb_plot as plot
 import pandas as pd
 
-dash.register_page(__name__, path='/')
+dash.register_page(__name__, path='/', order=4)
 
 layout = html.Div([
     html.Div([
@@ -118,7 +118,25 @@ def update_sensors_menus(selected_file, selected_site, current_sensor_values, cu
             continue
 
         sensors = [c for c in mrun.MagnetData.get_group_data(group_name).columns if c not in ('t', 'timestamp')]
-        options = [{'label': s, 'value': s} for s in sensors]
+
+        options = []
+        for s in sensors:
+            try:
+                symbol, unit = mrun.getUnit(s)
+            except RuntimeError:
+                try:
+                    symbol, unit = mrun.getUnit(f"{group_name}/{s}")
+                except RuntimeError:
+                    symbol, unit = None, None
+
+            if symbol and unit is not None:
+                label = f"{s} ({symbol} [{unit:~P}])"
+            elif symbol:
+                label = f"{s} ({symbol})"
+            else:
+                label = s
+
+            options.append({'label': label, 'value': s})
 
         saved_values_for_this_group = saved_state_map.get(group_name, [])
             
