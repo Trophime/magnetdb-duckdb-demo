@@ -12,7 +12,7 @@ from plotly import graph_objects as go
 import magnetdb_analysis as db
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/magnet_stats", name="Magnet stats")
+dash.register_page(__name__, path="/magnet_stats", name="Magnet stats", order=2)
 
 
 J_TO_KWH = 3.6e6
@@ -146,6 +146,7 @@ def _build_page_content(df):
         color="Housing",
         color_discrete_map={"M9": "red", "M10": "blue"},
         category_orders={"Magnet": field_on_by_magnet["Magnet"].tolist()},
+        barmode="group",
         title="Field ON Time per Magnet (h)",
     )
 

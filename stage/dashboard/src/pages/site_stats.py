@@ -12,7 +12,7 @@ from plotly import graph_objects as go
 import magnetdb_analysis as db
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/site_stats", name="Assembly stats")
+dash.register_page(__name__, path="/site_stats", name="Assembly stats", order=1)
 
 
 J_TO_KWH = 3.6e6

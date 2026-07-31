@@ -109,24 +109,26 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
     if df is None or df.empty:
         return go.Figure()
 
-    # 1. Récupération dynamique de l'unité
-    unit = "Valeur"
+    # 1. Récupération dynamique du symbole et de l'unité
+    ylabel = "Value"
     if mrun and len(y_cols) > 0:
         sensor = y_cols[0]
+        symbol, unit_str = None, None
         try:
-            _, unit_str = mrun.getUnit(sensor)
-            if unit_str:
-                unit = str(unit_str)
+            symbol, unit_str = mrun.getUnit(sensor)
         except RuntimeError:
             try:
-                _, unit_str = mrun.getUnit(f"{group_name}/{sensor}")
-                if unit_str:
-                    unit = str(unit_str)
+                symbol, unit_str = mrun.getUnit(f"{group_name}/{sensor}")
             except RuntimeError:
                 logger.debug(
                     "No unit found for sensor %r (group %r) in either Pupitre or PigBrother key format",
                     sensor, group_name,
                 )
+
+        if symbol and unit_str is not None:
+            ylabel = f"{symbol} [{unit_str:~P}]"
+        elif symbol:
+            ylabel = symbol
 
     # 2. Gestion du Downsampling
     downsample_method = 'none' if (not method or method in ['raw data', 'raw', 'none']) else method
@@ -202,7 +204,7 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
         template="plotly_white",
         margin=dict(l=40, r=40, t=60, b=40),
         xaxis=dict(title=x_title),
-        yaxis=dict(title=f"Value : {unit}"),
+        yaxis=dict(title=ylabel),
         showlegend=True,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
         hovermode="x unified",
@@ -220,19 +222,23 @@ def create_comparison_plot(df_unaligned, df_aligned, x_col: str, y_cols: list, m
     if (df_unaligned is None or df_unaligned.empty) and (df_aligned is None or df_aligned.empty):
         return go.Figure()
 
-    # 1. Récupération dynamique de l'unité
-    unit = "Valeur"
+    # 1. Récupération dynamique du symbole et de l'unité
+    ylabel = "Value"
     if mrun and len(y_cols) > 0:
         sensor = y_cols[0]
+        symbol, unit_str = None, None
         try:
-            _, unit_str = mrun.getUnit(sensor)
-            if unit_str: unit = str(unit_str)
+            symbol, unit_str = mrun.getUnit(sensor)
         except RuntimeError:
             try:
-                _, unit_str = mrun.getUnit(f"{group_name}/{sensor}")
-                if unit_str: unit = str(unit_str)
+                symbol, unit_str = mrun.getUnit(f"{group_name}/{sensor}")
             except RuntimeError:
                 pass # Fallback géré silencieusement
+
+        if symbol and unit_str is not None:
+            ylabel = f"{symbol} [{unit_str:~P}]"
+        elif symbol:
+            ylabel = symbol
 
     x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time'}
     x_title = x_label_mapping.get(x_col, x_col)
@@ -320,8 +326,8 @@ def create_comparison_plot(df_unaligned, df_aligned, x_col: str, y_cols: list, m
     )
     
     # Titres des axes Y et X
-    fig.update_yaxes(title_text=f"Value : {unit}", row=1, col=1)
-    fig.update_yaxes(title_text=f"Value : {unit}", row=2, col=1)
+    fig.update_yaxes(title_text=ylabel, row=1, col=1)
+    fig.update_yaxes(title_text=ylabel, row=2, col=1)
     fig.update_xaxes(title_text=x_title, row=2, col=1) 
 
     return fig

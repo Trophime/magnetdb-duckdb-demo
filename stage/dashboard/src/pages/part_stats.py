@@ -12,7 +12,7 @@ from plotly import graph_objects as go
 import magnetdb_analysis as db
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/part_stats", name="Part stats")
+dash.register_page(__name__, path="/part_stats", name="Part stats", order=3)
 
 
 S_TO_H = 3600
