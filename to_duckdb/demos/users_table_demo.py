@@ -90,6 +90,7 @@ def load_log(
     int,
     int,
 ]:
+) -> tuple[dict[str, set[str]], dict[str, list[datetime]], int, int]:
     """Group EXPERIENCES_LOG sessions by acronym (UserCode).
 
     Parameters
@@ -108,6 +109,8 @@ def load_log(
         `variant` is the raw magnet's stripped suffix (``"e"``/``"i"``), or
         ``None`` for magnets with no insert/external variant. ``HStop`` is
         ``None`` when EXPERIENCES_LOG left it blank (session not closed).
+    housings : dict[str, set[str]]
+        Acronym -> set of normalized base magnets used (e.g. ``"M9"``).
     timestamps : dict[str, list[datetime]]
         Acronym -> list of surviving session start timestamps.
     n_total : int
@@ -124,6 +127,7 @@ def load_log(
     sessions: dict[str, list[tuple[str, str | None, datetime, datetime | None]]] = (
         defaultdict(list)
     )
+    housings: dict[str, set[str]] = defaultdict(set)
     timestamps: dict[str, list[datetime]] = defaultdict(list)
     n_total = 0
     n_discarded = 0
@@ -149,11 +153,15 @@ def load_log(
             sessions[acronym].append((magnet, variant, hstart, hstop))
             timestamps[acronym].append(ts)
     return sessions, timestamps, n_total, n_discarded
+            housings[acronym].add(normalize_magnet(row["Magnet"]))
+            timestamps[acronym].append(ts)
+    return housings, timestamps, n_total, n_discarded
 
 
 def load_proposals(
     proposals_path: Path, cutoff: datetime | None
 ) -> tuple[dict[str, list[dict[str, str]]], int, int, int]:
+) -> tuple[dict[str, list[dict[str, str]]], int, int]:
     """Index proposal rows by acronym.
 
     Parameters
@@ -211,6 +219,13 @@ def load_proposals(
                                         
             acronym_rows[acronym].append(row)
     return acronym_rows, n_total, n_discarded, n_ignored
+                    except ValueError:
+                        start_date = None
+                    if start_date is not None and start_date < cutoff.date():
+                        n_discarded += 1
+                        continue
+            acronym_rows[acronym].append(row)
+    return acronym_rows, n_total, n_discarded
 
 
 def find_proposal_rows(
@@ -357,6 +372,14 @@ def build_users(
     """
     sessions, timestamps, log_total, log_discarded = load_log(log_path, cutoff)
     acronym_rows, proposals_total, proposals_discarded, proposals_ignored = load_proposals(
+        One dict per acronym, matching the ``users`` table columns.
+    match_counts : Counter
+        Counts of ``"exact"``, ``"fuzzy"``, ``"unmatched"`` proposal matches.
+    stats : dict
+        Row counts read/discarded from both source files, for reporting.
+    """
+    housings, timestamps, log_total, log_discarded = load_log(log_path, cutoff)
+    acronym_rows, proposals_total, proposals_discarded = load_proposals(
         proposals_path, cutoff
     )
     acronym_rows_lower = {a.lower(): a for a in acronym_rows}
@@ -364,12 +387,14 @@ def build_users(
     users = []
     match_counts: Counter = Counter()
     for acronym in sorted(sessions):
+    for acronym in sorted(housings):
         rows, matched_acronym, match_type = find_proposal_rows(
             acronym, acronym_rows, acronym_rows_lower, fuzzy_cutoff
         )
         if rows is None:
             match_counts["unmatched"] += 1
             research_area = call_number = access_mode = type_ = None
+            research_area = call_number = access_mode = None
         else:
             match_counts[match_type] += 1
             if match_type == "fuzzy":
@@ -461,6 +486,19 @@ def build_users(
     stats = {
         "duplicates_removed": n_duplicates,
         "proposals_ignored": proposals_ignored,
+
+        users.append(
+            {
+                "acronym": acronym,
+                "research_area": research_area,
+                "country": None,
+                "call_number": call_number,
+                "access_mode": access_mode,
+                "housing": sorted(housings[acronym], key=_housing_sort_key),
+            }
+        )
+
+    stats = {
         "log_total": log_total,
         "log_discarded": log_discarded,
         "proposals_total": proposals_total,
@@ -522,20 +560,16 @@ def main() -> None:
         con.execute("DELETE FROM users")
         con.executemany(
             "INSERT INTO users "
-            "(acronym, research_area, type, country, call_number, access_mode, housing, "
-            "hstart, hstop) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "(acronym, research_area, country, call_number, access_mode, housing) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             [
                 [
                     u["acronym"],
                     u["research_area"],
-                    u["type"],
                     u["country"],
                     u["call_number"],
                     u["access_mode"],
                     u["housing"],
-                    u["hstart"],
-                    u["hstop"],
                 ]
                 for u in users
             ],
@@ -544,74 +578,15 @@ def main() -> None:
         print(f"\nRead {stats['log_total']} EXPERIENCES_LOG rows "
               f"({stats['log_discarded']} discarded by --from)")
         print(f"Read {stats['proposals_total']} proposals rows "
-              f"({stats['proposals_discarded']} discarded by --from)"
-              f"({stats['proposals_ignored']} ignored for empty acronym or invalid start date)")
-        print(f"Inserted {len(users)} rows into 'users' ({args.db}), "
-              f"{stats['duplicates_removed']} duplicate rows removed")
+              f"({stats['proposals_discarded']} discarded by --from)")
+        print(f"Inserted {len(users)} rows into 'users' ({args.db})")
         print(
             f"Proposal match: {match_counts['exact']} exact, "
             f"{match_counts['fuzzy']} fuzzy, {match_counts['unmatched']} unmatched"
         )
 
-        empty_hstop = con.execute("SELECT COUNT(*) FROM users WHERE hstop IS NULL").fetchone()[0]
-        print(f"Records with empty hstop: {empty_hstop}")
-        empty_research_area = con.execute(
-            "SELECT COUNT(*) FROM users WHERE research_area IS NULL"
-        ).fetchone()[0]
-        print(f"Records with empty research_area: {empty_research_area}")
-        acronyms_without_research_area = [
-            row[0]
-            for row in con.execute(
-                "SELECT DISTINCT acronym FROM users WHERE research_area IS NULL "
-                "ORDER BY acronym"
-            ).fetchall()
-        ]
-        print(
-            f"Acronyms without research_area ({len(acronyms_without_research_area)}):"
-        )
-        for acronym in acronyms_without_research_area:
-            print(f"  {acronym}")
-
-        # Match each row's housing (via experiments.site_name's "<housing>_..."
-        # prefix) and [hstart, hstop] range against experiments' file-embedded
-        # timestamp. Rows with no hstop have no closed range to contain
-        # anything, so they're left with experiments_ids = NULL.
-        con.execute(
-            f"UPDATE users SET experiments_ids = ("
-            f"SELECT LIST(e.id) FROM experiments e "
-            f"WHERE split_part(e.site_name, '_', 1) = users.housing "
-            f"AND {_EXP_FILE_TS} BETWEEN users.hstart AND users.hstop"
-            f") WHERE users.hstop IS NOT NULL"
-        )
-        matched = con.execute(
-            "SELECT COUNT(*) FROM users WHERE experiments_ids IS NOT NULL"
-        ).fetchone()[0]
-        print(f"Records with matched experiments_ids: {matched}")
-        no_experiments_ids = con.execute(
-            "SELECT COUNT(*) FROM users WHERE experiments_ids IS NULL"
-        ).fetchone()[0]
-        print(f"Records with no experiments_ids: {no_experiments_ids}")
-
-        shared_experiment_ids = con.execute(
-            "SELECT experiment_id FROM (SELECT unnest(experiments_ids) AS experiment_id "
-            "FROM users WHERE experiments_ids IS NOT NULL) "
-            "GROUP BY experiment_id HAVING COUNT(*) > 1 ORDER BY experiment_id"
-        ).fetchall()
-        print(
-            f"Experiments shared across multiple users rows: "
-            f"{len(shared_experiment_ids)}"
-        )
-        for (experiment_id,) in shared_experiment_ids:
-            print(f"  experiment {experiment_id}:")
-            rows = con.execute(
-                "SELECT * FROM users WHERE list_contains(experiments_ids, ?) "
-                "ORDER BY acronym, housing, hstart",
-                [experiment_id],
-            ).df()
-            print(rows.to_string(index=False))
-
         sample = con.execute(
-            "SELECT * FROM users ORDER BY acronym, housing, hstart LIMIT ?", [args.sample]
+            "SELECT * FROM users ORDER BY acronym LIMIT ?", [args.sample]
         ).df()
         print(f"\nSample rows (up to {args.sample}):")
         print(sample.to_string(index=False))
