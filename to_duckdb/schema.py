@@ -331,9 +331,57 @@ CREATE TABLE IF NOT EXISTS hoop_stress_fatigue (
     sum_range3      DOUBLE   NOT NULL,
     PRIMARY KEY (experiment_id, part_name)
 );
+
+-- ── Users ─────────────────────────────────────────────────────────────────
+
+-- One row per EXPERIENCES_LOG session: a distinct UserCode (= proposal Acronym,
+-- fuzzy-matched) crossed with each base magnet (e.g. "M9i"/"M9e" -> "M9") and each
+-- (HStart, HStop) session on it. research_area / type / call_number / access_mode
+-- come from the matched proposals CSV row (Type, e.g. "EMFL"/"Supra"/"Instrumentation")
+-- and are duplicated across an acronym's rows.
+-- hstop is NULL where EXPERIENCES_LOG left it blank (session not closed).
+-- experiments_ids holds experiments.id values whose file-embedded timestamp falls
+-- within [hstart, hstop] on this row's housing; NULL until populated (see
+-- demos/users_table_demo.py) and left NULL for rows with no hstop.
+-- No primary key: EXPERIENCES_LOG itself contains exact-duplicate session rows.
+-- country is not populated yet.
+CREATE TABLE IF NOT EXISTS users (
+    acronym         VARCHAR,
+    research_area   VARCHAR,
+    type            VARCHAR,
+    country         VARCHAR,
+    call_number     VARCHAR,
+    access_mode     VARCHAR,
+    housing         VARCHAR,
+    hstart          TIMESTAMP,
+    hstop           TIMESTAMP,
+    experiments_ids INTEGER[]
+);
 """
 
 
 def ensure_schema(con) -> None:
     """Create all tables and apply idempotent migrations on *con*."""
+    # users.hstart changed from TIMESTAMP[] (one row per acronym+housing) to a
+    # scalar TIMESTAMP (one row per session), and the primary key was dropped;
+    # DuckDB can't ALTER COLUMN across incompatible types or drop a primary
+    # key, and the table is fully rebuilt by its populating script, so drop
+    # and let CREATE TABLE recreate it.
+    hstart_type = con.execute(
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_name = 'users' AND column_name = 'hstart'"
+    ).fetchone()
+    if hstart_type is not None and hstart_type[0] != "TIMESTAMP":
+        con.execute("DROP TABLE users")
     con.execute(SCHEMA_SQL)
+    # idempotent migration: experiment_ids was renamed to experiments_ids
+    has_old_name = con.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = 'users' AND column_name = 'experiment_ids'"
+    ).fetchone()
+    if has_old_name is not None:
+        con.execute("ALTER TABLE users RENAME COLUMN experiment_ids TO experiments_ids")
+    # idempotent migration for databases that predate experiments_ids
+    con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS experiments_ids INTEGER[]")
+    # idempotent migration for databases that predate the type column
+    con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS type VARCHAR")
