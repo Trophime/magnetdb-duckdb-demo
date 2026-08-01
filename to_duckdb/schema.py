@@ -334,28 +334,17 @@ CREATE TABLE IF NOT EXISTS hoop_stress_fatigue (
 
 -- ── Users ─────────────────────────────────────────────────────────────────
 
--- One row per EXPERIENCES_LOG session: a distinct UserCode (= proposal Acronym,
--- fuzzy-matched) crossed with each base magnet (e.g. "M9i"/"M9e" -> "M9") and each
--- (HStart, HStop) session on it. research_area / type / call_number / access_mode
--- come from the matched proposals CSV row (Type, e.g. "EMFL"/"Supra"/"Instrumentation")
--- and are duplicated across an acronym's rows.
--- hstop is NULL where EXPERIENCES_LOG left it blank (session not closed).
--- experiments_ids holds experiments.id values whose file-embedded timestamp falls
--- within [hstart, hstop] on this row's housing; NULL until populated (see
--- demos/users_table_demo.py) and left NULL for rows with no hstop.
--- No primary key: EXPERIENCES_LOG itself contains exact-duplicate session rows.
+-- One row per distinct EXPERIENCES_LOG UserCode (= proposal Acronym, fuzzy-matched).
+-- research_area / call_number / access_mode come from the matched proposals CSV row.
+-- housing holds the distinct base magnets (e.g. "M9i"/"M9e" -> "M9") the user ran on.
 -- country is not populated yet.
 CREATE TABLE IF NOT EXISTS users (
-    acronym         VARCHAR,
-    research_area   VARCHAR,
-    type            VARCHAR,
-    country         VARCHAR,
-    call_number     VARCHAR,
-    access_mode     VARCHAR,
-    housing         VARCHAR,
-    hstart          TIMESTAMP,
-    hstop           TIMESTAMP,
-    experiments_ids INTEGER[]
+    acronym       VARCHAR PRIMARY KEY,
+    research_area VARCHAR,
+    country       VARCHAR,
+    call_number   VARCHAR,
+    access_mode   VARCHAR,
+    housing       VARCHAR[]
 );
 """
 
