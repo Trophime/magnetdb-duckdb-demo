@@ -338,6 +338,21 @@ CREATE TABLE IF NOT EXISTS hoop_stress_fatigue (
     sum_range3      DOUBLE   NOT NULL,
     PRIMARY KEY (experiment_id, part_name)
 );
+
+-- ── Users ─────────────────────────────────────────────────────────────────
+
+-- One row per distinct EXPERIENCES_LOG UserCode (= proposal Acronym, fuzzy-matched).
+-- research_area / call_number / access_mode come from the matched proposals CSV row.
+-- housing holds the distinct base magnets (e.g. "M9i"/"M9e" -> "M9") the user ran on.
+-- country is not populated yet.
+CREATE TABLE IF NOT EXISTS users (
+    acronym       VARCHAR PRIMARY KEY,
+    research_area VARCHAR,
+    country       VARCHAR,
+    call_number   VARCHAR,
+    access_mode   VARCHAR,
+    housing       VARCHAR[]
+);
 """
 
 
