@@ -127,7 +127,7 @@ ALTER TABLE operationaldata ALTER COLUMN id SET DEFAULT nextval('operationaldata
 
 -- One row per processed overview file (OverviewRecord, data attribute excluded).
 -- sources_* columns hold the file-path lists from FileSet.
--- signatures / sync_info / flow_params / metrics / debitbrut are stored as JSON.
+-- signatures / sync_info / flow_params / metrics / debitbrut / plateaux are stored as JSON.
 CREATE TABLE IF NOT EXISTS overview_records (
     filename                  VARCHAR PRIMARY KEY,
     site_name                 VARCHAR REFERENCES sites(name),
@@ -153,11 +153,14 @@ CREATE TABLE IF NOT EXISTS overview_records (
     sync_info                 JSON      DEFAULT '{}',
     flow_params               JSON      DEFAULT '{}',
     metrics                   JSON      DEFAULT '{}',
-    debitbrut                 JSON      DEFAULT '{}'
+    debitbrut                 JSON      DEFAULT '{}',
+    plateaux                  JSON      DEFAULT '{}'
 );
 
 -- idempotent migration for databases that predate site_name
 ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS site_name VARCHAR;
+-- idempotent migration for databases that predate plateaux
+ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS plateaux JSON DEFAULT '{}';
 
 -- ── Operational statistics tables ────────────────────────────────────────────
 

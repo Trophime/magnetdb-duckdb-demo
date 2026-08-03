@@ -37,6 +37,7 @@ upsert_overview_record(con, record, site_name, verbose)
 insert_overview_record_from_dict(con, data, site_name, verbose, upsert)
 attach_site_to_overview_record(con, filename, site_name, verbose)
 infer_overview_record_fields(con, filename, db_tz, verbose)
+infer_operating_mode(df)
 """
 
 import json
@@ -1386,6 +1387,9 @@ def insert_overview_record(
 ) -> None:
     """Insert an OverviewRecord row; skip silently if filename already exists.
 
+    If *site_name* is given, also runs :func:`_postprocess_overview_record`
+    (sets ``mode``) right after inserting.
+
     Parameters
     ----------
     con:
@@ -1449,12 +1453,17 @@ def insert_overview_record(
     )
     if verbose:
         print(f"  + overview_record  {filename}  [{record.housing}]  duration={record.duration:.1f}s")
+    if site_name is not None:
+        _postprocess_overview_record(con, filename, verbose=verbose)
 
 
 def upsert_overview_record(
     con, record, site_name: str | None = None, verbose: bool = True
 ) -> None:
     """Insert or replace an OverviewRecord row (idempotent re-processing).
+
+    If *site_name* is given, also runs :func:`_postprocess_overview_record`
+    (sets ``mode``) right after upserting.
 
     Parameters
     ----------
@@ -1511,6 +1520,8 @@ def upsert_overview_record(
     )
     if verbose:
         print(f"  ~ overview_record  {record.filename}  [{record.housing}]  (upserted)")
+    if site_name is not None:
+        _postprocess_overview_record(con, record.filename, verbose=verbose)
 
 
 def insert_overview_record_from_dict(
@@ -1526,6 +1537,10 @@ def insert_overview_record_from_dict(
     comma-separated string (as written by ``cli.py``).  Both the canonical
     ``sources_<key>`` column names and the short ``<key>`` aliases used by
     ``cli.py`` are accepted (e.g. ``sources_overview`` or ``overview``).
+
+    If a site name ends up set (from *site_name* or ``data["site_name"]``),
+    also runs :func:`_postprocess_overview_record` (sets ``mode``) right
+    after writing the row.
 
     Parameters
     ----------
@@ -1599,6 +1614,7 @@ def insert_overview_record_from_dict(
         _json_field("flow_params"),
         _json_field("metrics"),
         _json_field("debitbrut"),
+        _json_field("plateaux"),
     ]
 
     if upsert:
@@ -1610,14 +1626,16 @@ def insert_overview_record_from_dict(
                 sources_default, sources_trigger, sources_spike,
                 sources_hybrid_kHz, sources_hybrid_rms, sources_hybrid_trigger,
                 sources_hybrid_vprocess, sources_pigbrother_runlog, sources_pupitre_runlog,
-                signatures, sync_info, flow_params, metrics, debitbrut
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                signatures, sync_info, flow_params, metrics, debitbrut, plateaux
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             row,
         )
         if verbose:
             housing = data.get("housing", "?")
             print(f"  ~ overview_record  {filename}  [{housing}]  (upserted)")
+        if effective_site is not None:
+            _postprocess_overview_record(con, filename, verbose=verbose)
     else:
         if con.execute(
             "SELECT 1 FROM overview_records WHERE filename = ?", [filename]
@@ -1633,8 +1651,8 @@ def insert_overview_record_from_dict(
                 sources_default, sources_trigger, sources_spike,
                 sources_hybrid_kHz, sources_hybrid_rms, sources_hybrid_trigger,
                 sources_hybrid_vprocess, sources_pigbrother_runlog, sources_pupitre_runlog,
-                signatures, sync_info, flow_params, metrics, debitbrut
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                signatures, sync_info, flow_params, metrics, debitbrut, plateaux
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """,
             row,
         )
@@ -1642,6 +1660,8 @@ def insert_overview_record_from_dict(
             housing = data.get("housing", "?")
             dur = float(data.get("duration") or 0.0)
             print(f"  + overview_record  {filename}  [{housing}]  duration={dur:.1f}s")
+        if effective_site is not None:
+            _postprocess_overview_record(con, filename, verbose=verbose)
 
 
 def attach_site_to_overview_record(
@@ -1650,6 +1670,8 @@ def attach_site_to_overview_record(
     """Set or overwrite site_name and housing on an existing overview_record row.
 
     The housing value is taken from sites.housing for the given site_name.
+    Also runs :func:`_postprocess_overview_record` (sets ``mode``) now that
+    ``site_name`` is known.
 
     Parameters
     ----------
@@ -1686,6 +1708,7 @@ def attach_site_to_overview_record(
     )
     if verbose:
         print(f"  ~ overview_record  {filename}  site_name → {site_name}  housing → {housing}")
+    _postprocess_overview_record(con, filename, verbose=verbose)
 
 
 # overview_records.filename follows python_magnetrun's
@@ -1772,6 +1795,114 @@ def _mean_across_frames(dfs: list, column: str) -> float:
     return total / count if count else 0.0
 
 
+def infer_operating_mode(df) -> str:
+    """Classify the operating mode from the IH(IB) relation near IB = 0.
+
+    Ported from the housing_summary mode-inference heuristic: fits a line
+    to ``Courant_GR1`` (IH) vs ``Courant_GR2`` (IB) for IB in a low-current
+    window and classifies the slope.
+
+    Parameters
+    ----------
+    df : :class:`~pandas.DataFrame`
+        Must contain ``Courant_GR1`` and ``Courant_GR2`` columns (bare TDMS
+        channel names from the ``Courants_Alimentations`` group).
+
+    Returns
+    -------
+    str
+        ``"NORMAL"``, ``"ECO"``, or ``"UNKNOWN"``.
+    """
+    import numpy as np
+
+    ib_zero_threshold = 50
+    ih_zero_threshold = 50
+
+    try:
+        IH = np.asarray(df["Courant_GR1"], dtype=float)
+        IB = np.asarray(df["Courant_GR2"], dtype=float)
+    except (KeyError, TypeError):
+        return "UNKNOWN"
+
+    mask = np.isfinite(IH) & np.isfinite(IB)
+    IH, IB = IH[mask], IB[mask]
+
+    if len(IH) == 0:
+        return "UNKNOWN"
+    if np.nanmax(np.abs(IH)) < ih_zero_threshold:
+        return "NORMAL"
+    if np.nanmax(np.abs(IB)) < ib_zero_threshold:
+        return "NORMAL"
+
+    fit_max_current = 0.25 * np.nanmax(IB)
+    fit_mask = (ib_zero_threshold < IB) & (IB < fit_max_current)
+    if fit_mask.sum() < 10:
+        fit_mask = IB > ib_zero_threshold
+
+    x, y = IB[fit_mask], IH[fit_mask]
+    if len(x) < 2:
+        return "UNKNOWN"
+
+    slope, _shift = np.polyfit(x, y, 1)
+    return "NORMAL" if 0.66 <= slope <= 1.5 else "ECO"
+
+
+def _postprocess_overview_record(con, filename: str, verbose: bool = True) -> str:
+    """Run mode inference (and future enrichment steps) once site_name is known.
+
+    Called from every code path that sets ``overview_records.site_name``:
+    the insert/upsert/from_dict writers, :func:`attach_site_to_overview_record`,
+    and :func:`infer_overview_record_fields`.  A no-op until ``site_name`` is
+    non-NULL and at least one overview source file is on record and readable.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    filename : str
+        Primary key of the ``overview_records`` row.
+    verbose : bool
+        Print a status line when a field is updated.
+
+    Returns
+    -------
+    str
+        ``"applied"``, ``"skipped_no_site"``, ``"skipped_no_sources"``, or
+        ``"not_found"``.
+    """
+    row = con.execute(
+        "SELECT site_name, sources_overview FROM overview_records WHERE filename = ?",
+        [filename],
+    ).fetchone()
+    if row is None:
+        return "not_found"
+
+    site_name, sources_overview = row
+    if site_name is None:
+        return "skipped_no_site"
+    if not sources_overview:
+        return "skipped_no_sources"
+
+    from python_magnetrun.magnetdata import load_magnetdata
+
+    try:
+        mdata = load_magnetdata(sources_overview[0])
+        df_overview = mdata.Data["Courants_Alimentations"]
+    except Exception as exc:
+        if verbose:
+            print(f"  ! overview_record {filename}: could not read {sources_overview[0]}: {exc}")
+        return "skipped_no_sources"
+
+    mode = infer_operating_mode(df_overview)
+    con.execute(
+        "UPDATE overview_records SET mode = ? WHERE filename = ?",
+        [mode, filename],
+    )
+    if verbose:
+        print(f"  ~ overview_record  {filename}  mode → {mode}")
+    return "applied"
+
+
 def infer_overview_record_fields(
     con, filename: str, db_tz, verbose: bool = True
 ) -> str:
@@ -1784,8 +1915,10 @@ def infer_overview_record_fields(
     ``teb``/``bp`` are the samples-weighted mean of the ``teb``/``BP``
     columns across every existing ``sources_pupitre`` file.  Requires
     ``python_magnetrun`` to be installed when either source list is
-    non-empty.  Rich fields (``mode``, ``signatures``, ``sync_info``,
-    ``flow_params``, ``metrics``, ``debitbrut``) are left untouched.
+    non-empty.  On success, also runs :func:`_postprocess_overview_record`
+    (which sets ``mode`` now that ``site_name`` is known).  ``signatures``,
+    ``sync_info``, ``flow_params``, ``metrics``, ``debitbrut``, and
+    ``plateaux`` are left untouched.
 
     Parameters
     ----------
@@ -1865,6 +1998,7 @@ def infer_overview_record_fields(
             f"  ~ overview_record  {filename}  site_name → {site_name}  t0={t0_db}  "
             f"duration={duration:.1f}s  teb={teb:.2f}  bp={bp:.2f}"
         )
+    _postprocess_overview_record(con, filename, verbose=verbose)
     return "resolved"
 
 

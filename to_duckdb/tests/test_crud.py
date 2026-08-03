@@ -7,10 +7,12 @@ import pytest
 from crud import (
     _find_site_for_timestamp,
     _parse_overview_filename,
+    _postprocess_overview_record,
     delete_magnet,
     delete_site,
     exists,
     infer_magnet_type,
+    infer_operating_mode,
     infer_overview_record_fields,
     insert_experiments,
     insert_magnet,
@@ -609,3 +611,111 @@ def test_infer_overview_record_fields_bad_filename(con):
 def test_infer_overview_record_fields_not_found(con):
     status = infer_overview_record_fields(con, "does_not_exist", FILE_TZ, verbose=False)
     assert status == "not_found"
+
+
+# ---------------------------------------------------------------------------
+# infer_operating_mode()
+# ---------------------------------------------------------------------------
+
+
+def test_infer_operating_mode_normal_when_ih_near_zero():
+    df = {"Courant_GR1": [0.0, 1.0, 2.0, 0.5], "Courant_GR2": [100.0, 200.0, 300.0, 400.0]}
+    assert infer_operating_mode(df) == "NORMAL"
+
+
+def test_infer_operating_mode_normal_when_ib_near_zero():
+    df = {"Courant_GR1": [100.0, 200.0, 300.0], "Courant_GR2": [0.0, 1.0, 2.0]}
+    assert infer_operating_mode(df) == "NORMAL"
+
+
+def test_infer_operating_mode_normal_from_slope_fit():
+    ib = list(range(60, 1060, 10))
+    df = {"Courant_GR1": ib, "Courant_GR2": ib}  # slope == 1.0
+    assert infer_operating_mode(df) == "NORMAL"
+
+
+def test_infer_operating_mode_eco_from_slope_fit():
+    ib = list(range(60, 1060, 10))
+    df = {"Courant_GR1": [2.0 * v for v in ib], "Courant_GR2": ib}  # slope == 2.0
+    assert infer_operating_mode(df) == "ECO"
+
+
+def test_infer_operating_mode_unknown_when_insufficient_points():
+    df = {"Courant_GR1": [100.0], "Courant_GR2": [100.0]}
+    assert infer_operating_mode(df) == "UNKNOWN"
+
+
+def test_infer_operating_mode_unknown_when_all_nan():
+    nan = float("nan")
+    df = {"Courant_GR1": [nan, nan], "Courant_GR2": [nan, nan]}
+    assert infer_operating_mode(df) == "UNKNOWN"
+
+
+def test_infer_operating_mode_unknown_when_columns_missing():
+    assert infer_operating_mode({}) == "UNKNOWN"
+
+
+# ---------------------------------------------------------------------------
+# _postprocess_overview_record()
+# ---------------------------------------------------------------------------
+
+
+class _FakeTdmsData:
+    """Stand-in for a loaded TdmsMagnetData: exposes just the .Data dict."""
+
+    def __init__(self, df):
+        self.Data = {"Courants_Alimentations": df}
+
+
+def test_postprocess_overview_record_not_found(con):
+    status = _postprocess_overview_record(con, "does_not_exist", verbose=False)
+    assert status == "not_found"
+
+
+def test_postprocess_overview_record_skipped_no_site(con):
+    insert_overview_record_from_dict(con, {"filename": "M9_Overview_220127-1756"}, verbose=False)
+
+    status = _postprocess_overview_record(con, "M9_Overview_220127-1756", verbose=False)
+
+    assert status == "skipped_no_site"
+
+
+def test_postprocess_overview_record_skipped_no_sources(con):
+    _insert_m9_sites(con)
+    insert_overview_record_from_dict(
+        con,
+        {"filename": "M9_Overview_220127-1756", "site_name": "M9_SITE_B"},
+        verbose=False,
+    )
+
+    status = _postprocess_overview_record(con, "M9_Overview_220127-1756", verbose=False)
+
+    assert status == "skipped_no_sources"
+
+
+def test_postprocess_overview_record_applied_sets_mode(con, monkeypatch):
+    _insert_m9_sites(con)
+    insert_overview_record_from_dict(
+        con,
+        {
+            "filename": "M9_Overview_220127-1756",
+            "site_name": "M9_SITE_B",
+            "sources_overview": ["M9_Overview_220127-1756.tdms"],
+        },
+        verbose=False,
+    )
+
+    ib = list(range(60, 1060, 10))
+    fake_df = {"Courant_GR1": ib, "Courant_GR2": ib}  # slope == 1.0 -> NORMAL
+    monkeypatch.setattr(
+        "python_magnetrun.magnetdata.load_magnetdata",
+        lambda path: _FakeTdmsData(fake_df),
+    )
+
+    status = _postprocess_overview_record(con, "M9_Overview_220127-1756", verbose=False)
+
+    assert status == "applied"
+    row = con.execute(
+        "SELECT mode FROM overview_records WHERE filename = 'M9_Overview_220127-1756'"
+    ).fetchone()
+    assert row == ("NORMAL",)
