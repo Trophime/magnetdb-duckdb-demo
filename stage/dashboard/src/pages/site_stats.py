@@ -12,7 +12,7 @@ from plotly import graph_objects as go
 import magnetdb_analysis as db
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/site_stats", name="Assembly stats", order=1)
+dash.register_page(__name__, path="/", name="Assembly stats", order=1)
 
 
 J_TO_KWH = 3.6e6
@@ -99,6 +99,28 @@ def load_data(db_path=None):
     return df
 
 
+def load_site_summary(db_path=None):
+    """Count total sites and sites currently in operation.
+
+    Parameters
+    ----------
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
+
+    Returns
+    -------
+    tuple of int
+        ``(total_sites, sites_in_operation)``.
+    """
+    db_path = db_path or db.DB_PATH
+    con = duckdb.connect(db_path, read_only=True)
+    total_sites, sites_in_operation = con.execute(
+        "SELECT COUNT(*), SUM(CASE WHEN status = 'in_operation' THEN 1 ELSE 0 END) FROM sites"
+    ).fetchone()
+    con.close()
+    return total_sites, sites_in_operation or 0
+
+
 TABLE_COLUMNS = [
     (
         {"name": c, "id": c, "presentation": "markdown"}
@@ -119,11 +141,11 @@ def _experiment_link(row):
     )
     if pd.isna(row["File"]) or not row["File"]:
         return label
-    href = f"/?site={quote(str(row['Site']), safe='')}&file={quote(str(row['File']), safe='')}"
+    href = f"/home?site={quote(str(row['Site']), safe='')}&file={quote(str(row['File']), safe='')}"
     return f"[{label}]({href})"
 
 
-def _build_page_content(df):
+def _build_page_content(df, total_sites, sites_in_operation):
     """Build the figures, table rows, and summary text for a loaded experiments dataframe."""
     fig_per_exp = px.bar(
         df.sort_values("Experiment"),
@@ -211,6 +233,10 @@ def _build_page_content(df):
     table_df["Experiment"] = df.apply(_experiment_link, axis=1)
 
     summary = [
+        html.B(f"Sites: {total_sites}"),
+        html.Br(),
+        f"In operation: {sites_in_operation}",
+        html.Br(),
         html.B(f"Experiments: {len(df)}"),
         html.Br(),
         f"Processed: {(df['Status'] == 'STATS DONE').sum()}",
@@ -297,6 +323,7 @@ def update_site_stats(selected_db, selected_site):
 
     df = load_data(selected_db)
     site_options = sorted(df["Site"].unique())
+    total_sites, sites_in_operation = load_site_summary(selected_db)
 
     plot_df = df[df["Site"] == selected_site] if selected_site else df
     fig_per_site_style = {"display": "none"} if selected_site else {}
@@ -309,7 +336,7 @@ def update_site_stats(selected_db, selected_site):
         fig_field_on_year,
         table_records,
         summary,
-    ) = _build_page_content(plot_df)
+    ) = _build_page_content(plot_df, total_sites, sites_in_operation)
     return (
         fig_per_exp,
         fig_per_site,

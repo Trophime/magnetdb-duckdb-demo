@@ -8,11 +8,11 @@ import magnetdb_plot as plot
 import pandas as pd
 from natsort import natsorted
 
-dash.register_page(__name__, path='/', order=4)
+dash.register_page(__name__, path='/home', order=4)
 
 
 # `site`/`file` are populated by Dash Pages from the URL's query string (e.g. the
-# links generated on the "Assembly stats" page: /?site=...&file=...), so the
+# links generated on the "Assembly stats" page: /home?site=...&file=...), so the
 # dropdowns get their initial value at first render instead of via a callback
 # racing against the (async) options-loading callbacks below. Seeding `options`
 # with the value itself guarantees the label is shown immediately, rather than
