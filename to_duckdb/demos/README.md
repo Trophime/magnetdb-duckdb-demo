@@ -11,11 +11,12 @@ fuzzy-matched against a proposals CSV (`Data/proposals_2026-07-22.csv` by
 default) to fill in `research_area`, `call_number`, and `access_mode`. By
 default the table's contents are fully replaced; pass `--sync` to instead
 add only new rows and correct mismatched existing ones in place (leaving
-`experiments_ids` untouched). After (re)populating, the script backfills
-`experiments_ids` by matching each row's housing and `[hstart, hstop]`
-range against `experiments`' file-embedded timestamp — pass `--no-link` to
-skip that step. Not wired into `magnetdb.py populate` yet — run standalone
-from the repository root.
+`experiments_ids`/`overview_records_ids` untouched). After (re)populating,
+the script backfills `experiments_ids` by matching each row's housing and
+`[hstart, hstop]` range against `experiments`' file-embedded timestamp, and
+`overview_records_ids` the same way against `overview_records.t0` — pass
+`--no-link` to skip both steps. Not wired into `magnetdb.py populate` yet —
+run standalone from the repository root.
 
 ```bash
 python to_duckdb/demos/users_table_demo.py
@@ -35,7 +36,7 @@ python to_duckdb/demos/users_table_demo.py --no-link
 | `--fuzzy-cutoff` | `0.8` | `difflib` similarity cutoff for fuzzy acronym matching |
 | `--sample` | `20` | Number of resulting `users` rows to print |
 | `--sync` | off (full replace) | Add new rows and fix mismatched existing rows instead of replacing the whole table's contents |
-| `--no-link` | off (linking runs) | Skip backfilling `experiments_ids` after (re)populating |
+| `--no-link` | off (linking runs) | Skip backfilling `experiments_ids`/`overview_records_ids` after (re)populating |
 
 ---
 
