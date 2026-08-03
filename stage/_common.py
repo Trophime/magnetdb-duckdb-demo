@@ -14,12 +14,16 @@ from python_magnetrun.signature import Signature
 
 
 
-DATA_DIR = Path("../Data")
-PUPITRE_ROOT = DATA_DIR / "pupitre_2023" / "srv-data-install"
-PUPITRE_DIR = PUPITRE_ROOT / "M9"
-PIGBROTHER = DATA_DIR / "pigbrother_2025" / "M10_Overview_251201-0909.tdms"
+ROOT           = Path(__file__).resolve().parent.parent
+DATA_DIR       = ROOT / "Data"
 
-DB = Path("../to_duckdb/test-magnetdb.duckdb")
+RECORDS_DIR    = Path("/mnt/LNCMIG-Data/records")
+PUPITRE_DIR    = RECORDS_DIR / "srv-data-install"
+PIGBROTHER_DIR = RECORDS_DIR / "pbsurv"
+
+PIGBROTHER     = PIGBROTHER_DIR / "M10" / "Overview" / "M10_Overview_251201-0909.tdms"
+
+DB = Path("../to_duckdb/magnetdb.duckdb")
 
 FIELD_THRESHOLD = 0.1
 
