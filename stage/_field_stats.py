@@ -27,7 +27,7 @@ def main():
 
         for rowid, housing, pupitre in rows:
             filename = Path(pupitre).name
-            filepath = PUPITRE_ROOT / housing / filename
+            filepath = PUPITRE_DIR / housing / filename
             progress.update(task, description=f"{housing}/{filename}")
 
             if not filepath.exists():

@@ -2,7 +2,7 @@ import os
 import dash
 from dash import html, dcc, Output, Input, State, MATCH, ALL, Patch, ctx
 from dash.exceptions import PreventUpdate
-import dash_bootstrap_components as dbc
+import dash.bootstrap_components as dbc
 import plotly.graph_objects as go
 import magnetdb_analysis as db
 from magnetdb_plot import create_plot, create_comparison_plot
