@@ -4,13 +4,19 @@
 Standalone script — not wired into populate.py / magnetdb.py yet. Reads
 ``Data/EXPERIENCES_LOG.csv`` (one row per experiment session, keyed by
 ``UserCode``) and a proposals CSV (keyed by ``Acronym``, possibly typo'd
-relative to ``UserCode``), joins them with fuzzy matching, and (re)populates
-the ``users`` table of a DuckDB database with one row per acronym.
+relative to ``UserCode``), joins them with fuzzy matching, and populates the
+``users`` table of a DuckDB database with one row per acronym. By default the
+table's contents are fully replaced; pass ``--sync`` to instead add only new
+rows and correct mismatched existing ones in place.
 
 Run from the repository root, e.g.::
 
     python to_duckdb/demos/users_table_demo.py
     python to_duckdb/demos/users_table_demo.py --from 2020-01-01
+    python to_duckdb/demos/users_table_demo.py --sync
+    python to_duckdb/demos/users_table_demo.py --list
+    python to_duckdb/demos/users_table_demo.py --view
+    python to_duckdb/demos/users_table_demo.py --view <ACRONYM>
 """
 
 import argparse
@@ -469,6 +475,371 @@ def build_users(
     return users, match_counts, stats
 
 
+_USER_COMPARE_FIELDS = ("research_area", "type", "country", "call_number", "access_mode")
+
+
+def create_users_table(con, verbose: bool = True) -> None:
+    """Create the ``users`` table (and apply schema migrations) if needed.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    verbose : bool
+        Print a confirmation line when done.
+    """
+    ensure_schema(con)
+    if verbose:
+        print("Ensured 'users' table exists.")
+
+
+def delete_users_table(con, verbose: bool = True) -> None:
+    """Drop the ``users`` table entirely.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    verbose : bool
+        Print a confirmation line when done.
+    """
+    con.execute("DROP TABLE IF EXISTS users")
+    if verbose:
+        print("Dropped 'users' table.")
+
+
+def _user_key(u: dict) -> tuple:
+    """Build the (acronym, housing, hstart, hstop) identity key for a users row."""
+    return (u["acronym"], u["housing"], u["hstart"], u["hstop"])
+
+
+def fetch_existing_user(con, key: tuple) -> dict | None:
+    """Fetch the comparable columns of an existing ``users`` row by key.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    key : tuple
+        ``(acronym, housing, hstart, hstop)``, as returned by `_user_key`.
+
+    Returns
+    -------
+    dict or None
+        Mapping over `_USER_COMPARE_FIELDS`, or ``None`` if no row matches.
+    """
+    acronym, housing, hstart, hstop = key
+    row = con.execute(
+        "SELECT research_area, type, country, call_number, access_mode "
+        "FROM users WHERE acronym = ? AND housing = ? AND hstart = ? "
+        "AND hstop IS NOT DISTINCT FROM ?",
+        [acronym, housing, hstart, hstop],
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(zip(_USER_COMPARE_FIELDS, row))
+
+
+def insert_users(con, users: list[dict], verbose: bool = True) -> None:
+    """Bulk-insert `users` rows with no existence check.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    users : list[dict]
+        Rows as built by `build_users`.
+    verbose : bool
+        Print a count line when done.
+    """
+    con.executemany(
+        "INSERT INTO users "
+        "(acronym, research_area, type, country, call_number, access_mode, housing, "
+        "hstart, hstop) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [
+            [
+                u["acronym"],
+                u["research_area"],
+                u["type"],
+                u["country"],
+                u["call_number"],
+                u["access_mode"],
+                u["housing"],
+                u["hstart"],
+                u["hstop"],
+            ]
+            for u in users
+        ],
+    )
+    if verbose:
+        print(f"Inserted {len(users)} rows into 'users'")
+
+
+def replace_all_users(con, users: list[dict], verbose: bool = True) -> None:
+    """Replace the entire contents of ``users`` with `users`.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    users : list[dict]
+        Rows as built by `build_users`.
+    verbose : bool
+        Print a count line when done.
+    """
+    con.execute("DELETE FROM users")
+    insert_users(con, users, verbose=verbose)
+
+
+def sync_users(con, users: list[dict], verbose: bool = True) -> dict:
+    """Insert new ``users`` rows and correct mismatched existing ones.
+
+    Existing rows are matched by `_user_key`. A match whose
+    `_USER_COMPARE_FIELDS` differ from the freshly computed values is
+    updated in place; `experiments_ids` is never read or written here.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    users : list[dict]
+        Rows as built by `build_users`.
+    verbose : bool
+        Print a line per inserted/updated row.
+
+    Returns
+    -------
+    dict
+        ``{"inserted": int, "updated": int, "unchanged": int}``.
+    """
+    stats = {"inserted": 0, "updated": 0, "unchanged": 0}
+    new_users = []
+    for u in users:
+        key = _user_key(u)
+        existing = fetch_existing_user(con, key)
+        if existing is None:
+            new_users.append(u)
+            if verbose:
+                print(f"  + {u['acronym']} {u['housing']} {u['hstart']}  (new)")
+            continue
+
+        changed = {
+            field: (existing[field], u[field])
+            for field in _USER_COMPARE_FIELDS
+            if existing[field] != u[field]
+        }
+        if not changed:
+            stats["unchanged"] += 1
+            continue
+
+        set_clause = ", ".join(f"{field} = ?" for field in changed)
+        con.execute(
+            f"UPDATE users SET {set_clause} "
+            "WHERE acronym = ? AND housing = ? AND hstart = ? "
+            "AND hstop IS NOT DISTINCT FROM ?",
+            [u[field] for field in changed] + list(key),
+        )
+        stats["updated"] += 1
+        if verbose:
+            diffs = ", ".join(
+                f"{field}: {old!r} -> {new!r}" for field, (old, new) in changed.items()
+            )
+            print(f"  ~ {u['acronym']} {u['housing']} {u['hstart']}  ({diffs})")
+
+    if new_users:
+        insert_users(con, new_users, verbose=False)
+    stats["inserted"] = len(new_users)
+    return stats
+
+
+def update_experiments_ids(con, verbose: bool = True) -> dict:
+    """Link each ``users`` row to its ``experiments`` via housing + time range.
+
+    Matches each row's housing (via experiments.site_name's "<housing>_..."
+    prefix) and [hstart, hstop] range against experiments' file-embedded
+    timestamp. Rows with no hstop have no closed range to contain anything,
+    so they're left with experiments_ids = NULL.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    verbose : bool
+        Print matched/unmatched counts when done.
+
+    Returns
+    -------
+    dict
+        ``{"matched": int, "unmatched": int}``.
+    """
+    con.execute(
+        f"UPDATE users SET experiments_ids = ("
+        f"SELECT LIST(e.id) FROM experiments e "
+        f"WHERE split_part(e.site_name, '_', 1) = users.housing "
+        f"AND {_EXP_FILE_TS} BETWEEN users.hstart AND users.hstop"
+        f") WHERE users.hstop IS NOT NULL"
+    )
+    matched = con.execute(
+        "SELECT COUNT(*) FROM users WHERE experiments_ids IS NOT NULL"
+    ).fetchone()[0]
+    unmatched = con.execute(
+        "SELECT COUNT(*) FROM users WHERE experiments_ids IS NULL"
+    ).fetchone()[0]
+    if verbose:
+        print(f"Records with matched experiments_ids: {matched}")
+        print(f"Records with no experiments_ids: {unmatched}")
+    return {"matched": matched, "unmatched": unmatched}
+
+
+def report_source_stats(users: list[dict], stats: dict, match_counts: Counter) -> None:
+    """Print row-count, dedup, and proposal-match stats from `build_users`."""
+    print(f"\nRead {stats['log_total']} EXPERIENCES_LOG rows "
+          f"({stats['log_discarded']} discarded by --from)")
+    print(f"Read {stats['proposals_total']} proposals rows "
+          f"({stats['proposals_discarded']} discarded by --from)"
+          f"({stats['proposals_ignored']} ignored for empty acronym or invalid start date)")
+    print(f"Built {len(users)} users rows, "
+          f"{stats['duplicates_removed']} duplicate rows removed")
+    print(
+        f"Proposal match: {match_counts['exact']} exact, "
+        f"{match_counts['fuzzy']} fuzzy, {match_counts['unmatched']} unmatched"
+    )
+
+
+def report_data_quality(con) -> None:
+    """Print hstop/research_area coverage of the current ``users`` table contents."""
+    empty_hstop = con.execute("SELECT COUNT(*) FROM users WHERE hstop IS NULL").fetchone()[0]
+    print(f"Records with empty hstop: {empty_hstop}")
+    empty_research_area = con.execute(
+        "SELECT COUNT(*) FROM users WHERE research_area IS NULL"
+    ).fetchone()[0]
+    print(f"Records with empty research_area: {empty_research_area}")
+    acronyms_without_research_area = [
+        row[0]
+        for row in con.execute(
+            "SELECT DISTINCT acronym FROM users WHERE research_area IS NULL "
+            "ORDER BY acronym"
+        ).fetchall()
+    ]
+    print(
+        f"Acronyms without research_area ({len(acronyms_without_research_area)}):"
+    )
+    for acronym in acronyms_without_research_area:
+        print(f"  {acronym}")
+
+
+def report_experiments_ids_coverage(con) -> None:
+    """Print rows missing experiments_ids and experiments shared across rows."""
+    rows_no_experiments_ids = con.execute(
+        "SELECT * FROM users WHERE experiments_ids IS NULL "
+        "ORDER BY acronym, housing, hstart"
+    ).df()
+    print(f"\nRows with no experiments_ids ({len(rows_no_experiments_ids)}):")
+    print(rows_no_experiments_ids.to_string(index=False))
+
+    shared_experiment_ids = con.execute(
+        "SELECT experiment_id FROM (SELECT unnest(experiments_ids) AS experiment_id "
+        "FROM users WHERE experiments_ids IS NOT NULL) "
+        "GROUP BY experiment_id HAVING COUNT(*) > 1 ORDER BY experiment_id"
+    ).fetchall()
+    print(
+        f"Experiments shared across multiple users rows: "
+        f"{len(shared_experiment_ids)}"
+    )
+    for (experiment_id,) in shared_experiment_ids:
+        print(f"  experiment {experiment_id}:")
+        rows = con.execute(
+            "SELECT * FROM users WHERE list_contains(experiments_ids, ?) "
+            "ORDER BY acronym, housing, hstart",
+            [experiment_id],
+        ).df()
+        print(rows.to_string(index=False))
+
+
+# ---------------------------------------------------------------------------
+# list/view helpers — mirror crud.py's list_objects()/view_sites()/view_site()
+# so this logic can later move into crud.py and be wired into magnetdb.py's
+# top-level 'list' command and a future 'user' subcommand.
+# ---------------------------------------------------------------------------
+
+
+def list_users(con) -> list[str]:
+    """Return the sorted list of distinct acronyms in ``users``."""
+    return [
+        row[0]
+        for row in con.execute(
+            "SELECT DISTINCT acronym FROM users ORDER BY acronym"
+        ).fetchall()
+    ]
+
+
+def view_users(con) -> None:
+    """Print every users row (all columns), with experiments_ids resolved to filenames."""
+    rows = con.execute(
+        "SELECT * REPLACE ("
+        "  (SELECT list(e.file ORDER BY e.id) FROM experiments e "
+        "   WHERE e.id IN (SELECT UNNEST(u.experiments_ids))) AS experiments_ids"
+        ") FROM users u ORDER BY acronym, housing, hstart"
+    ).df()
+    if rows.empty:
+        print("No users in database.")
+        return
+    print(f"Users ({len(rows)} rows):")
+    print(rows.to_string(index=False))
+
+
+def view_user(con, acronym: str) -> None:
+    """Print metadata and each housing session for a single acronym."""
+    row = con.execute(
+        "SELECT research_area, type, country, call_number, access_mode "
+        "FROM users WHERE acronym = ? LIMIT 1",
+        [acronym],
+    ).fetchone()
+    if row is None:
+        print(f"User '{acronym}' not found.")
+        return
+    print(f"User : {acronym}")
+    print(f"  research_area: {row[0] or '?'}")
+    print(f"  type         : {row[1] or '?'}")
+    print(f"  country      : {row[2] or '?'}")
+    print(f"  call_number  : {row[3] or '?'}")
+    print(f"  access_mode  : {row[4] or '?'}")
+    sessions = con.execute(
+        "SELECT housing, hstart, hstop, experiments_ids "
+        "FROM users WHERE acronym = ? ORDER BY housing, hstart",
+        [acronym],
+    ).fetchall()
+    print(f"  sessions ({len(sessions)}):")
+    for housing, hstart, hstop, experiments_ids in sessions:
+        files = (
+            [
+                r[0]
+                for r in con.execute(
+                    "SELECT file FROM experiments WHERE id IN (SELECT UNNEST(?)) "
+                    "ORDER BY id",
+                    [experiments_ids],
+                ).fetchall()
+            ]
+            if experiments_ids
+            else []
+        )
+        print(f"    {housing}  {hstart} -> {hstop}  {files or '-'}")
+
+
+def report_sample(con, n: int) -> None:
+    """Print up to `n` sample rows from ``users``, with experiments_ids resolved to filenames."""
+    sample = con.execute(
+        "SELECT * REPLACE ("
+        "  (SELECT list(e.file ORDER BY e.id) FROM experiments e "
+        "   WHERE e.id IN (SELECT UNNEST(u.experiments_ids))) AS experiments_ids"
+        ") FROM users u ORDER BY acronym, housing, hstart LIMIT ?",
+        [n],
+    ).df()
+    print(f"\nSample rows (up to {n}):")
+    print(sample.to_string(index=False))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -508,7 +879,52 @@ def main() -> None:
         default=20,
         help="Number of resulting users rows to print.",
     )
+    parser.add_argument(
+        "--sync",
+        action="store_true",
+        help="Add new rows and fix mismatched existing rows instead of "
+        "replacing the whole table's contents.",
+    )
+    parser.add_argument(
+        "--no-link",
+        dest="link",
+        action="store_false",
+        default=True,
+        help="Skip backfilling experiments_ids after (re)populating.",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List distinct acronyms in 'users' and exit "
+        "(prepares magnetdb.py's top-level 'list' integration).",
+    )
+    parser.add_argument(
+        "--view",
+        nargs="?",
+        const="",
+        default=None,
+        metavar="ACRONYM",
+        help="Show all users (omit ACRONYM) or one acronym's detail, then exit "
+        "(prepares a future magnetdb.py 'user view' subcommand, like 'site view').",
+    )
     args = parser.parse_args()
+
+    if args.list or args.view is not None:
+        with duckdb.connect(str(args.db), read_only=True) as con:
+            if args.list:
+                acronyms = list_users(con)
+                print(f"users ({len(acronyms)}):")
+                if acronyms:
+                    for acronym in acronyms:
+                        print(f"  {acronym}")
+                else:
+                    print("  (none)")
+            if args.view is not None:
+                if args.view:
+                    view_user(con, args.view)
+                else:
+                    view_users(con)
+        return
 
     cutoff = parse_cutoff(args.from_date) if args.from_date else None
 
@@ -518,103 +934,25 @@ def main() -> None:
 
     con = duckdb.connect(str(args.db))
     try:
-        ensure_schema(con)
-        con.execute("DELETE FROM users")
-        con.executemany(
-            "INSERT INTO users "
-            "(acronym, research_area, type, country, call_number, access_mode, housing, "
-            "hstart, hstop) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                [
-                    u["acronym"],
-                    u["research_area"],
-                    u["type"],
-                    u["country"],
-                    u["call_number"],
-                    u["access_mode"],
-                    u["housing"],
-                    u["hstart"],
-                    u["hstop"],
-                ]
-                for u in users
-            ],
-        )
+        create_users_table(con, verbose=False)
+        report_source_stats(users, stats, match_counts)
 
-        print(f"\nRead {stats['log_total']} EXPERIENCES_LOG rows "
-              f"({stats['log_discarded']} discarded by --from)")
-        print(f"Read {stats['proposals_total']} proposals rows "
-              f"({stats['proposals_discarded']} discarded by --from)"
-              f"({stats['proposals_ignored']} ignored for empty acronym or invalid start date)")
-        print(f"Inserted {len(users)} rows into 'users' ({args.db}), "
-              f"{stats['duplicates_removed']} duplicate rows removed")
-        print(
-            f"Proposal match: {match_counts['exact']} exact, "
-            f"{match_counts['fuzzy']} fuzzy, {match_counts['unmatched']} unmatched"
-        )
+        if args.sync:
+            sync_stats = sync_users(con, users)
+            print(f"Sync: {sync_stats['inserted']} inserted, "
+                  f"{sync_stats['updated']} updated, "
+                  f"{sync_stats['unchanged']} unchanged")
+        else:
+            replace_all_users(con, users, verbose=False)
+            print(f"Replaced 'users' contents with {len(users)} rows ({args.db})")
 
-        empty_hstop = con.execute("SELECT COUNT(*) FROM users WHERE hstop IS NULL").fetchone()[0]
-        print(f"Records with empty hstop: {empty_hstop}")
-        empty_research_area = con.execute(
-            "SELECT COUNT(*) FROM users WHERE research_area IS NULL"
-        ).fetchone()[0]
-        print(f"Records with empty research_area: {empty_research_area}")
-        acronyms_without_research_area = [
-            row[0]
-            for row in con.execute(
-                "SELECT DISTINCT acronym FROM users WHERE research_area IS NULL "
-                "ORDER BY acronym"
-            ).fetchall()
-        ]
-        print(
-            f"Acronyms without research_area ({len(acronyms_without_research_area)}):"
-        )
-        for acronym in acronyms_without_research_area:
-            print(f"  {acronym}")
+        report_data_quality(con)
 
-        # Match each row's housing (via experiments.site_name's "<housing>_..."
-        # prefix) and [hstart, hstop] range against experiments' file-embedded
-        # timestamp. Rows with no hstop have no closed range to contain
-        # anything, so they're left with experiments_ids = NULL.
-        con.execute(
-            f"UPDATE users SET experiments_ids = ("
-            f"SELECT LIST(e.id) FROM experiments e "
-            f"WHERE split_part(e.site_name, '_', 1) = users.housing "
-            f"AND {_EXP_FILE_TS} BETWEEN users.hstart AND users.hstop"
-            f") WHERE users.hstop IS NOT NULL"
-        )
-        matched = con.execute(
-            "SELECT COUNT(*) FROM users WHERE experiments_ids IS NOT NULL"
-        ).fetchone()[0]
-        print(f"Records with matched experiments_ids: {matched}")
-        no_experiments_ids = con.execute(
-            "SELECT COUNT(*) FROM users WHERE experiments_ids IS NULL"
-        ).fetchone()[0]
-        print(f"Records with no experiments_ids: {no_experiments_ids}")
+        if args.link:
+            update_experiments_ids(con)
+            report_experiments_ids_coverage(con)
 
-        shared_experiment_ids = con.execute(
-            "SELECT experiment_id FROM (SELECT unnest(experiments_ids) AS experiment_id "
-            "FROM users WHERE experiments_ids IS NOT NULL) "
-            "GROUP BY experiment_id HAVING COUNT(*) > 1 ORDER BY experiment_id"
-        ).fetchall()
-        print(
-            f"Experiments shared across multiple users rows: "
-            f"{len(shared_experiment_ids)}"
-        )
-        for (experiment_id,) in shared_experiment_ids:
-            print(f"  experiment {experiment_id}:")
-            rows = con.execute(
-                "SELECT * FROM users WHERE list_contains(experiments_ids, ?) "
-                "ORDER BY acronym, housing, hstart",
-                [experiment_id],
-            ).df()
-            print(rows.to_string(index=False))
-
-        sample = con.execute(
-            "SELECT * FROM users ORDER BY acronym, housing, hstart LIMIT ?", [args.sample]
-        ).df()
-        print(f"\nSample rows (up to {args.sample}):")
-        print(sample.to_string(index=False))
+        report_sample(con, args.sample)
     finally:
         con.close()
 

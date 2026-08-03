@@ -8,15 +8,22 @@ Standalone demo scripts for the student MagnetDB DuckDB.
 
 Builds and populates the `users` table from `Data/EXPERIENCES_LOG.csv`,
 fuzzy-matched against a proposals CSV (`Data/proposals_2026-07-22.csv` by
-default) to fill in `research_area`, `call_number`, and `access_mode`.
-Not wired into `magnetdb.py populate` yet — run standalone from the
-repository root.
+default) to fill in `research_area`, `call_number`, and `access_mode`. By
+default the table's contents are fully replaced; pass `--sync` to instead
+add only new rows and correct mismatched existing ones in place (leaving
+`experiments_ids` untouched). After (re)populating, the script backfills
+`experiments_ids` by matching each row's housing and `[hstart, hstop]`
+range against `experiments`' file-embedded timestamp — pass `--no-link` to
+skip that step. Not wired into `magnetdb.py populate` yet — run standalone
+from the repository root.
 
 ```bash
 python to_duckdb/demos/users_table_demo.py
 python to_duckdb/demos/users_table_demo.py --db to_duckdb/test-magnetdb.duckdb
 python to_duckdb/demos/users_table_demo.py --from 2020-01-01
 python to_duckdb/demos/users_table_demo.py --fuzzy-cutoff 0.8 --sample 10
+python to_duckdb/demos/users_table_demo.py --sync
+python to_duckdb/demos/users_table_demo.py --no-link
 ```
 
 | Flag | Default | Description |
@@ -27,6 +34,8 @@ python to_duckdb/demos/users_table_demo.py --fuzzy-cutoff 0.8 --sample 10
 | `--from` | none (no filtering) | Discard entries before this date (Europe/Paris local time), e.g. `2020-01-01` |
 | `--fuzzy-cutoff` | `0.8` | `difflib` similarity cutoff for fuzzy acronym matching |
 | `--sample` | `20` | Number of resulting `users` rows to print |
+| `--sync` | off (full replace) | Add new rows and fix mismatched existing rows instead of replacing the whole table's contents |
+| `--no-link` | off (linking runs) | Skip backfilling `experiments_ids` after (re)populating |
 
 ---
 
