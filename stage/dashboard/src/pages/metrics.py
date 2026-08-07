@@ -21,12 +21,12 @@ layout = html.Div([
             placeholder="Select a housing"
         ),
 
-        html.Label("Select Overview Pupitre:", style={'fontWeight': 'bold', 'marginTop': '10px'}),
-        dcc.Dropdown(
-            id='dropdown-ovrview',
-            options= db.get_pupitres(),
-            placeholder="Select a pupitre"
-        ),
+        # html.Label("Select Overview Pupitre:", style={'fontWeight': 'bold', 'marginTop': '10px'}),
+        # dcc.Dropdown(
+        #     id='dropdown-ovrview',
+        #     options= db.get_pupitres(),
+        #     placeholder="Select a pupitre"
+        # ),
     ], style={'padding': '20px', 'backgroundColor': '#f8f9fa', 'minHeight': '100vh'})
 ])
 
