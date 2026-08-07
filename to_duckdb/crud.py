@@ -980,7 +980,7 @@ def view_overview_records(
     from_ts: str | None = None,
     to_ts: str | None = None,
 ) -> None:
-    joins, conditions, params = [], [], []
+    joins, conditions, params = [], ["ovr.merged_into IS NULL"], []
 
     if site_name:
         conditions.append("ovr.site_name = ?")
@@ -1382,10 +1382,133 @@ def _fileset_lists(sources) -> dict[str, list[str]]:
     }
 
 
+_OVERVIEW_SOURCE_LIST_COLUMNS = [
+    "sources_overview", "sources_archive", "sources_pupitre",
+    "sources_default", "sources_trigger", "sources_spike",
+    "sources_hybrid_kHz", "sources_hybrid_rms", "sources_hybrid_trigger",
+    "sources_hybrid_vprocess", "sources_pigbrother_runlog", "sources_pupitre_runlog",
+]
+_OVERVIEW_JSON_COLUMNS = [
+    "signatures", "sync_info", "flow_params", "metrics", "debitbrut", "plateaux",
+]
+_OVERVIEW_RECORD_COLUMNS = (
+    ["filename", "site_name", "housing", "mode", "t0", "duration", "teb", "bp"]
+    + _OVERVIEW_SOURCE_LIST_COLUMNS
+    + _OVERVIEW_JSON_COLUMNS
+)
+
+
+def _execute_overview_record_write(con, columns: dict) -> None:
+    """INSERT OR REPLACE one overview_records row from a *columns* dict."""
+    values = [
+        json.dumps(columns[col]) if col in _OVERVIEW_JSON_COLUMNS else columns[col]
+        for col in _OVERVIEW_RECORD_COLUMNS
+    ]
+    con.execute(
+        f"INSERT OR REPLACE INTO overview_records ({', '.join(_OVERVIEW_RECORD_COLUMNS)}) "
+        f"VALUES ({', '.join(['?'] * len(_OVERVIEW_RECORD_COLUMNS))})",
+        values,
+    )
+
+
+def _write_overview_record_row(
+    con, columns: dict, on_conflict: str, verbose: bool = True
+) -> None:
+    """Write one overview_records row (plain insert/replace, no cross-row merge).
+
+    Pupitre-duplicate detection and merging is handled separately, as a
+    table-wide sweep, by :func:`merge_duplicate_pupitre_records` (run from
+    ``populate overview-records-infer``) — not here.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    columns : dict
+        Maps every ``overview_records`` column name to its Python value
+        (JSON columns as ``dict``, not yet serialized).
+    on_conflict : str
+        ``"skip"`` — if ``columns["filename"]`` already exists, print a
+        status line and return without writing. ``"replace"`` — always
+        write (matches ``INSERT OR REPLACE`` semantics).
+    verbose : bool
+        Print a status line describing what happened.
+    """
+    filename = columns["filename"]
+
+    if on_conflict == "skip" and con.execute(
+        "SELECT 1 FROM overview_records WHERE filename = ?", [filename]
+    ).fetchone():
+        if verbose:
+            print(f"  ~ overview_record  {filename}  (already exists, skipped)")
+        return
+
+    _execute_overview_record_write(con, columns)
+    if verbose:
+        if on_conflict == "replace":
+            print(f"  ~ overview_record  {filename}  [{columns.get('housing')}]  (upserted)")
+        else:
+            dur = float(columns.get("duration") or 0.0)
+            print(f"  + overview_record  {filename}  [{columns.get('housing')}]  duration={dur:.1f}s")
+
+    if columns.get("site_name") is not None:
+        _postprocess_overview_record(con, filename, verbose=verbose)
+
+
+def _overview_record_to_columns(record, site_name: str | None) -> dict:
+    """Build a ``_write_overview_record_row`` columns dict from an OverviewRecord.
+
+    Parameters
+    ----------
+    record:
+        An ``OverviewRecord`` dataclass instance (``data`` attribute is ignored).
+    site_name : str or None
+        Site name FK (references ``sites.name``).
+
+    Returns
+    -------
+    dict
+        Maps every ``overview_records`` column name to its Python value.
+    """
+    src = _fileset_lists(record.sources)
+    return {
+        "filename": record.filename,
+        "site_name": site_name,
+        "housing": record.housing,
+        "mode": record.mode or None,
+        "t0": str(record.t0) if record.t0 is not None else None,
+        "duration": float(record.duration),
+        "teb": float(record.teb),
+        "bp": float(record.BP),
+        "sources_overview": src["overview"],
+        "sources_archive": src["archive"],
+        "sources_pupitre": src["pupitre"],
+        "sources_default": src["default"],
+        "sources_trigger": src["trigger"],
+        "sources_spike": src["spike"],
+        "sources_hybrid_kHz": src["hybrid_kHz"],
+        "sources_hybrid_rms": src["hybrid_rms"],
+        "sources_hybrid_trigger": src["hybrid_trigger"],
+        "sources_hybrid_vprocess": src["hybrid_vprocess"],
+        "sources_pigbrother_runlog": src["pigbrother_runlog"],
+        "sources_pupitre_runlog": src["pupitre_runlog"],
+        "signatures": record.signatures,
+        "sync_info": record.sync_info,
+        "flow_params": record.flow_params,
+        "metrics": record.metrics,
+        "debitbrut": record.debitbrut,
+        "plateaux": {},
+    }
+
+
 def insert_overview_record(
     con, record, site_name: str | None = None, verbose: bool = True
 ) -> None:
     """Insert an OverviewRecord row; skip silently if filename already exists.
+
+    Pupitre-duplicate detection/merging is not done here — see
+    :func:`merge_duplicate_pupitre_records`, run separately from
+    ``populate overview-records-infer``.
 
     If *site_name* is given, also runs :func:`_postprocess_overview_record`
     (sets ``mode``) right after inserting.
@@ -1401,66 +1524,19 @@ def insert_overview_record(
     verbose:
         Print a status line when inserting.
     """
-    filename = record.filename
-    if con.execute(
-        "SELECT 1 FROM overview_records WHERE filename = ?", [filename]
-    ).fetchone():
-        if verbose:
-            print(f"  ~ overview_record  {filename}  (already exists, skipped)")
-        return
-
-    src = _fileset_lists(record.sources)
-    t0 = str(record.t0) if record.t0 is not None else None
-
-    con.execute(
-        """
-        INSERT INTO overview_records (
-            filename, site_name, housing, mode, t0, duration, teb, bp,
-            sources_overview, sources_archive, sources_pupitre,
-            sources_default, sources_trigger, sources_spike,
-            sources_hybrid_kHz, sources_hybrid_rms, sources_hybrid_trigger,
-            sources_hybrid_vprocess, sources_pigbrother_runlog, sources_pupitre_runlog,
-            signatures, sync_info, flow_params, metrics, debitbrut
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """,
-        [
-            filename,
-            site_name,
-            record.housing,
-            record.mode or None,
-            t0,
-            float(record.duration),
-            float(record.teb),
-            float(record.BP),
-            src["overview"],
-            src["archive"],
-            src["pupitre"],
-            src["default"],
-            src["trigger"],
-            src["spike"],
-            src["hybrid_kHz"],
-            src["hybrid_rms"],
-            src["hybrid_trigger"],
-            src["hybrid_vprocess"],
-            src["pigbrother_runlog"],
-            src["pupitre_runlog"],
-            json.dumps(record.signatures),
-            json.dumps(record.sync_info),
-            json.dumps(record.flow_params),
-            json.dumps(record.metrics),
-            json.dumps(record.debitbrut),
-        ],
+    _write_overview_record_row(
+        con, _overview_record_to_columns(record, site_name), on_conflict="skip", verbose=verbose
     )
-    if verbose:
-        print(f"  + overview_record  {filename}  [{record.housing}]  duration={record.duration:.1f}s")
-    if site_name is not None:
-        _postprocess_overview_record(con, filename, verbose=verbose)
 
 
 def upsert_overview_record(
     con, record, site_name: str | None = None, verbose: bool = True
 ) -> None:
     """Insert or replace an OverviewRecord row (idempotent re-processing).
+
+    Pupitre-duplicate detection/merging is not done here — see
+    :func:`merge_duplicate_pupitre_records`, run separately from
+    ``populate overview-records-infer``.
 
     If *site_name* is given, also runs :func:`_postprocess_overview_record`
     (sets ``mode``) right after upserting.
@@ -1476,52 +1552,9 @@ def upsert_overview_record(
     verbose:
         Print a status line when upserting.
     """
-    src = _fileset_lists(record.sources)
-    t0 = str(record.t0) if record.t0 is not None else None
-
-    con.execute(
-        """
-        INSERT OR REPLACE INTO overview_records (
-            filename, site_name, housing, mode, t0, duration, teb, bp,
-            sources_overview, sources_archive, sources_pupitre,
-            sources_default, sources_trigger, sources_spike,
-            sources_hybrid_kHz, sources_hybrid_rms, sources_hybrid_trigger,
-            sources_hybrid_vprocess, sources_pigbrother_runlog, sources_pupitre_runlog,
-            signatures, sync_info, flow_params, metrics, debitbrut
-        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-        """,
-        [
-            record.filename,
-            site_name,
-            record.housing,
-            record.mode or None,
-            t0,
-            float(record.duration),
-            float(record.teb),
-            float(record.BP),
-            src["overview"],
-            src["archive"],
-            src["pupitre"],
-            src["default"],
-            src["trigger"],
-            src["spike"],
-            src["hybrid_kHz"],
-            src["hybrid_rms"],
-            src["hybrid_trigger"],
-            src["hybrid_vprocess"],
-            src["pigbrother_runlog"],
-            src["pupitre_runlog"],
-            json.dumps(record.signatures),
-            json.dumps(record.sync_info),
-            json.dumps(record.flow_params),
-            json.dumps(record.metrics),
-            json.dumps(record.debitbrut),
-        ],
+    _write_overview_record_row(
+        con, _overview_record_to_columns(record, site_name), on_conflict="replace", verbose=verbose
     )
-    if verbose:
-        print(f"  ~ overview_record  {record.filename}  [{record.housing}]  (upserted)")
-    if site_name is not None:
-        _postprocess_overview_record(con, record.filename, verbose=verbose)
 
 
 def insert_overview_record_from_dict(
@@ -1537,6 +1570,10 @@ def insert_overview_record_from_dict(
     comma-separated string (as written by ``cli.py``).  Both the canonical
     ``sources_<key>`` column names and the short ``<key>`` aliases used by
     ``cli.py`` are accepted (e.g. ``sources_overview`` or ``overview``).
+
+    Pupitre-duplicate detection/merging is not done here — see
+    :func:`merge_duplicate_pupitre_records`, run separately from
+    ``populate overview-records-infer``.
 
     If a site name ends up set (from *site_name* or ``data["site_name"]``),
     also runs :func:`_postprocess_overview_record` (sets ``mode``) right
@@ -1576,11 +1613,17 @@ def insert_overview_record_from_dict(
     def _get_sources(key: str) -> list[str]:
         return _to_list(data.get(f"sources_{key}", data.get(key)))
 
-    def _json_field(key: str) -> str:
+    def _json_field_dict(key: str) -> dict:
         v = data.get(key, {})
-        if isinstance(v, (dict, list)):
-            return json.dumps(v)
-        return v if isinstance(v, str) else "{}"
+        if isinstance(v, dict):
+            return v
+        if isinstance(v, str) and v:
+            try:
+                parsed = json.loads(v)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
 
     t0_raw = data.get("t0")
     t0 = str(t0_raw) if t0_raw is not None else None
@@ -1588,80 +1631,27 @@ def insert_overview_record_from_dict(
     effective_site = site_name if site_name is not None else data.get("site_name")
     bp = float(data.get("bp", data.get("BP", 0.0)) or 0.0)
 
-    row = [
-        filename,
-        effective_site,
-        data.get("housing") or None,
-        data.get("mode") or None,
-        t0,
-        float(data.get("duration") or 0.0),
-        float(data.get("teb") or 0.0),
-        bp,
-        _get_sources("overview"),
-        _get_sources("archive"),
-        _get_sources("pupitre"),
-        _get_sources("default"),
-        _get_sources("trigger"),
-        _get_sources("spike"),
-        _get_sources("hybrid_kHz"),
-        _get_sources("hybrid_rms"),
-        _get_sources("hybrid_trigger"),
-        _get_sources("hybrid_vprocess"),
-        _get_sources("pigbrother_runlog"),
-        _get_sources("pupitre_runlog"),
-        _json_field("signatures"),
-        _json_field("sync_info"),
-        _json_field("flow_params"),
-        _json_field("metrics"),
-        _json_field("debitbrut"),
-        _json_field("plateaux"),
-    ]
+    columns = {
+        "filename": filename,
+        "site_name": effective_site,
+        "housing": data.get("housing") or None,
+        "mode": data.get("mode") or None,
+        "t0": t0,
+        "duration": float(data.get("duration") or 0.0),
+        "teb": float(data.get("teb") or 0.0),
+        "bp": bp,
+        **{f"sources_{key}": _get_sources(key) for key in _source_keys},
+        "signatures": _json_field_dict("signatures"),
+        "sync_info": _json_field_dict("sync_info"),
+        "flow_params": _json_field_dict("flow_params"),
+        "metrics": _json_field_dict("metrics"),
+        "debitbrut": _json_field_dict("debitbrut"),
+        "plateaux": _json_field_dict("plateaux"),
+    }
 
-    if upsert:
-        con.execute(
-            """
-            INSERT OR REPLACE INTO overview_records (
-                filename, site_name, housing, mode, t0, duration, teb, bp,
-                sources_overview, sources_archive, sources_pupitre,
-                sources_default, sources_trigger, sources_spike,
-                sources_hybrid_kHz, sources_hybrid_rms, sources_hybrid_trigger,
-                sources_hybrid_vprocess, sources_pigbrother_runlog, sources_pupitre_runlog,
-                signatures, sync_info, flow_params, metrics, debitbrut, plateaux
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            row,
-        )
-        if verbose:
-            housing = data.get("housing", "?")
-            print(f"  ~ overview_record  {filename}  [{housing}]  (upserted)")
-        if effective_site is not None:
-            _postprocess_overview_record(con, filename, verbose=verbose)
-    else:
-        if con.execute(
-            "SELECT 1 FROM overview_records WHERE filename = ?", [filename]
-        ).fetchone():
-            if verbose:
-                print(f"  ~ overview_record  {filename}  (already exists, skipped)")
-            return
-        con.execute(
-            """
-            INSERT INTO overview_records (
-                filename, site_name, housing, mode, t0, duration, teb, bp,
-                sources_overview, sources_archive, sources_pupitre,
-                sources_default, sources_trigger, sources_spike,
-                sources_hybrid_kHz, sources_hybrid_rms, sources_hybrid_trigger,
-                sources_hybrid_vprocess, sources_pigbrother_runlog, sources_pupitre_runlog,
-                signatures, sync_info, flow_params, metrics, debitbrut, plateaux
-            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-            """,
-            row,
-        )
-        if verbose:
-            housing = data.get("housing", "?")
-            dur = float(data.get("duration") or 0.0)
-            print(f"  + overview_record  {filename}  [{housing}]  duration={dur:.1f}s")
-        if effective_site is not None:
-            _postprocess_overview_record(con, filename, verbose=verbose)
+    _write_overview_record_row(
+        con, columns, on_conflict="replace" if upsert else "skip", verbose=verbose
+    )
 
 
 def attach_site_to_overview_record(
@@ -2000,6 +1990,194 @@ def infer_overview_record_fields(
         )
     _postprocess_overview_record(con, filename, verbose=verbose)
     return "resolved"
+
+
+def _merge_overview_rows(existing: dict, incoming: dict) -> dict:
+    """Combine two overview_records rows that share a pupitre source file.
+
+    The row with the earlier ``t0`` supplies identity fields (``filename``,
+    ``site_name``, ``housing``, ``mode``, ``t0``); every ``sources_*``
+    column is unioned and de-duplicated; ``duration`` is summed; ``teb`` and
+    ``bp`` become duration-weighted averages; the JSON dict columns are
+    shallow-merged, with the earlier row's keys winning on conflict.
+
+    Parameters
+    ----------
+    existing : dict
+        One of the two rows being merged.
+    incoming : dict
+        The other row being merged.
+
+    Returns
+    -------
+    dict
+        The merged row, keyed like *existing*/*incoming*. ``merged["filename"]``
+        is always one of the two input filenames (whichever has the lower
+        ``t0``) — the survivor to update in place.
+    """
+    lower, higher = (
+        (existing, incoming)
+        if str(existing.get("t0") or "") <= str(incoming.get("t0") or "")
+        else (incoming, existing)
+    )
+    merged = {
+        "filename": lower["filename"],
+        "site_name": lower["site_name"],
+        "housing": lower["housing"],
+        "mode": lower["mode"],
+        "t0": lower["t0"],
+    }
+    for col in _OVERVIEW_SOURCE_LIST_COLUMNS:
+        merged[col] = sorted(set(lower.get(col) or []) | set(higher.get(col) or []))
+
+    d_lower = float(lower.get("duration") or 0.0)
+    d_higher = float(higher.get("duration") or 0.0)
+    merged["duration"] = d_lower + d_higher
+    total = d_lower + d_higher
+    if total > 0:
+        merged["teb"] = (
+            float(lower.get("teb") or 0.0) * d_lower
+            + float(higher.get("teb") or 0.0) * d_higher
+        ) / total
+        merged["bp"] = (
+            float(lower.get("bp") or 0.0) * d_lower
+            + float(higher.get("bp") or 0.0) * d_higher
+        ) / total
+    else:
+        merged["teb"] = lower.get("teb")
+        merged["bp"] = lower.get("bp")
+
+    for col in _OVERVIEW_JSON_COLUMNS:
+        merged[col] = {**(higher.get(col) or {}), **(lower.get(col) or {})}
+
+    return merged
+
+
+def _find_pupitre_duplicate_pair(group: dict) -> tuple[dict, dict] | None:
+    """Return the first pair of rows in *group* sharing a sources_pupitre entry.
+
+    Parameters
+    ----------
+    group : dict
+        Maps ``filename`` to row dict, for rows already known to share the
+        same ``(housing, site_name)``.
+
+    Returns
+    -------
+    tuple[dict, dict] or None
+        The two matching rows, or ``None`` if no pair shares a
+        ``sources_pupitre`` entry.
+    """
+    filenames = list(group)
+    for i, name_a in enumerate(filenames):
+        pupitre_a = set(group[name_a].get("sources_pupitre") or [])
+        if not pupitre_a:
+            continue
+        for name_b in filenames[i + 1:]:
+            if pupitre_a & set(group[name_b].get("sources_pupitre") or []):
+                return group[name_a], group[name_b]
+    return None
+
+
+def _apply_overview_record_merge_update(con, merged: dict) -> None:
+    """UPDATE the surviving overview_records row in place with merged field values."""
+    set_cols = [c for c in _OVERVIEW_RECORD_COLUMNS if c != "filename"]
+    values = [
+        json.dumps(merged[col]) if col in _OVERVIEW_JSON_COLUMNS else merged[col]
+        for col in set_cols
+    ]
+    assignments = ", ".join(f"{col} = ?" for col in set_cols)
+    con.execute(
+        f"UPDATE overview_records SET {assignments} WHERE filename = ?",
+        values + [merged["filename"]],
+    )
+
+
+def merge_duplicate_pupitre_records(con, verbose: bool = True) -> dict:
+    """Merge overview_records rows that share a pupitre source file.
+
+    Table-wide sweep, intended to run from ``populate overview-records-infer``
+    once ``housing``/``site_name``/``t0`` have been resolved for the rows
+    involved — never at insert time, and never scoped by ``housing`` alone.
+
+    Live rows (``merged_into IS NULL``) are grouped by ``(housing, site_name)``;
+    rows with ``site_name IS NULL`` form their own ``(housing, NULL)`` group
+    and are only ever compared against each other, never against a row that
+    already has a resolved ``site_name`` for that housing. Within each group,
+    any pair sharing a ``sources_pupitre`` entry is merged: the row with the
+    lower ``t0`` is the survivor, updated in place (via :func:`_merge_overview_rows`);
+    the other row is tombstoned — ``merged_into`` set to the survivor's
+    filename — rather than deleted, so a later re-populate of its source file
+    cannot resurrect and re-merge it. This repeats within each group until no
+    more pairs are found, so chains (A–B share a file, B–C share a different
+    file) all consolidate onto one survivor. If a row that other tombstoned
+    rows already point ``merged_into`` at is itself absorbed into a new
+    survivor, those pointers are flattened to the new survivor so
+    ``merged_into`` is always exactly one hop from any tombstoned row to the
+    current live row.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    verbose : bool
+        Print a status line per merge.
+
+    Returns
+    -------
+    dict
+        ``{"groups_checked": int, "merges": int}``.
+    """
+    rows = con.execute(
+        f"SELECT {', '.join(_OVERVIEW_RECORD_COLUMNS)} FROM overview_records "
+        "WHERE merged_into IS NULL"
+    ).fetchall()
+
+    groups: dict[tuple, dict] = {}
+    for values in rows:
+        row = dict(zip(_OVERVIEW_RECORD_COLUMNS, values))
+        for key in _OVERVIEW_JSON_COLUMNS:
+            row[key] = json.loads(row[key]) if row[key] else {}
+        groups.setdefault((row["housing"], row["site_name"]), {})[row["filename"]] = row
+
+    n_merges = 0
+    for group in groups.values():
+        while True:
+            pair = _find_pupitre_duplicate_pair(group)
+            if pair is None:
+                break
+            merged = _merge_overview_rows(*pair)
+            survivor_filename = merged["filename"]
+            absorbed_filename = next(
+                f for f in (pair[0]["filename"], pair[1]["filename"]) if f != survivor_filename
+            )
+
+            _apply_overview_record_merge_update(con, merged)
+            con.execute(
+                "UPDATE overview_records SET merged_into = ? WHERE filename = ?",
+                [survivor_filename, absorbed_filename],
+            )
+            con.execute(
+                "UPDATE overview_records SET merged_into = ? WHERE merged_into = ?",
+                [survivor_filename, absorbed_filename],
+            )
+
+            group.pop(absorbed_filename)
+            group[survivor_filename] = merged
+            n_merges += 1
+            if verbose:
+                print(
+                    f"  ~ overview_record  {survivor_filename}  [{merged['housing']}]  "
+                    f"merged with {absorbed_filename} (shared pupitre source), "
+                    f"duration={merged['duration']:.1f}s"
+                )
+
+    if verbose:
+        print(
+            f"\noverview_records: {n_merges} pupitre-duplicate merge(s) "
+            f"across {len(groups)} group(s)."
+        )
+    return {"groups_checked": len(groups), "merges": n_merges}
 
 
 def update_site_magnet(con, site_name: str, magnet_name: str, **kwargs) -> None:

@@ -90,6 +90,7 @@ from crud import (
     insert_site_magnets,
     list_objects,
     load_json,
+    merge_duplicate_pupitre_records,
     print_geometry_check,
     update_site_magnet,
     upsert_overview_record,
@@ -113,7 +114,6 @@ from populate import (
     find_and_register_pupitre as _pupitre_find_and_register,
     find_and_register_tdms as _tdms_find_and_register,
     load_site as _load_site,
-    resolve_operationaldata_path as _resolve_operationaldata_path,
 )
 from config import DEFAULT_DB
 from schema import COIL_TYPES, ensure_schema
@@ -831,18 +831,21 @@ def cmd_populate_overview_records_infer(args) -> None:
 
     if not filenames:
         print("No overview_records rows to infer (all already have a site_name).")
-        return
-
-    print(f"\nInferring {len(filenames)} overview_record(s) …\n")
-
-    if args.dry_run:
+    elif args.dry_run:
         for fname in filenames:
             print(f"  [dry-run] would infer: {fname}")
+    else:
+        print(f"\nInferring {len(filenames)} overview_record(s) …\n")
+        with duckdb.connect(str(db_path)) as con:
+            for fname in filenames:
+                infer_overview_record_fields(con, fname, db_tz, verbose=True)
+
+    if args.dry_run:
         return
 
+    print("\nChecking for pupitre-duplicate overview_records …")
     with duckdb.connect(str(db_path)) as con:
-        for fname in filenames:
-            infer_overview_record_fields(con, fname, db_tz, verbose=True)
+        merge_duplicate_pupitre_records(con, verbose=True)
 
     print("\nDone.")
 
@@ -862,6 +865,11 @@ def cmd_populate_overview_records(args) -> None:
     if not Path(db_path).exists():
         print(f"Error: '{db_path}' does not exist.")
         sys.exit(1)
+    try:
+        db_tz = ZoneInfo(args.db_tz)
+    except Exception:
+        print(f"Error: Unknown timezone '{args.db_tz}'")
+        sys.exit(1)
 
     site_names = _resolve_site_names(args, db_path)
     if not site_names:
@@ -873,24 +881,21 @@ def cmd_populate_overview_records(args) -> None:
     config = ProcessingConfig(dry_run=args.dry_run)
 
     for site_name in site_names:
-        with duckdb.connect(db_path, read_only=True) as con:
-            rows = con.execute(
-                "SELECT file FROM operationaldata "
-                "WHERE site_name = ? AND type = 'Overview' ORDER BY file",
-                [site_name],
-            ).fetchall()
+        site = _load_site(site_name, db_path)
+        if site is None:
+            print(f"[SKIP] '{site_name}' not found in DB.")
+            continue
+        print(f"\nSite: {site_name}  housing={site['housing']}")
 
-        if not rows:
-            print(f"[INFO] {site_name}: no Overview entries in operationaldata — "
-                  "run 'populate operationaldata' first.")
+        matches = _tdms_find_and_register(
+            site, db_path, db_tz, dry_run=True,
+            type_filter=["Overview"], records_base=records_base, pbsurv=args.pbsurv,
+        )
+        if not matches:
             continue
 
-        print(f"\nSite: {site_name}  ({len(rows)} Overview file(s))")
-        for (relpath,) in rows:
-            fpath = _resolve_operationaldata_path(relpath, records_base=records_base)
-            if not fpath.exists():
-                print(f"  [SKIP] {fpath.name} — file not found")
-                continue
+        print(f"  {len(matches)} Overview file(s) matched")
+        for fpath, _ts, _file_type in matches:
             if args.dry_run:
                 print(f"  [DRY RUN] would process {fpath.name}")
                 continue
@@ -1372,13 +1377,21 @@ def build_parser() -> argparse.ArgumentParser:
     # populate overview-records
     p_ov = pop_sub.add_parser(
         "overview-records",
-        help="Process Overview TDMS files (from operationaldata) via python_magnetrun.",
+        help="Scan the filesystem for Overview TDMS files and process them via python_magnetrun.",
     )
     _db_arg(p_ov)
     _sites_arg(p_ov)
     p_ov.add_argument(
         "--records-base", default=str(_DEFAULT_RECORDS_BASE), dest="records_base",
         help=f"Root of the records tree (default: {_DEFAULT_RECORDS_BASE})",
+    )
+    p_ov.add_argument(
+        "--pbsurv", default=_DEFAULT_PBSURV,
+        help=f"Subdirectory of records-base for TDMS files (default: {_DEFAULT_PBSURV})",
+    )
+    p_ov.add_argument(
+        "--db-tz", default="UTC", dest="db_tz",
+        help="Timezone of commissioned_at / decommissioned_at in the DB (default: UTC)",
     )
     p_ov.add_argument(
         "--reprocess", action="store_true",

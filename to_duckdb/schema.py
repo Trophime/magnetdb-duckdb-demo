@@ -154,13 +154,17 @@ CREATE TABLE IF NOT EXISTS overview_records (
     flow_params               JSON      DEFAULT '{}',
     metrics                   JSON      DEFAULT '{}',
     debitbrut                 JSON      DEFAULT '{}',
-    plateaux                  JSON      DEFAULT '{}'
+    plateaux                  JSON      DEFAULT '{}',
+    merged_into               VARCHAR
 );
 
 -- idempotent migration for databases that predate site_name
 ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS site_name VARCHAR;
 -- idempotent migration for databases that predate plateaux
 ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS plateaux JSON DEFAULT '{}';
+-- idempotent migration for databases that predate merged_into (dedup tombstone:
+-- NULL = live row; non-NULL = filename of the row this one was merged into)
+ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS merged_into VARCHAR;
 
 -- ── Operational statistics tables ────────────────────────────────────────────
 
@@ -353,19 +357,23 @@ CREATE TABLE IF NOT EXISTS hoop_stress_fatigue (
 -- experiments_ids holds experiments.id values whose file-embedded timestamp falls
 -- within [hstart, hstop] on this row's housing; NULL until populated (see
 -- demos/users_table_demo.py) and left NULL for rows with no hstop.
+-- overview_records_ids holds overview_records.filename values (its primary key,
+-- not an integer) whose t0 falls within [hstart, hstop] on this row's housing;
+-- populated the same way and under the same NULL rules as experiments_ids.
 -- No primary key: EXPERIENCES_LOG itself contains exact-duplicate session rows.
 -- country is not populated yet.
 CREATE TABLE IF NOT EXISTS users (
-    acronym         VARCHAR,
-    research_area   VARCHAR,
-    type            VARCHAR,
-    country         VARCHAR,
-    call_number     VARCHAR,
-    access_mode     VARCHAR,
-    housing         VARCHAR,
-    hstart          TIMESTAMP,
-    hstop           TIMESTAMP,
-    experiments_ids INTEGER[]
+    acronym               VARCHAR,
+    research_area         VARCHAR,
+    type                  VARCHAR,
+    country               VARCHAR,
+    call_number           VARCHAR,
+    access_mode           VARCHAR,
+    housing               VARCHAR,
+    hstart                TIMESTAMP,
+    hstop                 TIMESTAMP,
+    experiments_ids       INTEGER[],
+    overview_records_ids  VARCHAR[]
 );
 """
 
@@ -395,3 +403,5 @@ def ensure_schema(con) -> None:
     con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS experiments_ids INTEGER[]")
     # idempotent migration for databases that predate the type column
     con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS type VARCHAR")
+    # idempotent migration for databases that predate overview_records_ids
+    con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS overview_records_ids VARCHAR[]")

@@ -1,6 +1,6 @@
 # Plan — overview_records pupitre-duplicate merge, done as a sweep in overview-records-infer
 
-Status: pending approval (not yet implemented)
+Status: implemented
 
 ## Goal
 

@@ -692,6 +692,45 @@ def update_experiments_ids(con, verbose: bool = True) -> dict:
     return {"matched": matched, "unmatched": unmatched}
 
 
+def update_overview_records_ids(con, verbose: bool = True) -> dict:
+    """Link each ``users`` row to its ``overview_records`` via housing + time range.
+
+    Matches each row's housing against overview_records.housing and each
+    record's t0 against [hstart, hstop]. Rows with no hstop have no closed
+    range to contain anything, so they're left with overview_records_ids = NULL.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    verbose : bool
+        Print matched/unmatched counts when done.
+
+    Returns
+    -------
+    dict
+        ``{"matched": int, "unmatched": int}``.
+    """
+    con.execute(
+        "UPDATE users SET overview_records_ids = ("
+        "SELECT LIST(o.filename) FROM overview_records o "
+        "WHERE o.housing = users.housing "
+        "AND o.t0 BETWEEN users.hstart AND users.hstop "
+        "AND o.merged_into IS NULL"
+        ") WHERE users.hstop IS NOT NULL"
+    )
+    matched = con.execute(
+        "SELECT COUNT(*) FROM users WHERE overview_records_ids IS NOT NULL"
+    ).fetchone()[0]
+    unmatched = con.execute(
+        "SELECT COUNT(*) FROM users WHERE overview_records_ids IS NULL"
+    ).fetchone()[0]
+    if verbose:
+        print(f"Records with matched overview_records_ids: {matched}")
+        print(f"Records with no overview_records_ids: {unmatched}")
+    return {"matched": matched, "unmatched": unmatched}
+
+
 def report_source_stats(users: list[dict], stats: dict, match_counts: Counter) -> None:
     """Print row-count, dedup, and proposal-match stats from `build_users`."""
     print(f"\nRead {stats['log_total']} EXPERIENCES_LOG rows "
@@ -753,6 +792,34 @@ def report_experiments_ids_coverage(con) -> None:
             "SELECT * FROM users WHERE list_contains(experiments_ids, ?) "
             "ORDER BY acronym, housing, hstart",
             [experiment_id],
+        ).df()
+        print(rows.to_string(index=False))
+
+
+def report_overview_records_ids_coverage(con) -> None:
+    """Print rows missing overview_records_ids and records shared across rows."""
+    rows_no_overview_records_ids = con.execute(
+        "SELECT * FROM users WHERE overview_records_ids IS NULL "
+        "ORDER BY acronym, housing, hstart"
+    ).df()
+    print(f"\nRows with no overview_records_ids ({len(rows_no_overview_records_ids)}):")
+    print(rows_no_overview_records_ids.to_string(index=False))
+
+    shared_overview_records_ids = con.execute(
+        "SELECT filename FROM (SELECT unnest(overview_records_ids) AS filename "
+        "FROM users WHERE overview_records_ids IS NOT NULL) "
+        "GROUP BY filename HAVING COUNT(*) > 1 ORDER BY filename"
+    ).fetchall()
+    print(
+        f"Overview records shared across multiple users rows: "
+        f"{len(shared_overview_records_ids)}"
+    )
+    for (filename,) in shared_overview_records_ids:
+        print(f"  overview_record {filename}:")
+        rows = con.execute(
+            "SELECT * FROM users WHERE list_contains(overview_records_ids, ?) "
+            "ORDER BY acronym, housing, hstart",
+            [filename],
         ).df()
         print(rows.to_string(index=False))
 
@@ -890,7 +957,7 @@ def main() -> None:
         dest="link",
         action="store_false",
         default=True,
-        help="Skip backfilling experiments_ids after (re)populating.",
+        help="Skip backfilling experiments_ids/overview_records_ids after (re)populating.",
     )
     parser.add_argument(
         "--list",
@@ -951,6 +1018,8 @@ def main() -> None:
         if args.link:
             update_experiments_ids(con)
             report_experiments_ids_coverage(con)
+            update_overview_records_ids(con)
+            report_overview_records_ids_coverage(con)
 
         report_sample(con, args.sample)
     finally:

@@ -1,5 +1,6 @@
 """Unit tests for crud.py — one function per concern."""
 
+import json
 from datetime import datetime
 
 import pytest
@@ -23,10 +24,12 @@ from crud import (
     insert_part,
     insert_site,
     insert_site_magnets,
+    merge_duplicate_pupitre_records,
     parse_timestamp,
     update_site_magnet,
     view_magnet,
     view_magnets,
+    view_overview_records,
     view_site,
     view_sites,
 )
@@ -568,6 +571,281 @@ def test_find_site_for_timestamp_no_housing_match(con):
     _insert_m9_sites(con)
     t0 = datetime(2022, 1, 27, 17, 56, tzinfo=FILE_TZ)
     assert _find_site_for_timestamp(con, "M10", t0, FILE_TZ) is None
+
+
+# ---------------------------------------------------------------------------
+# merge_duplicate_pupitre_records()
+# ---------------------------------------------------------------------------
+
+
+def _overview_dict(filename, t0, duration, teb, bp, pupitre, housing="M9", **extra):
+    return {
+        "filename": filename,
+        "housing": housing,
+        "t0": t0,
+        "duration": duration,
+        "teb": teb,
+        "bp": bp,
+        "sources_pupitre": pupitre,
+        **extra,
+    }
+
+
+def _ensure_site(con, site_name, housing):
+    """Insert a minimal housing_config + sites row, satisfying overview_records's FK."""
+    if con.execute("SELECT 1 FROM housing_config WHERE name = ?", [housing]).fetchone() is None:
+        con.execute(
+            "INSERT INTO housing_config (name, coil_assignment, formats) VALUES (?, MAP{}, [])",
+            [housing],
+        )
+    if con.execute("SELECT 1 FROM sites WHERE name = ?", [site_name]).fetchone() is None:
+        con.execute(
+            "INSERT INTO sites (name, housing, status, commissioned_at, decommissioned_at) "
+            "VALUES (?, ?, 'active', '2022-01-01 00:00:00', NULL)",
+            [site_name, housing],
+        )
+
+
+def _insert_overview(con, *args, **kwargs):
+    data = _overview_dict(*args, **kwargs)
+    if data.get("site_name"):
+        _ensure_site(con, data["site_name"], data["housing"])
+    insert_overview_record_from_dict(con, data, verbose=False)
+
+
+def test_merge_duplicate_pupitre_records_merges_shared_pupitre_lower_t0_first(con):
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+        signatures={"sigA": {"min": 0, "max": 1}},
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+        signatures={"sigB": {"min": 2, "max": 3}},
+    )
+
+    result = merge_duplicate_pupitre_records(con, verbose=False)
+    assert result == {"groups_checked": 1, "merges": 1}
+
+    rows = con.execute("SELECT filename FROM overview_records ORDER BY filename").fetchall()
+    assert rows == [("M9_Overview_220127-1700",), ("M9_Overview_220127-1800",)]
+
+    sources_pupitre, duration, teb, bp, signatures, merged_into = con.execute(
+        "SELECT sources_pupitre, duration, teb, bp, signatures, merged_into "
+        "FROM overview_records WHERE filename = 'M9_Overview_220127-1700'"
+    ).fetchone()
+    assert sources_pupitre == ["p1.tdms", "p2.tdms", "p3.tdms"]
+    assert duration == pytest.approx(300.0)
+    assert teb == pytest.approx((10.0 * 100.0 + 20.0 * 200.0) / 300.0)
+    assert bp == pytest.approx((1.0 * 100.0 + 2.0 * 200.0) / 300.0)
+    assert json.loads(signatures) == {
+        "sigA": {"min": 0, "max": 1},
+        "sigB": {"min": 2, "max": 3},
+    }
+    assert merged_into is None
+
+    absorbed_merged_into = con.execute(
+        "SELECT merged_into FROM overview_records WHERE filename = 'M9_Overview_220127-1800'"
+    ).fetchone()[0]
+    assert absorbed_merged_into == "M9_Overview_220127-1700"
+
+
+def test_merge_duplicate_pupitre_records_merges_shared_pupitre_higher_t0_first(con):
+    _insert_overview(
+        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+    )
+
+    merge_duplicate_pupitre_records(con, verbose=False)
+
+    sources_pupitre, duration, merged_into = con.execute(
+        "SELECT sources_pupitre, duration, merged_into FROM overview_records "
+        "WHERE filename = 'M9_Overview_220127-1700'"
+    ).fetchone()
+    assert sources_pupitre == ["p1.tdms", "p2.tdms", "p3.tdms"]
+    assert duration == pytest.approx(300.0)
+    assert merged_into is None
+
+    assert con.execute(
+        "SELECT merged_into FROM overview_records WHERE filename = 'M9_Overview_220127-1800'"
+    ).fetchone()[0] == "M9_Overview_220127-1700"
+
+
+def test_merge_duplicate_pupitre_records_no_merge_when_housing_differs(con):
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["shared.tdms"], housing="M9", site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M10_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        ["shared.tdms"], housing="M10", site_name="M10_SITE_A",
+    )
+
+    result = merge_duplicate_pupitre_records(con, verbose=False)
+    assert result == {"groups_checked": 2, "merges": 0}
+
+    rows = con.execute(
+        "SELECT filename, merged_into FROM overview_records ORDER BY filename"
+    ).fetchall()
+    assert rows == [
+        ("M10_Overview_220127-1800", None),
+        ("M9_Overview_220127-1700", None),
+    ]
+
+
+def test_merge_duplicate_pupitre_records_no_merge_when_site_name_differs(con):
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["shared.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        ["shared.tdms"], site_name="M9_SITE_B",
+    )
+
+    result = merge_duplicate_pupitre_records(con, verbose=False)
+    assert result == {"groups_checked": 2, "merges": 0}
+
+    rows = con.execute(
+        "SELECT filename, merged_into FROM overview_records ORDER BY filename"
+    ).fetchall()
+    assert rows == [
+        ("M9_Overview_220127-1700", None),
+        ("M9_Overview_220127-1800", None),
+    ]
+
+
+def test_merge_duplicate_pupitre_records_no_merge_without_shared_pupitre(con):
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["p1.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        ["p2.tdms"], site_name="M9_SITE_A",
+    )
+
+    result = merge_duplicate_pupitre_records(con, verbose=False)
+    assert result == {"groups_checked": 1, "merges": 0}
+
+    rows = con.execute(
+        "SELECT filename, merged_into FROM overview_records ORDER BY filename"
+    ).fetchall()
+    assert rows == [
+        ("M9_Overview_220127-1700", None),
+        ("M9_Overview_220127-1800", None),
+    ]
+
+
+def test_merge_duplicate_pupitre_records_chains_three_way(con):
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 100.0, 10.0, 1.0,
+        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1900", "2022-01-27 19:00:00", 100.0, 10.0, 1.0,
+        ["p3.tdms", "p4.tdms"], site_name="M9_SITE_A",
+    )
+
+    result = merge_duplicate_pupitre_records(con, verbose=False)
+    assert result == {"groups_checked": 1, "merges": 2}
+
+    rows = con.execute(
+        "SELECT filename, merged_into FROM overview_records ORDER BY filename"
+    ).fetchall()
+    assert rows == [
+        ("M9_Overview_220127-1700", None),
+        ("M9_Overview_220127-1800", "M9_Overview_220127-1700"),
+        ("M9_Overview_220127-1900", "M9_Overview_220127-1700"),
+    ]
+    sources_pupitre, duration = con.execute(
+        "SELECT sources_pupitre, duration FROM overview_records "
+        "WHERE filename = 'M9_Overview_220127-1700'"
+    ).fetchone()
+    assert sources_pupitre == ["p1.tdms", "p2.tdms", "p3.tdms", "p4.tdms"]
+    assert duration == pytest.approx(300.0)
+
+
+def test_merge_duplicate_pupitre_records_flattens_pointer_on_re_merge(con):
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 100.0, 10.0, 1.0,
+        ["p2.tdms"], site_name="M9_SITE_A",
+    )
+    merge_duplicate_pupitre_records(con, verbose=False)
+    assert con.execute(
+        "SELECT merged_into FROM overview_records WHERE filename = 'M9_Overview_220127-1800'"
+    ).fetchone()[0] == "M9_Overview_220127-1700"
+
+    # An even-earlier row sharing p2.tdms (now carried by the 17:00 survivor)
+    # becomes the new survivor; the 18:00 row's pointer must flatten onto it.
+    _insert_overview(
+        con, "M9_Overview_220127-1600", "2022-01-27 16:00:00", 50.0, 5.0, 0.5,
+        ["p2.tdms"], site_name="M9_SITE_A",
+    )
+    merge_duplicate_pupitre_records(con, verbose=False)
+
+    rows = con.execute(
+        "SELECT filename, merged_into FROM overview_records ORDER BY filename"
+    ).fetchall()
+    assert rows == [
+        ("M9_Overview_220127-1600", None),
+        ("M9_Overview_220127-1700", "M9_Overview_220127-1600"),
+        ("M9_Overview_220127-1800", "M9_Overview_220127-1600"),
+    ]
+
+
+def test_merge_duplicate_pupitre_records_idempotent_on_rerun(con):
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+    )
+
+    first = merge_duplicate_pupitre_records(con, verbose=False)
+    assert first["merges"] == 1
+    before = con.execute(
+        "SELECT filename, duration, merged_into FROM overview_records ORDER BY filename"
+    ).fetchall()
+
+    second = merge_duplicate_pupitre_records(con, verbose=False)
+    assert second["merges"] == 0
+    after = con.execute(
+        "SELECT filename, duration, merged_into FROM overview_records ORDER BY filename"
+    ).fetchall()
+    assert before == after
+
+
+def test_view_overview_records_excludes_merged_rows(con, capsys):
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+    )
+    merge_duplicate_pupitre_records(con, verbose=False)
+
+    view_overview_records(con)
+    out = capsys.readouterr().out
+    assert "M9_Overview_220127-1700" in out
+    assert "M9_Overview_220127-1800" not in out
 
 
 # ---------------------------------------------------------------------------
