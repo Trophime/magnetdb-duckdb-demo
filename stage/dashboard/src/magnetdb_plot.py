@@ -214,120 +214,204 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
     return fig
 
 
-def create_comparison_plot(df_unaligned, df_aligned, x_col: str, y_cols: list, method: str, filename: str = "", mrun=None, group_name: str = "") -> go.Figure:
+def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=None) -> go.Figure:
     """
-    Gère le sous-échantillonnage et génère une figure Plotly avec deux subplots (Avant / Après).
-    Basé sur la logique stricte de create_plot.
+    Creates a single figure with 2 subplots (Before / After alignment).
+    files_data contains a list of dicts :
+    [{'file': name, 'df': df, 'is_pupitre': bool, 'sensors': [...], 'lag': float, 'mrun': obj, 'group_name': str}, ...]
     """
-    if (df_unaligned is None or df_unaligned.empty) and (df_aligned is None or df_aligned.empty):
+    if not files_data:
         return go.Figure()
 
-    # 1. Récupération dynamique du symbole et de l'unité
+    # 1. TRI CHRONOLOGIQUE
+    files_data = sorted(
+        files_data, 
+        key=lambda item: item['df']['timestamp'].min() if item['df'] is not None and not item['df'].empty and 'timestamp' in item['df'].columns else item['file']
+    )
+
+    # 2. IDENTIFICATION DU T0 GLOBAL (Uniquement pour tracer l'axe 't' de base continu)
+    global_t0 = None
+    for item in files_data:
+        df_temp = item.get('df')
+        if df_temp is not None and not df_temp.empty and 'timestamp' in df_temp.columns:
+            min_ts = df_temp['timestamp'].min()
+            if global_t0 is None or min_ts < global_t0:
+                global_t0 = min_ts
+
+    # 3. RÉCUPÉRATION DE L'UNITÉ Y
     ylabel = "Value"
-    if mrun and len(y_cols) > 0:
-        sensor = y_cols[0]
-        symbol, unit_str = None, None
-        try:
-            symbol, unit_str = mrun.getUnit(sensor)
-        except RuntimeError:
+    for item in files_data:
+        mrun_obj = item.get('mrun')
+        sensors_list = item.get('sensors', [])
+        group_name = item.get('group_name', "")
+        
+        if mrun_obj and sensors_list:
+            sensor = sensors_list[0]
+            symbol, unit_str = None, None
             try:
-                symbol, unit_str = mrun.getUnit(f"{group_name}/{sensor}")
+                symbol, unit_str = mrun_obj.getUnit(sensor)
             except RuntimeError:
-                pass # Fallback géré silencieusement
+                try:
+                    if group_name:
+                        symbol, unit_str = mrun_obj.getUnit(f"{group_name}/{sensor}")
+                except RuntimeError:
+                    pass
+            
+            if symbol and unit_str is not None:
+                ylabel = f"{symbol} [{unit_str:~P}]"
+                break
+            elif symbol:
+                ylabel = symbol
+                break
 
-        if symbol and unit_str is not None:
-            ylabel = f"{symbol} [{unit_str:~P}]"
-        elif symbol:
-            ylabel = symbol
-
-    x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time'}
-    x_title = x_label_mapping.get(x_col, x_col)
-
-    # Création de la figure avec subplots. 
-    # shared_xaxes=True est la magie qui synchronise le zoom avec la souris !
+    # 4. CRÉATION DES SUBPLOTS
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
+        shared_yaxes='all',
         vertical_spacing=0.1,
-        subplot_titles=("Signaux Bruts (Avant alignement)", "Signaux Synchronisés (Après alignement)")
+        subplot_titles=("Raw Signals (Before alignment)", "Synchronized Signals (After alignment)")
     )
 
-    # 2b. Style (color/dash/width/alpha)
-    style = _resolve_file_style(filename)
-    line_kwargs = dict(width=style.width, color=style.color, dash=style.dash) if style else dict(width=2)
-    trace_opacity = style.opacity if style else 1.0
-
     downsample_method = 'none' if (not method or method in ['raw data', 'raw', 'none']) else method
+    event_counters = {'default': 0, 'spike': 0, 'trigger': 0}
 
-    # --- BOUCLE SUR LES DEUX ÉTATS (Row 1 = Non Aligné, Row 2 = Aligné) ---
-    for row, df_current in enumerate([df_unaligned, df_aligned], start=1):
-        if df_current is None or df_current.empty:
+    # 5. BOUCLE SUR CHAQUE FICHIER
+    for item in files_data:
+        file = item['file']
+        df_raw = item['df']
+        sensors = item['sensors']
+        lag_val = item['lag']
+        style = _resolve_file_style(file)
+        line_kwargs = dict(width=style.width, color=style.color, dash=style.dash) if style else dict(width=2)
+        trace_opacity = style.opacity if style else 1.0
+
+        if df_raw is None or df_raw.empty or not sensors:
             continue
 
-        # 2. Gestion du Downsampling INDÉPENDANT pour chaque état
-        if downsample_method == 'none':
-            df_plot = df_current
+        # --- Classification Événements ---
+        file_type = classify_pigbrother_file(file)
+        is_event = file_type in ['default', 'spike', 'trigger']
+        
+        event_label = ""
+        if is_event:
+            event_counters[file_type] += 1
+            event_label = f"#{file_type}{event_counters[file_type]}"
+
+        # --- Downsampling ---
+        if is_event or downsample_method == 'none':
+            df_plot = df_raw.copy()
         else:
             try:
                 config = DownsampleConfig(n_out=_DEFAULT_N_OUT, method=_METHOD_MAP.get(downsample_method, 'stride'))
-                df_plot = downsample_dataframe(df_current, time_col=x_col, value_cols=list(y_cols), config=config)
+                df_plot = downsample_dataframe(df_raw, time_col=x_col, value_cols=list(sensors), config=config)
             except Exception as e:
-                print(f"Erreur downsampling sur {filename} (row {row}): {e}")
-                df_plot = df_current
+                df_plot = df_raw.copy()
 
-        # 3. Traitement robuste des colonnes
-        for sensor in y_cols:
-            target_col = None
+        # --- Tracé sur les 2 Lignes ---
+        for row in [1, 2]:
+            for sensor in sensors:
+                target_col = None
+                sub_df = df_plot[sensor] if (isinstance(df_plot, dict) and sensor in df_plot) else df_plot
+                short_name = sensor.split('/')[-1]
+                
+                if sensor in sub_df.columns: 
+                    target_col = sensor
+                elif short_name in sub_df.columns: 
+                    target_col = short_name
 
-            # CAS A : Dictionnaire LTTB
-            if isinstance(df_plot, dict):
-                if sensor in df_plot:
-                    sub_df = df_plot[sensor]
-                    short_name = sensor.split('/')[-1]
-                    if sensor in sub_df.columns: target_col = sensor
-                    elif short_name in sub_df.columns: target_col = short_name
+                if target_col and x_col in sub_df.columns:
+                    
+                    # =================================================================
+                    # LA CORRECTION DÉFINITIVE MATHÉMATIQUE
+                    # =================================================================
+                    file_t0 = sub_df['timestamp'].min() if 'timestamp' in sub_df.columns else None
+                    
+                    # Calcul de la "Vraie Dérive" des horloges matérielles
+                    if is_event:
+                        true_drift = 0.0  # Les événements sont absolus, pas de correction
+                    else:
+                        true_drift = lag_val
 
-                    if target_col and x_col in sub_df.columns:
-                        fig.add_trace(go.Scattergl(
-                            x=sub_df[x_col],
-                            y=sub_df[target_col],
-                            mode='lines',
-                            name=sensor if row == 1 else f"{sensor} (Aligné)",
-                            line=dict(line_kwargs),
-                            opacity=trace_opacity,
-                            showlegend=(row == 1) # Affiche la légende 1 seule fois
+                    if row == 1:
+                        # LIGNE 1 : RAW (La réalité physique inaltérée)
+                        if x_col == 'timestamp':
+                            x_data = sub_df['timestamp'].copy()
+                        elif x_col == 't' and global_t0 is not None and 'timestamp' in sub_df.columns:
+                            x_data = (sub_df['timestamp'] - global_t0).dt.total_seconds()
+                        else:
+                            x_data = sub_df[x_col].copy()
+                    
+                    elif row == 2:
+                        # LIGNE 2 : ALIGNED (Décalage local appliqué)
+                        if x_col == 'timestamp':
+                            x_data = sub_df['timestamp'] + pd.to_timedelta(true_drift, unit='s')
+                        elif x_col == 't' and global_t0 is not None and 'timestamp' in sub_df.columns:
+                            x_data = (sub_df['timestamp'] - global_t0).dt.total_seconds() + true_drift
+                        else:
+                            # Fallback (temps relatif simple qui commence à 0)
+                            t_base = sub_df['t'] if 't' in sub_df.columns else sub_df.index
+                            x_data = t_base + true_drift
+                    # =================================================================
+
+                    # TRACER UN ÉVÉNEMENT
+                    if is_event:
+                        max_idx = sub_df[target_col].abs().values.argmax()
+                        x_point = x_data.iloc[max_idx]
+                        y_point = sub_df[target_col].iloc[max_idx]
+
+                        fig.add_trace(go.Scatter(
+                            x=[x_point], 
+                            y=[y_point], 
+                            mode='markers+text',
+                            text=[event_label],
+                            textposition="top center",
+                            textfont=dict(color=style.color if style else "red", size=11, family="Arial Black"),
+                            marker=dict(
+                                size=14, 
+                                symbol='x' if file_type == 'default' else 'star',
+                                color=style.color if style else "red",
+                                line=dict(width=2, color='DarkSlateGrey')
+                            ),
+                            name=f"{file} - {sensor}" if row == 1 else f"{file} - {sensor} (Aligned)",
+                            legendgroup=file,
+                            showlegend=(row == 1)
                         ), row=row, col=1)
 
-            # CAS B : DataFrame classique
-            else:
-                short_name = sensor.split('/')[-1]
-                if sensor in df_plot.columns: target_col = sensor
-                elif short_name in df_plot.columns: target_col = short_name
+                    # TRACER UNE COURBE NORMALE
+                    else:
+                        fig.add_trace(go.Scatter(
+                            x=x_data, 
+                            y=sub_df[target_col], 
+                            mode='lines',
+                            name=f"{file} - {sensor}" if row == 1 else f"{file} - {sensor} (Aligned)",
+                            legendgroup=file,
+                            line=line_kwargs, 
+                            opacity=trace_opacity, 
+                            showlegend=(row == 1)
+                        ), row=row, col=1)
 
-                if target_col and x_col in df_plot.columns:
-                    fig.add_trace(go.Scattergl(
-                        x=df_plot[x_col],
-                        y=df_plot[target_col],
-                        mode='lines',
-                        name=sensor if row == 1 else f"{sensor} (Aligné)",
-                        line=dict(line_kwargs),
-                        opacity=trace_opacity,
-                        showlegend=(row == 1)
-                    ), row=row, col=1)
-
-    # 4. Layout
+    # 6. GLOBAL LAYOUT AND STYLING
+    x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time'}
     fig.update_layout(
-        title=f"Visualization : {filename} (Algo: {method})",
         template="plotly_white",
-        margin=dict(l=40, r=40, t=60, b=40),
-        legend=dict(orientation="h", yanchor="bottom", y=1.1, xanchor="right", x=1),
+        margin=dict(t=50, b=20, l=40, r=20),
         hovermode="x unified",
         uirevision='constant',
+        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
     )
     
-    # Titres des axes Y et X
-    fig.update_yaxes(title_text=ylabel, row=1, col=1)
-    fig.update_yaxes(title_text=ylabel, row=2, col=1)
-    fig.update_xaxes(title_text=x_title, row=2, col=1) 
+    fig.update_xaxes(title_text=x_label_mapping.get(x_col, x_col), row=2, col=1)
+    fig.update_yaxes(title_text=ylabel)
+    
+    fig.update_xaxes(
+        showspikes=True,
+        spikemode="across",
+        spikesnap="cursor",
+        showline=True,
+        spikedash="solid",
+        spikecolor="#FF0000",
+        spikethickness=1
+    )
 
     return fig

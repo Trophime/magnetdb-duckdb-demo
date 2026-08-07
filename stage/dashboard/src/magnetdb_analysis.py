@@ -5,13 +5,14 @@ import functools
 from python_magnetrun.MagnetRun import load_mrun
 from python_magnetrun.field_defs import match_channels_across_formats
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import json
 import time
 from functools import wraps
 import pandas as pd
 import scipy.signal as sg
+import threading
 
 # Chemin absolu vers la base DuckDB (surchargable via variable d'environnement)
 DB_PATH = os.environ.get(
@@ -123,8 +124,11 @@ def load_mrun_object(filename, housing):
     return load_mrun(filename=os.path.basename(filename), housing=housing)
 
 
+# On crée un verrou global pour notre base de données
+_data_lock = threading.Lock()
+
 @functools.lru_cache(maxsize=64)
-def get_group_dataframe(filename, housing, group_name):
+def _cached_get_group_dataframe(filename, housing, group_name):
     """Return get_group_data(group_name) for filename, cached per (filename, housing, group_name).
 
     get_group_data() re-slices/rebuilds a DataFrame on every call (for TDMS,
@@ -134,6 +138,17 @@ def get_group_dataframe(filename, housing, group_name):
     """
     mrun = load_mrun_object(filename, housing)
     return mrun.MagnetData.get_group_data(group_name)
+
+def get_group_dataframe(filename, housing, group_name):
+    """Return get_group_data(group_name) for filename, cached per (filename, housing, group_name).
+   
+       get_group_data() re-slices/rebuilds a DataFrame on every call (for TDMS,
+       via getTdmsData) — it isn't free even when load_mrun_object is a cache
+       hit. Comparison-page callers all request the same group for the same
+       files repeatedly (once per pair-graph), so this is cached separately.
+       """
+    with _data_lock:
+        return _cached_get_group_dataframe(filename, housing, group_name)
 
 
 def parse_magnet_filename(filename):
@@ -163,7 +178,7 @@ def parse_magnet_filename(filename):
     return None
 
 
-def check_same_date(file_pupitre, file_pigbrother):
+def check_same_date(file_pupitre, file_pigbrother, tol=5):
     """
     Vérifie si un fichier Pupitre et un fichier PigBrother proviennent du même run (même minute).
     """
@@ -173,8 +188,12 @@ def check_same_date(file_pupitre, file_pigbrother):
     if dt_pupitre is None or dt_pigbrother is None:
         return False
 
+    time_lag = abs(dt_pupitre - dt_pigbrother)
+
+    tol_limit = timedelta(minutes=tol)
+    
     # Comparaison directe des objets datetime (Année, Mois, Jour, Heure, Minute)
-    return dt_pupitre == dt_pigbrother
+    return time_lag <= tol_limit
 
 
 def load_json_config(filepath):
@@ -271,6 +290,41 @@ def get_lag(df_pupitre, df_pb, column_current_pupitre='Idcct1', column_current_p
 
     return lag_seconds
 
+def get_housings():
+    """Récupère la liste des Housings (ex: M9, M10) disponibles."""
+    con = duckdb.connect(DB_PATH, read_only=True)
+    df = con.execute("SELECT DISTINCT name FROM housing_config WHERE name IS NOT NULL").fetchdf()
+    con.close()
+    return df['name'].tolist()
+
+def get_pupitres_for_housing(housing):
+    """Récupère la liste des fichiers pupitre pour un housing donné."""
+    con = duckdb.connect(DB_PATH, read_only=True)
+    query = "SELECT pupitre FROM housing_summary WHERE housing = ? AND pupitre <> ''"
+    df = con.execute(query, (housing,)).fetchdf()
+    con.close()
+    return df['pupitre'].tolist()
+
+def get_linked_files(housing, pupitre_filename):
+    """
+    Récupère uniquement les fichiers associés (Overview, Archive, Default) 
+    pour un fichier pupitre précis.
+    """
+    con = duckdb.connect(DB_PATH, read_only=True)
+    query = """
+        SELECT 
+            overview as pigbrother_file, 
+            archive as archive_file, 
+            "default" as default_file
+        FROM housing_summary 
+        WHERE housing = ? AND pupitre = ?
+    """
+    result = con.execute(query, (housing, pupitre_filename)).fetchdf().to_dict('records')
+    con.close()
+    
+    if result:
+        return result[0] 
+    return None
 
 def chrono_callback(func):
     """Décorateur pour mesurer le temps d'exécution d'une fonction."""
