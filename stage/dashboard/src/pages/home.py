@@ -85,7 +85,7 @@ def update_file_dropdown(selected_site, selected_table, selected_db):
 
 @dash.callback(
     Output('sensors-selectors-container', 'children'), 
-    Input('dd-file', 'value'), # Plus de dd-group ici !
+    Input('dd-file', 'value'), 
     Input('dd-site', 'value'),
     State({'type': 'group-sensors-checklist', 'index': ALL}, 'value'),
     State({'type': 'group-sensors-checklist', 'index': ALL}, 'id')
@@ -140,7 +140,6 @@ def update_sensors_menus(selected_file, selected_site, current_sensor_values, cu
 
         saved_values_for_this_group = saved_state_map.get(group_name, [])
             
-        # --- STRUCTURE CORRIGÉE : ACCORDÉON GLOBAL ---
         menus_blocks.append(
             html.Details([
                 
@@ -200,7 +199,7 @@ def update_sensors_menus(selected_file, selected_site, current_sensor_values, cu
                 'borderRadius': '8px',
                 'marginBottom': '20px',
                 'boxShadow': '0 2px 4px rgba(0,0,0,0.05)',
-                'overflow': 'hidden', # Important pour que l'en-tête gris ne dépasse pas des coins arrondis
+                'overflow': 'hidden',
                 'backgroundColor': '#ffffff'
             })
         )
@@ -324,8 +323,6 @@ def sync_zoom_home(relayout_data_list, graph_ids):
     x_min, x_max = None, None
     autoscale = False
     
-    # --- ANALYSE DE L'ÉVÉNEMENT PLOTLY ---
-    
     # Cas A : Zoom avec le rectangle de sélection 
     if 'xaxis.range[0]' in relayout_data:
         x_min = relayout_data['xaxis.range[0]']
@@ -342,8 +339,6 @@ def sync_zoom_home(relayout_data_list, graph_ids):
         
     # Cas D : Autre événement 
         raise PreventUpdate
-
-    # --- APPLICATION DES MISES À JOUR (PATCH) ---
     
     for g_id in graph_ids:
         # On ne met pas à jour le graphique qui a déclenché l'action 
