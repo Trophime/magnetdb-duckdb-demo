@@ -140,63 +140,68 @@ def update_sensors_menus(selected_file, selected_site, current_sensor_values, cu
 
         saved_values_for_this_group = saved_state_map.get(group_name, [])
             
-        # Création du menu Accordéon (Details/Summary)
-        # Création du conteneur Flexbox pour mettre le menu et le graphe côte à côte
+        # --- STRUCTURE CORRIGÉE : ACCORDÉON GLOBAL ---
         menus_blocks.append(
-            html.Div([
+            html.Details([
                 
-                # --- PARTIE GAUCHE : L'accordéon et les cases à cocher (Largeur fixe) ---
-                html.Div([
-                    html.Details([
-                        html.Summary(f"📂 {group_name}", style={
-                            'fontWeight': 'bold', 
-                            'cursor': 'pointer',
-                            'marginBottom': '5px',
-                            'outline': 'none',
-                            'fontSize': '16px'
-                        }),
-                        
-                        html.Div([
-                            dcc.Checklist(
-                                id={'type': 'group-sensors-checklist', 'index': group_name},
-                                options=options,
-                                value=saved_values_for_this_group,
-                                labelStyle={'display': 'block', 'marginLeft': '25px', 'marginBottom': '4px'} 
-                            )
-                        ], style={'marginBottom': '10px'})
-                    ], open=True) # "open=True" ouvre l'accordéon par défaut, c'est plus pratique !
-                ], style={
-                    'width': '250px', # On fixe la largeur du menu à gauche (pas trop grand)
-                    'flexShrink': 0,  # Empêche le menu de se faire écraser
-                    'padding': '10px',
-                    'borderRight': '1px solid #ddd', # Petite barre de séparation discrète
-                    'backgroundColor': '#ffffff'
+                # 1. EN-TÊTE : Le titre cliquable qui contrôle TOUT le bloc
+                html.Summary(f"📂 {group_name}", style={
+                    'fontWeight': 'bold', 
+                    'cursor': 'pointer',
+                    'padding': '10px 15px',
+                    'backgroundColor': '#e9ecef',
+                    'borderBottom': '1px solid #ddd',
+                    'outline': 'none',
+                    'fontSize': '16px'
                 }),
                 
-                # --- PARTIE DROITE : Le conteneur du Graphique (Prend tout le reste de la place) ---
-                html.Div(
-                    children=[
-                        # ⚡ On place le dcc.Graph directement ici !
-                        dcc.Graph(
-                            id={'type': 'dynamic-graph', 'index': group_name},
-                            style={'height': '350px'}
+                # 2. CONTENU : Les deux colonnes (Checklist et Graphique)
+                html.Div([
+                    
+                    # --- PARTIE GAUCHE : Les cases à cocher ---
+                    html.Div([
+                        dcc.Checklist(
+                            id={'type': 'group-sensors-checklist', 'index': group_name},
+                            options=options,
+                            value=saved_values_for_this_group,
+                            labelStyle={'display': 'block', 'marginLeft': '25px', 'marginBottom': '4px'} 
                         )
-                    ], 
-                    style={
-                        'flexGrow': 1, 
-                        'minWidth': '0', 
-                        'padding': '10px'
-                    }
-                )
+                    ], style={
+                        'width': '250px', 
+                        'flexShrink': 0,  
+                        'padding': '10px',
+                        'borderRight': '1px solid #ddd', 
+                        'backgroundColor': '#ffffff'
+                    }),
+                    
+                    # --- PARTIE DROITE : Le conteneur du Graphique ---
+                    html.Div(
+                        children=[
+                            dcc.Graph(
+                                id={'type': 'dynamic-graph', 'index': group_name},
+                                style={'height': '350px'}
+                            )
+                        ], 
+                        style={
+                            'flexGrow': 1, 
+                            'minWidth': '0', 
+                            'padding': '10px'
+                        }
+                    )
+                    
+                ], style={
+                    'display': 'flex',
+                    'flexDirection': 'row',
+                    'backgroundColor': '#f8f9fa'
+                })
                 
-            ], style={
-                'display': 'flex', # C'est la commande magique pour mettre côte à côte
-                'flexDirection': 'row',
-                'border': '1px solid #007bff', # Un joli cadre bleu autour de tout le bloc du groupe
+            ], open=True, style={
+                'border': '1px solid #007bff',
                 'borderRadius': '8px',
                 'marginBottom': '20px',
-                'boxShadow': '0 2px 4px rgba(0,0,0,0.05)', # Petite ombre stylée
-                'backgroundColor': '#f8f9fa'
+                'boxShadow': '0 2px 4px rgba(0,0,0,0.05)',
+                'overflow': 'hidden', # Important pour que l'en-tête gris ne dépasse pas des coins arrondis
+                'backgroundColor': '#ffffff'
             })
         )
         
