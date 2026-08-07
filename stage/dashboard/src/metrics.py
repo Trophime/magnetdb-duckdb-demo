@@ -13,8 +13,6 @@ def get_variance(signal):
     return np.nanvar(signal)
 
 
-
-
 def evaluate_metrics(y_ref, y_sec_unaligned, y_sec_aligned):
     """
     Compare results of the mean of the Reference signal with the Secondary signal, before and after applying the lag.
