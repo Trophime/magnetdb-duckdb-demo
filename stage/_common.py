@@ -23,7 +23,7 @@ PIGBROTHER_DIR = RECORDS_DIR / "pbsurv"
 
 PIGBROTHER     = PIGBROTHER_DIR / "M10" / "Overview" / "M10_Overview_251201-0909.tdms"
 
-DB = Path("../to_duckdb/magnetdb.duckdb")
+DB = Path("../to_duckdb/new-magnetdb.duckdb")
 
 FIELD_THRESHOLD = 0.1
 

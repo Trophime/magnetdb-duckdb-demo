@@ -52,10 +52,14 @@ def main():
                             field_max = ?,
                             field_mean = ?,
                             field_time_on = ?,
+                            field_std = ?,
+                            field_median = ?,
                             field_signature = ?
                         WHERE rowid = ?
                     """, 
-                    (float(field.max()), float(field.mean()), int((field > FIELD_THRESHOLD).sum()), field_signature, int(rowid))
+                    (float(field.max()), float(field.mean()), 
+                     int((field > FIELD_THRESHOLD).sum()), float(field.std()),
+                     float(field.median()), field_signature, int(rowid))
                 )
 
             except Exception as e:

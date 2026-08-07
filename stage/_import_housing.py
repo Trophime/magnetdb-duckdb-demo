@@ -36,6 +36,8 @@ def main():
     summary_df["field_max"]           = pd.Series(dtype = "float64")
     summary_df["field_mean"]          = pd.Series(dtype = "float64")
     summary_df["field_time_on"]       = pd.Series(dtype = "float64")
+    summary_df["field_std"]           = pd.Series(dtype = "float64")
+    summary_df["field_median"]        = pd.Series(dtype = "float64")
     summary_df["mode"]                = ""
     summary_df["field_signature"]     = ""
     summary_df["reference_signature"] = ""
