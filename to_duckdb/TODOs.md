@@ -2,6 +2,7 @@
 - by default remove users entries with a hstart before the first ever commissioned date in the duckdb database (see site table
 - instead of loading EXPERIENCES_LOG.csv, load this table directly from SUPERVISON DB
 - same for proposal table, load it directly from EMFL user DB API
+- see to_duckdb/PLAN_users_multi_source.md
 * stress
 - see to_duckdb/docs/hoop_stress.md and to_duckdb/PLAN_hoop_stress_history.md
 - `magnetdp.py hoop-stress compute` | Compute and persist hoop-stress bin stats + fatigue -- do not compute fatigue at this point

@@ -259,7 +259,7 @@ def _rainflow_stats(sigma: pd.Series) -> dict[str, float]:
     cycles = rainflow.count_cycles(sigma.to_numpy().astype(float))
     n_cycles = 0.0
     sum_range3 = 0.0
-    for rng, _mean, count, *_ in cycles:
+    for rng, count in cycles:
         n_cycles += count
         sum_range3 += count * float(rng) ** 3
     return {"n_cycles": n_cycles, "sum_range3": sum_range3}
