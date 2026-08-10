@@ -845,7 +845,7 @@ def cmd_populate_overview_records_infer(args) -> None:
 
     print("\nChecking for pupitre-duplicate overview_records …")
     with duckdb.connect(str(db_path)) as con:
-        merge_duplicate_pupitre_records(con, verbose=True)
+        merge_duplicate_pupitre_records(con, verbose=True, max_gap_seconds=args.max_gap_seconds)
 
     print("\nDone.")
 
@@ -1442,6 +1442,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_ov_infer.add_argument(
         "--reprocess", action="store_true",
         help="Re-infer rows that already have a site_name (default: only NULL ones).",
+    )
+    p_ov_infer.add_argument(
+        "--max-gap-seconds", type=float, default=60.0, dest="max_gap_seconds",
+        help="Max real-time gap (seconds) between two pupitre-sharing overview_records "
+             "for them to be merged as duplicates (default: 60.0).",
     )
     p_ov_infer.add_argument("--dry-run", action="store_true",
                             help="List rows that would be processed without writing to the DB.")

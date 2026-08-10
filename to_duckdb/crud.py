@@ -42,7 +42,7 @@ infer_operating_mode(df)
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -1992,6 +1992,13 @@ def infer_overview_record_fields(
     return "resolved"
 
 
+def _row_end(row: dict) -> Any:
+    """The row's own ``t0 + duration``, or ``None`` if ``t0`` is missing."""
+    if row.get("t0") is None:
+        return None
+    return row["t0"] + timedelta(seconds=float(row.get("duration") or 0.0))
+
+
 def _merge_overview_rows(existing: dict, incoming: dict) -> dict:
     """Combine two overview_records rows that share a pupitre source file.
 
@@ -2050,32 +2057,93 @@ def _merge_overview_rows(existing: dict, incoming: dict) -> dict:
     for col in _OVERVIEW_JSON_COLUMNS:
         merged[col] = {**(higher.get(col) or {}), **(lower.get(col) or {})}
 
+    # Real end of the latest-in-time constituent absorbed so far, kept
+    # separately from `duration` (which is summed and so does not reflect
+    # the small real dead-time gaps between merged captures) — used only
+    # for adjacency checks against the next candidate, never persisted.
+    ends = [
+        e for e in (lower.get("_last_end") or _row_end(lower), higher.get("_last_end") or _row_end(higher))
+        if e is not None
+    ]
+    merged["_last_end"] = max(ends) if ends else None
+
     return merged
 
 
-def _find_pupitre_duplicate_pair(group: dict) -> tuple[dict, dict] | None:
-    """Return the first pair of rows in *group* sharing a sources_pupitre entry.
+def _overview_gap_seconds(row_a: dict, row_b: dict) -> float | None:
+    """Seconds between the earlier row's real end and the later row's ``t0``.
+
+    *row_a*/*row_b* are sorted by ``t0`` internally, so argument order does
+    not matter. A negative result means the windows overlap. The earlier
+    row's end is read from its ``_last_end`` key if present (set by
+    :func:`_merge_overview_rows` for an already-merged composite, so a
+    multi-hop chain compares against the true end of its latest constituent
+    rather than a sum of durations that would silently swallow the small
+    real dead-time gaps between them) — falling back to its own
+    ``t0 + duration`` otherwise.
+
+    Parameters
+    ----------
+    row_a : dict
+        One of the two rows being compared.
+    row_b : dict
+        The other row being compared.
+
+    Returns
+    -------
+    float or None
+        The gap in seconds, or ``None`` if either row is missing ``t0``.
+    """
+    t0_a, t0_b = row_a.get("t0"), row_b.get("t0")
+    if t0_a is None or t0_b is None:
+        return None
+    earlier, later = (row_a, row_b) if t0_a <= t0_b else (row_b, row_a)
+    end_of_earlier = earlier.get("_last_end") or _row_end(earlier)
+    return (later["t0"] - end_of_earlier).total_seconds()
+
+
+def _find_pupitre_duplicate_pair(group: dict, max_gap_seconds: float) -> tuple[dict, dict] | None:
+    """Return the first pair of rows in *group* sharing a pupitre source and time-adjacent.
+
+    A pupitre source file can legitimately be referenced by many separate,
+    unrelated Overview captures spanning hours (pupitre logs rotate on a
+    much coarser cadence than pigbrother TDMS captures) — so sharing a
+    ``sources_pupitre`` entry alone is not a reliable duplicate signal. A
+    pair only counts as a duplicate if, in addition, the real gap between
+    one row's end (``t0 + duration``) and the other's ``t0`` is within
+    *max_gap_seconds* (see :func:`_overview_gap_seconds`) — consistent with
+    two captures being one continuous session split across files, rather
+    than two genuinely distinct experiments that happen to overlap the same
+    pupitre log.
 
     Parameters
     ----------
     group : dict
         Maps ``filename`` to row dict, for rows already known to share the
         same ``(housing, site_name)``.
+    max_gap_seconds : float
+        Maximum real-time gap (seconds) between the two rows' windows for
+        them to still count as adjacent.
 
     Returns
     -------
     tuple[dict, dict] or None
         The two matching rows, or ``None`` if no pair shares a
-        ``sources_pupitre`` entry.
+        ``sources_pupitre`` entry within *max_gap_seconds*.
     """
     filenames = list(group)
     for i, name_a in enumerate(filenames):
-        pupitre_a = set(group[name_a].get("sources_pupitre") or [])
+        row_a = group[name_a]
+        pupitre_a = set(row_a.get("sources_pupitre") or [])
         if not pupitre_a:
             continue
         for name_b in filenames[i + 1:]:
-            if pupitre_a & set(group[name_b].get("sources_pupitre") or []):
-                return group[name_a], group[name_b]
+            row_b = group[name_b]
+            if not (pupitre_a & set(row_b.get("sources_pupitre") or [])):
+                continue
+            gap = _overview_gap_seconds(row_a, row_b)
+            if gap is not None and gap <= max_gap_seconds:
+                return row_a, row_b
     return None
 
 
@@ -2093,23 +2161,32 @@ def _apply_overview_record_merge_update(con, merged: dict) -> None:
     )
 
 
-def merge_duplicate_pupitre_records(con, verbose: bool = True) -> dict:
-    """Merge overview_records rows that share a pupitre source file.
+def merge_duplicate_pupitre_records(
+    con, verbose: bool = True, max_gap_seconds: float = 60.0
+) -> dict:
+    """Merge overview_records rows that share a pupitre source file and are time-adjacent.
 
     Table-wide sweep, intended to run from ``populate overview-records-infer``
     once ``housing``/``site_name``/``t0`` have been resolved for the rows
     involved — never at insert time, and never scoped by ``housing`` alone.
 
+    A pupitre log can legitimately be referenced by several genuinely
+    distinct Overview captures spanning hours (pupitre rotates on a much
+    coarser cadence than pigbrother TDMS captures), so sharing a
+    ``sources_pupitre`` entry alone does not mean two rows are duplicates —
+    see :func:`_find_pupitre_duplicate_pair`, which additionally requires the
+    real gap between the two rows' windows to be within *max_gap_seconds*.
+
     Live rows (``merged_into IS NULL``) are grouped by ``(housing, site_name)``;
     rows with ``site_name IS NULL`` form their own ``(housing, NULL)`` group
     and are only ever compared against each other, never against a row that
     already has a resolved ``site_name`` for that housing. Within each group,
-    any pair sharing a ``sources_pupitre`` entry is merged: the row with the
-    lower ``t0`` is the survivor, updated in place (via :func:`_merge_overview_rows`);
-    the other row is tombstoned — ``merged_into`` set to the survivor's
-    filename — rather than deleted, so a later re-populate of its source file
-    cannot resurrect and re-merge it. This repeats within each group until no
-    more pairs are found, so chains (A–B share a file, B–C share a different
+    any qualifying pair is merged: the row with the lower ``t0`` is the
+    survivor, updated in place (via :func:`_merge_overview_rows`); the other
+    row is tombstoned — ``merged_into`` set to the survivor's filename —
+    rather than deleted, so a later re-populate of its source file cannot
+    resurrect and re-merge it. This repeats within each group until no more
+    pairs are found, so chains (A–B share a file, B–C share a different
     file) all consolidate onto one survivor. If a row that other tombstoned
     rows already point ``merged_into`` at is itself absorbed into a new
     survivor, those pointers are flattened to the new survivor so
@@ -2122,6 +2199,9 @@ def merge_duplicate_pupitre_records(con, verbose: bool = True) -> dict:
         Open DuckDB connection.
     verbose : bool
         Print a status line per merge.
+    max_gap_seconds : float
+        Maximum real-time gap (seconds) between two pupitre-sharing rows'
+        windows for them to still count as adjacent (default: 60.0).
 
     Returns
     -------
@@ -2143,7 +2223,7 @@ def merge_duplicate_pupitre_records(con, verbose: bool = True) -> dict:
     n_merges = 0
     for group in groups.values():
         while True:
-            pair = _find_pupitre_duplicate_pair(group)
+            pair = _find_pupitre_duplicate_pair(group, max_gap_seconds)
             if pair is None:
                 break
             merged = _merge_overview_rows(*pair)

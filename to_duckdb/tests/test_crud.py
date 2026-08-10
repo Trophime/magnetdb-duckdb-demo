@@ -614,13 +614,15 @@ def _insert_overview(con, *args, **kwargs):
 
 
 def test_merge_duplicate_pupitre_records_merges_shared_pupitre_lower_t0_first(con):
+    # 1700 ends at 17:01:40 (duration=100s); 1702 starts 20s later — within
+    # the default 60s adjacency threshold.
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
         ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
         signatures={"sigA": {"min": 0, "max": 1}},
     )
     _insert_overview(
-        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 200.0, 20.0, 2.0,
         ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
         signatures={"sigB": {"min": 2, "max": 3}},
     )
@@ -629,7 +631,7 @@ def test_merge_duplicate_pupitre_records_merges_shared_pupitre_lower_t0_first(co
     assert result == {"groups_checked": 1, "merges": 1}
 
     rows = con.execute("SELECT filename FROM overview_records ORDER BY filename").fetchall()
-    assert rows == [("M9_Overview_220127-1700",), ("M9_Overview_220127-1800",)]
+    assert rows == [("M9_Overview_220127-1700",), ("M9_Overview_220127-1702",)]
 
     sources_pupitre, duration, teb, bp, signatures, merged_into = con.execute(
         "SELECT sources_pupitre, duration, teb, bp, signatures, merged_into "
@@ -646,14 +648,14 @@ def test_merge_duplicate_pupitre_records_merges_shared_pupitre_lower_t0_first(co
     assert merged_into is None
 
     absorbed_merged_into = con.execute(
-        "SELECT merged_into FROM overview_records WHERE filename = 'M9_Overview_220127-1800'"
+        "SELECT merged_into FROM overview_records WHERE filename = 'M9_Overview_220127-1702'"
     ).fetchone()[0]
     assert absorbed_merged_into == "M9_Overview_220127-1700"
 
 
 def test_merge_duplicate_pupitre_records_merges_shared_pupitre_higher_t0_first(con):
     _insert_overview(
-        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 200.0, 20.0, 2.0,
         ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
     )
     _insert_overview(
@@ -671,6 +673,42 @@ def test_merge_duplicate_pupitre_records_merges_shared_pupitre_higher_t0_first(c
     assert duration == pytest.approx(300.0)
     assert merged_into is None
 
+    assert con.execute(
+        "SELECT merged_into FROM overview_records WHERE filename = 'M9_Overview_220127-1702'"
+    ).fetchone()[0] == "M9_Overview_220127-1700"
+
+
+def test_merge_duplicate_pupitre_records_no_merge_when_gap_too_large(con):
+    """Regression test: a shared pupitre file alone must not trigger a merge.
+
+    Real data shows one pupitre log can legitimately span several genuinely
+    distinct Overview captures hours apart (pupitre rotates on a much
+    coarser cadence than pigbrother TDMS captures) — sharing a
+    sources_pupitre entry is not sufficient on its own.
+    """
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+    )
+
+    result = merge_duplicate_pupitre_records(con, verbose=False)
+    assert result == {"groups_checked": 1, "merges": 0}
+
+    rows = con.execute(
+        "SELECT filename, merged_into FROM overview_records ORDER BY filename"
+    ).fetchall()
+    assert rows == [
+        ("M9_Overview_220127-1700", None),
+        ("M9_Overview_220127-1800", None),
+    ]
+
+    # Widening the threshold enough (~58 minutes here) makes it merge after all.
+    result = merge_duplicate_pupitre_records(con, verbose=False, max_gap_seconds=3600.0)
+    assert result == {"groups_checked": 1, "merges": 1}
     assert con.execute(
         "SELECT merged_into FROM overview_records WHERE filename = 'M9_Overview_220127-1800'"
     ).fetchone()[0] == "M9_Overview_220127-1700"
@@ -743,16 +781,18 @@ def test_merge_duplicate_pupitre_records_no_merge_without_shared_pupitre(con):
 
 
 def test_merge_duplicate_pupitre_records_chains_three_way(con):
+    # Each record ends 100s after its t0 and the next starts 20s later —
+    # all three gaps (20s) are within the default 60s threshold.
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
         ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
     )
     _insert_overview(
-        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 100.0, 10.0, 1.0,
+        con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 100.0, 10.0, 1.0,
         ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
     )
     _insert_overview(
-        con, "M9_Overview_220127-1900", "2022-01-27 19:00:00", 100.0, 10.0, 1.0,
+        con, "M9_Overview_220127-1704", "2022-01-27 17:04:00", 100.0, 10.0, 1.0,
         ["p3.tdms", "p4.tdms"], site_name="M9_SITE_A",
     )
 
@@ -764,8 +804,8 @@ def test_merge_duplicate_pupitre_records_chains_three_way(con):
     ).fetchall()
     assert rows == [
         ("M9_Overview_220127-1700", None),
-        ("M9_Overview_220127-1800", "M9_Overview_220127-1700"),
-        ("M9_Overview_220127-1900", "M9_Overview_220127-1700"),
+        ("M9_Overview_220127-1702", "M9_Overview_220127-1700"),
+        ("M9_Overview_220127-1704", "M9_Overview_220127-1700"),
     ]
     sources_pupitre, duration = con.execute(
         "SELECT sources_pupitre, duration FROM overview_records "
@@ -775,24 +815,72 @@ def test_merge_duplicate_pupitre_records_chains_three_way(con):
     assert duration == pytest.approx(300.0)
 
 
+def test_merge_duplicate_pupitre_records_chain_does_not_drift_with_summed_duration(con):
+    """Regression test: a long chain must compare against each survivor's real
+    last end, not against t0 + cumulative summed duration.
+
+    Summing durations across merges silently swallows the small real
+    dead-time gaps already absorbed into earlier links of the chain. Four
+    records here each have a real 25s gap to the next — well within the
+    default 60s threshold — but the two internal gaps (25s + 25s = 50s)
+    would inflate the *naive* t0+duration comparison for the last link to
+    75s (over threshold) if the survivor's true last end weren't tracked
+    separately. This mirrors what real M9 December 2025 data showed.
+    """
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1702", "2022-01-27 17:02:05", 100.0, 10.0, 1.0,
+        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1704", "2022-01-27 17:04:10", 100.0, 10.0, 1.0,
+        ["p3.tdms", "p4.tdms"], site_name="M9_SITE_A",
+    )
+    _insert_overview(
+        con, "M9_Overview_220127-1706", "2022-01-27 17:06:15", 100.0, 10.0, 1.0,
+        ["p4.tdms", "p5.tdms"], site_name="M9_SITE_A",
+    )
+
+    result = merge_duplicate_pupitre_records(con, verbose=False)
+    assert result == {"groups_checked": 1, "merges": 3}
+
+    rows = con.execute(
+        "SELECT filename, merged_into FROM overview_records ORDER BY filename"
+    ).fetchall()
+    assert rows == [
+        ("M9_Overview_220127-1700", None),
+        ("M9_Overview_220127-1702", "M9_Overview_220127-1700"),
+        ("M9_Overview_220127-1704", "M9_Overview_220127-1700"),
+        ("M9_Overview_220127-1706", "M9_Overview_220127-1700"),
+    ]
+    duration = con.execute(
+        "SELECT duration FROM overview_records WHERE filename = 'M9_Overview_220127-1700'"
+    ).fetchone()[0]
+    assert duration == pytest.approx(400.0)
+
+
 def test_merge_duplicate_pupitre_records_flattens_pointer_on_re_merge(con):
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
         ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
     )
     _insert_overview(
-        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 100.0, 10.0, 1.0,
+        con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 100.0, 10.0, 1.0,
         ["p2.tdms"], site_name="M9_SITE_A",
     )
     merge_duplicate_pupitre_records(con, verbose=False)
     assert con.execute(
-        "SELECT merged_into FROM overview_records WHERE filename = 'M9_Overview_220127-1800'"
+        "SELECT merged_into FROM overview_records WHERE filename = 'M9_Overview_220127-1702'"
     ).fetchone()[0] == "M9_Overview_220127-1700"
 
     # An even-earlier row sharing p2.tdms (now carried by the 17:00 survivor)
-    # becomes the new survivor; the 18:00 row's pointer must flatten onto it.
+    # becomes the new survivor; the 17:02 row's pointer must flatten onto it.
+    # Ends at 16:59:50 (duration=50s) — 10s before the 17:00 survivor's t0.
     _insert_overview(
-        con, "M9_Overview_220127-1600", "2022-01-27 16:00:00", 50.0, 5.0, 0.5,
+        con, "M9_Overview_220127-1659", "2022-01-27 16:59:00", 50.0, 5.0, 0.5,
         ["p2.tdms"], site_name="M9_SITE_A",
     )
     merge_duplicate_pupitre_records(con, verbose=False)
@@ -801,9 +889,9 @@ def test_merge_duplicate_pupitre_records_flattens_pointer_on_re_merge(con):
         "SELECT filename, merged_into FROM overview_records ORDER BY filename"
     ).fetchall()
     assert rows == [
-        ("M9_Overview_220127-1600", None),
-        ("M9_Overview_220127-1700", "M9_Overview_220127-1600"),
-        ("M9_Overview_220127-1800", "M9_Overview_220127-1600"),
+        ("M9_Overview_220127-1659", None),
+        ("M9_Overview_220127-1700", "M9_Overview_220127-1659"),
+        ("M9_Overview_220127-1702", "M9_Overview_220127-1659"),
     ]
 
 
@@ -813,7 +901,7 @@ def test_merge_duplicate_pupitre_records_idempotent_on_rerun(con):
         ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
     )
     _insert_overview(
-        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 200.0, 20.0, 2.0,
         ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
     )
 
@@ -837,7 +925,7 @@ def test_view_overview_records_excludes_merged_rows(con, capsys):
         ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
     )
     _insert_overview(
-        con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
+        con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 200.0, 20.0, 2.0,
         ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
     )
     merge_duplicate_pupitre_records(con, verbose=False)
@@ -845,7 +933,7 @@ def test_view_overview_records_excludes_merged_rows(con, capsys):
     view_overview_records(con)
     out = capsys.readouterr().out
     assert "M9_Overview_220127-1700" in out
-    assert "M9_Overview_220127-1800" not in out
+    assert "M9_Overview_220127-1702" not in out
 
 
 # ---------------------------------------------------------------------------
