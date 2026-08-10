@@ -10,6 +10,7 @@ import pandas as pd
 from plotly.subplots import make_subplots
 from metrics import evaluate_metrics, generate_metrics_report
 from python_magnetrun.utils.files import classify_pigbrother_file
+import numpy as np
 
 
 TARGET_TABLE = 'operationaldata'
@@ -320,17 +321,17 @@ def calculate_all_offsets(selected_files, selected_site):
     
     housing = selected_site.split('_')[0]
     
-    # 1. Identifier le GROUPE de fichiers Maîtres (Les Overviews en priorité)
+    # 1. Identifier le GROUPE de fichiers Maîtres
     overview_files = [f for f in selected_files if 'overview' in f.lower()]
     
     if overview_files:
         master_files = overview_files
     else:
-        # Fallback : S'il n'y a pas d'Overview, les fichiers Pupitres deviennent les maîtres
+        # S'il n'y a pas d'Overview, les fichiers Pupitres deviennent les maîtres
         pupitres = [f for f in selected_files if f.endswith('.txt')]
         master_files = pupitres if pupitres else [selected_files[0]]
         
-    # 2. CONSTRUIRE LA TIMELINE CONTINUE DU MAÎTRE (Concaténation)
+    # 2. CONSTRUIRE LA TIMELINE CONTINUE DU MAÎTRE 
     df_master_list = []
     for f in master_files:
         df_part = db.get_group_dataframe(f, housing, 'Courants_Alimentations')
@@ -393,6 +394,34 @@ def calculate_all_offsets(selected_files, selected_site):
                 html.Span(f"{f} : ", style={'fontWeight': 'bold'}),
                 html.Span(f"{lag:.3f} s", style={'color': '#28a745' if lag == 0 else '#dc3545'})
             ], style={'fontSize': '14px', 'marginBottom': '4px'}))
+
+            try:
+                # 1. Utiliser le temps du maître comme référence
+                t_ref = df_master['timestamp'].astype('int64') / 10**9
+                y_ref = df_master[col_master].values
+                
+                # 2. Utiliser le temps de la cible
+                t_target = df_target['timestamp'].astype('int64') / 10**9
+                y_target = df_target[col_target].values
+                
+                # 3. Interpoler la cible sur la base de temps du maître (avec le lag)
+                # Cela aligne les signaux et les met à la même dimension
+                y_sec_aligned = np.interp(t_ref, t_target + lag, y_target, left=np.nan, right=np.nan)
+                y_sec_unaligned = np.interp(t_ref, t_target, y_target, left=np.nan, right=np.nan)
+                
+                # 4. Calcul (evaluate_metrics gère les nan via nanmean/nanvar)
+                results = evaluate_metrics(y_ref, y_sec_unaligned, y_sec_aligned)
+                
+                generate_metrics_report(
+                    file_ref=master_files[0], 
+                    sensor_ref=col_master,
+                    file_sec=f,               
+                    sensor_sec=col_target,
+                    results=results,
+                    lag_seconds=lag
+                )
+            except Exception as e:
+                print(f"[metrics] Erreur rapport pour {f} : {e}")
     
     return sync_data, display_elements
 
