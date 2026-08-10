@@ -7,7 +7,7 @@ import magnetdb_analysis as db
 import magnetdb_plot as plot
 import pandas as pd
 
-dash.register_page(__name__, path='/', order=4)
+dash.register_page(__name__, path='/', name="File viewer", order=4)
 
 layout = html.Div([
     html.Div([
