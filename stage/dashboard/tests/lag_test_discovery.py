@@ -10,6 +10,7 @@ from tabulate import tabulate
 from python_magnetrun.analysis.config import (
     DEFAULT_DATA_DIR,
     DEFAULT_PIGBROTHER_DATA_DIR,
+    ThresholdConfig,
 )
 from python_magnetrun.analysis.processing import ProcessingConfig, process_overview_file
 from python_magnetrun.analysis.field_comparison import (
@@ -20,11 +21,16 @@ from python_magnetrun.analysis.field_comparison import (
     print_comparison_summary,
 )
 from python_magnetrun.analysis.metrics import compare_series
-from python_magnetrun.analysis.synchronization import apply_lag_correction
+from python_magnetrun.analysis.synchronization import (
+    apply_lag_correction,
+    check_lag_reliability,
+    find_best_matching_regime,
+)
 from python_magnetrun.log_utils import LogConfig, setup_logging
 from python_magnetrun.plotting.backend import get_backend
 from python_magnetrun.plotting.style import DEFAULT_STYLE
 from python_magnetrun.plotting.timeseries import plot_overlay
+from python_magnetrun.signature import Signature
 from python_magnetrun.utils.timezone import series_utc_to_local_naive
 
 
@@ -166,6 +172,46 @@ def compare_group_fields(df_pupitre, df_other, fields):
             ]
         )
     return rows
+
+
+def fill_small_gaps(df, tkey="timestamp", max_gap_seconds=30.0):
+    """Interpolate across small timing gaps so dt stays close to uniform.
+
+    Inserts evenly-spaced, linearly-interpolated rows only inside gaps
+    larger than 1.5x the median dt; existing rows are left untouched.
+    Gaps larger than max_gap_seconds are left unfilled.
+    """
+    df = df.sort_values(tkey).reset_index(drop=True)
+    dt = df[tkey].diff().dt.total_seconds()
+    dt_median = dt.median()
+
+    gap_positions = dt[(dt > dt_median * 1.5) & (dt <= max_gap_seconds)]
+    if gap_positions.empty:
+        return df
+
+    print(
+        f"Warning: interpolating across {len(gap_positions)} gap(s) up to "
+        f"{gap_positions.max():.1f}s (median dt={dt_median:.2f}s)"
+    )
+
+    numeric_cols = df.select_dtypes(include="number").columns
+    new_rows = []
+    for idx, gap in gap_positions.items():
+        i0, i1 = idx - 1, idx
+        n_fill = int(round(gap / dt_median)) - 1
+        for k in range(1, n_fill + 1):
+            frac = k / (n_fill + 1)
+            row = df.iloc[i0].copy()
+            row[tkey] = df[tkey].iloc[i0] + pd.to_timedelta(frac * gap, unit="s")
+            for col in numeric_cols:
+                row[col] = df[col].iloc[i0] + frac * (df[col].iloc[i1] - df[col].iloc[i0])
+            new_rows.append(row)
+
+    return (
+        pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+        .sort_values(tkey)
+        .reset_index(drop=True)
+    )
 
 
 def plot_lag_comparison(
@@ -323,7 +369,9 @@ def main() -> None:
                     f"corr={ref_lag.correlation:.2f}, conf={ref_lag.confidence:.2f})"
                 )
 
-                df_pupitre_aligned = apply_lag_correction(df_pupitre, lag_overview)
+                df_pupitre_aligned = apply_lag_correction(
+                    df_pupitre, lag_overview, reference_t0=record.t0
+                )
                 rows = compare_group_fields(df_pupitre_aligned, df_overview, fields)
                 print(
                     f"\nget_lag-based per-field metrics vs overview (lag={lag_overview:.2f}s):"
@@ -338,6 +386,38 @@ def main() -> None:
                     lag_overview, ref_lag.seconds, "overview", plot_path,
                 )
                 print(f"Saved comparison plot: {plot_path}")
+
+                sig_pupitre_df = fill_small_gaps(df_pupitre_aligned)
+                sig_overview_df = fill_small_gaps(df_overview)
+                unit = pint.get_application_registry().Unit(
+                    ref_field.pupitre_unit or "dimensionless"
+                )
+                thresholds = ThresholdConfig.default()
+                pupitre_threshold = thresholds.get(col_pup, thresholds.get("IH", 1.0))
+                pigbrother_threshold = thresholds.get(
+                    col_ov, thresholds.get("Courant_GR1", 0.5)
+                )
+                sig_pupitre = Signature.from_df(
+                    filename=str(fichier_overview), t0=record.t0, df=sig_pupitre_df,
+                    key=col_pup, symbol=col_pup, unit=unit, tkey="t",
+                    threshold=pupitre_threshold,
+                )
+                sig_overview = Signature.from_df(
+                    filename=str(fichier_overview), t0=record.t0, df=sig_overview_df,
+                    key=col_ov, symbol=col_ov, unit=unit, tkey="t",
+                    threshold=pigbrother_threshold,
+                )
+                sig_pupitre.compact()
+                sig_overview.compact()
+                regime_matches = find_best_matching_regime(sig_pupitre, sig_overview)
+                print("\nRegime match (pupitre vs overview signatures):")
+                for m in regime_matches:
+                    reliable = check_lag_reliability(m.lags, duration=record.duration)
+                    print(
+                        f"  {m.regime}->{m.match_regime}: score={m.score:.3f}, "
+                        f"lags=(start={m.lags[0]:.2f}s, end={m.lags[1]:.2f}s), "
+                        f"reliable={reliable}"
+                    )
             else:
                 print("pupitre vs overview: no data")
 
