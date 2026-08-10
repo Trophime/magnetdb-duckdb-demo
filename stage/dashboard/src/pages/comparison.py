@@ -8,7 +8,9 @@ import magnetdb_analysis as db
 from magnetdb_plot import create_plot, create_comparison_plot
 import pandas as pd
 from plotly.subplots import make_subplots
-from metrics import evaluate_mean, generate_metrics_report
+from metrics import evaluate_metrics, generate_metrics_report
+from python_magnetrun.utils.files import classify_pigbrother_file
+import numpy as np
 
 
 TARGET_TABLE = 'operationaldata'
@@ -22,8 +24,8 @@ dash.register_page(
 )
 
 layout = html.Div([
-    html.H2("Visualisation et Comparaison Multi-fichiers"),
-    html.P("Superposez et comparez les capteurs equivalents entre plusieurs fichiers (Pupitre et PigBrother)."),
+    html.H2("Visualization and Multi-file Comparison"),
+    html.P("Overlay and compare equivalent sensors across multiple files (Pupitre and PigBrother)."),
 
     dcc.Store(id='zoom-state', data=None),
 
@@ -89,8 +91,8 @@ layout = html.Div([
 
         # Colonne de droite : Zone des blocs cote a cote
         dbc.Col([
-            html.H5("Comparaison des paires de capteurs"),
-            html.Div(id='sensors-message', children="Selectionnez vos fichiers et un groupe."),
+            html.H5("Comparison of sensor pairs"),
+            html.Div(id='sensors-message', children="Select your files and a group."),
             
             # Conteneur dynamique
             html.Div(id='accordion-container')
@@ -99,9 +101,8 @@ layout = html.Div([
     ], className="g-4")
 ])
 
-# --- 2. CALLBACKS ---
 
-# CALLBACK 1 : Chargement des fichiers du site synchronises
+# Chargement des fichiers du site synchronises
 @dash.callback(
     Output('dd-site-compare', 'options'),
     Input('dd-database', 'value')
@@ -110,6 +111,7 @@ def update_site_dropdown(selected_db):
     if not selected_db:
         return []
     return db.get_all_sites(selected_db)
+
 
 
 @dash.callback(
@@ -127,18 +129,46 @@ def update_file_dropdown(selected_site, selected_db):
     pupitre_files = [f for f in files if f.endswith('.txt')]
     pigbrother_files = [f for f in files if f.endswith('.tdms')]
 
-    options = []
+    # 1. Regrouper chaque Pupitre avec ses fichiers PigBrother correspondants
+    matched_groups = []
+
     for p_file in pupitre_files:
-        matched_pb_file = None
+        dt_p = db.parse_magnet_filename(p_file)
+        matching_pbs = []
+
         for pb_file in pigbrother_files:
             if db.check_same_date(p_file, pb_file):
-                matched_pb_file = pb_file
-                break
+                matching_pbs.append(pb_file)
 
-        if matched_pb_file:
-            options.append({'label': f"Pupitre: {os.path.basename(p_file)}", 'value': os.path.basename(p_file)})
-            options.append({'label': f"PigBrother: {os.path.basename(matched_pb_file)}", 'value': os.path.basename(matched_pb_file)})
-            pigbrother_files.remove(matched_pb_file)
+        # Si au moins un PigBrother correspond (ou pour afficher la session)
+        if matching_pbs:
+            matched_groups.append({
+                'p_file': p_file,
+                'date': dt_p,
+                'pb_files': matching_pbs
+            })
+
+    # 2. Trier les groupes chronologiquement par date de run
+    matched_groups.sort(key=lambda g: g['date'] if g['date'] is not None else pd.Timestamp.min)
+
+    # 3. Construire les options Dash en plaçant Pupitre suivi immédiatement de ses PigBrother
+    options = []
+    seen_values = set()  # Évite les doublons 
+
+    for group in matched_groups:
+        p_base = os.path.basename(group['p_file'])
+        
+        # Ajouter le fichier Pupitre
+        if p_base not in seen_values:
+            options.append({'label': f"Pupitre: {p_base}", 'value': p_base})
+            seen_values.add(p_base)
+
+        # Ajouter immédiatement tous ses PigBrother associés
+        for pb_file in group['pb_files']:
+            pb_base = os.path.basename(pb_file)
+            if pb_base not in seen_values:
+                options.append({'label': f"PigBrother: {pb_base}", 'value': pb_base})
+                seen_values.add(pb_base)
 
     return options, []
 
@@ -174,7 +204,7 @@ def update_file_dropdown(selected_site, selected_db):
 #     return options, default_value
 
 
-# CALLBACK 3 : Generation des blocs
+# Generation des blocs
 @dash.callback(
     Output('accordion-container', 'children'),
     Output('sensors-message', 'children'),
@@ -182,10 +212,9 @@ def update_file_dropdown(selected_site, selected_db):
     Input('dd-files-compare', 'value'),
     State('dd-site-compare', 'value'),
 )
-@db.chrono_callback
 def generate_pair_blocks(selected_group, selected_files, selected_site):
     if not selected_files or not selected_group or not selected_site:
-        return [], "Selectionnez vos fichiers et un groupe."
+        return [], "Select your files and a group."
 
     housing = selected_site.split('_')[0]
     pairs = db.get_comparable_pairs_for_group(selected_group, selected_files, housing)
@@ -195,7 +224,7 @@ def generate_pair_blocks(selected_group, selected_files, selected_site):
         print(f"[comparison] pair: {pair['label']} -> channels={pair['channels']}")
 
     if not pairs:
-        return [], f"Aucune donnee trouvee pour le groupe '{selected_group}' dans les fichiers selectionnes."
+        return [], f"No data found for group '{selected_group}' in the selected files."
 
     blocks = []
     for pair in pairs:
@@ -210,57 +239,67 @@ def generate_pair_blocks(selected_group, selected_files, selected_site):
 
         default_values = [opt['value'] for opt in options]
 
-        block = html.Div([
-            html.Div([
-                html.Details([
-                    html.Summary(f"📂 {pair_title}", style={
-                        'fontWeight': 'bold', 
-                        'cursor': 'pointer',
-                        'marginBottom': '5px',
-                        'outline': 'none',
-                        'fontSize': '14px'
-                    }),
-                    
-                    html.Div([
-                        html.P(pair['description'], style={'fontStyle': 'italic', 'fontSize': '11px', 'color': '#666', 'marginBottom': '6px'}),
-                        dcc.Checklist(
-                            id={'type': 'pair-checklist', 'index': pair_id},
-                            options=options,
-                            value=default_values,
-                            labelStyle={'display': 'block', 'marginLeft': '10px', 'marginBottom': '4px', 'fontSize': '13px'} 
-                        )
-                    ], style={'marginBottom': '10px'})
-                ], open=True)
-            ], style={
-                'width': '280px',
-                'flexShrink': 0,
-                'padding': '10px',
-                'borderRight': '1px solid #ddd',
-                'backgroundColor': '#ffffff'
+        block = html.Details([
+            
+            # 1. LE BOUTON ACCORDÉON 
+            html.Summary(f"📂 {pair_title}", style={
+                'fontWeight': 'bold', 
+                'cursor': 'pointer',
+                'padding': '10px 15px',
+                'backgroundColor': '#e9ecef',
+                'borderBottom': '1px solid #ddd',
+                'outline': 'none',
+                'fontSize': '14px'
             }),
             
-            html.Div(
-                children=[
-                    dcc.Graph(
-                        id={'type': 'pair-graph', 'index': pair_id},
-                        style={'height': '650px'}
+            # 2. LE CONTENU 
+            html.Div([
+                
+                # Colonne Gauche (Checklist)
+                html.Div([
+                    html.P(pair['description'], style={'fontStyle': 'italic', 'fontSize': '11px', 'color': '#666', 'marginBottom': '6px'}),
+                    dcc.Checklist(
+                        id={'type': 'pair-checklist', 'index': pair_id},
+                        options=options,
+                        value=default_values,
+                        labelStyle={'display': 'block', 'marginLeft': '10px', 'marginBottom': '4px', 'fontSize': '13px'} 
                     )
-                ], 
-                style={
-                    'flexGrow': 1,
-                    'minWidth': '0',
-                    'padding': '10px'
-                }
-            )
+                ], style={
+                    'width': '280px',
+                    'flexShrink': 0,
+                    'padding': '10px',
+                    'borderRight': '1px solid #ddd',
+                    'backgroundColor': '#ffffff'
+                }),
+                
+                # Colonne Droite (Graphique)
+                html.Div(
+                    children=[
+                        dcc.Graph(
+                            id={'type': 'pair-graph', 'index': pair_id},
+                            style={'height': '650px'}
+                        )
+                    ], 
+                    style={
+                        'flexGrow': 1,
+                        'minWidth': '0',
+                        'padding': '10px'
+                    }
+                )
+                
+            ], style={
+                'display': 'flex',
+                'flexDirection': 'row',
+                'backgroundColor': '#f8f9fa'
+            })
             
-        ], style={
-            'display': 'flex',
-            'flexDirection': 'row',
+        ], open=True, style={
             'border': '1px solid #007bff',
             'borderRadius': '8px',
             'marginBottom': '20px',
             'boxShadow': '0 2px 4px rgba(0,0,0,0.05)',
-            'backgroundColor': '#f8f9fa'
+            'overflow': 'hidden',
+            'backgroundColor': '#ffffff'
         })
         
         blocks.append(block)
@@ -268,7 +307,7 @@ def generate_pair_blocks(selected_group, selected_files, selected_site):
     return blocks, ""
 
 
-# CALLBACK NOUVEAU : Calcul centralisé des décalages temporels
+# Calcul centralisé des décalages temporels 
 @dash.callback(
     Output('sync-offsets-store', 'data'),
     Output('sync-offsets-display', 'children'),
@@ -278,57 +317,115 @@ def generate_pair_blocks(selected_group, selected_files, selected_site):
 @db.chrono_callback
 def calculate_all_offsets(selected_files, selected_site):
     if not selected_files or not selected_site:
-        return {}, "Aucun fichier sélectionné pour la synchronisation."
+        return {}, "No files selected for synchronization."
     
     housing = selected_site.split('_')[0]
     
-    # 1. Construire le Master Pupitre pour le T0
-    df_pupitres_list = []
-    for f in selected_files:
-        if f.endswith('.txt'):
-            df_ref = db.get_group_dataframe(f, housing, 'Courants_Alimentations')
-            if df_ref is not None and not df_ref.empty:
-                df_pupitres_list.append(df_ref.copy())
+    # 1. Identifier le GROUPE de fichiers Maîtres
+    overview_files = [f for f in selected_files if 'overview' in f.lower()]
     
-    if not df_pupitres_list:
-        return {}, "En attente d'un fichier Pupitre (horloge maître)..."
+    if overview_files:
+        master_files = overview_files
+    else:
+        # S'il n'y a pas d'Overview, les fichiers Pupitres deviennent les maîtres
+        pupitres = [f for f in selected_files if f.endswith('.txt')]
+        master_files = pupitres if pupitres else [selected_files[0]]
         
-    df_pupitre_master = pd.concat(df_pupitres_list).sort_values(by='timestamp').reset_index(drop=True)
-    t0_absolu = df_pupitre_master['timestamp'].min()
+    # 2. CONSTRUIRE LA TIMELINE CONTINUE DU MAÎTRE 
+    df_master_list = []
+    for f in master_files:
+        df_part = db.get_group_dataframe(f, housing, 'Courants_Alimentations')
+        if df_part is not None and not df_part.empty:
+            df_master_list.append(df_part)
+            
+    if not df_master_list:
+        return {}, "Waiting for reference data..."
+        
+    # On colle tous les morceaux pour faire une chronologie géante
+    df_master = pd.concat(df_master_list).sort_values(by='timestamp').reset_index(drop=True)
+    t0_absolu = df_master['timestamp'].min()
     
-    # Préparation du dictionnaire de stockage
-    # On convertit le T0 en texte ISO pour pouvoir le passer dans dcc.Store (JSON)
+    # Identifier la colonne pour la fonction mathématique
+    col_master = 'Idcct1' if master_files[0].endswith('.txt') else 'Courant_A1'
+    
     sync_data = {'offsets': {}, 't0_absolu': t0_absolu.isoformat()}
     
-    # Préparation de l'affichage HTML
     display_elements = [
-        html.H6("Synchronisation Temporelle", style={'marginBottom': '10px', 'fontWeight': 'bold'})
+        html.H6("Time Synchronization", style={'marginBottom': '10px', 'fontWeight': 'bold'}),
+        html.Div("Reference : " + ", ".join(master_files), style={'fontWeight': 'bold', 'color': '#007bff', 'marginBottom': '10px', 'wordWrap': 'break-word'})
     ]
     
-    # 2. Calculer le lag unique pour chaque PigBrother
+    # 3. Calculer le lag de chaque fichier cible par rapport à la chronologie géante
     for f in selected_files:
-        if f.endswith('.tdms'):
-            df_pb_ref = db.get_group_dataframe(f, housing, 'Courants_Alimentations')
-            if df_pb_ref is not None and not df_pb_ref.empty:
-                lag = db.get_lag(
-                    df_pupitre_master, df_pb_ref, 
-                    column_current_pupitre='Idcct1', 
-                    column_current_pigbrother='Courant_A1'
-                )
-                sync_data['offsets'][f] = lag
+        # A. Les fichiers qui composent le maître ne bougent pas
+        if f in master_files:
+            sync_data['offsets'][f] = 0.0  
+            display_elements.append(html.Div([
+                html.Span(f"{f} : ", style={'fontWeight': 'bold'}),
+                html.Span("0.000 s (T0)", style={'color': '#007bff'})
+            ], style={'fontSize': '14px', 'marginBottom': '4px'}))
+            continue
+            
+        # On ignore le calcul complexe pour les fichiers d'événements
+        file_type = classify_pigbrother_file(f)
+        if file_type in ['default', 'spike', 'trigger', 'archive']:
+            sync_data['offsets'][f] = 0.0  # Pas de lag calculé
+            display_elements.append(html.Div([
+                html.Span(f"{f} : ", style={'fontWeight': 'bold'}),
+                html.Span("0.000 s", style={'color': '#17a2b8'}) # Bleu cyan pour différencier
+            ], style={'fontSize': '14px', 'marginBottom': '4px'}))
+            continue
+
+        # C. Calcul normal pour les autres fichiers (Pupitres, Archives classiques...)
+        df_target = db.get_group_dataframe(f, housing, 'Courants_Alimentations')
+        if df_target is not None and not df_target.empty:
+            col_target = 'Idcct1' if f.endswith('.txt') else 'Courant_A1'
+            
+            lag = db.get_lag(
+                df_pupitre=df_master, 
+                df_pb=df_target, 
+                column_current_pupitre=col_master, 
+                column_current_pigbrother=col_target
+            )
+            
+            sync_data['offsets'][f] = lag
+            
+            display_elements.append(html.Div([
+                html.Span(f"{f} : ", style={'fontWeight': 'bold'}),
+                html.Span(f"{lag:.3f} s", style={'color': '#28a745' if lag == 0 else '#dc3545'})
+            ], style={'fontSize': '14px', 'marginBottom': '4px'}))
+
+            try:
+                # 1. Utiliser le temps du maître comme référence
+                t_ref = df_master['timestamp'].astype('int64') / 10**9
+                y_ref = df_master[col_master].values
                 
-                # Ajout de la ligne visuelle sur le site
-                display_elements.append(html.Div([
-                    html.Span(f"{f} : ", style={'fontWeight': 'bold'}),
-                    html.Span(f"{lag:.3f} s", style={'color': '#28a745' if lag == 0 else '#dc3545'})
-                ], style={'fontSize': '14px', 'marginBottom': '4px'}))
+                # 2. Utiliser le temps de la cible
+                t_target = df_target['timestamp'].astype('int64') / 10**9
+                y_target = df_target[col_target].values
+                
+                # 3. Interpoler la cible sur la base de temps du maître (avec le lag)
+                # Cela aligne les signaux et les met à la même dimension
+                y_sec_aligned = np.interp(t_ref, t_target + lag, y_target, left=np.nan, right=np.nan)
+                y_sec_unaligned = np.interp(t_ref, t_target, y_target, left=np.nan, right=np.nan)
+                
+                # 4. Calcul (evaluate_metrics gère les nan via nanmean/nanvar)
+                results = evaluate_metrics(y_ref, y_sec_unaligned, y_sec_aligned)
+                
+                generate_metrics_report(
+                    file_ref=master_files[0], 
+                    sensor_ref=col_master,
+                    file_sec=f,               
+                    sensor_sec=col_target,
+                    results=results,
+                    lag_seconds=lag
+                )
+            except Exception as e:
+                print(f"[metrics] Erreur rapport pour {f} : {e}")
     
-    if not sync_data['offsets']:
-        display_elements.append(html.Div("Aucun fichier PigBrother à décaler.", style={'fontSize': '14px'}))
-        
     return sync_data, display_elements
 
-# CALLBACK 4 : Trace unifie avec Heritage du Zoom (AVEC SUBPLOTS AVANT/APRES VIA FONCTION EXTERNE)
+# Création d'un graphique unique pour chaque paire de capteurs sélectionnée
 @dash.callback(
     Output({'type': 'pair-graph', 'index': MATCH}, 'figure'),
 
@@ -348,6 +445,7 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
     if not selected_pair_channels or not selected_files or not selected_site:
         return go.Figure()
 
+    # --- 1. Gestion du Zoom en mémoire ---
     maintain_zoom = False
     triggered_id = ctx.triggered_id
     if triggered_id == 'comp-method-selector' or (isinstance(triggered_id, dict) and triggered_id.get('type') == 'pair-checklist'):
@@ -357,11 +455,15 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
     if maintain_zoom and all_relayout_data:
         for relayout in all_relayout_data:
             if relayout:
-                if 'xaxis.range[0]' in relayout:
-                    x_range = [relayout['xaxis.range[0]'], relayout['xaxis.range[1]']]
-                    break
-                elif 'xaxis.range' in relayout:
-                    x_range = [relayout['xaxis.range'][0], relayout['xaxis.range'][1]]
+                for key, value in relayout.items():
+                    if key.startswith('xaxis') and key.endswith('.range[0]'):
+                        axis_name = key.split('.')[0]
+                        x_range = [value, relayout.get(f'{axis_name}.range[1]')]
+                        break
+                    elif key.startswith('xaxis') and key.endswith('.range'):
+                        x_range = [value[0], value[1]]
+                        break
+                if x_range:
                     break
 
     pupitre_sensors = [val.split(':')[1] for val in selected_pair_channels if val.startswith('pupitre:')]
@@ -373,20 +475,9 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
     t0_str = sync_data.get('t0_absolu')
     t0_absolu = pd.to_datetime(t0_str) if t0_str else None
 
-    # ---  CONTENEUR POUR STOCKER LES DONNÉES DES MÉTRIQUES ---
-    metrics_data = {
-        'ref_file': None, 'ref_y': None,
-        'sec_file': None, 'sec_y_unaligned': None, 'sec_y_aligned': None
-    }
-
-    # --- CRÉATION DU CONTENEUR PRINCIPAL ---
-    main_fig = make_subplots(
-        rows=2, cols=1, 
-        shared_xaxes=True, 
-        vertical_spacing=0.1,
-        subplot_titles=("Signaux Bruts (Avant alignement)", "Signaux Synchronisés (Après alignement)")
-    )
-
+    # --- 2. PREPARATION DU PAQUET DE DONNÉES ---
+    files_data = []
+    
     for file in selected_files:
         is_pupitre = file.endswith('.txt')
         sensors_to_plot = pupitre_sensors if is_pupitre else pigbrother_sensors
@@ -396,112 +487,66 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
 
         try:
             mrun = db.load_mrun_object(file, housing)
-            if mrun is None:
-                continue
-
             df_base = db.get_group_dataframe(file, housing, selected_group)
+            
             if df_base is None or df_base.empty:
                 continue
-            
-            # --- 1. PRÉPARATION DU DF BRUT  ---
-            df_unaligned = df_base.copy()
-            if xaxis_type == 't' and t0_absolu is not None:
-                df_unaligned['t'] = (df_unaligned['timestamp'] - t0_absolu).dt.total_seconds()
 
-            # --- 2. PRÉPARATION DU DF ALIGNÉ ---
-            df_aligned = df_base.copy()
-            if not is_pupitre and file in offsets:
-                df_aligned['timestamp'] = df_aligned['timestamp'] + pd.to_timedelta(offsets[file], unit='s')
-            
-            if xaxis_type == 't' and t0_absolu is not None:
-                df_aligned['t'] = (df_aligned['timestamp'] - t0_absolu).dt.total_seconds()
+            # Calcul du t relatif si besoin
+            if xaxis_type == 't' and t0_absolu is not None and 't' not in df_base.columns:
+                df_base['t'] = (df_base['timestamp'] - t0_absolu).dt.total_seconds()
 
-            # --- EXTRACTION DES VECTEURS POUR LES MÉTRIQUES ---
-            # On prend la première colonne sélectionnée pour le calcul
-            col_metric = sensors_to_plot[0] 
-            if is_pupitre:
-                metrics_data['ref_file'] = file
-                metrics_data['ref_y'] = df_aligned[col_metric].values 
-            else:
-                metrics_data['sec_file'] = file
-                metrics_data['sec_y_unaligned'] = df_unaligned[col_metric].values
-                metrics_data['sec_y_aligned'] = df_aligned[col_metric].values
+            #On applique le lag stocké de manière universelle
+            lag_val = offsets.get(file, 0.0)
 
-            # --- 3. APPEL DE LA FONCTION CRÉANT LES TRACES ---
-            sub_fig = create_comparison_plot(
-                df_unaligned=df_unaligned,
-                df_aligned=df_aligned,
-                x_col=xaxis_type,
-                y_cols=sensors_to_plot,
-                method=selected_method,
-                filename=file,
-                mrun=mrun,
-                group_name=selected_group
-            )
-
-            # --- 4. TRANSFERT DES TRACES DANS LE SUBPLOT PRINCIPAL ---
-            for trace in sub_fig.data:
-                row_idx = 1 if getattr(trace, 'yaxis', 'y') in [None, 'y', 'y1'] else 2
-                trace.name = f"{file} - {trace.name}"
-                trace.legendgroup = file
-                main_fig.add_trace(trace, row=row_idx, col=1)
-
+            files_data.append({
+                'file': file,
+                'df': df_base,
+                'is_pupitre': is_pupitre,
+                'sensors': sensors_to_plot,
+                'lag': lag_val,
+                'mrun': mrun,
+                'group_name': selected_group
+            })
         except Exception as e:
-            print(f"Erreur lors du tracé du fichier {file}: {e}")
+            print(f"Erreur chargement {file}: {e}")
 
-    # --- GÉNÉRATION DU RAPPORT DE MÉTRIQUES ---
-    if metrics_data['ref_y'] is not None and metrics_data['sec_y_aligned'] is not None:
-        try:
-            results = evaluate_mean(
-                metrics_data['ref_y'], 
-                metrics_data['sec_y_unaligned'], 
-                metrics_data['sec_y_aligned']
-            )
-            report_path = generate_metrics_report(
-                metrics_data['ref_file'], 
-                metrics_data['sec_file'], 
-                results
-            )
-            print(f"Rapport généré avec succès : {report_path}")
-        except Exception as e:
-            print(f"Erreur lors de la génération des métriques: {e}")
-
-    # --- 5. MISE EN FORME GLOBALE ---
-    main_fig.update_layout(
-        title=f"Comparaison Avant/Après (Algo: {selected_method})", 
-        uirevision='constant',
-        margin=dict(t=50, b=20, l=20, r=20),
-        hovermode="x unified",
-        template="plotly_white",
-        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
+    # --- 3. CREATION UNIQUE DE LA FIGURE ---
+    fig = create_comparison_plot(
+        files_data=files_data,
+        x_col=xaxis_type,
+        method=selected_method,
+        t0_absolu=t0_absolu
     )
-    
+
+    # Re-application du zoom conservé si nécessaire
     if x_range is not None:
-        main_fig.update_layout(
-            xaxis=dict(range=x_range, autorange=False)
+        fig.update_layout(
+            xaxis_range=x_range, 
+            xaxis_autorange=False
         )
 
-    return main_fig
+    return fig
 
-# CALLBACK 5 : Synchronisation du zoom a la souris avec sécurité Anti-Boucle
+# Synchronisation du zoom entre tous les accordéons
 @dash.callback(
     Output({'type': 'pair-graph', 'index': ALL}, 'figure', allow_duplicate=True),
-    Output('zoom-state', 'data'),  # <-- NOUVEL OUTPUT
+    Output('zoom-state', 'data'),  
     Input({'type': 'pair-graph', 'index': ALL}, 'relayoutData'),
     State({'type': 'pair-graph', 'index': ALL}, 'id'),
-    State('zoom-state', 'data'),   # <-- NOUVEAU STATE
+    State('zoom-state', 'data'),   
     prevent_initial_call=True
 )
-@db.chrono_callback
 def sync_zoom_comparison(relayout_data_list, graph_ids, current_zoom):
     triggered_id = ctx.triggered_id
-    if not triggered_id:
+    if not triggered_id or not graph_ids:
         raise PreventUpdate
 
-    if triggered_id not in graph_ids:
+    try:
+        trigger_index = graph_ids.index(triggered_id)
+        relayout_data = relayout_data_list[trigger_index]
+    except ValueError:
         raise PreventUpdate
-    trigger_index = graph_ids.index(triggered_id)
-    relayout_data = relayout_data_list[trigger_index]
 
     if not relayout_data:
         raise PreventUpdate
@@ -509,25 +554,30 @@ def sync_zoom_comparison(relayout_data_list, graph_ids, current_zoom):
     x_min, x_max = None, None
     autoscale = False
 
-    # On ne considère un "vrai" zoom que si les clés sont exactement celles d'un drag utilisateur
-    keys = set(relayout_data.keys())
-    if {'xaxis.range[0]', 'xaxis.range[1]'}.issubset(keys):
-        x_min = relayout_data['xaxis.range[0]']
-        x_max = relayout_data['xaxis.range[1]']
-    elif 'xaxis.range' in relayout_data:
-        x_min, x_max = relayout_data['xaxis.range']
-    elif keys == {'xaxis.autorange', 'yaxis.autorange'} or keys == {'xaxis.autorange'}:
-        autoscale = True
-    else:
-        # Événement "bruit" (autosize, redraw complet déclenché par Dash) -> on ignore
+    # 1. Extraction des coordonnées du zoom X
+    for key, value in relayout_data.items():
+        if key.startswith('xaxis') and key.endswith('.range[0]'):
+            axis_name = key.split('.')[0]
+            x_min = value
+            x_max = relayout_data.get(f'{axis_name}.range[1]')
+            break
+        elif key.startswith('xaxis') and key.endswith('.range'):
+            x_min, x_max = value[0], value[1]
+            break
+        elif key.startswith('xaxis') and key.endswith('.autorange'):
+            autoscale = True
+            break
+
+    if x_min is None and not autoscale:
         raise PreventUpdate
 
     new_state = {'autoscale': autoscale, 'range': [x_min, x_max] if not autoscale else None}
 
-    # VERROU ANTI-BOUCLE INFINIE : si l'état ne change pas réellement, on stoppe la propagation
+    # Anti-boucle infinie
     if new_state == current_zoom:
         raise PreventUpdate
 
+    # 2. Application du Patch sur tous les autres graphiques
     patches = []
     for g_id in graph_ids:
         if g_id == triggered_id:
@@ -538,6 +588,7 @@ def sync_zoom_comparison(relayout_data_list, graph_ids, current_zoom):
         
         if autoscale:
             patched_fig['layout']['xaxis']['autorange'] = True
+            patched_fig['layout']['yaxis']['autorange'] = True
         else:
             patched_fig['layout']['xaxis']['range'] = [x_min, x_max]
             patched_fig['layout']['xaxis']['autorange'] = False

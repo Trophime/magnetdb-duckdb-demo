@@ -1,105 +1,108 @@
+import numpy as np
+import scipy.signal as sg
 import os
 from datetime import datetime
-
-import numpy as np
-
-REPORTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "reports")
+import pandas as pd
 
 
-def evaluate_mean(ref_y, sec_y_unaligned, sec_y_aligned):
-    """Compare the mean of a reference signal against a secondary signal.
+OUTPUT_DIR = "/workspaces/2026-m1-hifimagnet/stage/dashboard/metrics_reports"  
 
-    Computes the mean of each series and the absolute/relative difference
-    between the reference mean and the secondary mean, before and after
-    time alignment. Comparing scalar means (rather than a point-by-point
-    error) avoids issues from ``ref_y`` and ``sec_y_*`` having different
-    lengths, which happens when pupitre and pigbrother files are sampled
-    at different rates.
+def get_mean(signal):
+    return np.nanmean(signal)
 
-    Parameters
-    ----------
-    ref_y : :class:`~numpy.ndarray`
-        Reference signal values.
-    sec_y_unaligned : :class:`~numpy.ndarray`
-        Secondary signal values before time alignment.
-    sec_y_aligned : :class:`~numpy.ndarray`
-        Secondary signal values after time alignment.
+def get_variance(signal):
+    return np.nanvar(signal)
 
-    Returns
-    -------
-    dict
-        Keys ``ref_mean``, ``sec_mean_unaligned``, ``sec_mean_aligned``,
-        ``abs_diff_unaligned``, ``abs_diff_aligned``, ``rel_diff_unaligned``
-        [%], ``rel_diff_aligned`` [%].
+def get_rmse(y_ref, y_sec):
+    """Calculate the Root Mean Square Error between two signals of the same size."""
+    return np.sqrt(np.nanmean((y_ref - y_sec)**2))
+
+def get_mae(y_ref, y_sec):
+    """Calculate the Mean Absolute Error between two signals of the same size."""
+    return np.nanmean(np.abs(y_ref - y_sec))
+
+def get_pearson_correlation(y_ref, y_sec):
+    """Calculate the Pearson correlation coefficient between two signals of the same size."""
+    df = pd.DataFrame({'Ref': y_ref, 'Sec': y_sec})
+    return df['Ref'].corr(df['Sec'])
+
+
+def evaluate_metrics(y_ref, y_sec_unaligned, y_sec_aligned):
     """
-    ref_mean = float(np.nanmean(ref_y))
-    sec_mean_unaligned = float(np.nanmean(sec_y_unaligned))
-    sec_mean_aligned = float(np.nanmean(sec_y_aligned))
-
-    abs_diff_unaligned = abs(sec_mean_unaligned - ref_mean)
-    abs_diff_aligned = abs(sec_mean_aligned - ref_mean)
-
-    if ref_mean != 0:
-        rel_diff_unaligned = 100 * abs_diff_unaligned / abs(ref_mean)
-        rel_diff_aligned = 100 * abs_diff_aligned / abs(ref_mean)
-    else:
-        rel_diff_unaligned = float("nan")
-        rel_diff_aligned = float("nan")
-
+    Compare results of the mean of the Reference signal with the Secondary signal, before and after applying the lag.
+    """
     return {
-        "ref_mean": ref_mean,
-        "sec_mean_unaligned": sec_mean_unaligned,
-        "sec_mean_aligned": sec_mean_aligned,
-        "abs_diff_unaligned": abs_diff_unaligned,
-        "abs_diff_aligned": abs_diff_aligned,
-        "rel_diff_unaligned": rel_diff_unaligned,
-        "rel_diff_aligned": rel_diff_aligned,
+        "Mean": {
+            "Reference": get_mean(y_ref),
+            "Before Alignment": get_mean(y_sec_unaligned),
+            "After Alignment": get_mean(y_sec_aligned)
+        },
+        "Variance": {
+            "Reference": get_variance(y_ref),
+            "Before Alignment": get_variance(y_sec_unaligned),
+            "After Alignment": get_variance(y_sec_aligned)
+        },
+        "Distance_RMSE": {
+            "Before Alignment": get_rmse(y_ref, y_sec_unaligned),
+            "After Alignment": get_rmse(y_ref, y_sec_aligned)
+        },
+        "Distance_MAE": {
+            "Before Alignment": get_mae(y_ref, y_sec_unaligned),
+            "After Alignment": get_mae(y_ref, y_sec_aligned)
+        },
+        "Pearson_Correlation": {
+            "Before Alignment": get_pearson_correlation(y_ref, y_sec_unaligned),
+            "After Alignment": get_pearson_correlation(y_ref, y_sec_aligned)
+        }
     }
 
-
-def generate_metrics_report(ref_file, sec_file, results):
-    """Write a plain-text mean-comparison report to disk.
-
-    Parameters
-    ----------
-    ref_file : str
-        Path or name of the reference file.
-    sec_file : str
-        Path or name of the secondary file.
-    results : dict
-        Output of :func:`evaluate_mean`.
-
-    Returns
-    -------
-    str
-        Absolute path to the written report file.
+def generate_metrics_report(file_ref, sensor_ref, file_sec, sensor_sec, results, lag_seconds, output_dir=OUTPUT_DIR):
     """
-    os.makedirs(REPORTS_DIR, exist_ok=True)
+    Creates a text file in VSCode containing the observations.
+    """
 
-    ref_basename = os.path.splitext(os.path.basename(ref_file))[0]
-    sec_basename = os.path.splitext(os.path.basename(sec_file))[0]
-    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-    report_path = os.path.join(
-        REPORTS_DIR, f"comparison_{ref_basename}_vs_{sec_basename}_{timestamp}.txt"
-    )
+    # Creation of the folder if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # File name with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_name = f"metrics_{file_ref}_vs_{file_sec}_{timestamp}.txt"
+    complete_path = os.path.join(output_dir, file_name)
+    
+    # Writing the results
+    with open(complete_path, "w", encoding="utf-8") as f:
+        f.write("=== ALIGNEMENT REPORT ===\n")
+        f.write(f"Reference file (Pupitre)    : {file_ref}\n")
+        f.write(f"  -> Mesured captor         : {sensor_ref}\n")
+        f.write(f"Secondary file (PigBrother) : {file_sec}\n")
+        f.write(f"  -> Mesured captor         : {sensor_sec}\n")
+        f.write(f"  -> Applied gap            : {lag_seconds:.3f} secondes\n\n")
 
-    lines = [
-        "Metrics report",
-        "==============",
-        f"Reference file : {ref_file}",
-        f"Secondary file : {sec_file}",
-        "",
-        f"Reference mean            : {results['ref_mean']:.6g}",
-        f"Secondary mean (unaligned): {results['sec_mean_unaligned']:.6g}",
-        f"Secondary mean (aligned)  : {results['sec_mean_aligned']:.6g}",
-        "",
-        f"Absolute diff (unaligned) : {results['abs_diff_unaligned']:.6g}",
-        f"Absolute diff (aligned)   : {results['abs_diff_aligned']:.6g}",
-        f"Relative diff (unaligned) : {results['rel_diff_unaligned']:.2f} %",
-        f"Relative diff (aligned)   : {results['rel_diff_aligned']:.2f} %",
-    ]
+        f.write("--- MEAN ---\n")
+        f.write("-" * 45 + "\n")
+        f.write(f"Mean Reference              : {results['Mean']['Reference']:.4f}\n")
+        f.write(f"Mean Secondary (Raw)        : {results['Mean']['Before Alignment']:.4f}\n")
+        f.write(f"Mean Secondary (Lag)        : {results['Mean']['After Alignment']:.4f}\n")
+        f.write("-" * 45 + "\n\n")
 
-    with open(report_path, "w") as f:
-        f.write("\n".join(lines) + "\n")
+        f.write("--- VARIANCE ---\n")
+        f.write("-" * 45 + "\n")
+        f.write(f"Reference                   : {results['Variance']['Reference']:.4e}\n")
+        f.write(f"Secondary (Raw)             : {results['Variance']['Before Alignment']:.4e}\n")
+        f.write(f"Secondary (Lag)             : {results['Variance']['After Alignment']:.4e}\n")
+        f.write("-" * 45 + "\n\n")
 
-    return report_path
+        f.write("--- DISTANCE TO REFERENCE ---\n")
+        f.write("-" * 45 + "\n")
+        f.write(f"RMSE Before Alignment       : {results['Distance_RMSE']['Before Alignment']:.4f}\n")
+        f.write(f"RMSE After Alignment        : {results['Distance_RMSE']['After Alignment']:.4f}\n")
+        f.write(f"MAE Before Alignment        : {results['Distance_MAE']['Before Alignment']:.4f}\n")
+        f.write(f"MAE After Alignment         : {results['Distance_MAE']['After Alignment']:.4f}\n")
+        f.write("-" * 45 + "\n\n")
+
+        f.write(f"SHAPE SIMILARITY (Pearson Correlation)\n")
+        f.write(f"Before Alignment              : {results['Pearson_Correlation']['Before Alignment']:.4f}\n")
+        f.write(f"After Alignment               : {results['Pearson_Correlation']['After Alignment']:.4f}\n")
+        
+    print(f"[metrics.py] Report generated: {complete_path}")
+    return complete_path

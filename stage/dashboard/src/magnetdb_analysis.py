@@ -5,7 +5,7 @@ import functools
 from python_magnetrun.MagnetRun import load_mrun
 from python_magnetrun.field_defs import match_channels_across_formats
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import numpy as np
 import json
 import time
@@ -20,6 +20,7 @@ DB_PATH = os.environ.get(
 # Répertoire scanné pour lister les bases sélectionnables dans le dropdown
 DB_DIR = os.environ.get("MAGNETDB_DB_DIR", os.path.dirname(DB_PATH))
 
+print(f"Using DuckDB database: {DB_PATH}")
 print(f"Using DuckDB database: {DB_PATH}")
 
 def get_available_databases(db_dir=None):
@@ -53,6 +54,15 @@ def get_all_tables(db_path=None):
             .df()["table_name"]
             .tolist()
         )
+
+
+_SITE_DATE_RE = re.compile(r"_A(\d{6})_\d{2}$")
+
+
+def _site_sort_key(site_name):
+    """Sort key extracting the YYMMDD date from a ``housing_AYYMMDD_NN`` site name."""
+    match = _SITE_DATE_RE.search(site_name)
+    return match.group(1) if match else site_name
 
 
 def get_all_sites(db_path=None):
@@ -129,8 +139,7 @@ def get_group_dataframe(filename, housing, group_name):
 
 def parse_magnet_filename(filename):
     """
-    Extrait et convertit la date et l'heure d'un nom de fichier en objet datetime (sans les secondes).
-    Supporte les formats Pupitre (.txt) et PigBrother (.tdms).
+    Extracts the datetime from a Pupitre or PigBrother filename.
     Returns datetime object ou None si aucun format ne correspond.
     """
     # 1. Format Pupitre : "2025.01.24 - 10:30:29.txt"
@@ -143,7 +152,6 @@ def parse_magnet_filename(filename):
 
     # 2. Format PigBrother : "M9_Archive_251202-1430.tdms"
     elif filename.endswith(".tdms"):
-        # CORRECTION : Ajout des parenthèses autour du 3ème \d{2} pour capturer le jour !
         match = re.search(r"(\d{2})(\d{2})(\d{2})-(\d{2})(\d{2})", filename)
         if match:
             year_short, month, day, hour, minute = match.groups()
@@ -154,9 +162,9 @@ def parse_magnet_filename(filename):
     return None
 
 
-def check_same_date(file_pupitre, file_pigbrother):
+def check_same_date(file_pupitre, file_pigbrother, tol=5):
     """
-    Vérifie si un fichier Pupitre et un fichier PigBrother proviennent du même run (même minute).
+    Check if the Pupitre and PigBrother files are within a certain tolerance in minutes.
     """
     dt_pupitre = parse_magnet_filename(file_pupitre)
     dt_pigbrother = parse_magnet_filename(file_pigbrother)
@@ -164,18 +172,22 @@ def check_same_date(file_pupitre, file_pigbrother):
     if dt_pupitre is None or dt_pigbrother is None:
         return False
 
+    time_lag = abs(dt_pupitre - dt_pigbrother)
+
+    tol_limit = timedelta(minutes=tol)
+    
     # Comparaison directe des objets datetime (Année, Mois, Jour, Heure, Minute)
-    return dt_pupitre == dt_pigbrother
+    return time_lag <= tol_limit
 
 
 def load_json_config(filepath):
-    """Charge un fichier JSON de configuration de manière sécurisée."""
+    """Load a JSON configuration file and return its content as a dictionary."""
     if os.path.exists(filepath):
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Erreur lors de la lecture du fichier JSON {filepath}: {e}")
+            print(f"Error loading JSON config {filepath}: {e}")
     return {}
 
 
@@ -264,7 +276,7 @@ def get_lag(df_pupitre, df_pb, column_current_pupitre='Idcct1', column_current_p
 
 
 def chrono_callback(func):
-    """Décorateur pour mesurer le temps d'exécution d'une fonction."""
+    """Decorator to measure the execution time of a function."""
 
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -272,7 +284,7 @@ def chrono_callback(func):
         result = func(*args, **kwargs)
         end_time = time.time()
         temps_ms = (end_time - start_time) * 1000
-        print(f"Callback '{func.__name__}' exécuté en {temps_ms:.2f} ms")
+        print(f"Callback '{func.__name__}' executed in {temps_ms:.2f} ms")
         return result
 
     return wrapper

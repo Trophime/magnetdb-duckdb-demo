@@ -70,7 +70,7 @@ DEFAULT_BINS: list[tuple[float, float]] = [
     (40.0, 45.0),
 ]
 
-SITE_CHANNELS = ["Pmagnet", "Ptot", "tsb", "teb", "debitbrut"]
+SITE_CHANNELS = ["Field", "Pmagnet", "Ptot", "tsb", "teb", "debitbrut"]
 
 # ---------------------------------------------------------------------------
 # File loading  (identical logic to compute_op_stats)
