@@ -100,9 +100,8 @@ layout = html.Div([
     ], className="g-4")
 ])
 
-# --- 2. CALLBACKS ---
 
-# CALLBACK 1 : Chargement des fichiers du site synchronises
+# Chargement des fichiers du site synchronises
 @dash.callback(
     Output('dd-site-compare', 'options'),
     Input('dd-database', 'value')
@@ -149,12 +148,11 @@ def update_file_dropdown(selected_site, selected_db):
             })
 
     # 2. Trier les groupes chronologiquement par date de run
-    # (du plus ancien au plus récent)
     matched_groups.sort(key=lambda g: g['date'] if g['date'] is not None else pd.Timestamp.min)
 
     # 3. Construire les options Dash en plaçant Pupitre suivi immédiatement de ses PigBrother
     options = []
-    seen_values = set()  # Évite les doublons si un fichier est matché plusieurs fois
+    seen_values = set()  # Évite les doublons 
 
     for group in matched_groups:
         p_base = os.path.basename(group['p_file'])
@@ -205,7 +203,7 @@ def update_file_dropdown(selected_site, selected_db):
 #     return options, default_value
 
 
-# CALLBACK 3 : Generation des blocs
+# Generation des blocs
 @dash.callback(
     Output('accordion-container', 'children'),
     Output('sensors-message', 'children'),
@@ -213,7 +211,6 @@ def update_file_dropdown(selected_site, selected_db):
     Input('dd-files-compare', 'value'),
     State('dd-site-compare', 'value'),
 )
-@db.chrono_callback
 def generate_pair_blocks(selected_group, selected_files, selected_site):
     if not selected_files or not selected_group or not selected_site:
         return [], "Select your files and a group."
@@ -241,10 +238,9 @@ def generate_pair_blocks(selected_group, selected_files, selected_site):
 
         default_values = [opt['value'] for opt in options]
 
-        # --- NOUVELLE STRUCTURE : html.Details ENGLOBE TOUT ---
         block = html.Details([
             
-            # 1. LE BOUTON ACCORDÉON (Titre)
+            # 1. LE BOUTON ACCORDÉON 
             html.Summary(f"📂 {pair_title}", style={
                 'fontWeight': 'bold', 
                 'cursor': 'pointer',
@@ -255,7 +251,7 @@ def generate_pair_blocks(selected_group, selected_files, selected_site):
                 'fontSize': '14px'
             }),
             
-            # 2. LE CONTENU (Colonnes qui s'afficheront/disparaîtront ensemble)
+            # 2. LE CONTENU 
             html.Div([
                 
                 # Colonne Gauche (Checklist)
@@ -304,14 +300,13 @@ def generate_pair_blocks(selected_group, selected_files, selected_site):
             'overflow': 'hidden',
             'backgroundColor': '#ffffff'
         })
-        # -----------------------------------------------------
         
         blocks.append(block)
         
     return blocks, ""
 
 
-# CALLBACK NOUVEAU : Calcul centralisé des décalages temporels (Support Multi-fichiers continus)
+# Calcul centralisé des décalages temporels 
 @dash.callback(
     Output('sync-offsets-store', 'data'),
     Output('sync-offsets-display', 'children'),
@@ -370,13 +365,13 @@ def calculate_all_offsets(selected_files, selected_site):
             ], style={'fontSize': '14px', 'marginBottom': '4px'}))
             continue
             
-        # B. NOVEAU : On ignore le calcul complexe pour les fichiers d'événements
+        # On ignore le calcul complexe pour les fichiers d'événements
         file_type = classify_pigbrother_file(f)
-        if file_type in ['default', 'spike', 'trigger']:
+        if file_type in ['default', 'spike', 'trigger', 'archive']:
             sync_data['offsets'][f] = 0.0  # Pas de lag calculé
             display_elements.append(html.Div([
                 html.Span(f"{f} : ", style={'fontWeight': 'bold'}),
-                html.Span("0.000 s (Event)", style={'color': '#17a2b8'}) # Bleu cyan pour différencier
+                html.Span("0.000 s", style={'color': '#17a2b8'}) # Bleu cyan pour différencier
             ], style={'fontSize': '14px', 'marginBottom': '4px'}))
             continue
 
@@ -385,11 +380,9 @@ def calculate_all_offsets(selected_files, selected_site):
         if df_target is not None and not df_target.empty:
             col_target = 'Idcct1' if f.endswith('.txt') else 'Courant_A1'
             
-            
-            
             lag = db.get_lag(
-                df_pupitre=df_master.iloc[::50], 
-                df_pb=df_target[::50], 
+                df_pupitre=df_master, 
+                df_pb=df_target, 
                 column_current_pupitre=col_master, 
                 column_current_pigbrother=col_target
             )
@@ -403,6 +396,7 @@ def calculate_all_offsets(selected_files, selected_site):
     
     return sync_data, display_elements
 
+# Création d'un graphique unique pour chaque paire de capteurs sélectionnée
 @dash.callback(
     Output({'type': 'pair-graph', 'index': MATCH}, 'figure'),
 
@@ -473,7 +467,7 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
             if xaxis_type == 't' and t0_absolu is not None and 't' not in df_base.columns:
                 df_base['t'] = (df_base['timestamp'] - t0_absolu).dt.total_seconds()
 
-            # CHANGEMENT MAJEUR : On applique le lag stocké de manière universelle
+            #On applique le lag stocké de manière universelle
             lag_val = offsets.get(file, 0.0)
 
             files_data.append({
@@ -505,7 +499,7 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
 
     return fig
 
-# CALLBACK 5 : Synchronisation du zoom entre tous les accordéons
+# Synchronisation du zoom entre tous les accordéons
 @dash.callback(
     Output({'type': 'pair-graph', 'index': ALL}, 'figure', allow_duplicate=True),
     Output('zoom-state', 'data'),  
@@ -514,7 +508,6 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
     State('zoom-state', 'data'),   
     prevent_initial_call=True
 )
-@db.chrono_callback
 def sync_zoom_comparison(relayout_data_list, graph_ids, current_zoom):
     triggered_id = ctx.triggered_id
     if not triggered_id or not graph_ids:

@@ -120,7 +120,7 @@ def get_overview_records_for_site(site_name, db_path=None):
 
 @functools.lru_cache(maxsize=16)
 def load_mrun_object(filename, housing):
-    """Charge et retourne l'objet MagnetRun complet."""
+    """Download and return the complete MagnetRun object."""
     return load_mrun(filename=os.path.basename(filename), housing=housing)
 
 
@@ -153,8 +153,7 @@ def get_group_dataframe(filename, housing, group_name):
 
 def parse_magnet_filename(filename):
     """
-    Extrait et convertit la date et l'heure d'un nom de fichier en objet datetime (sans les secondes).
-    Supporte les formats Pupitre (.txt) et PigBrother (.tdms).
+    Extracts the datetime from a Pupitre or PigBrother filename.
     Returns datetime object ou None si aucun format ne correspond.
     """
     # 1. Format Pupitre : "2025.01.24 - 10:30:29.txt"
@@ -167,7 +166,6 @@ def parse_magnet_filename(filename):
 
     # 2. Format PigBrother : "M9_Archive_251202-1430.tdms"
     elif filename.endswith(".tdms"):
-        # CORRECTION : Ajout des parenthèses autour du 3ème \d{2} pour capturer le jour !
         match = re.search(r"(\d{2})(\d{2})(\d{2})-(\d{2})(\d{2})", filename)
         if match:
             year_short, month, day, hour, minute = match.groups()
@@ -180,7 +178,7 @@ def parse_magnet_filename(filename):
 
 def check_same_date(file_pupitre, file_pigbrother, tol=5):
     """
-    Vérifie si un fichier Pupitre et un fichier PigBrother proviennent du même run (même minute).
+    Check if the Pupitre and PigBrother files are within a certain tolerance in minutes.
     """
     dt_pupitre = parse_magnet_filename(file_pupitre)
     dt_pigbrother = parse_magnet_filename(file_pigbrother)
@@ -197,13 +195,13 @@ def check_same_date(file_pupitre, file_pigbrother, tol=5):
 
 
 def load_json_config(filepath):
-    """Charge un fichier JSON de configuration de manière sécurisée."""
+    """Load a JSON configuration file and return its content as a dictionary."""
     if os.path.exists(filepath):
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
-            print(f"Erreur lors de la lecture du fichier JSON {filepath}: {e}")
+            print(f"Error loading JSON config {filepath}: {e}")
     return {}
 
 
@@ -291,14 +289,14 @@ def get_lag(df_pupitre, df_pb, column_current_pupitre='Idcct1', column_current_p
     return lag_seconds
 
 def get_housings():
-    """Récupère la liste des Housings (ex: M9, M10) disponibles."""
+    """Get the list of distinct housings from the housing_summary table."""
     con = duckdb.connect(DB_PATH, read_only=True)
     df = con.execute("SELECT DISTINCT name FROM housing_config WHERE name IS NOT NULL").fetchdf()
     con.close()
     return df['name'].tolist()
 
 def get_pupitres_for_housing(housing):
-    """Récupère la liste des fichiers pupitre pour un housing donné."""
+    """Get the list of Pupitre files for a given housing."""
     con = duckdb.connect(DB_PATH, read_only=True)
     query = "SELECT pupitre FROM housing_summary WHERE housing = ? AND pupitre <> ''"
     df = con.execute(query, (housing,)).fetchdf()
@@ -307,8 +305,8 @@ def get_pupitres_for_housing(housing):
 
 def get_linked_files(housing, pupitre_filename):
     """
-    Récupère uniquement les fichiers associés (Overview, Archive, Default) 
-    pour un fichier pupitre précis.
+    Get only the linked files (Overview, Archive, Default) 
+    for a specific Pupitre file.
     """
     con = duckdb.connect(DB_PATH, read_only=True)
     query = """
@@ -327,7 +325,7 @@ def get_linked_files(housing, pupitre_filename):
     return None
 
 def chrono_callback(func):
-    """Décorateur pour mesurer le temps d'exécution d'une fonction."""
+    """Decorator to measure the execution time of a function."""
 
     @wraps(func)
     def wrapper(*args, **kwargs):
@@ -335,7 +333,7 @@ def chrono_callback(func):
         result = func(*args, **kwargs)
         end_time = time.time()
         temps_ms = (end_time - start_time) * 1000
-        print(f"Callback '{func.__name__}' exécuté en {temps_ms:.2f} ms")
+        print(f"Callback '{func.__name__}' executed in {temps_ms:.2f} ms")
         return result
 
     return wrapper

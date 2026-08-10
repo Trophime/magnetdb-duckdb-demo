@@ -26,7 +26,7 @@ _default_db = db.DB_PATH if db.DB_PATH in _default_db_values else (_default_db_v
 
 # Layout principal : il contient la barre de navigation ou les liens globaux
 app.layout = html.Div([
-    html.H1("Dashboard MagnetDB - Suivi LNCMI"),
+    html.H1("Dashboard MagnetDB - LNCMI monitoring"),
 
     # Sélecteur de base de données, partagé par toutes les pages
     html.Div([
@@ -49,7 +49,7 @@ app.layout = html.Div([
         )
         for page in dash.page_registry.values()
     ], style={"display": "flex", "gap": "15px", "marginBottom": "20px"}),
-    # C'est ici que le contenu de home.py (ou comparison.py) va s'injecter
+    # C'est ici que le contenu des pages sera affiché, selon la page sélectionnée
     dash.page_container
 ])
 
