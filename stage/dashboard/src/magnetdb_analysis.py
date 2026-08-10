@@ -21,7 +21,6 @@ DB_PATH = os.environ.get(
 DB_DIR = os.environ.get("MAGNETDB_DB_DIR", os.path.dirname(DB_PATH))
 
 print(f"Using DuckDB database: {DB_PATH}")
-print(f"Using DuckDB database: {DB_PATH}")
 
 def get_available_databases(db_dir=None):
     """List the DuckDB database files selectable in the database dropdown.
@@ -112,7 +111,7 @@ def get_overview_records_for_site(site_name, db_path=None):
         query = """
             SELECT filename, housing, mode, t0
             FROM overview_records
-            WHERE site_name = ?
+            WHERE site_name = ? AND merged_into IS NULL
             ORDER BY t0 NULLS LAST, filename
         """
         return conn.execute(query, [site_name]).df().to_dict("records")
@@ -273,6 +272,75 @@ def get_lag(df_pupitre, df_pb, column_current_pupitre='Idcct1', column_current_p
     lag_seconds = float(best_lag_indices * dt)
 
     return lag_seconds
+
+
+def get_housings(db_path=None):
+    """Return the list of distinct housings defined in ``housing_config``.
+
+    Parameters
+    ----------
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Housing names (e.g. ``"M9"``, ``"M10"``).
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = "SELECT DISTINCT name FROM housing_config WHERE name IS NOT NULL"
+        return conn.execute(query).df()["name"].tolist()
+
+
+def get_pupitres_for_housing(housing, db_path=None):
+    """Return the list of Pupitre files recorded for a given housing.
+
+    Parameters
+    ----------
+    housing : str
+        Housing name (e.g. ``"M9"``).
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Pupitre filenames for *housing*.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = "SELECT pupitre FROM housing_summary WHERE housing = ? AND pupitre <> ''"
+        return conn.execute(query, [housing]).df()["pupitre"].tolist()
+
+
+def get_linked_files(housing, pupitre_filename, db_path=None):
+    """Return the Overview, Archive and Default files linked to a Pupitre file.
+
+    Parameters
+    ----------
+    housing : str
+        Housing name (e.g. ``"M9"``).
+    pupitre_filename : str
+        Pupitre filename to look up in ``housing_summary``.
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    dict or None
+        Dict with ``pigbrother_file``, ``archive_file`` and ``default_file``
+        keys, or ``None`` if *pupitre_filename* has no matching row.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT
+                overview as pigbrother_file,
+                archive as archive_file,
+                "default" as default_file
+            FROM housing_summary
+            WHERE housing = ? AND pupitre = ?
+        """
+        result = conn.execute(query, [housing, pupitre_filename]).df().to_dict("records")
+    return result[0] if result else None
 
 
 def chrono_callback(func):
