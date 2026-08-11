@@ -81,6 +81,7 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | `check [--entity ...] [--name ...] [--fix]` | Validate DB contents (geometry_data coverage, magnet type consistency, file existence) | below |
 | `db create` | Create DB and initialise schema | [loading.md](docs/loading.md) |
 | `db delete [--yes]` | Delete DB file | [loading.md](docs/loading.md) |
+| `db drop-table --table TABLE [TABLE ...] [--yes] [--dry-run]` | Drop one or more tables from the DB | [loading.md](docs/loading.md) |
 | `material add/view/delete` | Manage materials | [loading.md](docs/loading.md) |
 | `magnet add/view/delete` | Manage magnets | [loading.md](docs/loading.md) |
 | `site add/view/delete` | Manage sites + experiment records | [loading.md](docs/loading.md) |
