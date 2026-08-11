@@ -1570,6 +1570,7 @@ def insert_overview_record_from_dict(
     comma-separated string (as written by ``cli.py``).  Both the canonical
     ``sources_<key>`` column names and the short ``<key>`` aliases used by
     ``cli.py`` are accepted (e.g. ``sources_overview`` or ``overview``).
+    Each item is reduced to its basename (``Path(x).name``) before storage.
 
     Pupitre-duplicate detection/merging is not done here — see
     :func:`merge_duplicate_pupitre_records`, run separately from
@@ -1599,10 +1600,12 @@ def insert_overview_record_from_dict(
 
     def _to_list(v) -> list[str]:
         if v is None:
-            return []
-        if isinstance(v, list):
-            return [str(x) for x in v if x]
-        return [x.strip() for x in str(v).split(",") if x.strip()]
+            items = []
+        elif isinstance(v, list):
+            items = [str(x) for x in v if x]
+        else:
+            items = [x.strip() for x in str(v).split(",") if x.strip()]
+        return [Path(x).name for x in items]
 
     _source_keys = [
         "overview", "archive", "pupitre", "default", "trigger", "spike",
@@ -1773,6 +1776,44 @@ def _find_site_for_timestamp(con, housing: str, t0: datetime, db_tz) -> str | No
     return matches[0] if len(matches) == 1 else None
 
 
+def resolve_overview_site(
+    con, filename: str, db_tz
+) -> tuple[str | None, datetime | None, str | None]:
+    """Resolve ``(housing, t0, site_name)`` for an overview_records filename.
+
+    ``housing`` is always the ``_``-separated prefix of *filename* (see
+    :func:`_parse_overview_filename`), returned even when ``t0``/``site_name``
+    cannot be determined.  ``t0`` and ``site_name`` are only both set when the
+    filename's timestamp parses **and** it falls in exactly one site's
+    commissioned/decommissioned window (see :func:`_find_site_for_timestamp`).
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    filename : str
+        An ``overview_records.filename`` value (or candidate for one).
+    db_tz : zoneinfo.ZoneInfo
+        Timezone of the DB's ``commissioned_at``/``decommissioned_at`` columns.
+
+    Returns
+    -------
+    tuple[str | None, datetime | None, str | None]
+        ``(housing, t0, site_name)``. ``housing`` is set whenever *filename*
+        has a ``_``-separated prefix. ``t0`` (naive, expressed in *db_tz*) is
+        set whenever the filename's timestamp parses, independent of whether
+        a site was matched. ``site_name`` is ``None`` unless exactly one site's
+        window contains ``t0``.
+    """
+    housing, t0 = _parse_overview_filename(filename)
+    if t0 is None:
+        return housing, None, None
+
+    site_name = _find_site_for_timestamp(con, housing, t0, db_tz)
+    t0_db = t0.astimezone(db_tz).replace(tzinfo=None)
+    return housing, t0_db, site_name
+
+
 def _mean_across_frames(dfs: list, column: str) -> float:
     """Samples-weighted mean of *column* across every frame in *dfs*."""
     total, count = 0.0, 0
@@ -1801,17 +1842,35 @@ def infer_operating_mode(df) -> str:
     Returns
     -------
     str
-        ``"NORMAL"``, ``"ECO"``, or ``"UNKNOWN"``.
+        ``"NORMAL"``, ``"ECO"``, or ``"UNKNOWN"``. Only one of ``Courant_GR1``/
+        ``Courant_GR2`` present means a single-channel housing, not an
+        inconclusive fit, so ``"NORMAL"`` is returned in that case.
+
+    Raises
+    ------
+    ValueError
+        If neither ``Courant_GR1`` nor ``Courant_GR2`` is present — this
+        indicates a malformed/incomplete source file, not a classification
+        outcome.
     """
     import numpy as np
 
     ib_zero_threshold = 50
     ih_zero_threshold = 50
 
+    has_ih = "Courant_GR1" in df
+    has_ib = "Courant_GR2" in df
+    if not has_ih and not has_ib:
+        raise ValueError(
+            "infer_operating_mode: neither Courant_GR1 nor Courant_GR2 present"
+        )
+    if has_ih != has_ib:
+        return "NORMAL"
+
     try:
         IH = np.asarray(df["Courant_GR1"], dtype=float)
         IB = np.asarray(df["Courant_GR2"], dtype=float)
-    except (KeyError, TypeError):
+    except TypeError:
         return "UNKNOWN"
 
     mask = np.isfinite(IH) & np.isfinite(IB)
@@ -1837,6 +1896,37 @@ def infer_operating_mode(df) -> str:
     return "NORMAL" if 0.66 <= slope <= 1.5 else "ECO"
 
 
+def _resolve_source_path(name: str, housing: str | None) -> str:
+    """Resolve a possibly-bare ``sources_*`` filename to a loadable path.
+
+    ``overview_records.sources_*`` columns store basenames only (see
+    :func:`insert_overview_record_from_dict`), so a name read back from the
+    DB must be re-expanded against ``PIGBROTHER_DATA_DIR``/``PUPITRE_DATA_DIR``
+    (env var > ``data_dirs.json`` > hard-coded default; see
+    :mod:`python_magnetrun.data_dirs`) before it can be loaded. Already-
+    qualified paths, or names that don't resolve to an existing file, are
+    returned unchanged.
+
+    Parameters
+    ----------
+    name : str
+        Basename or path of a ``.tdms``/``.txt`` source file.
+    housing : str or None
+        Housing identifier (e.g. ``"M9"``), needed to locate the ``.txt``
+        pupitre subdirectory.
+
+    Returns
+    -------
+    str
+        Resolved path if found, otherwise *name* unchanged.
+    """
+    from python_magnetrun.data_dirs import PIGBROTHER_DATA_DIR, PUPITRE_DATA_DIR
+    from python_magnetrun.utils.files import expand_input_files
+
+    datadir = {".tdms": PIGBROTHER_DATA_DIR, ".txt": PUPITRE_DATA_DIR}
+    return expand_input_files([name], datadir, housing=housing)[0]
+
+
 def _postprocess_overview_record(con, filename: str, verbose: bool = True) -> str:
     """Run mode inference (and future enrichment steps) once site_name is known.
 
@@ -1857,8 +1947,8 @@ def _postprocess_overview_record(con, filename: str, verbose: bool = True) -> st
     Returns
     -------
     str
-        ``"applied"``, ``"skipped_no_site"``, ``"skipped_no_sources"``, or
-        ``"not_found"``.
+        ``"applied"``, ``"skipped_no_site"``, ``"skipped_no_sources"``,
+        ``"skipped_no_mode_data"``, or ``"not_found"``.
     """
     row = con.execute(
         "SELECT site_name, sources_overview FROM overview_records WHERE filename = ?",
@@ -1873,17 +1963,26 @@ def _postprocess_overview_record(con, filename: str, verbose: bool = True) -> st
     if not sources_overview:
         return "skipped_no_sources"
 
+    housing, _ = _parse_overview_filename(filename)
+    overview_path = _resolve_source_path(sources_overview[0], housing)
+
     from python_magnetrun.magnetdata import load_magnetdata
 
     try:
-        mdata = load_magnetdata(sources_overview[0])
+        mdata = load_magnetdata(overview_path)
         df_overview = mdata.Data["Courants_Alimentations"]
     except Exception as exc:
         if verbose:
-            print(f"  ! overview_record {filename}: could not read {sources_overview[0]}: {exc}")
+            print(f"  ! overview_record {filename}: could not read {overview_path}: {exc}")
         return "skipped_no_sources"
 
-    mode = infer_operating_mode(df_overview)
+    try:
+        mode = infer_operating_mode(df_overview)
+    except ValueError as exc:
+        if verbose:
+            print(f"  ! overview_record {filename}: {exc}")
+        return "skipped_no_mode_data"
+
     con.execute(
         "UPDATE overview_records SET mode = ? WHERE filename = ?",
         [mode, filename],
@@ -1938,46 +2037,46 @@ def infer_overview_record_fields(
         return "not_found"
     sources_overview, sources_pupitre = row
 
-    housing, t0 = _parse_overview_filename(filename)
-    if t0 is None:
+    housing, t0_db, site_name = resolve_overview_site(con, filename, db_tz)
+    if t0_db is None:
         if verbose:
             print(f"  ! overview_record {filename}: could not parse timestamp from filename")
         return "bad_filename"
 
-    site_name = _find_site_for_timestamp(con, housing, t0, db_tz)
     if site_name is None:
         if verbose:
             print(
                 f"  ! overview_record {filename}: no unique site match "
-                f"for housing={housing} t0={t0}"
+                f"for housing={housing} t0={t0_db}"
             )
         return "no_site_match"
 
     duration = 0.0
     if sources_overview:
+        overview_path = _resolve_source_path(sources_overview[0], housing)
         from python_magnetrun.magnetdata import load_magnetdata
 
         try:
-            duration = float(load_magnetdata(sources_overview[0]).getDuration())
+            duration = float(load_magnetdata(overview_path).getDuration())
         except Exception as exc:
             print(
                 f"  ! overview_record {filename}: could not read duration "
-                f"from {sources_overview[0]}: {exc}"
+                f"from {overview_path}: {exc}"
             )
 
     pupitre_frames = []
     for pupitre_path in sources_pupitre or []:
+        resolved_pupitre_path = _resolve_source_path(pupitre_path, housing)
         from python_magnetrun.magnetdata import load_magnetdata
 
         try:
-            pupitre_frames.append(load_magnetdata(pupitre_path).Data)
+            pupitre_frames.append(load_magnetdata(resolved_pupitre_path).Data)
         except Exception as exc:
-            print(f"  ! overview_record {filename}: could not read {pupitre_path}: {exc}")
+            print(f"  ! overview_record {filename}: could not read {resolved_pupitre_path}: {exc}")
 
     teb = _mean_across_frames(pupitre_frames, "teb")
     bp = _mean_across_frames(pupitre_frames, "BP")
 
-    t0_db = t0.astimezone(db_tz).replace(tzinfo=None)
     con.execute(
         "UPDATE overview_records SET site_name = ?, housing = ?, t0 = ?, "
         "duration = ?, teb = ?, bp = ? WHERE filename = ?",

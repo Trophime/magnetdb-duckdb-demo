@@ -26,6 +26,7 @@ from crud import (
     insert_site_magnets,
     merge_duplicate_pupitre_records,
     parse_timestamp,
+    resolve_overview_site,
     update_site_magnet,
     view_magnet,
     view_magnets,
@@ -574,6 +575,65 @@ def test_find_site_for_timestamp_no_housing_match(con):
 
 
 # ---------------------------------------------------------------------------
+# resolve_overview_site()
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_overview_site_matches_unique_site(con):
+    _insert_m9_sites(con)
+    housing, t0, site_name = resolve_overview_site(con, "M9_Overview_220127-1756", FILE_TZ)
+    assert housing == "M9"
+    assert t0 == datetime(2022, 1, 27, 17, 56)
+    assert site_name == "M9_SITE_B"
+
+
+def test_resolve_overview_site_bad_filename_returns_housing_only(con):
+    _insert_m9_sites(con)
+    housing, t0, site_name = resolve_overview_site(con, "M9_Overview_notatimestamp", FILE_TZ)
+    assert housing == "M9"
+    assert t0 is None
+    assert site_name is None
+
+
+def test_resolve_overview_site_no_site_match_still_returns_housing_and_t0(con):
+    _insert_m9_sites(con)
+    housing, t0, site_name = resolve_overview_site(con, "M9_Overview_220114-0000", FILE_TZ)
+    assert housing == "M9"
+    assert t0 == datetime(2022, 1, 14, 0, 0)
+    assert site_name is None
+
+
+# ---------------------------------------------------------------------------
+# insert_overview_record_from_dict()
+# ---------------------------------------------------------------------------
+
+
+def test_insert_overview_record_from_dict_reduces_sources_to_basename(con):
+    insert_overview_record_from_dict(
+        con,
+        {
+            "filename": "M10_Overview_250127-1605",
+            "overview": "/mnt/LNCMIG-Data/records/pbsurv/M10/Overview/M10_Overview_250127-1605.tdms",
+            "archive": (
+                "/mnt/LNCMIG-Data/records/pbsurv/M10/Fichiers_Archive/M10_Archive_250127-1605.tdms, "
+                "/mnt/LNCMIG-Data/records/pbsurv/M10/Fichiers_Archive/M10_Archive_250127-2105.tdms"
+            ),
+            "pupitre": ["/mnt/LNCMIG-Data/records/srv-data-install/M10/2025.01.27 - 15:39:29.txt"],
+        },
+        verbose=False,
+    )
+    row = con.execute(
+        "SELECT sources_overview, sources_archive, sources_pupitre FROM overview_records "
+        "WHERE filename = 'M10_Overview_250127-1605'"
+    ).fetchone()
+    assert row == (
+        ["M10_Overview_250127-1605.tdms"],
+        ["M10_Archive_250127-1605.tdms", "M10_Archive_250127-2105.tdms"],
+        ["2025.01.27 - 15:39:29.txt"],
+    )
+
+
+# ---------------------------------------------------------------------------
 # merge_duplicate_pupitre_records()
 # ---------------------------------------------------------------------------
 
@@ -979,6 +1039,54 @@ def test_infer_overview_record_fields_not_found(con):
     assert status == "not_found"
 
 
+def test_infer_overview_record_fields_resolves_source_basenames(con, monkeypatch, tmp_path):
+    """sources_overview/sources_pupitre store basenames only; both must be
+    re-expanded against PIGBROTHER_DATA_DIR/PUPITRE_DATA_DIR before loading."""
+    overview_dir = tmp_path / "pigbrother" / "M9" / "Overview"
+    overview_dir.mkdir(parents=True)
+    (overview_dir / "M9_Overview_220127-1756.tdms").touch()
+    pupitre_dir = tmp_path / "pupitre" / "M9"
+    pupitre_dir.mkdir(parents=True)
+    (pupitre_dir / "pupitre1.txt").touch()
+    monkeypatch.setattr(
+        "python_magnetrun.data_dirs.PIGBROTHER_DATA_DIR", str(tmp_path / "pigbrother")
+    )
+    monkeypatch.setattr(
+        "python_magnetrun.data_dirs.PUPITRE_DATA_DIR", str(tmp_path / "pupitre")
+    )
+
+    _insert_m9_sites(con)
+    insert_overview_record_from_dict(
+        con,
+        {
+            "filename": "M9_Overview_220127-1756",
+            "sources_overview": ["M9_Overview_220127-1756.tdms"],
+            "sources_pupitre": ["pupitre1.txt"],
+        },
+        verbose=False,
+    )
+
+    seen_paths = []
+
+    def _fake_load(path):
+        seen_paths.append(path)
+        raise RuntimeError("stub load — only path resolution is under test")
+
+    monkeypatch.setattr("python_magnetrun.magnetdata.load_magnetdata", _fake_load)
+
+    status = infer_overview_record_fields(con, "M9_Overview_220127-1756", FILE_TZ, verbose=False)
+
+    assert status == "resolved"
+    # The overview file is loaded twice: once here for duration, once more
+    # by the _postprocess_overview_record() call this function makes on
+    # success (mode inference) — both must resolve to the same real path.
+    assert seen_paths == [
+        str(overview_dir / "M9_Overview_220127-1756.tdms"),
+        str(pupitre_dir / "pupitre1.txt"),
+        str(overview_dir / "M9_Overview_220127-1756.tdms"),
+    ]
+
+
 # ---------------------------------------------------------------------------
 # infer_operating_mode()
 # ---------------------------------------------------------------------------
@@ -1017,8 +1125,19 @@ def test_infer_operating_mode_unknown_when_all_nan():
     assert infer_operating_mode(df) == "UNKNOWN"
 
 
-def test_infer_operating_mode_unknown_when_columns_missing():
-    assert infer_operating_mode({}) == "UNKNOWN"
+def test_infer_operating_mode_raises_when_both_columns_missing():
+    with pytest.raises(ValueError):
+        infer_operating_mode({})
+
+
+def test_infer_operating_mode_normal_when_only_ih_present():
+    df = {"Courant_GR1": [100.0, 200.0, 300.0]}
+    assert infer_operating_mode(df) == "NORMAL"
+
+
+def test_infer_operating_mode_normal_when_only_ib_present():
+    df = {"Courant_GR2": [100.0, 200.0, 300.0]}
+    assert infer_operating_mode(df) == "NORMAL"
 
 
 # ---------------------------------------------------------------------------
@@ -1085,3 +1204,69 @@ def test_postprocess_overview_record_applied_sets_mode(con, monkeypatch):
         "SELECT mode FROM overview_records WHERE filename = 'M9_Overview_220127-1756'"
     ).fetchone()
     assert row == ("NORMAL",)
+
+
+def test_postprocess_overview_record_skipped_no_mode_data(con, monkeypatch):
+    # Uses a filename distinct from the other tests' "M9_Overview_220127-1756":
+    # that name matches a real .tdms file on some dev machines' mounted
+    # PIGBROTHER_DATA_DIR, whose insert-time internal postprocess call would
+    # load real data and set mode before this test's monkeypatch is installed.
+    _insert_m9_sites(con)
+    insert_overview_record_from_dict(
+        con,
+        {
+            "filename": "M9_Overview_010101-0101",
+            "site_name": "M9_SITE_B",
+            "sources_overview": ["M9_Overview_010101-0101.tdms"],
+        },
+        verbose=False,
+    )
+
+    fake_df = {}  # neither Courant_GR1 nor Courant_GR2 -> malformed source file
+    monkeypatch.setattr(
+        "python_magnetrun.magnetdata.load_magnetdata",
+        lambda path: _FakeTdmsData(fake_df),
+    )
+
+    status = _postprocess_overview_record(con, "M9_Overview_010101-0101", verbose=False)
+
+    assert status == "skipped_no_mode_data"
+    row = con.execute(
+        "SELECT mode FROM overview_records WHERE filename = 'M9_Overview_010101-0101'"
+    ).fetchone()
+    assert row == (None,)
+
+
+def test_postprocess_overview_record_resolves_bare_basename(con, monkeypatch, tmp_path):
+    """sources_overview stores a basename only; it must be re-expanded against
+    PIGBROTHER_DATA_DIR/<housing>/Overview/ before being handed to load_magnetdata."""
+    overview_dir = tmp_path / "M9" / "Overview"
+    overview_dir.mkdir(parents=True)
+    (overview_dir / "M9_Overview_220127-1756.tdms").touch()
+    monkeypatch.setattr("python_magnetrun.data_dirs.PIGBROTHER_DATA_DIR", str(tmp_path))
+
+    _insert_m9_sites(con)
+    insert_overview_record_from_dict(
+        con,
+        {
+            "filename": "M9_Overview_220127-1756",
+            "site_name": "M9_SITE_B",
+            "sources_overview": ["M9_Overview_220127-1756.tdms"],
+        },
+        verbose=False,
+    )
+
+    ib = list(range(60, 1060, 10))
+    fake_df = {"Courant_GR1": ib, "Courant_GR2": ib}  # slope == 1.0 -> NORMAL
+    seen_paths = []
+
+    def _fake_load(path):
+        seen_paths.append(path)
+        return _FakeTdmsData(fake_df)
+
+    monkeypatch.setattr("python_magnetrun.magnetdata.load_magnetdata", _fake_load)
+
+    status = _postprocess_overview_record(con, "M9_Overview_220127-1756", verbose=False)
+
+    assert status == "applied"
+    assert seen_paths == [str(overview_dir / "M9_Overview_220127-1756.tdms")]

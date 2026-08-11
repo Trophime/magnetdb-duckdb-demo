@@ -10,6 +10,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
 
     python magnetdb.py db create            [--db ...]
     python magnetdb.py db delete            [--db ...] [--yes]
+    python magnetdb.py db drop-table        --table TABLE [TABLE ...] [--db ...] [--yes] [--dry-run]
 
     python magnetdb.py material add <json_file> [--db ...] [--input-dir ...] [--dry-run]
     python magnetdb.py material view [<name>]   [--db ...] [--nuance NUANCE]
@@ -37,7 +38,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py populate operationaldata [--site SITE ...] [--all] [--type ...] [--records-base ...] [--dry-run]
     python magnetdb.py populate experiments     [--site SITE ...] [--all] [--dry-run]
     python magnetdb.py populate overview-records [--site SITE ...] [--all] [--reprocess] [--dry-run]
-    python magnetdb.py populate overview-records-from-json <json_file> [--site SITE] [--reprocess] [--dry-run] [--db ...]
+    python magnetdb.py populate overview-records-from-json <json_file> [--site SITE] [--db-tz ...] [--reprocess] [--dry-run] [--db ...]
 
     python magnetdb.py hoop-stress compute  [--site SITE ...] [--all] [--db ...] [--magnet-type H|B|S|all]
                                             [--bins 0,100,200,...] [--parquet-dir ...] [--geometries ...]
@@ -92,6 +93,7 @@ from crud import (
     load_json,
     merge_duplicate_pupitre_records,
     print_geometry_check,
+    resolve_overview_site,
     update_site_magnet,
     upsert_overview_record,
     view_experiments,
@@ -191,6 +193,46 @@ def cmd_db_delete(args) -> None:
     if wal.exists():
         wal.unlink()
     print(f"Deleted '{db_path}'.")
+
+
+def cmd_db_drop_table(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+
+    with duckdb.connect(str(db_path), read_only=args.dry_run) as con:
+        existing = {r[0] for r in con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        ).fetchall()}
+
+        to_drop = []
+        for table in args.table:
+            if table not in existing:
+                print(f"[SKIP] '{table}' does not exist.")
+                continue
+            count = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            to_drop.append((table, count))
+
+        if not to_drop:
+            print("Nothing to drop.")
+            return
+
+        if args.dry_run:
+            for table, count in to_drop:
+                print(f"[DRY RUN] would drop '{table}' ({count} row(s))")
+            return
+
+        if not args.yes:
+            names = ", ".join(t for t, _ in to_drop)
+            answer = input(f"Drop table(s) {names} from '{db_path}'? [y/N] ").strip().lower()
+            if answer not in ("y", "yes"):
+                print("Aborted.")
+                return
+
+        for table, count in to_drop:
+            con.execute(f"DROP TABLE {table}")
+            print(f"Dropped '{table}' ({count} row(s)).")
 
 
 # ---------------------------------------------------------------------------
@@ -772,29 +814,56 @@ def cmd_populate_overview_records_from_json(args) -> None:
     if not db_path.exists():
         print(f"Error: '{db_path}' does not exist.")
         sys.exit(1)
+    try:
+        db_tz = ZoneInfo(args.db_tz)
+    except Exception:
+        print(f"Error: Unknown timezone '{args.db_tz}'")
+        sys.exit(1)
 
-    site_name = args.site or None
+    site_override = args.site or None
+    site_row = _load_site(site_override, str(db_path)) if site_override else None
+    if site_override is not None and site_row is None:
+        print(f"Error: site '{site_override}' not found in DB.")
+        sys.exit(1)
 
     print(f"\nLoading {len(records)} overview record(s) from {json_path.name} …\n")
 
-    if args.dry_run:
-        for rec in records:
-            fname = rec.get("filename", "<missing>")
-            housing = rec.get("housing", "?")
-            dur = rec.get("duration", 0.0)
-            print(f"  [dry-run] would insert: {fname}  [{housing}]  duration={float(dur or 0):.1f}s")
-        return
+    with duckdb.connect(str(db_path), read_only=args.dry_run) as con:
+        if not args.dry_run:
+            ensure_schema(con)
 
-    with duckdb.connect(str(db_path)) as con:
-        ensure_schema(con)
         for rec in records:
+            filename = rec.get("filename", "<missing>")
+            housing = rec.get("housing")
+            t0 = rec.get("t0")
+            site_name = site_override
+
+            if site_override is not None:
+                housing = housing or site_row["housing"]
+            else:
+                resolved_housing, resolved_t0, resolved_site = resolve_overview_site(
+                    con, filename, db_tz
+                )
+                housing = housing or resolved_housing
+                if not rec.get("site_name") and resolved_site is not None:
+                    site_name = resolved_site
+                    t0 = resolved_t0
+
+            if args.dry_run:
+                dur = float(rec.get("duration") or 0.0)
+                print(
+                    f"  [dry-run] would insert: {filename}  [{housing or '?'}]  "
+                    f"site={site_name or '?'}  duration={dur:.1f}s"
+                )
+                continue
+
+            rec_to_insert = {**rec, "housing": housing, "t0": t0}
             try:
                 insert_overview_record_from_dict(
-                    con, rec, site_name=site_name, verbose=True, upsert=args.reprocess
+                    con, rec_to_insert, site_name=site_name, verbose=True, upsert=args.reprocess
                 )
             except (ValueError, KeyError) as exc:
-                fname = rec.get("filename", "<unknown>")
-                print(f"  [ERROR] {fname}: {exc}")
+                print(f"  [ERROR] {filename}: {exc}")
 
     print("\nDone.")
 
@@ -987,6 +1056,7 @@ _DISPATCH = {
     ("check",             None):              cmd_check,
     ("db",                "create"):          cmd_db_create,
     ("db",                "delete"):          cmd_db_delete,
+    ("db",                "drop-table"):      cmd_db_drop_table,
     ("material",          "add"):             cmd_material_add,
     ("material",          "view"):            cmd_material_view,
     ("material",          "delete"):          cmd_material_delete,
@@ -1134,7 +1204,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── db ───────────────────────────────────────────────────────────────────
     db_p = entity.add_parser("db", help="Manage the DuckDB database file.")
     db_sub = db_p.add_subparsers(dest="action", required=True,
-                                 metavar="{create,delete}")
+                                 metavar="{create,delete,drop-table}")
 
     db_create = db_sub.add_parser("create", help="Create a new database and initialise the schema.")
     _db_arg(db_create)
@@ -1143,6 +1213,15 @@ def build_parser() -> argparse.ArgumentParser:
     _db_arg(db_del)
     db_del.add_argument("--yes", "-y", action="store_true",
                         help="Skip confirmation prompt")
+
+    db_drop = db_sub.add_parser("drop-table", help="Drop one or more tables from the database.")
+    _db_arg(db_drop)
+    db_drop.add_argument("--table", nargs="+", required=True, metavar="TABLE",
+                         help="Table name(s) to drop.")
+    db_drop.add_argument("--yes", "-y", action="store_true",
+                         help="Skip confirmation prompt")
+    db_drop.add_argument("--dry-run", action="store_true",
+                         help="Show what would be dropped without writing anything.")
 
     # ── material ─────────────────────────────────────────────────────────────
     mat_p = entity.add_parser("material", help="Manage materials.")
@@ -1418,6 +1497,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_ov_json.add_argument(
         "--site", default=None, metavar="SITE",
         help="Site name to assign to all loaded records (overrides any site_name in the JSON).",
+    )
+    p_ov_json.add_argument(
+        "--db-tz", default="UTC", dest="db_tz",
+        help="Timezone of commissioned_at / decommissioned_at in the DB (default: UTC)",
     )
     p_ov_json.add_argument(
         "--reprocess", action="store_true",

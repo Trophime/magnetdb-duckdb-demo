@@ -234,3 +234,147 @@ def test_cli_site_update_magnet_missing_db_exits(tmp_path, monkeypatch):
              "SITE_JSON_01", "MAG_JSON",
              "--db", str(tmp_path / "nope.duckdb"),
              "--z-offset", "1.0")
+
+
+# ---------------------------------------------------------------------------
+# populate overview-records-from-json
+# ---------------------------------------------------------------------------
+
+
+def _summary_json_record(filename, **extra):
+    return {
+        "filename": filename,
+        "overview": f"/mnt/LNCMIG-Data/records/pbsurv/M10/Overview/{filename}.tdms",
+        "archive": "",
+        "pupitre": "",
+        "default": "",
+        "trigger": "",
+        "spike": "",
+        "hybrid_kHz": "",
+        "hybrid_rms": "",
+        "hybrid_trigger": "",
+        "hybrid_vprocess": "",
+        "pigbrother_runlog": "",
+        "pupitre_runlog": "",
+        **extra,
+    }
+
+
+def test_cli_populate_overview_records_from_json_auto_resolves_site(tmp_path, monkeypatch):
+    db = _db_with_site(tmp_path)  # SITE_JSON_01, housing M10, commissioned 2025-01-01
+    json_path = tmp_path / "M10_summary-2025.json"
+    json_path.write_text(json.dumps([_summary_json_record("M10_Overview_250115-1200")]))
+
+    _run(monkeypatch, "populate", "overview-records-from-json", str(json_path), "--db", str(db))
+
+    row = _fetch_one(
+        db, "SELECT housing, site_name, t0, sources_overview FROM overview_records "
+        "WHERE filename = 'M10_Overview_250115-1200'"
+    )
+    assert row[0] == "M10"
+    assert row[1] == "SITE_JSON_01"
+    assert row[2] is not None
+    assert row[3] == ["M10_Overview_250115-1200.tdms"]
+
+
+def test_cli_populate_overview_records_from_json_unresolved_site_stays_null(tmp_path, monkeypatch):
+    db = _db_with_site(tmp_path)  # only a M10 site exists
+    json_path = tmp_path / "M9_summary-2025.json"
+    json_path.write_text(json.dumps([_summary_json_record("M9_Overview_250115-1200")]))
+
+    _run(monkeypatch, "populate", "overview-records-from-json", str(json_path), "--db", str(db))
+
+    row = _fetch_one(
+        db, "SELECT housing, site_name FROM overview_records "
+        "WHERE filename = 'M9_Overview_250115-1200'"
+    )
+    assert row == ("M9", None)
+
+
+def test_cli_populate_overview_records_from_json_unknown_site_exits(tmp_path, monkeypatch):
+    db = _db_with_site(tmp_path)
+    json_path = tmp_path / "M10_summary-2025.json"
+    json_path.write_text(json.dumps([_summary_json_record("M10_Overview_250115-1200")]))
+
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "populate", "overview-records-from-json", str(json_path),
+             "--db", str(db), "--site", "NoSuchSite")
+
+    assert _count(db, "overview_records") == 0
+
+
+def test_cli_populate_overview_records_from_json_site_override(tmp_path, monkeypatch):
+    db = _db_with_site(tmp_path)
+    json_path = tmp_path / "M10_summary-2025.json"
+    json_path.write_text(json.dumps([_summary_json_record("M10_Overview_250115-1200")]))
+
+    _run(monkeypatch, "populate", "overview-records-from-json", str(json_path),
+         "--db", str(db), "--site", "SITE_JSON_01")
+
+    row = _fetch_one(
+        db, "SELECT housing, site_name FROM overview_records "
+        "WHERE filename = 'M10_Overview_250115-1200'"
+    )
+    assert row == ("M10", "SITE_JSON_01")
+
+
+# ---------------------------------------------------------------------------
+# db drop-table
+# ---------------------------------------------------------------------------
+
+
+def _tables(db_path):
+    with duckdb.connect(str(db_path), read_only=True) as con:
+        return {r[0] for r in con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        ).fetchall()}
+
+
+def _add_junk_tables(db_path, *names):
+    """Create standalone tables (no FK relationships) for drop-table tests."""
+    with duckdb.connect(str(db_path)) as con:
+        for name in names:
+            con.execute(f"CREATE TABLE {name} (x INTEGER)")
+            con.execute(f"INSERT INTO {name} VALUES (1), (2)")
+
+
+def test_cli_db_drop_table_drops_existing_table(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    _add_junk_tables(db, "JUNK1")
+
+    _run(monkeypatch, "db", "drop-table", "--db", str(db), "--table", "JUNK1", "--yes")
+
+    assert "JUNK1" not in _tables(db)
+
+
+def test_cli_db_drop_table_multiple_tables(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    _add_junk_tables(db, "JUNK1", "JUNK2")
+
+    _run(monkeypatch, "db", "drop-table", "--db", str(db),
+         "--table", "JUNK1", "JUNK2", "--yes")
+
+    assert not ({"JUNK1", "JUNK2"} & _tables(db))
+
+
+def test_cli_db_drop_table_skips_nonexistent_table(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+
+    _run(monkeypatch, "db", "drop-table", "--db", str(db), "--table", "NOPE", "--yes")
+
+    assert "does not exist" in capsys.readouterr().out
+
+
+def test_cli_db_drop_table_dry_run_writes_nothing(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    _add_junk_tables(db, "JUNK1")
+
+    _run(monkeypatch, "db", "drop-table", "--db", str(db), "--table", "JUNK1", "--dry-run")
+
+    assert "JUNK1" in _tables(db)
+
+
+def test_cli_db_drop_table_missing_db_exits(tmp_path, monkeypatch):
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "db", "drop-table",
+             "--db", str(tmp_path / "nope.duckdb"), "--table", "materials", "--yes")
