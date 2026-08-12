@@ -74,6 +74,7 @@ import duckdb
 
 from checks import print_check_report, run_checks
 from crud import (
+    _resolve_source_path,
     check_geometry_data,
     delete_magnet,
     delete_material,
@@ -849,15 +850,31 @@ def cmd_populate_overview_records_from_json(args) -> None:
                     site_name = resolved_site
                     t0 = resolved_t0
 
+            duration = rec.get("duration")
+            if not duration:
+                try:
+                    from python_magnetrun.magnetdata import load_magnetdata
+
+                    overview_path = _resolve_source_path(f"{filename}.tdms", housing)
+                    duration = float(
+                        load_magnetdata(overview_path).Groups["Infos"]["Duration"][:][0]
+                    )
+                except Exception as exc:
+                    print(
+                        f"  [WARN] {filename}: could not read duration from "
+                        f"Infos/Duration ({filename}.tdms): {exc}"
+                    )
+                    duration = 0.0
+
             if args.dry_run:
-                dur = float(rec.get("duration") or 0.0)
+                dur = float(duration or 0.0)
                 print(
                     f"  [dry-run] would insert: {filename}  [{housing or '?'}]  "
                     f"site={site_name or '?'}  duration={dur:.1f}s"
                 )
                 continue
 
-            rec_to_insert = {**rec, "housing": housing, "t0": t0}
+            rec_to_insert = {**rec, "housing": housing, "t0": t0, "duration": duration}
             try:
                 insert_overview_record_from_dict(
                     con, rec_to_insert, site_name=site_name, verbose=True, upsert=args.reprocess

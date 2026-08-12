@@ -8,6 +8,8 @@
 - `magnetdp.py hoop-stress compute` | Compute and persist hoop-stress bin stats + fatigue -- do not compute fatigue at this point
 - test if fatigue can be used like a cumulative stats??
 * overview-record
+- duration from overview
+- backfill teb, ... from source_pupitres
 - concat entries that share one pupitre file
 - lag: see Wolali and Me
 - plateaux:
@@ -15,6 +17,7 @@
   - Field (pupitre) for classification, 
   - Ref currents (pigbrother) for ODE system, 
   - currents A1 to A2 (pigbrother) and Iddct1 to Iddct4 for lag
+iQuestion: quid des overview sans pupitre et vice-verca des pupitre sans overview... comment les detecter???
 
 * add a scheduler to run the above scripts on a regular basis (cron job or similar) -- see claude calcul22
 - see to_duckdb/PLAN_scheduled_populate.md

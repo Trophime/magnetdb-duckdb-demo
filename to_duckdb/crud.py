@@ -2000,8 +2000,11 @@ def infer_overview_record_fields(
     ``housing`` and ``t0`` are parsed from *filename* (python_magnetrun's
     ``<housing>_Overview_<YYMMDD-HHMM>`` convention); ``site_name`` is the
     unique ``sites`` row whose commissioned/decommissioned window contains
-    ``t0``.  ``duration`` is read from the first ``sources_overview`` file;
-    ``teb``/``bp`` are the samples-weighted mean of the ``teb``/``BP``
+    ``t0``.  ``duration`` is only re-estimated when the stored value is
+    ``0``: read directly from the single ``sources_overview`` file when
+    there's exactly one, otherwise as ``(last file's t0 + duration) -
+    first file's t0`` across the first and last ``sources_overview``
+    entries.  ``teb``/``bp`` are the samples-weighted mean of the ``teb``/``BP``
     columns across every existing ``sources_pupitre`` file.  Requires
     ``python_magnetrun`` to be installed when either source list is
     non-empty.  On success, also runs :func:`_postprocess_overview_record`
@@ -2028,14 +2031,14 @@ def infer_overview_record_fields(
         ``"not_found"``.
     """
     row = con.execute(
-        "SELECT sources_overview, sources_pupitre FROM overview_records WHERE filename = ?",
+        "SELECT sources_overview, sources_pupitre, duration FROM overview_records WHERE filename = ?",
         [filename],
     ).fetchone()
     if row is None:
         if verbose:
             print(f"  ! overview_record {filename}: not found")
         return "not_found"
-    sources_overview, sources_pupitre = row
+    sources_overview, sources_pupitre, duration_db = row
 
     housing, t0_db, site_name = resolve_overview_site(con, filename, db_tz)
     if t0_db is None:
@@ -2051,17 +2054,25 @@ def infer_overview_record_fields(
             )
         return "no_site_match"
 
-    duration = 0.0
-    if sources_overview:
-        overview_path = _resolve_source_path(sources_overview[0], housing)
+    duration = float(duration_db or 0.0)
+    if not duration and sources_overview:
         from python_magnetrun.magnetdata import load_magnetdata
 
         try:
-            duration = float(load_magnetdata(overview_path).getDuration())
+            if len(sources_overview) == 1:
+                overview_path = _resolve_source_path(sources_overview[0], housing)
+                duration = float(load_magnetdata(overview_path).getDuration())
+            else:
+                first_path = _resolve_source_path(sources_overview[0], housing)
+                last_path = _resolve_source_path(sources_overview[-1], housing)
+                first_md = load_magnetdata(first_path)
+                last_md = load_magnetdata(last_path)
+                last_end = last_md.start_timestamp + timedelta(seconds=last_md.getDuration())
+                duration = (last_end - first_md.start_timestamp).total_seconds()
         except Exception as exc:
             print(
                 f"  ! overview_record {filename}: could not read duration "
-                f"from {overview_path}: {exc}"
+                f"from sources_overview: {exc}"
             )
 
     pupitre_frames = []
@@ -2103,9 +2114,13 @@ def _merge_overview_rows(existing: dict, incoming: dict) -> dict:
 
     The row with the earlier ``t0`` supplies identity fields (``filename``,
     ``site_name``, ``housing``, ``mode``, ``t0``); every ``sources_*``
-    column is unioned and de-duplicated; ``duration`` is summed; ``teb`` and
-    ``bp`` become duration-weighted averages; the JSON dict columns are
-    shallow-merged, with the earlier row's keys winning on conflict.
+    column is unioned and de-duplicated; ``duration`` is the span from the
+    earlier row's ``t0`` to the true end of whichever constituent ends
+    latest (falling back to the sum of the two rows' ``duration`` values
+    when either ``t0`` is missing); ``teb`` and ``bp`` become
+    duration-weighted averages (weighted by each row's own ``duration``,
+    not the merged span); the JSON dict columns are shallow-merged, with
+    the earlier row's keys winning on conflict.
 
     Parameters
     ----------
@@ -2138,7 +2153,6 @@ def _merge_overview_rows(existing: dict, incoming: dict) -> dict:
 
     d_lower = float(lower.get("duration") or 0.0)
     d_higher = float(higher.get("duration") or 0.0)
-    merged["duration"] = d_lower + d_higher
     total = d_lower + d_higher
     if total > 0:
         merged["teb"] = (
@@ -2156,15 +2170,20 @@ def _merge_overview_rows(existing: dict, incoming: dict) -> dict:
     for col in _OVERVIEW_JSON_COLUMNS:
         merged[col] = {**(higher.get(col) or {}), **(lower.get(col) or {})}
 
-    # Real end of the latest-in-time constituent absorbed so far, kept
-    # separately from `duration` (which is summed and so does not reflect
-    # the small real dead-time gaps between merged captures) — used only
-    # for adjacency checks against the next candidate, never persisted.
+    # Real end of the latest-in-time constituent absorbed so far — used both
+    # to derive `duration` below and for adjacency checks against the next
+    # candidate. Not itself a DB column (never persisted).
     ends = [
         e for e in (lower.get("_last_end") or _row_end(lower), higher.get("_last_end") or _row_end(higher))
         if e is not None
     ]
     merged["_last_end"] = max(ends) if ends else None
+
+    first_t0 = lower.get("t0")
+    if first_t0 is not None and merged["_last_end"] is not None:
+        merged["duration"] = (merged["_last_end"] - first_t0).total_seconds()
+    else:
+        merged["duration"] = total
 
     return merged
 

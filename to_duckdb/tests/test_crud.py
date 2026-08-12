@@ -698,7 +698,9 @@ def test_merge_duplicate_pupitre_records_merges_shared_pupitre_lower_t0_first(co
         "FROM overview_records WHERE filename = 'M9_Overview_220127-1700'"
     ).fetchone()
     assert sources_pupitre == ["p1.tdms", "p2.tdms", "p3.tdms"]
-    assert duration == pytest.approx(300.0)
+    # 320s span (17:00:00 -> 17:05:20), not the 300s sum: includes the 20s
+    # real gap between the first row's end (17:01:40) and the second's t0.
+    assert duration == pytest.approx(320.0)
     assert teb == pytest.approx((10.0 * 100.0 + 20.0 * 200.0) / 300.0)
     assert bp == pytest.approx((1.0 * 100.0 + 2.0 * 200.0) / 300.0)
     assert json.loads(signatures) == {
@@ -730,7 +732,7 @@ def test_merge_duplicate_pupitre_records_merges_shared_pupitre_higher_t0_first(c
         "WHERE filename = 'M9_Overview_220127-1700'"
     ).fetchone()
     assert sources_pupitre == ["p1.tdms", "p2.tdms", "p3.tdms"]
-    assert duration == pytest.approx(300.0)
+    assert duration == pytest.approx(320.0)
     assert merged_into is None
 
     assert con.execute(
@@ -872,7 +874,9 @@ def test_merge_duplicate_pupitre_records_chains_three_way(con):
         "WHERE filename = 'M9_Overview_220127-1700'"
     ).fetchone()
     assert sources_pupitre == ["p1.tdms", "p2.tdms", "p3.tdms", "p4.tdms"]
-    assert duration == pytest.approx(300.0)
+    # 340s span (17:00:00 -> 17:05:40): the 300s sum plus the two 20s real
+    # gaps between consecutive captures.
+    assert duration == pytest.approx(340.0)
 
 
 def test_merge_duplicate_pupitre_records_chain_does_not_drift_with_summed_duration(con):
@@ -919,7 +923,9 @@ def test_merge_duplicate_pupitre_records_chain_does_not_drift_with_summed_durati
     duration = con.execute(
         "SELECT duration FROM overview_records WHERE filename = 'M9_Overview_220127-1700'"
     ).fetchone()[0]
-    assert duration == pytest.approx(400.0)
+    # 475s span (17:00:00 -> 17:07:55): the 400s sum plus the three internal
+    # real gaps (25s + 25s + 25s) now included instead of swallowed.
+    assert duration == pytest.approx(475.0)
 
 
 def test_merge_duplicate_pupitre_records_flattens_pointer_on_re_merge(con):
