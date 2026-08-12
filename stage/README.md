@@ -42,3 +42,10 @@ for (s,) in con.execute('SELECT name FROM sites ORDER BY name').fetchall():
         --records $RECORDS/srv-data-install \
         --site "$SITE" --type Pupitre
 done
+
+# Populate overview_records from JSON
+for file in $(ls ../Data/*summary*.json); do
+    python magnetdb.py populate overview-records-from-json "$file" --db $DB
+done
+# Consolidate overview_records and remove duplicates
+python magnetdb.py populate overview-records-infer --db $DB 
