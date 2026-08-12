@@ -14,6 +14,7 @@ Run from the repository root, e.g.::
     python to_duckdb/demos/users_table_demo.py
     python to_duckdb/demos/users_table_demo.py --from 2020-01-01
     python to_duckdb/demos/users_table_demo.py --sync
+    python to_duckdb/demos/users_table_demo.py --link-only
     python to_duckdb/demos/users_table_demo.py --list
     python to_duckdb/demos/users_table_demo.py --view
     python to_duckdb/demos/users_table_demo.py --view <ACRONYM>
@@ -960,6 +961,15 @@ def main() -> None:
         help="Skip backfilling experiments_ids/overview_records_ids after (re)populating.",
     )
     parser.add_argument(
+        "--link-only",
+        action="store_true",
+        help="Skip rebuilding rows from --log/--proposals entirely; just "
+        "re-run the experiments_ids/overview_records_ids backfill against "
+        "the current 'users' table contents (e.g. after populating new "
+        "experiments/overview_records rows). Mutually exclusive with "
+        "--sync and --no-link.",
+    )
+    parser.add_argument(
         "--list",
         action="store_true",
         help="List distinct acronyms in 'users' and exit "
@@ -976,6 +986,11 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.link_only and args.sync:
+        parser.error("--link-only and --sync are mutually exclusive")
+    if args.link_only and not args.link:
+        parser.error("--link-only and --no-link are mutually exclusive")
+
     if args.list or args.view is not None:
         with duckdb.connect(str(args.db), read_only=True) as con:
             if args.list:
@@ -991,6 +1006,19 @@ def main() -> None:
                     view_user(con, args.view)
                 else:
                     view_users(con)
+        return
+
+    if args.link_only:
+        con = duckdb.connect(str(args.db))
+        try:
+            create_users_table(con, verbose=False)
+            update_experiments_ids(con)
+            report_experiments_ids_coverage(con)
+            update_overview_records_ids(con)
+            report_overview_records_ids_coverage(con)
+            report_sample(con, args.sample)
+        finally:
+            con.close()
         return
 
     cutoff = parse_cutoff(args.from_date) if args.from_date else None

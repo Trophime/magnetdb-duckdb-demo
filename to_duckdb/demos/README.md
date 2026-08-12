@@ -15,7 +15,11 @@ add only new rows and correct mismatched existing ones in place (leaving
 the script backfills `experiments_ids` by matching each row's housing and
 `[hstart, hstop]` range against `experiments`' file-embedded timestamp, and
 `overview_records_ids` the same way against `overview_records.t0` — pass
-`--no-link` to skip both steps. Not wired into `magnetdb.py populate` yet —
+`--no-link` to skip both steps. Pass `--link-only` to skip the CSV rebuild
+entirely and just re-run that backfill against the table's current
+contents (e.g. after populating new `experiments`/`overview_records` rows
+with nothing changed on the users/sessions side) — mutually exclusive with
+`--sync` and `--no-link`. Not wired into `magnetdb.py populate` yet —
 run standalone from the repository root.
 
 ```bash
@@ -25,6 +29,7 @@ python to_duckdb/demos/users_table_demo.py --from 2020-01-01
 python to_duckdb/demos/users_table_demo.py --fuzzy-cutoff 0.8 --sample 10
 python to_duckdb/demos/users_table_demo.py --sync
 python to_duckdb/demos/users_table_demo.py --no-link
+python to_duckdb/demos/users_table_demo.py --link-only
 ```
 
 | Flag | Default | Description |
@@ -37,6 +42,7 @@ python to_duckdb/demos/users_table_demo.py --no-link
 | `--sample` | `20` | Number of resulting `users` rows to print |
 | `--sync` | off (full replace) | Add new rows and fix mismatched existing rows instead of replacing the whole table's contents |
 | `--no-link` | off (linking runs) | Skip backfilling `experiments_ids`/`overview_records_ids` after (re)populating |
+| `--link-only` | off | Skip the CSV rebuild entirely; just re-run the `experiments_ids`/`overview_records_ids` backfill against the table's current contents. Mutually exclusive with `--sync`/`--no-link` |
 
 ---
 
