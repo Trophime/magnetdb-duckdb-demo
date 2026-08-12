@@ -99,6 +99,11 @@ def get_lag_per_pupitre_file(
     group,
     column_current_pupitre,
     column_current_pigbrother,
+    source="overview",
+    lag_reference=None,
+    pigbrother_unit=None,
+    pupitre_unit=None,
+    output_dir=None,
 ):
     """Compute get_lag() between df_pb and each pupitre file loaded individually.
 
@@ -108,19 +113,72 @@ def get_lag_per_pupitre_file(
     DataFrame -- i.e. whether concatenating pupitre files before running
     get_lag changes the result versus running it file-by-file.
 
-    Returns a list of (filename, lag_seconds, n_rows) tuples; lag_seconds is
-    None when the file failed to load or lacked column_current_pupitre.
+    Parameters
+    ----------
+    record : OverviewRecord
+        Record whose ``sources.pupitre`` files are processed individually.
+    df_pb : :class:`~pandas.DataFrame`
+        Pigbrother data (e.g. overview or archive) to compare each pupitre
+        file against.
+    group : str
+        Pigbrother group name passed to ``load_files_data``.
+    column_current_pupitre : str
+        Pupitre current column used for lag computation.
+    column_current_pigbrother : str
+        Pigbrother current column used for lag computation.
+    source : str, optional
+        Pigbrother source name (``"overview"`` or ``"archive"``), forwarded
+        to :func:`plot_lag_comparison` for the plot title/color.
+    lag_reference : float, optional
+        Reference lag [s], typically the single ``compute_reference_lag``
+        result computed once on the concatenated pupitre data. When given
+        together with ``output_dir``, a :func:`plot_lag_comparison` plot is
+        saved for each file, reusing this same reference lag for every file.
+    pigbrother_unit, pupitre_unit : str, optional
+        Units forwarded to :func:`plot_lag_comparison` for axis conversion.
+    output_dir : str or :class:`~pathlib.Path`, optional
+        Directory to save per-file plots into. Plotting is skipped unless
+        both ``output_dir`` and ``lag_reference`` are given.
+
+    Returns
+    -------
+    list of tuple
+        ``(filename, lag_seconds, n_rows)`` tuples; ``lag_seconds`` is
+        ``None`` when the file failed to load or lacked
+        ``column_current_pupitre``.
     """
     rows = []
     if record.sources is None:
         return rows
     for f in record.sources.pupitre:
-        df_pupitre_i = load_files_data([f], record.housing, group, [column_current_pupitre])
+        df_pupitre_i = load_files_data(
+            [f], record.housing, group, [column_current_pupitre]
+        )
         if df_pupitre_i.empty or column_current_pupitre not in df_pupitre_i.columns:
             rows.append((f, None, len(df_pupitre_i)))
             continue
-        lag = get_lag(df_pupitre_i, df_pb, column_current_pupitre, column_current_pigbrother)
+        lag = get_lag(
+            df_pupitre_i, df_pb, column_current_pupitre, column_current_pigbrother
+        )
         rows.append((f, lag, len(df_pupitre_i)))
+
+        if output_dir is not None and lag_reference is not None:
+            plot_path = (
+                Path(output_dir) / f"{Path(f).stem}_{column_current_pupitre}.png"
+            )
+            plot_lag_comparison(
+                df_pb,
+                column_current_pigbrother,
+                df_pupitre_i,
+                column_current_pupitre,
+                lag,
+                lag_reference,
+                source,
+                plot_path,
+                pigbrother_unit=pigbrother_unit,
+                pupitre_unit=pupitre_unit,
+            )
+
     return rows
 
 
@@ -145,6 +203,9 @@ def get_plateaux_per_pupitre(
     if record.sources is None:
         return rows
     for f in record.sources.pupitre:
+        print(
+            f"get_plateaux_per_pupitre: processing {f} for {column_current_pupitre} (threshold={threshold}, num_points_threshold={num_points_threshold})..."
+        )
         try:
             mrun = load_mrun(f, housing=record.housing)
             mdata = mrun.getMData()
@@ -282,7 +343,9 @@ def fill_small_gaps(df, tkey="timestamp", max_gap_seconds=30.0):
             row = df.iloc[i0].copy()
             row[tkey] = df[tkey].iloc[i0] + pd.to_timedelta(frac * gap, unit="s")
             for col in numeric_cols:
-                row[col] = df[col].iloc[i0] + frac * (df[col].iloc[i1] - df[col].iloc[i0])
+                row[col] = df[col].iloc[i0] + frac * (
+                    df[col].iloc[i1] - df[col].iloc[i0]
+                )
             new_rows.append(row)
 
     return (
@@ -301,6 +364,8 @@ def plot_lag_comparison(
     lag_reference,
     source,
     output_path,
+    pigbrother_unit=None,
+    pupitre_unit=None,
 ):
     """Overlay pigbrother reference against pupitre raw and shifted by each lag method."""
     df_pupitre_get_lag = apply_lag_correction(df_pupitre, lag_get_lag)
@@ -314,6 +379,12 @@ def plot_lag_comparison(
     s_ref = df_pigbrother[["timestamp", pigbrother_channel]].rename(
         columns={pigbrother_channel: ref_label}
     )
+    if pigbrother_unit and pupitre_unit and pigbrother_unit != pupitre_unit:
+        s_ref[ref_label] = convert_units(
+            s_ref[ref_label].to_numpy(dtype=float), pigbrother_unit, pupitre_unit
+        )
+    display_unit = pupitre_unit or pigbrother_unit
+
     s_raw = df_pupitre[["timestamp", pupitre_channel]].rename(
         columns={pupitre_channel: raw_label}
     )
@@ -329,7 +400,15 @@ def plot_lag_comparison(
         .sort_values("timestamp", kind="stable")
         .reset_index(drop=True)
     )
-    merged["timestamp"] = mdates.date2num(series_utc_to_local_naive(merged["timestamp"]))
+    if display_unit:
+        unit = pint.get_application_registry().Unit(display_unit)
+        merged.attrs["units"] = {
+            label: (display_unit, unit)
+            for label in (ref_label, raw_label, getlag_label, reflag_label)
+        }
+    merged["timestamp"] = mdates.date2num(
+        series_utc_to_local_naive(merged["timestamp"])
+    )
 
     source_color = "blue" if source == "overview" else "red"
     fig = plot_overlay(
@@ -414,7 +493,10 @@ def main() -> None:
             df_pupitre = record.get_pupitre()
             df_overview = record.get_overview()
             df_archive = record.get_archive()
-            print(f"overview df: {len(df_overview)} rows, columns={list(df_overview.columns)}", flush=True)
+            print(
+                f"overview df: {len(df_overview)} rows, columns={list(df_overview.columns)}",
+                flush=True,
+            )
 
             all_fields = discover_pupitre_pigbrother_fields()
             reference_fields = {
@@ -422,11 +504,7 @@ def main() -> None:
                 for af in all_fields
                 if af.pupitre_key in REFERENCE_LAG_KEYS
             }
-            fields = [
-                af
-                for af in all_fields
-                if af.pigbrother_group == targeted_group
-            ]
+            fields = [af for af in all_fields if af.pigbrother_group == targeted_group]
 
             metrics_headers = [
                 "pupitre_key",
@@ -443,9 +521,7 @@ def main() -> None:
 
             if not df_pupitre.empty and not df_overview.empty:
                 rows = compare_group_fields(df_pupitre, df_overview, fields)
-                print(
-                    f"\nper-field metrics vs overview:"
-                )
+                print(f"\nper-field metrics vs overview:")
                 print(tabulate(rows, headers=metrics_headers, tablefmt="simple"))
 
                 col_pup, col_ov, col_ref_ov = pick_columns(df_pupitre, df_overview)
@@ -466,8 +542,21 @@ def main() -> None:
                     f"corr={ref_lag.correlation:.2f}, conf={ref_lag.confidence:.2f})"
                 )
 
+                per_file_plot_dir = Path(__file__).with_name(
+                    f"{Path(__file__).stem}_{fichier_overview.stem}_overview_perfile_plots"
+                )
+                per_file_plot_dir.mkdir(parents=True, exist_ok=True)
                 per_file_rows = get_lag_per_pupitre_file(
-                    record, df_overview, targeted_group, col_pup, col_ov
+                    record,
+                    df_overview,
+                    targeted_group,
+                    col_pup,
+                    col_ov,
+                    source="overview",
+                    lag_reference=ref_lag.seconds,
+                    pigbrother_unit=ref_field.pigbrother_unit,
+                    pupitre_unit=ref_field.pupitre_unit,
+                    output_dir=str(per_file_plot_dir),
                 )
                 print(
                     f"\nget_lag vs overview, per individual pupitre file "
@@ -476,7 +565,11 @@ def main() -> None:
                 print(
                     tabulate(
                         [
-                            [Path(f).name, n, f"{lag:.2f}" if lag is not None else "n/a"]
+                            [
+                                Path(f).name,
+                                n,
+                                f"{lag:.2f}" if lag is not None else "n/a",
+                            ]
                             for f, lag, n in per_file_rows
                         ],
                         headers=["pupitre file", "n", "get_lag [s]"],
@@ -510,8 +603,16 @@ def main() -> None:
                         f"{Path(__file__).stem}_{fichier_overview.stem}_overview_{af.pupitre_key}.png"
                     )
                     plot_lag_comparison(
-                        df_overview, af.pigbrother_channel, df_pupitre, af.pupitre_key,
-                        lag_overview, ref_lag.seconds, "overview", plot_path,
+                        df_overview,
+                        af.pigbrother_channel,
+                        df_pupitre,
+                        af.pupitre_key,
+                        lag_overview,
+                        ref_lag.seconds,
+                        "overview",
+                        plot_path,
+                        pigbrother_unit=af.pigbrother_unit,
+                        pupitre_unit=af.pupitre_unit,
                     )
                     print(f"Saved comparison plot: {plot_path}")
 
@@ -521,35 +622,68 @@ def main() -> None:
                     ref_field.pupitre_unit or "dimensionless"
                 )
                 thresholds = ThresholdConfig.default()
-                pupitre_threshold = 10 # thresholds.get(col_pup, thresholds.get(col_pup, 10.0))
-                pigbrother_threshold = 10 # thresholds.get(col_ov, thresholds.get(col_ov, 5.))
-                print(f"col_pup={col_pup}, pupitre_threshold={pupitre_threshold}, col_ov={col_ov}, pigbrother_threshold={pigbrother_threshold}")
-                
+                pupitre_threshold = (
+                    10  # thresholds.get(col_pup, thresholds.get(col_pup, 10.0))
+                )
+                pigbrother_threshold = (
+                    10  # thresholds.get(col_ov, thresholds.get(col_ov, 5.))
+                )
+                print(
+                    f"col_pup={col_pup}, pupitre_threshold={pupitre_threshold}, col_ov={col_ov}, pigbrother_threshold={pigbrother_threshold}"
+                )
+
                 sig_pupitre = Signature.from_df(
-                    filename=str(fichier_overview), t0=record.t0, df=sig_pupitre_df,
-                    key=col_pup, symbol=col_pup, unit=unit, tkey="t",
+                    filename=str(fichier_overview),
+                    t0=record.t0,
+                    df=sig_pupitre_df,
+                    key=col_pup,
+                    symbol=col_pup,
+                    unit=unit,
+                    tkey="t",
                     threshold=pupitre_threshold,
                 )
                 sig_overview = Signature.from_df(
-                    filename=str(fichier_overview), t0=record.t0, df=sig_overview_df,
-                    key=col_ov, symbol=col_ov, unit=unit, tkey="t",
+                    filename=str(fichier_overview),
+                    t0=record.t0,
+                    df=sig_overview_df,
+                    key=col_ov,
+                    symbol=col_ov,
+                    unit=unit,
+                    tkey="t",
                     threshold=pigbrother_threshold,
                 )
-                print(f"\nPupitre {col_pup} signature (len={len(sig_pupitre.regimes)}): {''.join(sig_pupitre.regimes)}")
-                print(f"Overview {col_ov} signature (len={len(sig_overview.regimes)}): {''.join(sig_overview.regimes)}")
+                print(
+                    f"\nPupitre {col_pup} signature (len={len(sig_pupitre.regimes)}): {''.join(sig_pupitre.regimes)}"
+                )
+                print(
+                    f"Overview {col_ov} signature (len={len(sig_overview.regimes)}): {''.join(sig_overview.regimes)}"
+                )
                 sig_pupitre.compact()
                 sig_overview.compact()
-                print(f"\nPupitre {col_pup} signature compact(len={len(sig_pupitre.regimes)}): {''.join(sig_pupitre.regimes)}")
-                print(f"Overview {col_ov} signature compact(len={len(sig_overview.regimes)}): {''.join(sig_overview.regimes)}")
+                print(
+                    f"\nPupitre {col_pup} signature compact(len={len(sig_pupitre.regimes)}): {''.join(sig_pupitre.regimes)}"
+                )
+                print(
+                    f"Overview {col_ov} signature compact(len={len(sig_overview.regimes)}): {''.join(sig_overview.regimes)}"
+                )
 
                 sig_ref_overview = Signature.from_df(
-                    filename=str(fichier_overview), t0=record.t0, df=sig_overview_df,
-                    key=col_ref_ov, symbol=col_ov, unit=unit, tkey="t",
+                    filename=str(fichier_overview),
+                    t0=record.t0,
+                    df=sig_overview_df,
+                    key=col_ref_ov,
+                    symbol=col_ov,
+                    unit=unit,
+                    tkey="t",
                     threshold=pigbrother_threshold,
                 )
-                print(f"Overview {col_ref_ov} signature (len={len(sig_ref_overview.regimes)}): {''.join(sig_ref_overview.regimes)}")
+                print(
+                    f"Overview {col_ref_ov} signature (len={len(sig_ref_overview.regimes)}): {''.join(sig_ref_overview.regimes)}"
+                )
                 sig_ref_overview.compact()
-                print(f"Overview {col_ref_ov} signature compact(len={len(sig_ref_overview.regimes)}): {''.join(sig_ref_overview.regimes)}")
+                print(
+                    f"Overview {col_ref_ov} signature compact(len={len(sig_ref_overview.regimes)}): {''.join(sig_ref_overview.regimes)}"
+                )
 
                 """
                 regime_matches = find_best_matching_regime(sig_pupitre, sig_overview)
@@ -564,20 +698,30 @@ def main() -> None:
                 """
 
                 # add compute plateaux for df_pupitre_aligned["Field"]
-                # see python_magnetrun.processing.plateaux -- nplateaux 
-                pupitre_field_threshold = thresholds.get("Field", thresholds.get("Field", 1.e-3))
-                get_plateaux_per_pupitre = get_plateaux_per_pupitre(
-                    record, col_pup, threshold=pupitre_field_threshold, num_points_threshold=600
+                # see python_magnetrun.processing.plateaux -- nplateaux
+                # thresholds: see python_magnetrun.analysis.config.ThresholdConfig.default()
+                pupitre_field_threshold = (
+                    1.0e-3  # thresholds.get("Field", thresholds.get("Field", 1.0e-3))
+                )
+                plateaux_per_pupitre = get_plateaux_per_pupitre(
+                    record,
+                    "Field",
+                    threshold=pupitre_field_threshold,
+                    num_points_threshold=10,
                 )
                 print(
-                    f"\nget_plateaux_per_pupitre (threshold={pupitre_field_threshold}, num_points_threshold=600):"
+                    f"\nget_plateaux_per_pupitre (threshold={pupitre_field_threshold}, num_points_threshold=10):"
                 )
-                for f, plateau_data, n_plateaus in get_plateaux_per_pupitre:
+                for f, plateau_data, n_plateaus in plateaux_per_pupitre:
                     if plateau_data is None:
-                        print(f"  {Path(f).name}: failed to load or missing Field column")
+                        print(
+                            f"  {Path(f).name}: failed to load or missing Field column"
+                        )
                     else:
-                        print(f"  {Path(f).name}: n_plateaus={n_plateaus}, plateau_data={plateau_data}")
-             
+                        print(
+                            f"  {Path(f).name}: n_plateaus={n_plateaus}, plateau_data={plateau_data}"
+                        )
+
             else:
                 print("pupitre vs overview: no data")
 
@@ -619,8 +763,16 @@ def main() -> None:
                         f"{Path(__file__).stem}_{fichier_overview.stem}_archive_{af.pupitre_key}.png"
                     )
                     plot_lag_comparison(
-                        df_archive, af.pigbrother_channel, df_pupitre, af.pupitre_key,
-                        lag_archive, ref_lag.seconds, "archive", plot_path,
+                        df_archive,
+                        af.pigbrother_channel,
+                        df_pupitre,
+                        af.pupitre_key,
+                        lag_archive,
+                        ref_lag.seconds,
+                        "archive",
+                        plot_path,
+                        pigbrother_unit=af.pigbrother_unit,
+                        pupitre_unit=af.pupitre_unit,
                     )
                     print(f"Saved comparison plot: {plot_path}")
             else:

@@ -2,14 +2,13 @@ import dash
 import duckdb
 import pandas as pd
 
-from urllib.parse import quote
-
 from dash import Dash, html, dcc, Input, Output
 from dash.dash_table import DataTable
 
 import plotly.express as px
 from plotly import graph_objects as go
 import magnetdb_analysis as db
+from experiment_links import experiment_link
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
 dash.register_page(__name__, path="/", name="Assembly stats", order=1)
@@ -132,19 +131,6 @@ TABLE_COLUMNS = [
 ]
 
 
-def _experiment_link(row):
-    """Render the Experiment cell as a markdown link pre-loading Home with this row's site/file."""
-    label = (
-        row["Experiment"].strftime("%Y-%m-%d - %H:%M:%S")
-        if pd.notna(row["Experiment"])
-        else str(row["Experiment"])
-    )
-    if pd.isna(row["File"]) or not row["File"]:
-        return label
-    href = f"/home?site={quote(str(row['Site']), safe='')}&file={quote(str(row['File']), safe='')}"
-    return f"[{label}]({href})"
-
-
 def _build_page_content(df, total_sites, sites_in_operation):
     """Build the figures, table rows, and summary text for a loaded experiments dataframe."""
     fig_per_exp = px.bar(
@@ -230,7 +216,7 @@ def _build_page_content(df, total_sites, sites_in_operation):
     fig_field_on_year.update_xaxes(dtick=1, title="Year")
 
     table_df = df.drop(columns=["File"])
-    table_df["Experiment"] = df.apply(_experiment_link, axis=1)
+    table_df["Experiment"] = df.apply(experiment_link, axis=1)
 
     summary = [
         html.B(f"Sites: {total_sites}"),
