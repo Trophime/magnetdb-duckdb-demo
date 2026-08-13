@@ -78,88 +78,18 @@ Parquet output confirmed.
 
 ## Phase 2+ — remaining (not started)
 
-### Goal
+Split into separate plan files, one per phase, each with its own
+Goal/Files/Approach/Verification/Assumptions and explicit dependency on the
+previous phase landing:
 
-`hoop-stress compute --all` writes Parquet with part-name columns instead of
-slot names; a new `hoop-stress part-history <part_name>` command aggregates a
-part's bin-stats/fatigue-proxy across every site/magnet/experiment it has
-served in and persists a chronologically-ordered concatenation of its raw
-stress time series.
-
-### Files affected
-
-- `to_duckdb/compute_hoop_stats.py` — edit
-- `to_duckdb/magnetdb.py` — edit (new `hoop-stress part-history` subcommand +
-  dispatch entry)
-- `to_duckdb/docs/hoop-stress.md` — edit (document the new command and the
-  renamed Parquet columns)
-- New: `to_duckdb/tests/test_part_history.py` (or extended into an existing
-  hoop-stress test file — naming TBD once existing suite convention is
-  checked)
-
-### Approach
-
-1. **Rename Parquet columns to part names** (`compute_hoop_stats.py`)
-   - In `compute_hoop_stress_history`, build a renamed copy of `df` (via
-     `part_map`) right before `save_hoop_parquet`; leave the original `df`
-     untouched for bin-stats/fatigue computation, which still relies on
-     `H*_fast`/`B*_fast`/`Supra*_fast` naming.
-   - Fix `_column_meta` to key off the *original* slot name (via `part_map`)
-     instead of parsing the (now renamed) column name directly.
-
-2. **Aggregated per-part report + fatigue proxy** — new
-   `part_history_stats(part_name, db_path)` in `compute_hoop_stats.py`,
-   summing `hoop_stress_bin_stats` and `hoop_stress_fatigue` (`n_cycles`,
-   `sum_range3`) across every experiment where the part contributed, resolved
-   via `hoop_stress_bin_stats JOIN experiments`.
-
-3. **Persisted raw concatenated history file** — new
-   `build_part_history_series(part_name, db_path, parquet_dir)`: reads each
-   relevant experiment's Parquet (via `hoop_stress_processed.parquet_path`),
-   pulls the part's column + `t`, reconstructs an absolute timestamp from the
-   `t0` table metadata, sorts chronologically across experiments/sites, and
-   writes `<parquet_dir>/parts/<part_name>.parquet` (`timestamp`,
-   `hoop_stress_MPa`, `experiment_id`, `site_name`). Experiments with
-   pre-rename Parquet files (missing the part-named column) are skipped with
-   a `[WARN]`.
-
-4. **New CLI command** in `magnetdb.py`:
-   `hoop-stress part-history <part_name> [--db ...] [--parquet-dir ...]` —
-   prints the sites/experiments list and aggregated stats from step 2, writes
-   the file from step 3, reports its path.
-
-5. **Docs** — update `docs/hoop-stress.md`: note the renamed Parquet columns
-   and add the `part-history` section.
-
-### Verification
-
-1. Run `MPLBACKEND=Agg pytest to_duckdb/tests -k hoop` — confirm no
-   regressions in bin-stats/fatigue values after the column rename (only
-   names change, not numbers).
-2. Run `hoop-stress compute <one site> --reprocess --db <scratch db>` →
-   verify the Parquet schema has part-name columns with correct
-   `unit`/`symbol` metadata (via `pyarrow.parquet.read_schema`).
-3. Run `hoop-stress part-history <a part spanning >= 2 experiments>` → verify
-   the printed site/experiment list matches a manual `SELECT DISTINCT` query,
-   and the output file's row count equals the sum of per-experiment row
-   counts, sorted by timestamp.
-4. New test(s) for `part_history_stats` (aggregation math on a small
-   fixture) and `build_part_history_series` (ordering/concatenation on 2+
-   fake per-experiment Parquets).
-
-### Assumptions & open questions
-
-- Part names (e.g. `H24110501`) are safe to use as Parquet column names /
-  dict keys — no collision risk since `parts.name` is a primary key.
-- The part-history file stays Parquet, not CSV, for consistency with the
-  renamed per-experiment files — flag if CSV is wanted specifically for this
-  deliverable.
-- `hoop_stress_processed.parquet_path`: when an experiment has multiple
-  `bin_config` rows, they share the same Parquet file; dedupe by
-  `experiment_id` using latest `processed_at`.
-- Carried from the original master plan, not yet addressed: testing hoop
-  stress stats/bin history per part (Phase 4), and the fatigue-additivity
-  question — whether summed per-experiment rainflow (`n_cycles`/`sum_range3`)
-  matches single-pass rainflow on a part's full concatenated series (Phase 5,
-  resolves the `TODOs.md` "test if fatigue can be used like a cumulative
-  stats??" line).
+- **Phase 2** — [PLAN_hoop_stress_parquet_columns.md](PLAN_hoop_stress_parquet_columns.md):
+  rename Parquet columns to part names.
+- **Phase 3** — [PLAN_hoop_stress_part_history.md](PLAN_hoop_stress_part_history.md):
+  going from site to part — `part_history_stats`, `build_part_history_series`,
+  new `hoop-stress part-history` CLI command. Depends on Phase 2.
+- **Phase 4** — [PLAN_hoop_stress_per_part_tests.md](PLAN_hoop_stress_per_part_tests.md):
+  test coverage for Phase 3's aggregation/concatenation functions. Depends
+  on Phase 3.
+- **Phase 5** — [PLAN_hoop_stress_fatigue_additivity.md](PLAN_hoop_stress_fatigue_additivity.md):
+  the `TODOs.md` "test if fatigue can be used like a cumulative stats??"
+  question. Depends on Phase 3.

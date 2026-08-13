@@ -194,7 +194,9 @@ def test_column_meta_unmatched_returns_empty():
 
 
 def test_save_hoop_parquet_round_trip(tmp_path):
-    df = pd.DataFrame({"t": [0.0, 1.0, 2.0], "H1_fast": [10.0, 20.0, 30.0]})
+    # Column is already renamed to the part name, as the real caller
+    # (compute_hoop_stress_history) does before calling save_hoop_parquet.
+    df = pd.DataFrame({"t": [0.0, 1.0, 2.0], "H_NEW": [10.0, 20.0, 30.0]})
     path = tmp_path / "exp.parquet"
 
     save_hoop_parquet(
@@ -213,7 +215,8 @@ def test_save_hoop_parquet_round_trip(tmp_path):
     assert meta[b"t0"] == b"2025-01-01T00:00:00"
     assert json.loads(meta[b"part_map"]) == {"H1_fast": "H_NEW"}
 
-    field = table.schema.field("H1_fast")
+    assert "H1_fast" not in table.schema.names
+    field = table.schema.field("H_NEW")
     assert field.metadata[b"unit"] == b"MPa"
     assert field.metadata[b"symbol"].decode() == "σ_H1"
     assert table.column("t").to_pylist() == [0.0, 1.0, 2.0]
@@ -461,6 +464,11 @@ def test_compute_hoop_stress_history_full_run(patched_hoop_pipeline, hoop_db_pat
     assert not geom_dir.exists()  # cleaned up by the `finally: shutil.rmtree(...)`
     assert (pq_dir / "exp1.parquet").exists()
     assert (pq_dir / "exp2.parquet").exists()
+
+    # Parquet columns are renamed to part names (H1_fast -> H_NEW), not slot names.
+    written = pq.read_table(pq_dir / "exp1.parquet")
+    assert "H_NEW" in written.schema.names
+    assert "H1_fast" not in written.schema.names
 
     con = duckdb.connect(hoop_db_path, read_only=True)
     try:

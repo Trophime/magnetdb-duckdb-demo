@@ -232,11 +232,14 @@ def save_hoop_parquet(
     Field-level metadata: unit and symbol for each *_fast column.
     """
     table = pa.Table.from_pandas(df, preserve_index=False)
+    inv_part_map = {v: k for k, v in part_map.items()}
 
-    # Per-field metadata
+    # Per-field metadata (columns may already be renamed to part names, so
+    # resolve back to the slot name _column_meta expects)
     new_fields = []
     for field in table.schema:
-        extra = _column_meta(field.name)
+        slot_name = inv_part_map.get(field.name, field.name)
+        extra = _column_meta(slot_name)
         if extra:
             new_fields.append(field.with_metadata(extra))
         else:
@@ -562,16 +565,18 @@ def compute_hoop_stress_history(
                 except Exception:
                     pass
 
-            # Save Parquet
+            # Save Parquet (columns renamed to part names; original df with
+            # slot names is left untouched for the bin-stats/fatigue loop below)
+            exp_part_map = {k: v for k, v in part_map.items() if k in hoop_cols}
             pq_path = pq_dir / f"{exp_name}.parquet"
             try:
                 save_hoop_parquet(
-                    df, pq_path,
+                    df.rename(columns=exp_part_map), pq_path,
                     site_name=site_name,
                     housing=housing,
                     t0=t0_str,
                     experiment_file=exp_file,
-                    part_map={k: v for k, v in part_map.items() if k in hoop_cols},
+                    part_map=exp_part_map,
                 )
             except Exception as exc:
                 if verbose:

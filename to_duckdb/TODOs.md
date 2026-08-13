@@ -9,6 +9,14 @@ See: [to_duckdb/PLAN_users_multi_source.md](PLAN_users_multi_source.md)
 See: [to_duckdb/docs/hoop-stress.md](docs/hoop-stress.md) and [to_duckdb/PLAN_hoop_stress_history.md](PLAN_hoop_stress_history.md)
 - [ ] `magnetdb.py hoop-stress compute` | Compute and persist hoop-stress bin stats + fatigue -- do not compute fatigue at this point
 - [ ] test if fatigue can be used like a cumulative stats??
+- [ ] **POSTPONED, must come back to — `--check` mode must work smoothly.**
+      `validate_fast_from_pupitre(..., check=True)` sanity-checks the fast
+      path against `magnettools.Bmap.getHoop()`. Crash fixed here; the
+      deeper fix lives in a separate repo (`~/github/my-magnettools`,
+      uncommitted, not yet reinstalled) and this file's `--check` call
+      still needs to pass `z0_h`/`z0_b` into `getHoop()` once that lands.
+      See `NOTES_hoop_stress_implementation.md`'s "Known limitations"
+      section for the full trail.
 
 # overview-record
 - [ ] duration from overview

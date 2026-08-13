@@ -1052,8 +1052,9 @@ def validate_fast_from_pupitre(
 
                 headers, hoop_values = bmap.getHoop(Tubes, Helices, BMagnets, UMagnets)
                 ref_df = pd.DataFrame.from_records(hoop_values, columns=headers)
-                # Filter to rows belonging to the selected type (by label prefix)
-                mask = ref_df["label"].str.startswith(_label_prefix)
+                # Filter to rows belonging to the selected type (by "num" prefix,
+                # e.g. "H1", "B1", "Supra1" — bmap.getHoop() has no "label" column)
+                mask = ref_df["num"].str.startswith(_label_prefix)
                 ref_hoop = ref_df.loc[mask, "Hoop[MPa]"].to_numpy()
 
                 for i in range(_n_check):
