@@ -36,7 +36,7 @@ Usage
 import argparse
 import json
 import re
-import tempfile
+import shutil
 from pathlib import Path
 
 import duckdb
@@ -150,6 +150,54 @@ def build_part_column_map(
             s_idx += 1
 
     return mapping
+
+
+def resolve_z0_by_type(
+    site_name: str,
+    db_path: str,
+    con: "duckdb.DuckDBPyConnection | None" = None,
+) -> tuple[list[float], list[float]]:
+    """Return (z0_h, z0_b): per-part observation z-position from
+    site_magnets.z_offset, in the same H1_fast/H2_fast/… and
+    B1_fast/B2_fast/… order build_part_column_map() assigns columns.
+
+    z0_h has one entry per helix part (one per Tube); z0_b has one entry
+    per bitter part (one per Bstack). Missing z_offset defaults to 0.0
+    (magnet centered on z=0). Used by validate_fast_from_pupitre() to pick
+    which turn-group/plate represents each part, and where Bz is evaluated.
+
+    con : Reuse an already-open connection instead of opening a new
+          read-only one (avoids DuckDB's "different configuration" error
+          when called from within a caller's open connection).
+    """
+    owns_con = con is None
+    if con is None:
+        con = duckdb.connect(db_path, read_only=True)
+
+    rows = con.execute("""
+        SELECT sm.z_offset, m.type AS magnet_type, p.type AS part_type
+        FROM site_magnets sm
+        JOIN magnets      m  ON m.name         = sm.magnet_name
+        JOIN magnet_parts mp ON mp.magnet_name = m.name
+        JOIN parts        p  ON p.name         = mp.part_name
+        WHERE sm.site_name = ?
+        ORDER BY sm.commissioned_at DESC NULLS LAST, mp.rank
+    """, [site_name]).fetchall()
+    if owns_con:
+        con.close()
+
+    z0_h: list[float] = []
+    z0_b: list[float] = []
+    for z_offset, magnet_type, part_type in rows:
+        mt = (magnet_type or "").lower()
+        pt = (part_type or "").lower()
+        z = float(z_offset or 0.0)
+        if mt in ("insert",) and pt in ("helix",):
+            z0_h.append(z)
+        elif mt in ("bitters",) and pt in ("bitter",):
+            z0_b.append(z)
+
+    return z0_h, z0_b
 
 
 # ---------------------------------------------------------------------------
@@ -411,6 +459,7 @@ def compute_hoop_stress_history(
         return {"new": 0, "skipped": 0, "errors": [str(exc)]}
 
     part_map = build_part_column_map(site_name, db_path, con=con)
+    z0_h, z0_b = resolve_z0_by_type(site_name, db_path, con=con)
 
     # Parquet output directory
     pq_dir = Path(parquet_dir) if parquet_dir else Path(db_path).parent / "hoop_parquet"
@@ -419,25 +468,32 @@ def compute_hoop_stress_history(
 
     results: dict = {"new": 0, "skipped": 0, "errors": []}
 
-    with tempfile.TemporaryDirectory() as tmpdir:
-        tmpdir_path = Path(tmpdir)
+    # Build the geometry directory once per site (geometry is rebuilt on the
+    # fly from parts.geometry_data — see prepare_geometry_directory()). It
+    # creates and owns its own temp directory, cleaned up in the `finally`
+    # below. con=con reuses our already-open connection instead of opening a
+    # second one to the same file (DuckDB disallows mixed read-only/
+    # read-write connections to one file).
+    site_config = {
+        "name": site_name,
+        "magnets": [config for _magnet_name, config, _geo in magnet_configs],
+    }
+    try:
+        tmpdir_path = prepare_geometry_directory(
+            site_name, site_config, db_path,
+            geometries_dir=geometries_dir, con=con,
+        )
+    except Exception as exc:
+        print(f"[ERROR] geometry prep for '{site_name}': {exc}")
+        con.close()
+        return {"new": 0, "skipped": 0, "errors": [str(exc)]}
 
-        # Build the geometry directory once per site
-        for magnet_name, config, geometry_data in magnet_configs:
-            try:
-                prepare_geometry_directory(
-                    magnet_name, config, tmpdir_path,
-                    geometry_data=geometry_data,
-                    geometries_dir=geometries_dir,
-                )
-            except Exception as exc:
-                if verbose:
-                    print(f"  [WARN] geometry prep for '{magnet_name}': {exc}")
-
-        # Load magnettools objects (Tubes, Helices, BMagnets, UMagnets, …)
+    try:
+        # Load magnettools objects (Tubes, Helices, BMagnets, UMagnets, …).
+        # site_config is the same shape prepare_geometry_directory() used above —
+        # msite_setup() (inside load_magnettools) always expects confdata['magnets'].
         try:
-            combined_config = magnet_configs[0][1] if len(magnet_configs) == 1 else _merge_configs(magnet_configs)
-            data = load_magnettools(combined_config, tmpdir_path)
+            data = load_magnettools(site_config, tmpdir_path)
         except Exception as exc:
             print(f"[ERROR] Cannot load magnettools for '{site_name}': {exc}")
             con.close()
@@ -477,6 +533,8 @@ def compute_hoop_stress_history(
                     magnet_type=magnet_type,
                     use_mrun=use_mrun,
                     site=site_name,
+                    z0_h=z0_h,
+                    z0_b=z0_b,
                 )
             except Exception as exc:
                 if verbose:
@@ -536,6 +594,8 @@ def compute_hoop_stress_history(
                 str(pq_path) if pq_path else None,
             )
             results["new"] += 1
+    finally:
+        shutil.rmtree(tmpdir_path, ignore_errors=True)
 
     con.close()
 
@@ -546,18 +606,6 @@ def compute_hoop_stress_history(
             f"{len(results['errors'])} errors"
         )
     return results
-
-
-def _merge_configs(magnet_configs: list) -> dict:
-    """Merge multiple magnet configs into one combined dict for load_magnettools."""
-    combined: dict = {}
-    for _name, config, _geo in magnet_configs:
-        for key, val in config.items():
-            if isinstance(val, list) and key in combined:
-                combined[key] = combined[key] + val
-            else:
-                combined[key] = val
-    return combined
 
 
 # ---------------------------------------------------------------------------

@@ -1278,8 +1278,9 @@ def build_parser() -> argparse.ArgumentParser:
     m_add.add_argument("--geometry",
                        help="Path to the assembly-level YAML geometry file "
                             "(Insert, Bitters, …) to store in magnets.geometry_data. "
-                            "Required for geometry_config_to_yaml / the 'geometry' "
-                            "subcommand of stress_map.py / magnetdb.py hoop-stress.")
+                            "Not required for hoop-stress computation, which always "
+                            "rebuilds magnet/site geometry on the fly from parts' "
+                            "geometry_data; this stores an optional cached copy.")
     m_add.add_argument("--dry-run", action="store_true",
                        help="Validate and preview without writing")
 

@@ -27,6 +27,16 @@ The bin configuration is stored in `hoop_stress_processed` as a canonical edges 
 
 ---
 
+## Evaluation point (z0)
+
+Both Helix and Bitter parts are internally divided into axial sections (turn-groups/plates) with their own current density, but hoop stress is reported **once per DB part**, not once per section. For each part, the section whose z-extent actually contains an observation point `z0` is selected — Bz and current density are both sampled there — instead of an arbitrary "middle" section by array index.
+
+`z0` defaults to `0.0` per part (assumes magnets are centered on z=0) but is resolved **per magnet** from `site_magnets.z_offset` via `resolve_z0_by_type()`, so a magnet installed off-center within a site is evaluated at its own true axial position, not the site's. This is automatic — there is no `--z0` flag; update `site_magnets.z_offset` in the DB if a magnet is misaligned.
+
+Bitter parts are additionally grouped from their physical plates (`BMagnets`) into one representative value per part via `mt.create_Bstack()`, so `B1_fast`, `B2_fast`, … correspond to DB parts, matching `H1_fast`, `H2_fast`, ….
+
+---
+
 ## `hoop-stress compute`
 
 Processes all experiment files for one or more sites and persists results in `hoop_stress_bin_stats` and `hoop_stress_fatigue`.

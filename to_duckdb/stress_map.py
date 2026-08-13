@@ -279,31 +279,38 @@ def geometry_config_to_yaml(
     db_path: str,
     output_dir: str | Path | None = None,
     geometries_dir: str | Path | None = None,
+    con: "duckdb.DuckDBPyConnection | None" = None,
 ) -> str:
     """
-    Build a python_magnetgeo MSite from the site's magnet geometry_data and
-    site_magnets positional offsets, then return its YAML representation.
+    Build a python_magnetgeo MSite by rebuilding each linked magnet's
+    assembly YAML on the fly from that magnet's own parts, then combining
+    them with each magnet's ``site_magnets`` positional offsets.
 
     Mirrors ``Site.geometry_config_to_json()`` in python_magnetdb/models.py,
     replacing the Django ORM with DuckDB queries.
 
-    Each magnet's assembly geometry is resolved in this order:
-
-    1. ``magnets.geometry_data`` — JSON-serialised python_magnetgeo object stored
-       at import time via ``magnetdb.py magnet add --geometry <yaml>``.
-    2. ``geometries_dir`` fallback — load ``{magnet_name}.yaml`` from this
-       directory (for DBs populated without ``--geometry``).
+    ``parts.geometry_data`` is the only geometry ever persisted — there is
+    no stored magnet- or site-level geometry to read. Each magnet linked to
+    *site_name* has its assembly YAML reconstructed by
+    ``magnet_geometry_config_to_yaml()`` from its parts' ``geometry_data``;
+    this function combines those into one ``MSite``.
 
     Parameters
     ----------
     site_name      : Site name as registered in DuckDB (e.g. ``"M9_M19061901_0"``)
     db_path        : Path to the DuckDB file
-    output_dir     : If given, also write ``<site_name>.yaml`` to this directory
-                     via ``MSite.write_to_yaml()``.  The YAML string is returned
-                     regardless.
-    geometries_dir : Fallback directory containing ``{magnet_name}.yaml``
-                     assembly-level files (Insert, Bitters, …) for magnets that
-                     were imported without ``--geometry``.
+    output_dir     : If given, also write ``<site_name>.yaml`` (and each
+                     magnet's ``<magnet_name>.yaml``) to this directory via
+                     ``write_to_yaml()``.  The YAML string is returned
+                     regardless — this is a write location, not a read source.
+    geometries_dir : Passed straight through as ``output_dir`` to
+                     ``magnet_geometry_config_to_yaml()`` for each magnet —
+                     also a write location, not a fallback read source.
+    con            : Reuse an already-open connection instead of opening a
+                     new read-only one (avoids DuckDB's "different
+                     configuration" error when called from within a
+                     caller's open connection). Passed through to
+                     ``magnet_geometry_config_to_yaml()`` for each magnet.
 
     Returns
     -------
@@ -313,8 +320,8 @@ def geometry_config_to_yaml(
     Raises
     ------
     ValueError
-        If the site is not found, has no magnets, or a magnet's assembly
-        geometry cannot be resolved from either the DB or *geometries_dir*.
+        If the site is not found, has no magnets, or any part of a linked
+        magnet is missing ``geometry_data``.
     """
     import yaml as _yaml
     from python_magnetgeo.MSite import MSite
@@ -322,13 +329,16 @@ def geometry_config_to_yaml(
     print(f"  ── Preparing geometry directory for site '{site_name}' …")
     geo_dir = Path(geometries_dir) if geometries_dir else None
 
-    con = duckdb.connect(db_path, read_only=True)
+    owns_con = con is None
+    if con is None:
+        con = duckdb.connect(db_path, read_only=True)
 
     if (
         con.execute("SELECT 1 FROM sites WHERE name = ?", [site_name]).fetchone()
         is None
     ):
-        con.close()
+        if owns_con:
+            con.close()
         raise ValueError(f"Site '{site_name}' not found in DB.")
 
     rows = con.execute(
@@ -341,7 +351,8 @@ def geometry_config_to_yaml(
     """,
         [site_name],
     ).fetchall()
-    con.close()
+    if owns_con:
+        con.close()
 
     if not rows:
         raise ValueError(f"No magnets linked to site '{site_name}'.")
@@ -354,7 +365,7 @@ def geometry_config_to_yaml(
     for magnet_name, geometry_data, z, r, p in rows:
         print(f"\t- Processing magnet '{magnet_name}' …")
         yaml_str = magnet_geometry_config_to_yaml(
-            magnet_name, db_path, output_dir=geo_dir
+            magnet_name, db_path, output_dir=geo_dir, con=con if not owns_con else None,
         )
         magnet_obj = _yaml.load(yaml_str, Loader=_yaml.FullLoader)
         if output_dir is not None:
@@ -392,6 +403,7 @@ def magnet_geometry_config_to_yaml(
     magnet_name: str,
     db_path: str,
     output_dir: str | Path | None = None,
+    con: "duckdb.DuckDBPyConnection | None" = None,
 ) -> str:
     """
     Build a python_magnetgeo assembly object from a magnet's parts and return
@@ -414,6 +426,9 @@ def magnet_geometry_config_to_yaml(
     db_path     : Path to the DuckDB file
     output_dir  : If given, also write ``<magnet_name>.yaml`` to this directory
                   via ``write_to_yaml()``.  The YAML string is returned regardless.
+    con         : Reuse an already-open connection instead of opening a new
+                  read-only one (avoids DuckDB's "different configuration"
+                  error when called from within a caller's open connection).
 
     Returns
     -------
@@ -437,13 +452,16 @@ def magnet_geometry_config_to_yaml(
         flush=True,
     )
 
-    con = duckdb.connect(db_path, read_only=True)
+    owns_con = con is None
+    if con is None:
+        con = duckdb.connect(db_path, read_only=True)
 
     magnet_row = con.execute(
         "SELECT type FROM magnets WHERE name = ?", [magnet_name]
     ).fetchone()
     if magnet_row is None:
-        con.close()
+        if owns_con:
+            con.close()
         raise ValueError(f"Magnet '{magnet_name}' not found in DB.")
     magnet_type = magnet_row[0]
 
@@ -457,7 +475,8 @@ def magnet_geometry_config_to_yaml(
         """,
         [magnet_name],
     ).fetchall()
-    con.close()
+    if owns_con:
+        con.close()
 
     if not parts_rows:
         raise ValueError(f"Magnet '{magnet_name}' has no parts in DB.")
@@ -578,7 +597,11 @@ def magnet_geometry_config_to_yaml(
 
 
 def prepare_geometry_directory(
-    site_name: str, config: dict, db_path: str, geometries_dir: str | Path | None = None
+    site_name: str,
+    config: dict,
+    db_path: str,
+    geometries_dir: str | Path | None = None,
+    con: "duckdb.DuckDBPyConnection | None" = None,
 ) -> Path:
     """
     Build a temporary directory tree that magnet_setup() can read:
@@ -587,21 +610,29 @@ def prepare_geometry_directory(
         ├── config.json
         └── data/
             ├── geometries/
-            │   ├── {magnet_name}.yaml      ← top-level insert/bitters geometry
+            │   ├── {site_name}.yaml        ← MSite geometry (site + all magnets)
             │   ├── {part_name}.yaml        ← one file per part
             │   └── ...
             └── cad/
 
-    The magnet name is derived from config["geom"] (e.g. "M19061901.yaml" → "M19061901").
-    site_name is used only for the temp-directory prefix.
+    site_name is used both for the temp-directory prefix and to look up the
+    site's magnets in the DB.
 
-    Geometry YAML files are written from one of three sources (tried in order):
-    1. ``geometry_data`` argument — JSON already fetched by load_site_config_from_duckdb;
-       no extra DB connection needed.
-    2. ``geometry_data`` column in DuckDB — fetched via geometry_config_to_yaml when
-       geometry_data argument is None.
-    3. ``geometries_dir`` fallback — a directory of pre-extracted YAML files
-       (used for seed-based data that pre-dates geometry_data storage).
+    Geometry is rebuilt on the fly, bottom-up, from ``parts.geometry_data`` —
+    the only geometry ever persisted — via ``geometry_config_to_yaml()``.
+    *db_path* is required for this lookup; *config* plays no part in
+    geometry resolution and is only written verbatim to ``config.json`` for
+    ``magnet_setup()``'s other inputs. *geometries_dir*, if given, is passed
+    through to ``geometry_config_to_yaml()`` as a write location for the
+    rebuilt per-magnet YAML — not a fallback read source; a part missing
+    ``geometry_data`` always raises ``ValueError``.
+
+    Parameters
+    ----------
+    con : Reuse an already-open connection instead of opening a new
+          read-only one (avoids DuckDB's "different configuration" error
+          when called from within a caller's open connection). Passed
+          through to ``geometry_config_to_yaml()``.
 
     Returns the Path of the created temp directory (caller should clean up).
     """
@@ -621,7 +652,7 @@ def prepare_geometry_directory(
     (tempdir / "data" / "cad").mkdir()
 
     geometry_data = geometry_config_to_yaml(
-        site_name, db_path, output_dir=data_geom, geometries_dir=src_dir
+        site_name, db_path, output_dir=data_geom, geometries_dir=src_dir, con=con,
     )
     with open(data_geom / f"{site_name}.yaml", "w") as f:
         f.write(geometry_data)
@@ -687,6 +718,31 @@ def _assert_current_units(units: dict, cols: list[str], ureg) -> None:
             )
 
 
+def _section_index_at_z(elements, indices, z0: float = 0.0) -> int:
+    """Return the index from *indices* whose z-extent contains *z0*.
+
+    *elements* is the flat ``VectorOfBitters`` (``Helices`` or ``BMagnets``)
+    holding every section's geometry/current-density data; *indices* are the
+    global indices into it for one part's sections (e.g. one Tube's
+    turn-groups, or one Bitter part's Bstack). Falls back to the section
+    with the closest ``get_Z_offset()`` to *z0* if none of them actually
+    contains it (gap between sections, or *z0* outside the part entirely).
+    """
+    best_idx = indices[0]
+    best_dist = None
+    for idx in indices:
+        elem = elements[idx]
+        z_off = elem.get_Z_offset()
+        half_h = elem.get_HalfHeight()
+        if (z_off - half_h) <= z0 <= (z_off + half_h):
+            return idx
+        dist = abs(z0 - z_off)
+        if best_dist is None or dist < best_dist:
+            best_dist = dist
+            best_idx = idx
+    return best_idx
+
+
 def validate_fast_from_pupitre(
     data: tuple,
     pupitre_file: str,
@@ -695,18 +751,22 @@ def validate_fast_from_pupitre(
     check: bool = False,
     use_mrun: bool = False,
     site: str = "",
+    z0_h: list[float] | None = None,
+    z0_b: list[float] | None = None,
 ) -> pd.DataFrame:
     """
     Fast vectorised hoop-stress computation over a pupitre time series.
 
-    Precomputes, at unit current (1 A), for each tube i:
-      - r[i]        : inner radius of the tube
-      - j_unit[i]   : current density at inner radius for IH = 1 A
-      - Bz_tubes[i] : Bz at (r[i], 0) produced by all tubes at IH = 1 A
-      - Bz_bmag[i]  : Bz at (r[i], 0) produced by all BMagnets at IB = 1 A
-      - Bz_umag[i]  : Bz at (r[i], 0) produced by all UMagnets at IS = 1 A
+    Precomputes, at unit current (1 A), for each part i (one Tube for
+    Helix, one Bstack — a group of turn-group plates — for Bitter):
+      - r[i]        : inner radius of the part
+      - j_unit[i]   : current density of the section whose z-extent
+                      contains z0_h[i]/z0_b[i] (see _section_index_at_z())
+      - Bz_tubes[i] : Bz at (r[i], z0[i]) produced by all tubes at IH = 1 A
+      - Bz_bmag[i]  : Bz at (r[i], z0[i]) produced by all BMagnets at IB = 1 A
+      - Bz_umag[i]  : Bz at (r[i], z0[i]) produced by all UMagnets at IS = 1 A
 
-    Hoop stress estimate for tube i at time step k:
+    Hoop stress estimate for part i at time step k:
       sigma_i(k) = r_i * j_unit_i * IH(k)
                        * (Bz_tubes_i * IH(k) + Bz_bmag_i * IB(k) + Bz_umag_i * IS(k))
 
@@ -719,7 +779,7 @@ def validate_fast_from_pupitre(
     housing      : Housing name (e.g. "M9")
     magnet_type  : which coil type(s) to compute hoop stress for:
                      "H"   — insert helices only (columns H1_fast, H2_fast, …)
-                     "B"   — bitter plates only  (columns B1_fast, B2_fast, …)
+                     "B"   — bitter parts only   (columns B1_fast, B2_fast, …)
                      "S"   — supras only         (columns Supra1_fast, Supra2_fast, …)
                      "all" — all present types (H + B + S columns combined)
                    Also controls which reference magnet type is used in the
@@ -730,6 +790,11 @@ def validate_fast_from_pupitre(
                    of load_magnetdata() + prepareData(); supports .tdms in addition
                    to .txt/.csv and handles path auto-resolution.
     site         : Site name forwarded to load_mrun() (ignored when use_mrun=False)
+    z0_h         : Per-Tube observation z-position, in H1_fast/H2_fast/…
+                   order (e.g. from resolve_z0_by_type()). Defaults to all
+                   0.0 (magnets centered on z=0) when None.
+    z0_b         : Per-Bstack (per Bitter part) observation z-position, in
+                   B1_fast/B2_fast/… order. Defaults to all 0.0 when None.
 
     Returns
     -------
@@ -740,8 +805,26 @@ def validate_fast_from_pupitre(
     Tubes, Helices, OHelices, BMagnets, UMagnets, Shims = data
     icurrents = mt.get_currents(Tubes, Helices, BMagnets, UMagnets)
     n_tubes = len(Tubes)
-    n_bmag = len(BMagnets)
     n_umag = len(UMagnets)
+
+    # Group BMagnets into per-part stacks (Bstacks) so hoop stress is
+    # reported once per DB Bitter part, not once per physical plate.
+    if len(BMagnets):
+        _stacks = mt.create_Bstack(BMagnets)
+        b_group_indices = [
+            [_stacks[s][i] for i in range(len(_stacks[s]))] for s in range(len(_stacks))
+        ]
+    else:
+        b_group_indices = []
+    n_bmag = len(b_group_indices)
+
+    # z0_h/z0_b: per-Tube / per-Bstack observation z-position (default 0.0
+    # = magnets centered on z=0). Selects which turn-group/plate represents
+    # each part, and where Bz is evaluated for it.
+    if z0_h is None:
+        z0_h = [0.0] * n_tubes
+    if z0_b is None:
+        z0_b = [0.0] * n_bmag
 
     # Which types to compute (gate early so we skip unnecessary work)
     _do_h = (magnet_type in ("H", "all")) and n_tubes > 0
@@ -752,19 +835,36 @@ def validate_fast_from_pupitre(
     # 1. Precompute unit-current quantities for every magnet type
     #
     # Inner radii are pure geometry — extract before any set_currents call.
-    # Current densities require set_currents(group=1 A).
-    # Bz contributions are evaluated at ALL requested positions in each
-    # single-group pass so no extra set_currents calls are needed.
+    # Current densities require set_currents(group=1 A). Both are sampled
+    # from the section whose z-extent contains that part's z0 (see
+    # _section_index_at_z()), not an arbitrary array-index "middle".
+    # Bz contributions are evaluated at ALL requested (r, z0) positions in
+    # each single-group pass so no extra set_currents calls are needed.
     # ------------------------------------------------------------------
-    r_h = np.array([Tube.get_R_int() for Tube in Tubes]) if n_tubes else np.zeros(0)
-    r_b = np.array([BMag.get_R_int() for BMag in BMagnets]) if n_bmag else np.zeros(0)
+    h_sel = [
+        _section_index_at_z(
+            Helices, range(Tube.get_index(), Tube.get_index() + Tube.get_n_elem()), z0_h[i]
+        )
+        for i, Tube in enumerate(Tubes)
+    ]
+    b_sel = [
+        _section_index_at_z(BMagnets, idxs, z0_b[j])
+        for j, idxs in enumerate(b_group_indices)
+    ]
+
+    r_h = np.array([Tubes[i].get_R_int() for i in range(n_tubes)]) if n_tubes else np.zeros(0)
+    r_b = np.array([BMagnets[i].get_R_int() for i in b_sel]) if n_bmag else np.zeros(0)
     r_s = np.array([UMag.get_R_int() for UMag in UMagnets]) if n_umag else np.zeros(0)
+
+    z0_h_arr = np.array(z0_h) if n_tubes else np.zeros(0)
+    z0_b_arr = np.array(z0_b) if n_bmag else np.zeros(0)
+    z0_s_arr = np.zeros(n_umag)  # Supra not covered by per-section z0 (out of scope)
 
     j_unit_h = np.zeros(n_tubes)
     j_unit_b = np.zeros(n_bmag)
     j_unit_s = np.zeros(n_umag)
 
-    # Bz[src_at_tgt]: Bz at *tgt* inner radii when *src* current = 1 A, rest = 0
+    # Bz[src_at_tgt]: Bz at *tgt* (r, z0) when *src* current = 1 A, rest = 0
     Bz_h_at_rh = np.zeros(n_tubes)
     Bz_b_at_rh = np.zeros(n_tubes)
     Bz_s_at_rh = np.zeros(n_tubes)
@@ -781,11 +881,11 @@ def validate_fast_from_pupitre(
             v[i] = 0.0
         return v
 
-    def _bz_at(radii):
+    def _bz_at(radii, z0s):
         return np.array(
             [
-                mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, r, 0)[1]
-                for r in radii
+                mt.MagneticField(Tubes, Helices, BMagnets, UMagnets, r, z)[1]
+                for r, z in zip(radii, z0s)
             ]
         )
 
@@ -794,30 +894,28 @@ def validate_fast_from_pupitre(
         v = _zero_vcurrents()
         v[num] = 1.0  # IH = 1 A
         mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices, v)
-        for i, Tube in enumerate(Tubes):
-            n_elem = Tube.get_n_elem()
-            mid_elem = int(n_elem / 2) if (n_elem % 2) == 0 else int((n_elem + 1) / 2)
-            j_unit_h[i] = Helices[mid_elem + Tube.get_index()].get_CurrentDensity()
+        for i, sel in enumerate(h_sel):
+            j_unit_h[i] = Helices[sel].get_CurrentDensity()
         if _do_h:
-            Bz_h_at_rh = _bz_at(r_h)
+            Bz_h_at_rh = _bz_at(r_h, z0_h_arr)
         if _do_b:
-            Bz_h_at_rb = _bz_at(r_b)
+            Bz_h_at_rb = _bz_at(r_b, z0_b_arr)
         if _do_s:
-            Bz_h_at_rs = _bz_at(r_s)
+            Bz_h_at_rs = _bz_at(r_s, z0_s_arr)
         num += 1
 
     if n_bmag:
         v = _zero_vcurrents()
         v[num] = 1.0  # IB = 1 A
         mt.set_currents(Tubes, Helices, BMagnets, UMagnets, OHelices, v)
-        for j, BMag in enumerate(BMagnets):
-            j_unit_b[j] = BMag.get_CurrentDensity()
+        for j, sel in enumerate(b_sel):
+            j_unit_b[j] = BMagnets[sel].get_CurrentDensity()
         if _do_h:
-            Bz_b_at_rh = _bz_at(r_h)
+            Bz_b_at_rh = _bz_at(r_h, z0_h_arr)
         if _do_b:
-            Bz_b_at_rb = _bz_at(r_b)
+            Bz_b_at_rb = _bz_at(r_b, z0_b_arr)
         if _do_s:
-            Bz_b_at_rs = _bz_at(r_s)
+            Bz_b_at_rs = _bz_at(r_s, z0_s_arr)
         num += 1
 
     if n_umag:
@@ -827,15 +925,15 @@ def validate_fast_from_pupitre(
         for k, UMag in enumerate(UMagnets):
             j_unit_s[k] = UMag.get_CurrentDensity()
         if _do_h:
-            Bz_s_at_rh = _bz_at(r_h)
+            Bz_s_at_rh = _bz_at(r_h, z0_h_arr)
         if _do_b:
-            Bz_s_at_rb = _bz_at(r_b)
+            Bz_s_at_rb = _bz_at(r_b, z0_b_arr)
         if _do_s:
-            Bz_s_at_rs = _bz_at(r_s)
+            Bz_s_at_rs = _bz_at(r_s, z0_s_arr)
 
     print(
         f"   Precomputed unit-current quantities: "
-        f"{n_tubes} helix tube(s), {n_bmag} bitter plate(s), {n_umag} supra(s)."
+        f"{n_tubes} helix tube(s), {n_bmag} bitter part(s), {n_umag} supra(s)."
     )
 
     # ------------------------------------------------------------------
@@ -1342,7 +1440,7 @@ def plot_fatigue(
 def plot_stress_history(
     df: pd.DataFrame, magnet_name: str, output_png: str | None = None
 ) -> None:
-    fast_cols = [c for c in df.columns if re.match(r"H\d+_fast", c)]
+    fast_cols = [c for c in df.columns if re.match(r"(H|B|Supra)\d+_fast", c)]
     plot_cols = [c for c in ("IH", "IB") if c in df.columns] + fast_cols
 
     # Report and drop rows where every plotted column is NaN.
@@ -1534,6 +1632,8 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
             "Check that sites.housing is set in the DB."
         )
 
+    from compute_hoop_stats import resolve_z0_by_type
+
     records_base = getattr(args, "records_base", "")
     srv_subdir   = getattr(args, "srv_subdir", _DEFAULT_SRV_SUBDIR)
     pupitre_datadir = (
@@ -1546,6 +1646,7 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
         pupitre_datadir=pupitre_datadir,
         housing=housing,
     )
+    z0_h, z0_b = resolve_z0_by_type(args.site_name, args.db)
     print(
         f"\n── Computing hoop stress time series (housing={housing}, "
         f"{len(files)} file(s)) …"
@@ -1563,6 +1664,8 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
             check=args.check,
             use_mrun=args.use_mrun,
             site=args.site_name,
+            z0_h=z0_h,
+            z0_b=z0_b,
         )
         dt = parse_filename_timestamp(f)
         file_starts.append(dt.timestamp() if dt is not None else None)
@@ -1586,7 +1689,7 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
         if "t" in result.columns:
             result["t_abs"] = result["t"]
 
-    fast_cols = [c for c in result.columns if re.match(r"H\d+_fast", c)]
+    fast_cols = [c for c in result.columns if re.match(r"(H|B|Supra)\d+_fast", c)]
     show_cols = [c for c in ["t", "IH", "IB"] if c in result.columns] + fast_cols
     print(result[show_cols].head().to_string(index=False))
     return result
@@ -1661,7 +1764,7 @@ def cmd_fatigue(args: argparse.Namespace) -> None:
     tempdir, data, magnets, housing = _load_site(args)
     try:
         df = _load_history(args, data, housing)
-        fast_cols = [c for c in df.columns if re.match(r"H\d+_fast", c)]
+        fast_cols = [c for c in df.columns if re.match(r"(H|B|Supra)\d+_fast", c)]
         print(f"\n── Rainflow fatigue analysis ({len(fast_cols)} coil(s)) …")
         for col in fast_cols:
             cycles_df = compute_fatigue(df, col)

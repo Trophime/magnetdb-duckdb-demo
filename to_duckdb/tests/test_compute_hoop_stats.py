@@ -1,8 +1,8 @@
-"""Tests for compute_hoop_stats.py (orchestration in compute_hoop_stress_history()
-is covered separately — see follow-up)."""
+"""Tests for compute_hoop_stats.py."""
 
 import json
 
+import duckdb
 import pandas as pd
 import pyarrow.parquet as pq
 import pytest
@@ -16,11 +16,12 @@ from compute_hoop_stats import (
     _insert_bin_stats,
     _insert_fatigue,
     _mark_processed,
-    _merge_configs,
     _parse_bins,
     _rainflow_stats,
     bins_to_key,
     build_part_column_map,
+    compute_hoop_stress_history,
+    resolve_z0_by_type,
     save_hoop_parquet,
 )
 from crud import (
@@ -31,6 +32,7 @@ from crud import (
     insert_site,
     insert_site_magnets,
 )
+from schema import ensure_schema
 
 # ---------------------------------------------------------------------------
 # bins_to_key / _parse_bins
@@ -62,11 +64,11 @@ def test_parse_bins_requires_at_least_two_edges():
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def hoop_site(con):
-    """HOOP_SITE with two insert magnets (MAG_NEW, MAG_OLD) and one bitters
-    magnet (MAG_B). Exercises rank ordering, commissioned_at DESC ordering
-    across same-type magnets, and exclusion of non-coil parts (RING_NEW).
+def _build_hoop_site(con):
+    """Populate HOOP_SITE with two insert magnets (MAG_NEW, MAG_OLD) and one
+    bitters magnet (MAG_B). Exercises rank ordering, commissioned_at DESC
+    ordering across same-type magnets, and exclusion of non-coil parts
+    (RING_NEW).
     """
     insert_part(con, {"name": "H_NEW", "type": "helix"}, verbose=False)
     insert_part(con, {"name": "RING_NEW", "type": "ring"}, verbose=False)
@@ -93,6 +95,15 @@ def hoop_site(con):
         ],
         verbose=False,
     )
+
+
+@pytest.fixture
+def hoop_site(con):
+    """HOOP_SITE with two insert magnets (MAG_NEW, MAG_OLD) and one bitters
+    magnet (MAG_B). Exercises rank ordering, commissioned_at DESC ordering
+    across same-type magnets, and exclusion of non-coil parts (RING_NEW).
+    """
+    _build_hoop_site(con)
     return con
 
 
@@ -108,6 +119,47 @@ def test_build_part_column_map_orders_by_commissioned_at_desc_then_rank(hoop_sit
 def test_build_part_column_map_excludes_non_coil_parts(hoop_site):
     mapping = build_part_column_map("HOOP_SITE", "", con=hoop_site)
     assert "RING_NEW" not in mapping.values()
+
+
+# ---------------------------------------------------------------------------
+# resolve_z0_by_type
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_z0_by_type_defaults_to_zero(hoop_site):
+    z0_h, z0_b = resolve_z0_by_type("HOOP_SITE", "", con=hoop_site)
+
+    assert z0_h == [0.0, 0.0]  # H1_fast -> H_NEW, H2_fast -> H_OLD
+    assert z0_b == [0.0]       # B1_fast -> B_ONE
+
+
+def test_resolve_z0_by_type_reflects_site_magnets_z_offset(con):
+    insert_part(con, {"name": "H_NEW", "type": "helix"}, verbose=False)
+    insert_part(con, {"name": "H_OLD", "type": "helix"}, verbose=False)
+    insert_part(con, {"name": "B_ONE", "type": "bitter"}, verbose=False)
+    insert_magnet(con, {"name": "MAG_NEW"}, "insert", verbose=False)
+    insert_magnet_part_row(con, "MAG_NEW", "H_NEW", 0, 1)
+    insert_magnet(con, {"name": "MAG_OLD"}, "insert", verbose=False)
+    insert_magnet_part_row(con, "MAG_OLD", "H_OLD", 0, 1)
+    insert_magnet(con, {"name": "MAG_B"}, "bitters", verbose=False)
+    insert_magnet_part_row(con, "MAG_B", "B_ONE", 0, 1)
+    insert_site(con, {"name": "HOOP_SITE", "status": "in_operation"}, verbose=False)
+    insert_site_magnets(
+        con, "HOOP_SITE",
+        [
+            {"name": "MAG_NEW", "commissioned_at": "2025-06-01 00:00:00", "z_offset": 0.05},
+            {"name": "MAG_OLD", "commissioned_at": "2025-01-01 00:00:00"},
+            {"name": "MAG_B", "commissioned_at": "2025-03-01 00:00:00"},
+        ],
+        verbose=False,
+    )
+
+    z0_h, z0_b = resolve_z0_by_type("HOOP_SITE", "", con=con)
+
+    # H1_fast -> H_NEW (MAG_NEW, commissioned_at DESC puts it first) -> 0.05
+    # H2_fast -> H_OLD (MAG_OLD, no z_offset given) -> default 0.0
+    assert z0_h == [0.05, 0.0]
+    assert z0_b == [0.0]
 
 
 # ---------------------------------------------------------------------------
@@ -242,26 +294,6 @@ def test_compute_dt_without_t_column_defaults_to_one():
 
 
 # ---------------------------------------------------------------------------
-# _merge_configs
-# ---------------------------------------------------------------------------
-
-
-def test_merge_configs_concatenates_list_values():
-    configs = [
-        ("MAG_A", {"Helices": ["H1"]}, None),
-        ("MAG_B", {"Helices": ["H2"], "BMagnets": ["B1"]}, None),
-    ]
-    merged = _merge_configs(configs)
-    assert merged["Helices"] == ["H1", "H2"]
-    assert merged["BMagnets"] == ["B1"]
-
-
-def test_merge_configs_last_scalar_wins():
-    configs = [("A", {"tag": "first"}, None), ("B", {"tag": "second"}, None)]
-    assert _merge_configs(configs)["tag"] == "second"
-
-
-# ---------------------------------------------------------------------------
 # DB round-trip helpers: _get_experiments, _check_processed/_mark_processed,
 # _insert_bin_stats/_insert_fatigue
 # ---------------------------------------------------------------------------
@@ -339,3 +371,265 @@ def test_insert_bin_stats_and_fatigue_round_trip(hoop_site_with_experiments):
         [exp_id, "H_NEW"],
     ).fetchone()
     assert fatigue == (4.0, 123.0)
+
+
+# ---------------------------------------------------------------------------
+# compute_hoop_stress_history() — orchestration
+#
+# compute_hoop_stress_history() opens its own DuckDB connection internally
+# (duckdb.connect(db_path)); a second, independent `:memory:` connection does
+# not see that state, so these tests use a file-backed DB under tmp_path
+# instead of the `con`/`hoop_site` fixtures.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def hoop_db_path(tmp_path):
+    """File-backed HOOP_SITE + 2 experiments (exp1, exp2)."""
+    db_path = tmp_path / "hoop_orch.duckdb"
+    con = duckdb.connect(str(db_path))
+    ensure_schema(con)
+    _build_hoop_site(con)
+    insert_experiments(
+        con, "HOOP_SITE",
+        [
+            {"name": "exp1", "file": "exp1.txt"},
+            {"name": "exp2", "file": "exp2.txt"},
+        ],
+        verbose=False,
+    )
+    con.close()
+    return str(db_path)
+
+
+@pytest.fixture
+def patched_hoop_pipeline(monkeypatch, tmp_path):
+    """Fake the 4 stress_map functions compute_hoop_stress_history() imports
+    locally, matching the corrected (site-level, not per-magnet)
+    prepare_geometry_directory call shape — a regression to the old
+    per-magnet/``geometry_data=`` call raises TypeError here exactly as it
+    would against the real function.
+
+    Returns the geometry directory the fake creates, so tests can assert it
+    gets cleaned up by compute_hoop_stress_history()'s `finally` block, and
+    a call counter to assert prepare_geometry_directory runs once per site,
+    not once per magnet.
+    """
+    geom_dir = tmp_path / "geom_out"
+    calls = {"prepare_geometry_directory": 0}
+
+    def fake_load_site_config_from_duckdb(site_name, db_path, con=None):
+        return "M9", [
+            ("MAG_NEW", {"geom": "MAG_NEW.yaml"}, None),
+            ("MAG_OLD", {"geom": "MAG_OLD.yaml"}, None),
+            ("MAG_B", {"geom": "MAG_B.yaml"}, None),
+        ]
+
+    def fake_prepare_geometry_directory(site_name, config, db_path, geometries_dir=None, con=None):
+        calls["prepare_geometry_directory"] += 1
+        assert site_name == "HOOP_SITE"
+        assert con is not None  # compute_hoop_stress_history must reuse its own connection
+        assert isinstance(config, dict) and set(config) == {"name", "magnets"}
+        assert len(config["magnets"]) == 3
+        geom_dir.mkdir(exist_ok=True)
+        return geom_dir
+
+    def fake_load_magnettools(config, tempdir, debug=False):
+        return "FAKE_MAGNETTOOLS_DATA"
+
+    monkeypatch.setattr("stress_map.load_site_config_from_duckdb", fake_load_site_config_from_duckdb)
+    monkeypatch.setattr("stress_map.prepare_geometry_directory", fake_prepare_geometry_directory)
+    monkeypatch.setattr("stress_map.load_magnettools", fake_load_magnettools)
+    return geom_dir, calls
+
+
+def test_compute_hoop_stress_history_full_run(patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path):
+    geom_dir, calls = patched_hoop_pipeline
+
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, site=None, z0_h=None, z0_b=None):
+        return pd.DataFrame({"t": [0.0, 1.0, 2.0, 3.0], "H1_fast": [10.0, 60.0, 20.0, 80.0]})
+
+    monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
+
+    pq_dir = tmp_path / "pq"
+    results = compute_hoop_stress_history(
+        "HOOP_SITE", hoop_db_path, parquet_dir=str(pq_dir), verbose=False,
+    )
+
+    assert results == {"new": 2, "skipped": 0, "errors": []}
+    assert calls["prepare_geometry_directory"] == 1
+    assert not geom_dir.exists()  # cleaned up by the `finally: shutil.rmtree(...)`
+    assert (pq_dir / "exp1.parquet").exists()
+    assert (pq_dir / "exp2.parquet").exists()
+
+    con = duckdb.connect(hoop_db_path, read_only=True)
+    try:
+        processed = con.execute(
+            "SELECT experiment_id, magnet_type FROM hoop_stress_processed ORDER BY experiment_id"
+        ).fetchall()
+        assert len(processed) == 2
+        assert all(magnet_type == "all" for _exp_id, magnet_type in processed)
+
+        # H1_fast -> H_NEW (commissioned_at DESC: MAG_NEW is newest, rank 0 helix).
+        bin_rows = con.execute(
+            "SELECT n_samples, sum_dt, sum_x_dt, min_x, max_x FROM hoop_stress_bin_stats "
+            "WHERE part_name = 'H_NEW' ORDER BY experiment_id"
+        ).fetchall()
+        assert len(bin_rows) == 2
+        # sigma=[10,60,20,80], dt=diff([0,1,2,3]).clip(lower=0)=[0,1,1,1] -> all in bin (0,100)
+        assert bin_rows[0] == (4, 3.0, pytest.approx(160.0), 10.0, 80.0)
+
+        fatigue_rows = con.execute(
+            "SELECT part_name FROM hoop_stress_fatigue WHERE part_name = 'H_NEW'"
+        ).fetchall()
+        assert len(fatigue_rows) == 2
+
+        # Only H1_fast was in the synthetic DataFrame -> no rows for the other parts.
+        other_parts = con.execute(
+            "SELECT DISTINCT part_name FROM hoop_stress_bin_stats"
+        ).fetchall()
+        assert other_parts == [("H_NEW",)]
+    finally:
+        con.close()
+
+
+def test_compute_hoop_stress_history_geometry_prep_failure_aborts(hoop_db_path, monkeypatch):
+    def fake_load_site_config_from_duckdb(site_name, db_path, con=None):
+        return "M9", [("MAG_NEW", {"geom": "MAG_NEW.yaml"}, None)]
+
+    def fake_prepare_geometry_directory(site_name, config, db_path, geometries_dir=None, con=None):
+        raise RuntimeError("geometry boom")
+
+    monkeypatch.setattr("stress_map.load_site_config_from_duckdb", fake_load_site_config_from_duckdb)
+    monkeypatch.setattr("stress_map.prepare_geometry_directory", fake_prepare_geometry_directory)
+
+    results = compute_hoop_stress_history("HOOP_SITE", hoop_db_path, verbose=False)
+
+    assert results == {"new": 0, "skipped": 0, "errors": ["geometry boom"]}
+
+
+def test_compute_hoop_stress_history_skips_already_processed_unless_reprocess(
+    patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path
+):
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, site=None, z0_h=None, z0_b=None):
+        return pd.DataFrame({"t": [0.0, 1.0], "H1_fast": [10.0, 20.0]})
+
+    monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
+    pq_dir = str(tmp_path / "pq")
+
+    r1 = compute_hoop_stress_history("HOOP_SITE", hoop_db_path, parquet_dir=pq_dir, verbose=False)
+    assert r1["new"] == 2 and r1["skipped"] == 0
+
+    r2 = compute_hoop_stress_history("HOOP_SITE", hoop_db_path, parquet_dir=pq_dir, verbose=False)
+    assert r2["new"] == 0 and r2["skipped"] == 2
+
+    con = duckdb.connect(hoop_db_path, read_only=True)
+    try:
+        n_rows = con.execute("SELECT COUNT(*) FROM hoop_stress_processed").fetchone()[0]
+        assert n_rows == 2  # not duplicated by the re-run
+    finally:
+        con.close()
+
+    r3 = compute_hoop_stress_history(
+        "HOOP_SITE", hoop_db_path, parquet_dir=pq_dir, reprocess=True, verbose=False,
+    )
+    assert r3["new"] == 2 and r3["skipped"] == 0
+
+
+def test_compute_hoop_stress_history_dry_run_writes_nothing(
+    patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path
+):
+    def fake_validate(*args, **kwargs):
+        raise AssertionError("validate_fast_from_pupitre must not run under dry_run")
+
+    monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
+    pq_dir = tmp_path / "pq"
+
+    results = compute_hoop_stress_history(
+        "HOOP_SITE", hoop_db_path, parquet_dir=str(pq_dir), dry_run=True, verbose=False,
+    )
+
+    assert results == {"new": 2, "skipped": 0, "errors": []}
+    assert not pq_dir.exists()
+
+    con = duckdb.connect(hoop_db_path, read_only=True)
+    try:
+        assert con.execute("SELECT COUNT(*) FROM hoop_stress_processed").fetchone()[0] == 0
+        assert con.execute("SELECT COUNT(*) FROM hoop_stress_bin_stats").fetchone()[0] == 0
+    finally:
+        con.close()
+
+
+def test_compute_hoop_stress_history_different_bin_config_warns_and_reprocesses(
+    patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path, capsys
+):
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, site=None, z0_h=None, z0_b=None):
+        return pd.DataFrame({"t": [0.0, 1.0], "H1_fast": [10.0, 20.0]})
+
+    monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
+    pq_dir = str(tmp_path / "pq")
+
+    r1 = compute_hoop_stress_history("HOOP_SITE", hoop_db_path, parquet_dir=pq_dir, verbose=False)
+    assert r1["new"] == 2
+    capsys.readouterr()  # discard first-run output
+
+    r2 = compute_hoop_stress_history(
+        "HOOP_SITE", hoop_db_path, parquet_dir=pq_dir,
+        bins=[(0.0, 50.0), (50.0, 150.0)], verbose=False,
+    )
+    captured = capsys.readouterr()
+
+    assert "previously processed with" in captured.out
+    assert r2["new"] == 2  # not skipped -- computed under the new bin_key too
+    assert r2["skipped"] == 0
+
+    con = duckdb.connect(hoop_db_path, read_only=True)
+    try:
+        n_configs = con.execute(
+            "SELECT COUNT(DISTINCT bin_config) FROM hoop_stress_processed"
+        ).fetchone()[0]
+        assert n_configs == 2
+    finally:
+        con.close()
+
+
+def test_compute_hoop_stress_history_continues_after_one_experiment_errors(
+    patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path
+):
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, site=None, z0_h=None, z0_b=None):
+        if "exp1" in exp_file:
+            raise RuntimeError("boom")
+        return pd.DataFrame({"t": [0.0, 1.0], "H1_fast": [10.0, 20.0]})
+
+    monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
+
+    results = compute_hoop_stress_history(
+        "HOOP_SITE", hoop_db_path, parquet_dir=str(tmp_path / "pq"), verbose=False,
+    )
+
+    assert results["new"] == 1
+    assert len(results["errors"]) == 1
+    assert results["errors"][0] == ("exp1", "boom")
+
+    con = duckdb.connect(hoop_db_path, read_only=True)
+    try:
+        assert con.execute("SELECT COUNT(*) FROM hoop_stress_processed").fetchone()[0] == 1
+    finally:
+        con.close()
+
+
+def test_compute_hoop_stress_history_skips_experiment_with_no_hoop_columns(
+    patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path
+):
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, site=None, z0_h=None, z0_b=None):
+        return pd.DataFrame({"t": [0.0, 1.0], "IH": [100.0, 200.0]})
+
+    monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
+
+    results = compute_hoop_stress_history(
+        "HOOP_SITE", hoop_db_path, parquet_dir=str(tmp_path / "pq"), verbose=False,
+    )
+
+    assert results["new"] == 0
+    assert len(results["errors"]) == 2
+    assert all(msg == "no hoop columns" for _name, msg in results["errors"])
