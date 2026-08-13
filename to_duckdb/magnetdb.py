@@ -58,6 +58,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
                                             [--pupitre FILE ...] [--records-base DIR] [--srv-subdir DIR]
                                             [--use-mrun] [--check] [--magnet-type H|B|S|all]
                                             [--bins N]
+    python magnetdb.py hoop-stress part-history <part_name> [--db ...] [--parquet-dir ...]
 """
 
 import argparse
@@ -1064,6 +1065,48 @@ def cmd_hoop_stress_fatigue(args) -> None:
     cmd_fatigue(args)
 
 
+def cmd_hoop_stress_part_history(args) -> None:
+    from compute_hoop_stats import build_part_history_series, part_history_stats
+
+    db_path = args.db
+    if not Path(db_path).exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+
+    stats = part_history_stats(args.part_name, db_path)
+    experiments = stats["experiments"]
+    if not experiments:
+        print(f"[INFO] No hoop-stress data found for part '{args.part_name}'.")
+        return
+
+    print(f"\nPart: {args.part_name}")
+    print(f"Experiments ({len(experiments)}):")
+    for e in experiments:
+        print(f"  [{e['experiment_id']}] {e['site_name']} — {e['experiment_name']}")
+
+    print("\nAggregated bin stats:")
+    for b in stats["bin_stats"]:
+        mean = b["sum_x_dt"] / b["sum_dt"] if b["sum_dt"] else float("nan")
+        print(
+            f"  [{b['stress_bin_low']:.0f}, {b['stress_bin_high']:.0f}) MPa: "
+            f"n={b['n_samples']}, time={b['sum_dt'] / 3600:.2f} h, "
+            f"mean={mean:.1f} MPa, max={b['max_x']:.1f} MPa"
+        )
+
+    fatigue = stats["fatigue"]
+    print(
+        f"\nFatigue: n_cycles={fatigue['n_cycles']:.0f}, "
+        f"sum_range3={fatigue['sum_range3']:.3e} MPa^3"
+    )
+
+    parquet_dir = args.parquet_dir or str(Path(db_path).parent / "hoop_parquet")
+    out_path = build_part_history_series(args.part_name, db_path, parquet_dir)
+    if out_path:
+        print(f"\nWrote {out_path}")
+    else:
+        print("\nNo time-series file written (no experiments contributed data).")
+
+
 # ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
@@ -1099,6 +1142,7 @@ _DISPATCH = {
     ("hoop-stress",       "history"):                   cmd_hoop_stress_history,
     ("hoop-stress",       "stats"):                     cmd_hoop_stress_stats,
     ("hoop-stress",       "fatigue"):                   cmd_hoop_stress_fatigue,
+    ("hoop-stress",       "part-history"):              cmd_hoop_stress_part_history,
 }
 
 
@@ -1556,7 +1600,7 @@ def build_parser() -> argparse.ArgumentParser:
     hs_p = entity.add_parser("hoop-stress",
                              help="Compute and visualise per-part hoop-stress statistics.")
     hs_sub = hs_p.add_subparsers(dest="action", required=True,
-                                  metavar="{compute,barchart,history,stats,fatigue}")
+                                  metavar="{compute,barchart,history,stats,fatigue,part-history}")
 
     hs_compute = hs_sub.add_parser(
         "compute",
@@ -1596,8 +1640,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Load files via python_magnetrun.MagnetRun.load_mrun()",
     )
     hs_compute.add_argument(
-        "--records-base", default="", dest="records_base",
-        help="Root of the records tree (parent of --srv-subdir)",
+        "--records-base", default=str(_DEFAULT_RECORDS_BASE), dest="records_base",
+        help=f"Root of the records tree (parent of --srv-subdir) "
+             f"(default: {_DEFAULT_RECORDS_BASE})",
     )
     hs_compute.add_argument(
         "--srv-subdir", default=_DEFAULT_SRV_SUBDIR, dest="srv_subdir",
@@ -1654,6 +1699,19 @@ def build_parser() -> argparse.ArgumentParser:
     hs_fat.add_argument(
         "--bins", type=int, default=15,
         help="Number of histogram bins (default: 15)",
+    )
+
+    hs_parthist = hs_sub.add_parser(
+        "part-history",
+        help="Aggregate a part's hoop-stress bin-stats/fatigue and persist its "
+             "concatenated raw time series across every experiment it served in.",
+    )
+    _db_arg(hs_parthist)
+    hs_parthist.add_argument("part_name", help="DB part name (parts.name)")
+    hs_parthist.add_argument(
+        "--parquet-dir", default=None, dest="parquet_dir",
+        help="Directory hoop-stress Parquet files live in, and where "
+             "parts/<part_name>.parquet is written (default: <db dir>/hoop_parquet)",
     )
 
     return parser

@@ -1,5 +1,6 @@
 *.png
 *.json
 *.duckdb
+*.parquet
 
 deprecated/

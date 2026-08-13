@@ -12,6 +12,7 @@ For each experiment file not yet processed this module:
   3. Computes per-part stress-bin distributions    → hoop_stress_bin_stats
   4. Computes per-part rainflow fatigue cycle counts → hoop_stress_fatigue
   5. Marks the experiment as processed in hoop_stress_processed (idempotent).
+  6. Appends "HOOP STRESS DONE" to experiments.status (idempotent).
 
 Bin format
 ----------
@@ -45,6 +46,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from config import DEFAULT_DB
+from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE
 from populate import _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
 from schema import ensure_schema
 
@@ -52,6 +54,7 @@ from schema import ensure_schema
 # Defaults
 # ---------------------------------------------------------------------------
 
+DEFAULT_RECORDS_BASE = _DEFAULT_RECORDS_BASE
 DEFAULT_SRV_SUBDIR = _DEFAULT_SRV_SUBDIR
 DEFAULT_MAGNET_TYPE  = "all"
 
@@ -385,6 +388,236 @@ def _insert_fatigue(con, exp_id: int, part_name: str, stats: dict) -> None:
     )
 
 
+_HOOP_STATUS_TOKEN = "HOOP STRESS DONE"
+
+
+def _append_hoop_status(con, exp_id: int) -> None:
+    """Append the hoop-stress-done token to experiments.status (idempotent).
+
+    Mirrors compute_exp_stats.py's 'STATS DONE' convention, but appends
+    rather than overwrites so both pipelines' completion stays visible —
+    'pending'/empty is replaced outright (it carries no information),
+    anything else becomes '<status>, HOOP STRESS DONE'.
+    """
+    row = con.execute("SELECT status FROM experiments WHERE id = ?", [exp_id]).fetchone()
+    status = row[0] if row else None
+    if status and _HOOP_STATUS_TOKEN in status:
+        return
+    new_status = (
+        _HOOP_STATUS_TOKEN
+        if not status or status == "pending"
+        else f"{status}, {_HOOP_STATUS_TOKEN}"
+    )
+    con.execute("UPDATE experiments SET status = ? WHERE id = ?", [new_status, exp_id])
+
+
+# ---------------------------------------------------------------------------
+# Part history (cross-experiment/site aggregation)
+# ---------------------------------------------------------------------------
+
+
+def part_history_stats(
+    part_name: str,
+    db_path: str,
+    con: "duckdb.DuckDBPyConnection | None" = None,
+) -> dict:
+    """Aggregate a part's hoop-stress bin-stats and fatigue proxy across every
+    experiment it has served in.
+
+    Parameters
+    ----------
+    part_name : str
+        DB part name (``parts.name``).
+    db_path : str
+        Path to the DuckDB file.
+    con : duckdb.DuckDBPyConnection, optional
+        Reuse an already-open connection instead of opening a new read-only
+        one.
+
+    Returns
+    -------
+    dict
+        ``{"part_name": str, "experiments": list[dict], "bin_stats": list[dict],
+        "fatigue": dict}``. ``experiments`` entries have ``experiment_id``,
+        ``site_name``, ``experiment_name``. ``bin_stats`` entries are summed
+        across experiments, keyed by ``stress_bin_low``/``stress_bin_high``,
+        with the same fields as ``hoop_stress_bin_stats``. ``fatigue`` is
+        ``{"n_cycles": float, "sum_range3": float}`` summed across
+        experiments. All empty/zero if the part has no recorded data.
+    """
+    owns_con = con is None
+    if con is None:
+        con = duckdb.connect(db_path, read_only=True)
+
+    experiments = con.execute("""
+        SELECT DISTINCT b.experiment_id, e.site_name, e.name AS experiment_name
+        FROM hoop_stress_bin_stats b
+        JOIN experiments e ON e.id = b.experiment_id
+        WHERE b.part_name = ?
+        ORDER BY e.site_name, b.experiment_id
+    """, [part_name]).fetchall()
+
+    bin_rows = con.execute("""
+        SELECT stress_bin_low, stress_bin_high,
+               SUM(n_samples)  AS n_samples,
+               SUM(sum_dt)     AS sum_dt,
+               SUM(sum_x_dt)   AS sum_x_dt,
+               SUM(sum_x2_dt)  AS sum_x2_dt,
+               MIN(min_x)      AS min_x,
+               MAX(max_x)      AS max_x
+        FROM hoop_stress_bin_stats
+        WHERE part_name = ?
+        GROUP BY stress_bin_low, stress_bin_high
+        ORDER BY stress_bin_low
+    """, [part_name]).fetchall()
+
+    fatigue_row = con.execute("""
+        SELECT SUM(n_cycles), SUM(sum_range3)
+        FROM hoop_stress_fatigue
+        WHERE part_name = ?
+    """, [part_name]).fetchone()
+
+    if owns_con:
+        con.close()
+
+    return {
+        "part_name": part_name,
+        "experiments": [
+            {"experiment_id": r[0], "site_name": r[1], "experiment_name": r[2]}
+            for r in experiments
+        ],
+        "bin_stats": [
+            {
+                "stress_bin_low": r[0], "stress_bin_high": r[1],
+                "n_samples": r[2], "sum_dt": r[3], "sum_x_dt": r[4],
+                "sum_x2_dt": r[5], "min_x": r[6], "max_x": r[7],
+            }
+            for r in bin_rows
+        ],
+        "fatigue": {
+            "n_cycles": fatigue_row[0] if fatigue_row and fatigue_row[0] is not None else 0.0,
+            "sum_range3": fatigue_row[1] if fatigue_row and fatigue_row[1] is not None else 0.0,
+        },
+    }
+
+
+def build_part_history_series(
+    part_name: str,
+    db_path: str,
+    parquet_dir: str,
+    con: "duckdb.DuckDBPyConnection | None" = None,
+    verbose: bool = True,
+) -> "Path | None":
+    """Concatenate a part's raw hoop-stress time series across every
+    experiment it has served in, sorted chronologically, and persist it.
+
+    Reads each contributing experiment's Parquet file (resolved via
+    ``hoop_stress_processed.parquet_path``, deduped by ``experiment_id``
+    using the latest ``processed_at`` when multiple bin configs exist),
+    pulls the ``part_name`` column and ``t``, and reconstructs an absolute
+    timestamp from the file's own ``t0``/``site_name`` table metadata (see
+    :func:`save_hoop_parquet`). Experiments whose Parquet predates the
+    part-name column rename (no ``part_name`` column) are skipped with a
+    ``[WARN]``.
+
+    Parameters
+    ----------
+    part_name : str
+        DB part name (``parts.name``); also the column name expected in
+        each experiment's Parquet file.
+    db_path : str
+        Path to the DuckDB file.
+    parquet_dir : str
+        Directory the per-experiment hoop-stress Parquet files live in (the
+        same one ``hoop-stress compute`` writes to). The concatenated
+        history file is written to ``<parquet_dir>/parts/<part_name>.parquet``.
+    con : duckdb.DuckDBPyConnection, optional
+        Reuse an already-open connection instead of opening a new read-only
+        one.
+    verbose : bool
+        Print ``[WARN]``/``[INFO]`` progress lines.
+
+    Returns
+    -------
+    :class:`~pathlib.Path` or None
+        Path to the written file, or None if no experiment contributed data.
+    """
+    owns_con = con is None
+    if con is None:
+        con = duckdb.connect(db_path, read_only=True)
+
+    rows = con.execute("""
+        SELECT experiment_id, parquet_path
+        FROM (
+            SELECT experiment_id, parquet_path, processed_at,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY experiment_id ORDER BY processed_at DESC
+                   ) AS rn
+            FROM hoop_stress_processed
+            WHERE experiment_id IN (
+                SELECT DISTINCT experiment_id FROM hoop_stress_bin_stats WHERE part_name = ?
+            )
+        )
+        WHERE rn = 1
+        ORDER BY experiment_id
+    """, [part_name]).fetchall()
+
+    if owns_con:
+        con.close()
+
+    frames: list[pd.DataFrame] = []
+    for exp_id, parquet_path in rows:
+        if not parquet_path:
+            continue
+        try:
+            table = pq.read_table(parquet_path)
+        except Exception as exc:
+            if verbose:
+                print(f"  [WARN] [{exp_id}] cannot read {parquet_path}: {exc}")
+            continue
+
+        if part_name not in table.column_names:
+            if verbose:
+                print(
+                    f"  [WARN] [{exp_id}] {parquet_path}: no '{part_name}' column "
+                    f"(pre-rename file), skipping"
+                )
+            continue
+        if "t" not in table.column_names:
+            if verbose:
+                print(f"  [WARN] [{exp_id}] {parquet_path}: no 't' column, skipping")
+            continue
+
+        meta = table.schema.metadata or {}
+        t0_str = meta.get(b"t0", b"").decode()
+        site_name = meta.get(b"site_name", b"").decode()
+        if not t0_str:
+            if verbose:
+                print(f"  [WARN] [{exp_id}] {parquet_path}: no t0 metadata, skipping")
+            continue
+
+        df = table.select(["t", part_name]).to_pandas()
+        frames.append(pd.DataFrame({
+            "timestamp": pd.Timestamp(t0_str) + pd.to_timedelta(df["t"].astype(float), unit="s"),
+            "hoop_stress_MPa": df[part_name].astype(float),
+            "experiment_id": exp_id,
+            "site_name": site_name,
+        }))
+
+    if not frames:
+        if verbose:
+            print(f"[INFO] No processed experiments found for part '{part_name}'.")
+        return None
+
+    result = pd.concat(frames, ignore_index=True).sort_values("timestamp").reset_index(drop=True)
+
+    out_dir = Path(parquet_dir) / "parts"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"{part_name}.parquet"
+    pq.write_table(pa.Table.from_pandas(result, preserve_index=False), out_path, compression="snappy")
+    return out_path
+
+
 # ---------------------------------------------------------------------------
 # dt helper (same logic as compute_op_stats._compute_dt)
 # ---------------------------------------------------------------------------
@@ -598,6 +831,7 @@ def compute_hoop_stress_history(
                 con, exp_id, magnet_type, bin_key,
                 str(pq_path) if pq_path else None,
             )
+            _append_hoop_status(con, exp_id)
             results["new"] += 1
     finally:
         shutil.rmtree(tmpdir_path, ignore_errors=True)
@@ -646,8 +880,9 @@ def _parse_args(argv=None) -> argparse.Namespace:
                         help="Discover files but do not write to DB or disk")
     parser.add_argument("--use-mrun",     action="store_true", dest="use_mrun",
                         help="Load files via python_magnetrun.MagnetRun.load_mrun()")
-    parser.add_argument("--records-base",    default="", dest="records_base",
-                        help="Root of the records tree (parent of --srv-subdir)")
+    parser.add_argument("--records-base",    default=str(DEFAULT_RECORDS_BASE), dest="records_base",
+                        help=f"Root of the records tree (parent of --srv-subdir) "
+                             f"(default: {DEFAULT_RECORDS_BASE})")
     parser.add_argument("--srv-subdir",      default=DEFAULT_SRV_SUBDIR, dest="srv_subdir",
                         help=f"Subdirectory of records-base for pupitre TXT files "
                              f"(default: {DEFAULT_SRV_SUBDIR})")

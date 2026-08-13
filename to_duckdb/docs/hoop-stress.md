@@ -25,6 +25,10 @@ The bin configuration is stored in `hoop_stress_processed` as a canonical edges 
        {'0.0,100.0,200.0,300.0,400.0,500.0,600.0'}. Use --reprocess to overwrite.
 ```
 
+### Experiment status
+
+After processing, `experiments.status` gets `"HOOP STRESS DONE"` appended — comma-joined with whatever's already there (e.g. `"STATS DONE"` from `exp-stats compute`) so both pipelines' completion stays visible. A `status` of `"pending"` or empty is replaced outright rather than appended to, since it carries no information. This is idempotent: reprocessing an experiment that already carries the token leaves it unchanged.
+
 ---
 
 ## Evaluation point (z0)
@@ -69,6 +73,24 @@ python magnetdb.py hoop-stress compute M10_M19071101_13 --dry-run
 | `--dry-run` | — | Discover files without writing |
 | `--use-mrun` | — | Load files via `python_magnetrun.MagnetRun.load_mrun()` |
 | `--quiet` | — | Suppress per-file output |
+
+---
+
+## `hoop-stress part-history`
+
+Aggregates a part's hoop-stress bin-stats and fatigue proxy across every experiment (and site) it has contributed to, and persists a chronologically-sorted concatenation of its raw stress time series.
+
+```bash
+python magnetdb.py hoop-stress part-history H12082401 --db student.duckdb
+```
+
+Reads `hoop_stress_bin_stats`/`hoop_stress_fatigue` for the part (joined to `experiments` for the site/experiment list), and each contributing experiment's Parquet file — resolved via `hoop_stress_processed.parquet_path` — for the raw series; `t0`/`site_name` come from that file's own metadata (see `hoop-stress compute` above). Experiments whose Parquet predates the part-name column rename (no column named after the part) are skipped with a `[WARN]`.
+
+Writes `<parquet_dir>/parts/<part_name>.parquet` (`timestamp`, `hoop_stress_MPa`, `experiment_id`, `site_name`), sorted by `timestamp`.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--parquet-dir` | `<db dir>/hoop_parquet` | Directory Parquet files live in; output goes to `<parquet_dir>/parts/` |
 
 ---
 
