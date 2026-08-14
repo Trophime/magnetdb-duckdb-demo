@@ -29,10 +29,32 @@ Key data-availability findings from the live databases
 - `site_magnets.commissioned_at` is 0% populated in both databases (0/15, 0/89) and
   `magnet_parts` has no date column at all (only `rank`/`coil_index`) — so part-level "magnet
   history" cannot be date-ordered from existing data.
-- Resolution (user decision): add `magnets.created_at` to `to_duckdb/schema.py` and order the
-  part→magnet history table by that. It will be NULL for existing magnets until backfilled
-  separately (out of scope here — a `to_duckdb` ingestion/data-entry task, not a dashboard
-  change).
+- Resolution (user decision): add `magnets.assembled_at` to `to_duckdb/schema.py` and order the
+  part→magnet history table by that. Existing magnets get it backfilled from their `name` via
+  the LNCMI naming convention: `M` + `YYMMDD` (assembly date) + 2-digit serial, e.g.
+  `M23012001` → 2023-01-20. Confirmed against both `test-magnetdb.duckdb` and `magnetdb.duckdb`:
+  every name matching `^M\d{6}\d{2}$` parses to a valid calendar date (13/17 and 4/7 magnets
+  respectively; observed years span 2008–2026, so `20YY` is unambiguous — no century pivot
+  needed). The non-conforming names (`M9Bitters`, `M10Bitters`, `M9Bitters-newBi08/09` — the
+  hand-built Bitter magnets) don't match and stay NULL, same as before, surfaced via the
+  existing missing-data messaging. The same convention holds for parts (`H`/`R` + `YYMMDD` + 2
+  digits for helices/rings — 160/166 and 87/92 matched with zero bad dates across both DBs;
+  `bitter`-type parts are named after their magnet instead, e.g. `M9Bi`).
+  - Reversal (user decision): the magnet JSON files used by `magnetdb.py magnet add` (as
+    exported from the source MagnetDB API — confirmed via `notebooks/magnet.json`) do carry
+    their own `created_at` field (ISO-8601 timestamp), but it is **not** trusted as a source for
+    `assembled_at` — it's the record-creation time in the upstream MagnetDB API, not
+    necessarily the physical assembly date (this was flagged as an unverified assumption in an
+    earlier revision of this plan; resolved now by not relying on it at all). `assembled_at` is
+    derived from `name` only, both at insert time and in the backfill migration — there is no
+    JSON-field code path.
+  - Extension (user decision): add `parts.manufactured_at` following the same treatment as
+    `magnets.assembled_at` — derived from `name` via the `H`/`R` + `YYMMDD` + 2-digit
+    convention only, same idempotent backfill-migration shape, same "not trusting JSON
+    `created_at`" rule applied by the same reasoning (it's the same kind of record-creation
+    timestamp from the same source system). `bitter`-type parts (named after their magnet, e.g.
+    `M9Bi`) don't match the convention and stay NULL. No page in this plan currently orders or
+    displays by `manufactured_at` — it's added for data-model parity/future use.
 
 Annotation logic for incident files already exists in `magnetdb_plot.py::create_comparison_plot()`
 (not in `comparison.py` itself): files classified `default`/`spike`/`trigger` via
@@ -52,6 +74,18 @@ is safe. Note `src/metrics.py` (shared module, used by `comparison.py` for
 ## Files affected
 
 **Create**
+- `to_duckdb/migrations/migrate_magnets_assembled_at_from_name.py` — idempotent backfill,
+  follows the existing `to_duckdb/migrations/migrate_*.py` pattern (`--db`, `--dry-run`).
+  Imports the shared `assembled_at_from_name()` helper from `crud.py` (see below) rather than
+  duplicating the regex in SQL, loops rows where `assembled_at IS NULL`, and issues per-row
+  `UPDATE magnets SET assembled_at = ? WHERE name = ?` for names that parse. Leaves
+  non-conforming names (e.g. `M9Bitters`) NULL. Prints match/no-match counts and a sample of
+  unmatched names for manual review.
+- `to_duckdb/migrations/migrate_parts_manufactured_at_from_name.py` — same shape as the
+  magnets migration above: imports `manufactured_at_from_name()` from `crud.py`, loops rows
+  where `manufactured_at IS NULL`, issues per-row `UPDATE parts SET manufactured_at = ? WHERE
+  name = ?` for names that parse. Leaves `bitter`-type / non-conforming names NULL. Expected
+  match counts: 160/166 in `test-magnetdb.duckdb`, 87/92 in `magnetdb.duckdb`.
 - `stage/dashboard/src/pages/housing_stats.py` — landing page, `path="/"`, `order=1`.
 - `stage/dashboard/src/pages/overview_records.py` — new page, `path="/overview-records"`,
   `order=5`. Site dropdown → overview_record dropdown (chronological, reuses
@@ -67,8 +101,20 @@ is safe. Note `src/metrics.py` (shared module, used by `comparison.py` for
 - `stage/dashboard/src/pages/summary.py` → `stage/dashboard/src/pages_disabled/summary.py`
 
 **Edit**
-- `to_duckdb/schema.py` — add `magnets.created_at` (idempotent
-  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`).
+- `to_duckdb/schema.py` — add `magnets.assembled_at TIMESTAMP` and `parts.manufactured_at
+  TIMESTAMP` (idempotent `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, both).
+- `to_duckdb/crud.py` — add a shared `_date_from_coded_name(name: str, prefix_pattern: str) ->
+  str | None` helper next to the existing `parse_timestamp()` (both `re`/`datetime` already
+  imported): matches `^{prefix_pattern}(\d{6})\d{2}$` and parses the captured group with
+  `datetime.strptime(..., "%y%m%d")`, returning `None` on no-match or invalid date (e.g.
+  month 13). Two thin wrappers: `assembled_at_from_name(name) = _date_from_coded_name(name,
+  "M")` and `manufactured_at_from_name(name) = _date_from_coded_name(name, "[HR]")` — one
+  parsing/validation path for both, since they differ only in the prefix character class. The
+  JSON's own `created_at` field is deliberately ignored for both — not passed to either helper,
+  not read by `insert_magnet()`/`insert_part()` for this purpose. Update `insert_magnet()`: add
+  `assembled_at` to the INSERT column list, value `assembled_at_from_name(name)`. Update
+  `insert_part()`: add `manufactured_at` to the INSERT column list, value
+  `manufactured_at_from_name(name)`.
 - `stage/dashboard/src/magnetdb_analysis.py` — add `get_db_counts`,
   `get_overview_records_for_magnet`, `get_overview_records_for_part`,
   `get_site_history_for_magnet`, `get_magnet_history_for_part`, `get_field_bin_history`, and
@@ -86,7 +132,7 @@ is safe. Note `src/metrics.py` (shared module, used by `comparison.py` for
   add "Site history" accordion (`get_site_history_for_magnet`, ordered by
   `sites.commissioned_at`); summary counts + filter-aware text; missing-data banner.
 - `stage/dashboard/src/pages/part_stats.py` — `order`→4; add "Overview records" accordion; add
-  "Magnet history" accordion (`get_magnet_history_for_part`, ordered by `magnets.created_at`);
+  "Magnet history" accordion (`get_magnet_history_for_part`, ordered by `magnets.assembled_at`);
   summary counts + filter-aware text; missing-data banner.
 - `stage/dashboard/src/pages/home.py` — `order` only (4→6). No other changes; rename deferred
   ("eventually", per user).
@@ -95,8 +141,17 @@ is safe. Note `src/metrics.py` (shared module, used by `comparison.py` for
 
 ## Approach
 
-1. `magnets.created_at` schema addition → verify: `ALTER TABLE` runs clean against
-   `test-magnetdb.duckdb`.
+1. `magnets.assembled_at` + `parts.manufactured_at` schema additions, `_date_from_coded_name()`
+   (+ its two wrappers) and the `insert_magnet()`/`insert_part()` updates in `crud.py`, then run
+   `migrate_magnets_assembled_at_from_name.py` and `migrate_parts_manufactured_at_from_name.py`
+   → verify: both `ALTER TABLE`s run clean against `test-magnetdb.duckdb`; existing `crud.py`
+   tests (`test_crud.py::test_insert_magnet*`, `test_insert_part*`) still pass; new tests
+   confirm `insert_magnet()`/`insert_part()` set `assembled_at`/`manufactured_at` purely from
+   `name`, and that a `created_at` key present in the input dict has no effect on the result;
+   both migrations' `--dry-run` show the expected match counts
+   (magnets: 13/17 in `test-magnetdb.duckdb`, 4/7 in `magnetdb.duckdb`; parts: 160/166 and
+   87/92) and list the unmatched names; real runs set the column for matched rows and leave the
+   rest NULL; re-running either is a no-op (`WHERE ... IS NULL` guard).
 2. New query functions in `magnetdb_analysis.py` → verify: exercise each against
    `test-magnetdb.duckdb` directly, sane results (in particular `get_overview_record_sources`
    returns non-empty source arrays for at least one known record).
@@ -142,5 +197,14 @@ is safe. Note `src/metrics.py` (shared module, used by `comparison.py` for
 - Per-page summary counts show counts relevant to that page's entity + immediate neighbors
   (e.g. `magnet_stats` shows magnet/part/experiment counts, not every table in the DB), not
   literally every count on every page.
-- `magnets.created_at` will be NULL for all existing magnets until backfilled separately (out
-  of scope here).
+- `magnets.assembled_at` source: derived from `name` only, for magnets matching the
+  `MYYMMDDXX` convention; NULL otherwise. The magnet JSON's `created_at` field is explicitly
+  **not** used (reversed from an earlier revision of this plan — it's the source MagnetDB
+  API's record-creation timestamp, not a reliable stand-in for physical assembly date). This
+  applies uniformly to `insert_magnet()` (new/re-added magnets) and the backfill migration
+  (existing rows) — one code path, not two. The handful of non-conforming names (Bitter
+  magnets) stay NULL and get the missing-data treatment like any other gap.
+- `parts.manufactured_at` mirrors `assembled_at` exactly: derived from `name` only (`H`/`R` +
+  `YYMMDDXX` convention), JSON `created_at` not used, NULL for `bitter`-type parts and any
+  non-conforming helix/ring names. Currently write-only from this plan's perspective — no page
+  reads or orders by it yet; say if you'd like e.g. `part_stats.py` to display it.

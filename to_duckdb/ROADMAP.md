@@ -72,7 +72,37 @@ L = large, ? = not yet sizeable).
   Adds `magnets.created_at` to `to_duckdb/schema.py`, which overlaps with
   `PLAN_lifecycle_status.md`'s planned `magnets`/`parts` schema changes —
   sequence the two together to avoid separate uncoordinated
-  `ALTER TABLE magnets` passes.
+  `ALTER TABLE magnets` passes. Also touches `site_stats.py` (nav/labels),
+  which now also collides with `PLAN_site_to_assembly_rename.md` below —
+  see that entry.
+- `PLAN_site_to_assembly_rename.md` (repo root, not `to_duckdb`-local) —
+  **new (2026-08-14), pending approval**. Not triggered by a `TODOs.md`
+  line — user-initiated terminology cleanup: the "Site"/`MSite` concept
+  (a magnet geometry assembly, e.g. `"M9"`) is being renamed to `Assembly`
+  across the whole ecosystem, because "site" collides with unrelated
+  meanings in sibling packages (`housing`, a lab/geographic location, and
+  the word "site" as in "website"). Full multi-repo plan lives in that
+  file; **only the `to_duckdb`/`stage/dashboard` slice (its Phases 3–4)
+  belongs on this roadmap** — Phases 1/2/5/6/7 touch `python_magnetgeo`,
+  `python_magnetsetup`, `python_magnetrun`, `python_magnetcooling`, and a
+  "Track B" in `~/github/python_magnetdb`/`~/github/python_magnetapi`
+  (separate repos, backported later, no roadmap of their own currently).
+  **Directly collides with two items already in this roadmap**:
+  - `PLAN_lifecycle_status.md` (below, `Now`, approved but not yet
+    implemented) adds substantial *new* `sites`/`site_magnets` surface —
+    a `SiteStatus` enum, `decommission_site()`, `check_sites()`, a
+    `magnetdb.py site decommission` subcommand, `"site"` added to
+    `check --entity` choices — none of which exists yet. Writing that
+    today under the old vocabulary just means renaming it again almost
+    immediately. Recommend implementing `PLAN_lifecycle_status.md`
+    directly against `Assembly`/`assemblies`/`assembly_magnets` naming
+    from the start, i.e. do (or at least lock in the naming from) the
+    `to_duckdb` schema/CRUD rename first, or fold the two into one
+    coordinated pass.
+  - `PLAN_dashboard_hierarchy_rework.md` (above, `Next`, pending approval)
+    edits `site_stats.py` — same file the rename's Phase 4 touches
+    (ids, labels, query functions). Sequence so that file is only touched
+    once.
 
 ## Phase: Now — scoped, ready to execute
 
@@ -80,13 +110,14 @@ L = large, ? = not yet sizeable).
 |---|---|---|
 | Execute `PLAN_hoop_stress_history.md` Phases 4–5 | S–M | Phases 1–3 implemented, verified, and committed 2026-08-13 (compute pipeline correctness, Parquet part-name columns, `part-history` command). Remaining: per-part stats/fatigue tests (Phase 4), fatigue-additivity question (Phase 5). |
 | Housing-summary notebook fixes | S | Fix `h.site`→`h.housing` in cell `1387a3c9` (still present as of 2026-08-13); re-run notebook end-to-end for consistent outputs; decide fate of the `PROPOSALS` dead-end section. |
-| Execute `PLAN_lifecycle_status.md` | L | Approved 2026-08-14. Phase A (site lifecycle) → Phase B (magnet/part status + cascades) → Phase C (docs/cleanup); no external unknowns, two small opens carried as defaults (see plan). |
+| Site→Assembly rename — `to_duckdb`/dashboard slice (`PLAN_site_to_assembly_rename.md` Phases 3–4) | M | Pending approval. Recommend sequencing **before or together with** `PLAN_lifecycle_status.md` below — that plan is about to add new `sites`/`site_magnets` code (`SiteStatus` enum, `decommission_site()`, `check_sites()`, `site decommission` CLI) that doesn't exist yet; better to write it once, directly as `Assembly`/`assemblies`/`assembly_magnets`, than rename it again immediately after. Rest of that plan (`python_magnetgeo`/`python_magnetsetup`/`python_magnetrun`/`python_magnetcooling`, plus the separate-repo `python_magnetdb`/`python_magnetapi` backport) is outside this roadmap's scope. |
+| Execute `PLAN_lifecycle_status.md` | L | Approved 2026-08-14. Phase A (site lifecycle) → Phase B (magnet/part status + cascades) → Phase C (docs/cleanup); no external unknowns, two small opens carried as defaults (see plan). **Sequencing note:** see the rename row above — worth deciding vocabulary before writing Phase A's new `sites`-table code. |
 
 ## Phase: Next — needs a short scoping pass, or has a design sketch with opens to close
 
 | Item | Effort | Notes |
 |---|---|---|
-| Dashboard hierarchy rework (`stage/dashboard/PLAN_dashboard_hierarchy_rework.md`) | M | Pending approval, but not blocked on anything else in this roadmap — scoped independently of the processing-status flag/hoop-stress dependency that gates the stress/fatigue-linking remainder in `Later`. Touches `to_duckdb/schema.py` (`magnets.created_at`) — sequence with `PLAN_lifecycle_status.md`'s magnet/part schema work to avoid duplicate migrations. |
+| Dashboard hierarchy rework (`stage/dashboard/PLAN_dashboard_hierarchy_rework.md`) | M | Pending approval, but not blocked on anything else in this roadmap — scoped independently of the processing-status flag/hoop-stress dependency that gates the stress/fatigue-linking remainder in `Later`. Touches `to_duckdb/schema.py` (`magnets.created_at`) — sequence with `PLAN_lifecycle_status.md`'s magnet/part schema work to avoid duplicate migrations. Also edits `site_stats.py` — sequence after the `Now`-phase Site→Assembly rename lands so that file isn't touched under both vocabularies. |
 | overview-record: signature (Field for classification, Ref currents for ODE, A1–A2/Iddct1–4 for lag) | M | Builds on the now-committed dedup schema. Signature and lag are related — worth scoping together. |
 | overview-record: lag | M | Blocked on open question 1 below. |
 | overview-record: plateaux | M | Blocked on open question 2 below. |
@@ -111,6 +142,59 @@ L = large, ? = not yet sizeable).
 | Field validation stats for M8–M10 | ? | Review `Field == Supra_Field + Total_Field` per Xavier's M9/M10 experience; watch for early hybrid-test records where `Supra_Field` was hardcoded. |
 | Pre-2022 pigbrother data | ? | Open question, not yet scoped — availability/usability unknown. |
 | Special-experiment handling | ? | e.g. M19 (M9 at 18 MW + M10 at 10 MW simultaneously), Mateo's experiments with negative IH/IB current — needs a design for how these fit the standard schema. |
+
+## Rough Timeline (dev capacity assumption)
+
+**Assumptions:** 1 developer, part-time (~1–2 days/week), starting
+2026-08-18. This converts the effort labels above (relative, not calendar
+time) into elapsed calendar windows at that pace — treat every date as
+rough, not a commitment. Items blocked on an open question or external
+access get no calendar slot until that blocker clears.
+
+Effort → elapsed time at this pace:
+
+| Effort | Elapsed time |
+|---|---|
+| S | ~2 weeks |
+| S–M | ~3 weeks |
+| M | ~4 weeks |
+| L | ~10–12 weeks |
+| ? | not sizeable yet |
+
+### Now (Aug 2026 – late Dec 2026)
+
+| Item | Window |
+|---|---|
+| Hoop-stress Phases 4–5 | Aug 18 – Sep 8 |
+| Housing-summary notebook fixes | Sep 8 – Sep 22 |
+| Site→Assembly rename (`to_duckdb`/dashboard slice) | Sep 22 – Oct 20 |
+| `PLAN_lifecycle_status.md` | Oct 20 – late Dec | Largest single item (L); dominates this phase. |
+
+### Next — unblocked items (late Dec 2026 – late Apr 2027)
+
+| Item | Window |
+|---|---|
+| Dashboard hierarchy rework | late Dec – late Jan |
+| `overview-records-from-json` completion | late Jan – early Feb |
+| `populate all` composite | early Feb – late Feb |
+| userdb Phase 1 (pluggability refactor only) | late Feb – mid-Mar |
+| Scheduler | mid-Mar – late Mar |
+| EcoNRJ parameter inference | late Mar – late Apr |
+
+### Next — blocked on an open question or external access (no calendar slot yet)
+
+| Item | Size once unblocked | Blocker |
+|---|---|---|
+| Signature + lag (scoped together) | ~M + M (~8wk) | Open Question 1 — Wolali discussion outcome |
+| Plateaux | ~M (~4wk) | Open Question 2 — needs a definition |
+| Processing-status flag | ~M (~4wk) | Open Question 3 — design choice |
+| userdb Phases 2–3 (SUPERVISION/API loaders) | unsized | SUPERVISION DB schema access, userdb API response shape |
+
+### Later
+
+Still mostly `?` effort — not sizeable at this granularity. At this pace,
+realistically doesn't start before ~mid-2027, once the Next-phase backlog
+above clears. Revisit sizing once Now/Next close out.
 
 ## Open Questions (blocking finalization)
 
