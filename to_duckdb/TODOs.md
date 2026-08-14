@@ -50,6 +50,7 @@ See: [to_duckdb/PLAN_scheduled_populate.md](PLAN_scheduled_populate.md)
 - [ ] how to flag experiments/overview-records to know what processing has been done on them (stress, fatigue, etc.) and what is still to be done 
 - [ ] how to include cooling models by M1 student for better simulations especially for primary heat exchanger
 - [ ] rework dashboards to start with housing and then go "down" to magnet, with a link to the overview-records and the stress/fatigue results
+  See: [stage/dashboard/PLAN_dashboard_hierarchy_rework.md](../stage/dashboard/PLAN_dashboard_hierarchy_rework.md) (awaiting approval)
   - create a dashboard for housings
     - display stats for energy, magnet time per housing per year
     - make the table display site with housing, commissionning date, decomissionning date, status, energy, magnet time, binary field history -- like great tables
@@ -69,6 +70,28 @@ See: [to_duckdb/PLAN_scheduled_populate.md](PLAN_scheduled_populate.md)
     - add a table with details on stress/fatigue per site with links to stress/fatigue dashboard -- use accordeon to hide details and show only when needed
     - add a table with details on users per site with links to users dashboard -- use accordeon to hide details and show only when needed
     - add a table with details on experiments per site with links to experiments dashboard -- use accordeon to hide details and show only when needed
+  - magnet_stats dashboard
+    - use only magnet related data in this dashboard
+    - display stats for energy, magnet time per magnet per year
+    - make the table display magnet with housing, commissionning date, decomissionning date, status, energy, magnet time, binary field history -- like great tables
+    - add selector for magnet and year to filter the table and the graphs
+    - make the table clickable to go to the overview-records dashboard
+    - add a tablewith details on part per magnet with links to part_stats dashboard -- use accordeon to hide details and show only when needed
+    - add a table with details on site per magnet -- history of site that contain the given magnet -- with links to site_stats dashboard -- use accordeon to hide details and show only when needed
+    - add a table with details on overview-records per magnet with links to overview-records dashboard -- use accordeon to hide details and show only when needed
+    - add a table with details on stress/fatigue per magnet with links to stress/fatigue dashboard -- use accordeon to hide details and show only when needed
+    - add a table with details on users per magnet with links to users dashboard -- use accordeon to hide details and show only when needed
+    - add a table with details on experiments per magnet with links to experiments dashboard -- use accordeon to hide details and show only when needed
+  - part_stats.dashboard
+    - use only part related data in this dashboard
+    - add selector for part and year to filter the table and the graphs
+    - make the table clickable to go to the overview-records dashboard
+    - add a table with details on site per part -- history of site that contain the given part -- with links to site_stats dashboard -- use accordeon to hide details and show only when needed
+    - add a table with details on magnet per part -- history of magnet that contain the given part -- with links to magnet_stats dashboard -- use accordeon to hide details and show only when needed
+    - add a table with details on overview-records per part with links to overview-records dashboard -- use accordeon to hide details and show only when needed
+    - add a table with details on stress/fatigue per part with links to stress/fatigue dashboard -- use accordeon to hide details and show only when needed
+    - add a table with details on users per part with links to users dashboard -- use accordeon to hide details and show only when needed
+    - add a table with details on experiments per part with links to experiments dashboard -- use accordeon to hide details and show only when needed
 
 # Links with other projects
 Unsorted todo list of links with other projects:
