@@ -59,6 +59,20 @@ L = large, ? = not yet sizeable).
   dead-magnet-requires-a-dead-part invariant. Two small flagged assumptions
   carried into implementation as current defaults (see the plan's own
   "Assumptions & open questions" and the carried-forward opens below).
+- `stage/dashboard/PLAN_dashboard_hierarchy_rework.md` — **new
+  (2026-08-14), pending approval**. Covers the `TODOs.md` "New features"
+  line *"rework dashboards to start with housing and then go down to
+  magnet..."* — but only the hierarchy/navigation piece: `housing_stats`
+  landing page, a new overview-records file-viewer page, site/magnet/part
+  accordion links (Overview records + Experiments) and ordered history
+  drill-downs, DB-wide summary counts. Deliberately excludes stress/fatigue
+  linking, so unlike the original `TODOs.md` line it does **not** depend on
+  Open Question 3 (processing-status flag) below — that dependency now
+  applies only to the stress/fatigue-linking remainder, still in `Later`.
+  Adds `magnets.created_at` to `to_duckdb/schema.py`, which overlaps with
+  `PLAN_lifecycle_status.md`'s planned `magnets`/`parts` schema changes —
+  sequence the two together to avoid separate uncoordinated
+  `ALTER TABLE magnets` passes.
 
 ## Phase: Now — scoped, ready to execute
 
@@ -72,6 +86,7 @@ L = large, ? = not yet sizeable).
 
 | Item | Effort | Notes |
 |---|---|---|
+| Dashboard hierarchy rework (`stage/dashboard/PLAN_dashboard_hierarchy_rework.md`) | M | Pending approval, but not blocked on anything else in this roadmap — scoped independently of the processing-status flag/hoop-stress dependency that gates the stress/fatigue-linking remainder in `Later`. Touches `to_duckdb/schema.py` (`magnets.created_at`) — sequence with `PLAN_lifecycle_status.md`'s magnet/part schema work to avoid duplicate migrations. |
 | overview-record: signature (Field for classification, Ref currents for ODE, A1–A2/Iddct1–4 for lag) | M | Builds on the now-committed dedup schema. Signature and lag are related — worth scoping together. |
 | overview-record: lag | M | Blocked on open question 1 below. |
 | overview-record: plateaux | M | Blocked on open question 2 below. |
@@ -86,7 +101,7 @@ L = large, ? = not yet sizeable).
 
 | Item | Effort | Why it's later |
 |---|---|---|
-| Dashboard rework (housing → magnet, linked to overview-records/stress/fatigue) | L | Capstone/integration item — blocked on the processing-status flag and hoop-stress history existing first. |
+| Dashboard rework: stress/fatigue linking (remaining piece — hierarchy/navigation and the overview-records viewer moved to `Next`, see `PLAN_dashboard_hierarchy_rework.md`) | M | Blocked on the processing-status flag (Open Question 3) and `PLAN_hoop_stress_history.md` Phases 4–5. |
 | Commissioning data structure (site/assembly → propagate to magnets) in duckdb | L | New schema domain; touches the same site/housing concepts as the userdb work, sequence after userdb reduces rework. |
 | Cooling models (M1 student's primary heat-exchanger work) | M | External dependency — availability/completeness of that student's models isn't in your control. |
 | Fix/update `python_magnetrun/examples/bilan.py` | ? | Needs a look at current state before it can be sized. |
