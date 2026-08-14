@@ -9,19 +9,27 @@ produced `PLAN_overview_records_pupitre_dedup.md`, `PLAN_hoop_stress_history.md`
 by dependency, not calendar date; effort is relative (S = small, M = medium,
 L = large, ? = not yet sizeable).
 
-## Snapshot (2026-08-13)
+## Snapshot (2026-08-14)
 
 - `PLAN_overview_records_pupitre_dedup.md` — **implemented and committed**
   (`290b114`, 2026-08-07), with a follow-up fix (`1e79d8a`, 2026-08-10).
   Covers the `TODOs.md` line *"concat entries that share one pupitre file."*
-- `PLAN_hoop_stress_history.md` — **Phase 1 (compute pipeline correctness)
-  implemented and verified end-to-end, uncommitted** (2026-08-13). Real-data
-  verification surfaced and fixed a chain of previously-hidden bugs beyond
-  the original Bitter/Supra regex scope — see the plan file's "Phase 1 —
-  done" section for the full list. Phases 2–5 (Parquet part-name columns,
-  `part-history` command, per-part stats/fatigue tests, fatigue-additivity
-  question) not yet started. Covers the `TODOs.md` stress line *"compute
-  and persist hoop-stress bin stats + fatigue."*
+- `PLAN_hoop_stress_history.md` — **Phases 1–3 implemented, verified, and
+  committed** (`e26e05b`/`c26d74f`/`c975a5d`, 2026-08-13). Phase 1 (compute
+  pipeline correctness): real-data verification surfaced and fixed a chain
+  of previously-hidden bugs beyond the original Bitter/Supra regex scope —
+  see the plan file's "Phase 1 — done" section for the full list. Phase 2:
+  Parquet columns renamed to part names. Phase 3: `part_history_stats()`/
+  `build_part_history_series()` and the new `hoop-stress part-history`
+  command; `experiments.status` now tracks hoop-stress completion
+  (appended alongside `exp-stats compute`'s `STATS DONE`, not overwriting
+  it); `--records-base` default inconsistency across hoop-stress
+  subcommands fixed. Verified end-to-end against `test-magnetdb.duckdb`
+  (72 experiments across 2 sites for one shared part; row counts and
+  chronological ordering cross-checked against manual queries). Phases 4–5
+  (per-part stats/fatigue tests, fatigue-additivity question) not yet
+  started. Covers the `TODOs.md` stress line *"compute and persist
+  hoop-stress bin stats + fatigue."*
 - `PLAN_scheduled_populate.md` — **design sketch, not implemented**. Covers
   the `TODOs.md` line *"add a scheduler to run the above scripts on a
   regular basis."*
@@ -41,13 +49,24 @@ L = large, ? = not yet sizeable).
   not yet backed by a formal plan file.
 - `notebook_review_import_housing_summary.md` — review notes (not a formal
   plan) with 3 concrete next steps, feeding the `userdb` TODO item.
+- `PLAN_lifecycle_status.md` — **approved (2026-08-14), not yet
+  implemented**. Covers the `TODOs.md` "New features" line *"work on life
+  cycle of magnets and parts..."*. Scope grew during scoping to include
+  `sites` (derived status from `decommissioned_at`, per-housing no-overlap,
+  auto-close-on-add) since site disassembly is what triggers the
+  magnet→part status cascade; also touches `magnets`/`parts` status
+  validation, a `status_history` JSON log on all three tables, and a
+  dead-magnet-requires-a-dead-part invariant. Two small flagged assumptions
+  carried into implementation as current defaults (see the plan's own
+  "Assumptions & open questions" and the carried-forward opens below).
 
 ## Phase: Now — scoped, ready to execute
 
 | Item | Effort | Notes |
 |---|---|---|
-| Execute `PLAN_hoop_stress_history.md` Phases 2–5 | M | Phase 1 (compute pipeline correctness) implemented and verified 2026-08-13, uncommitted. Remaining: Parquet part-name columns, `part-history` command, per-part stats/fatigue tests, fatigue-additivity question. |
+| Execute `PLAN_hoop_stress_history.md` Phases 4–5 | S–M | Phases 1–3 implemented, verified, and committed 2026-08-13 (compute pipeline correctness, Parquet part-name columns, `part-history` command). Remaining: per-part stats/fatigue tests (Phase 4), fatigue-additivity question (Phase 5). |
 | Housing-summary notebook fixes | S | Fix `h.site`→`h.housing` in cell `1387a3c9` (still present as of 2026-08-13); re-run notebook end-to-end for consistent outputs; decide fate of the `PROPOSALS` dead-end section. |
+| Execute `PLAN_lifecycle_status.md` | L | Approved 2026-08-14. Phase A (site lifecycle) → Phase B (magnet/part status + cascades) → Phase C (docs/cleanup); no external unknowns, two small opens carried as defaults (see plan). |
 
 ## Phase: Next — needs a short scoping pass, or has a design sketch with opens to close
 
@@ -149,3 +168,9 @@ These are not duplicated in full here — see the referenced plan files:
   `-from-mysql`/`-from-api` swap only one side, or is a both-live mode
   needed), cutoff pushdown (server-side filter vs. client-side), and
   credential env-var naming.
+- **`PLAN_lifecycle_status.md`**: whether `site_magnets.decommissioned_at`
+  should auto-close alongside the site's own `decommissioned_at` during a
+  disassembly cascade (added during scoping, not explicitly requested), and
+  whether linking a magnet to a site (or a part to a magnet) should ever
+  auto-promote status upward — current design says no, only explicit
+  `update-status` calls move status up.
