@@ -1,9 +1,12 @@
 # Plan — hoop-stress part history, part-name columns, Bitter/Supra fatigue fix
 
-Status: Phase 1 (compute pipeline correctness) implemented and verified
-end-to-end (2026-08-13), **uncommitted**. Phases 2–5 (Parquet part-name
-columns, `part-history` command, per-part stats/fatigue tests,
-fatigue-additivity question) not yet started.
+Status: Phase 1 (compute pipeline correctness), Phase 2 (Parquet part-name
+columns), and Phase 3 (`part-history` command) implemented, **all
+uncommitted**. Phase 4 (per-part stats/history tests) written and passing
+in isolation (2026-08-14) — see
+[PLAN_hoop_stress_per_part_tests.md](PLAN_hoop_stress_per_part_tests.md) for
+what's still blocked pending `magnettools` availability. Phase 5
+(fatigue-additivity question) not yet started.
 
 ## Phase 1 — done (compute pipeline correctness)
 
@@ -76,20 +79,25 @@ Parquet output confirmed.
 
 **Not committed.**
 
-## Phase 2+ — remaining (not started)
+## Phase 2+ — status
 
 Split into separate plan files, one per phase, each with its own
 Goal/Files/Approach/Verification/Assumptions and explicit dependency on the
 previous phase landing:
 
 - **Phase 2** — [PLAN_hoop_stress_parquet_columns.md](PLAN_hoop_stress_parquet_columns.md):
-  rename Parquet columns to part names.
+  rename Parquet columns to part names. **Implemented** (commit `c26d74f`),
+  uncommitted-on-top-of status still applies per this file's overall header
+  (see git log for actual commit state).
 - **Phase 3** — [PLAN_hoop_stress_part_history.md](PLAN_hoop_stress_part_history.md):
   going from site to part — `part_history_stats`, `build_part_history_series`,
-  new `hoop-stress part-history` CLI command. Depends on Phase 2.
+  new `hoop-stress part-history` CLI command. **Implemented** (commit
+  `c975a5d`).
 - **Phase 4** — [PLAN_hoop_stress_per_part_tests.md](PLAN_hoop_stress_per_part_tests.md):
-  test coverage for Phase 3's aggregation/concatenation functions. Depends
-  on Phase 3.
+  test coverage for Phase 3's aggregation/concatenation functions.
+  **Tests written and passing in isolation** (2026-08-14); full-suite
+  re-verification and the real-DB cross-check are blocked on `magnettools`
+  availability (this machine's venv lacks it) — see that file for details.
 - **Phase 5** — [PLAN_hoop_stress_fatigue_additivity.md](PLAN_hoop_stress_fatigue_additivity.md):
   the `TODOs.md` "test if fatigue can be used like a cumulative stats??"
-  question. Depends on Phase 3.
+  question. Depends on Phase 3 (satisfied). **Not started.**

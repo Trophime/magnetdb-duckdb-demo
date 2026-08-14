@@ -20,7 +20,9 @@ from compute_hoop_stats import (
     _rainflow_stats,
     bins_to_key,
     build_part_column_map,
+    build_part_history_series,
     compute_hoop_stress_history,
+    part_history_stats,
     resolve_z0_by_type,
     save_hoop_parquet,
 )
@@ -641,3 +643,174 @@ def test_compute_hoop_stress_history_skips_experiment_with_no_hoop_columns(
     assert results["new"] == 0
     assert len(results["errors"]) == 2
     assert all(msg == "no hoop columns" for _name, msg in results["errors"])
+
+
+# ---------------------------------------------------------------------------
+# part_history_stats / build_part_history_series — cross-experiment/site
+# aggregation and chronological concatenation (Phase 3)
+# ---------------------------------------------------------------------------
+
+
+def _build_part_history_sites(con):
+    """Part 'H_NEW' recorded on two experiments across two different sites
+    (SITE_A, SITE_B). Returns (exp_a_id, exp_b_id).
+    """
+    insert_part(con, {"name": "H_NEW", "type": "helix"}, verbose=False)
+    insert_site(con, {"name": "SITE_A", "status": "in_operation"}, verbose=False)
+    insert_site(con, {"name": "SITE_B", "status": "in_operation"}, verbose=False)
+    insert_experiments(con, "SITE_A", [{"name": "expA", "file": "expA.txt"}], verbose=False)
+    insert_experiments(con, "SITE_B", [{"name": "expB", "file": "expB.txt"}], verbose=False)
+    exp_a = con.execute("SELECT id FROM experiments WHERE site_name = 'SITE_A'").fetchone()[0]
+    exp_b = con.execute("SELECT id FROM experiments WHERE site_name = 'SITE_B'").fetchone()[0]
+    return exp_a, exp_b
+
+
+@pytest.fixture
+def part_history_fixture(con):
+    """'H_NEW' with hoop_stress_bin_stats/hoop_stress_fatigue rows on two
+    experiments across two sites (SITE_A, SITE_B). Returns (con, exp_a, exp_b).
+    """
+    exp_a, exp_b = _build_part_history_sites(con)
+
+    _insert_bin_stats(con, exp_a, "H_NEW", [{
+        "stress_bin_low": 0.0, "stress_bin_high": 100.0, "n_samples": 2,
+        "sum_dt": 3.0, "sum_x_dt": 60.0, "sum_x2_dt": 1400.0,
+        "min_x": 10.0, "max_x": 50.0,
+    }])
+    _insert_bin_stats(con, exp_b, "H_NEW", [
+        {
+            "stress_bin_low": 0.0, "stress_bin_high": 100.0, "n_samples": 3,
+            "sum_dt": 5.0, "sum_x_dt": 90.0, "sum_x2_dt": 2000.0,
+            "min_x": 5.0, "max_x": 70.0,
+        },
+        {
+            "stress_bin_low": 100.0, "stress_bin_high": 200.0, "n_samples": 1,
+            "sum_dt": 1.0, "sum_x_dt": 150.0, "sum_x2_dt": 22500.0,
+            "min_x": 150.0, "max_x": 150.0,
+        },
+    ])
+    _insert_fatigue(con, exp_a, "H_NEW", {"n_cycles": 4.0, "sum_range3": 100.0})
+    _insert_fatigue(con, exp_b, "H_NEW", {"n_cycles": 6.0, "sum_range3": 250.0})
+
+    return con, exp_a, exp_b
+
+
+def test_part_history_stats_aggregates_bin_stats_and_fatigue_across_sites(part_history_fixture):
+    con, _exp_a, _exp_b = part_history_fixture
+
+    stats = part_history_stats("H_NEW", "", con=con)
+
+    assert stats["part_name"] == "H_NEW"
+    assert {e["site_name"] for e in stats["experiments"]} == {"SITE_A", "SITE_B"}
+    assert len(stats["experiments"]) == 2
+
+    bins = {(r["stress_bin_low"], r["stress_bin_high"]): r for r in stats["bin_stats"]}
+
+    # manual aggregation over the fixture: SITE_A's (0,100) row + SITE_B's (0,100) row
+    low = bins[(0.0, 100.0)]
+    assert low["n_samples"] == 5       # 2 + 3
+    assert low["sum_dt"] == pytest.approx(8.0)     # 3.0 + 5.0
+    assert low["sum_x_dt"] == pytest.approx(150.0)  # 60.0 + 90.0
+    assert low["sum_x2_dt"] == pytest.approx(3400.0)  # 1400.0 + 2000.0
+    assert low["min_x"] == 5.0   # min(10.0, 5.0)
+    assert low["max_x"] == 70.0  # max(50.0, 70.0)
+
+    # (100, 200) only has SITE_B's row -- no aggregation needed
+    high = bins[(100.0, 200.0)]
+    assert high["n_samples"] == 1
+    assert high["sum_dt"] == pytest.approx(1.0)
+
+    assert stats["fatigue"]["n_cycles"] == pytest.approx(10.0)    # 4.0 + 6.0
+    assert stats["fatigue"]["sum_range3"] == pytest.approx(350.0)  # 100.0 + 250.0
+
+
+def test_part_history_stats_empty_for_part_with_no_recorded_data(con):
+    insert_part(con, {"name": "H_UNUSED", "type": "helix"}, verbose=False)
+
+    stats = part_history_stats("H_UNUSED", "", con=con)
+
+    assert stats == {
+        "part_name": "H_UNUSED",
+        "experiments": [],
+        "bin_stats": [],
+        "fatigue": {"n_cycles": 0.0, "sum_range3": 0.0},
+    }
+
+
+def test_build_part_history_series_concatenates_chronologically_across_sites(
+    part_history_fixture, tmp_path
+):
+    con, exp_a, exp_b = part_history_fixture
+
+    # SITE_B's t0 is earlier than SITE_A's, so the chronologically-correct
+    # result must reorder them, not just concatenate in experiment_id order.
+    path_a = save_hoop_parquet(
+        pd.DataFrame({"t": [0.0, 1.0], "H_NEW": [10.0, 20.0]}),
+        tmp_path / "expA.parquet",
+        site_name="SITE_A", housing="M9", t0="2025-06-01T00:00:00",
+        experiment_file="expA.txt", part_map={"H1_fast": "H_NEW"},
+    )
+    path_b = save_hoop_parquet(
+        pd.DataFrame({"t": [0.0, 1.0, 2.0], "H_NEW": [1.0, 2.0, 3.0]}),
+        tmp_path / "expB.parquet",
+        site_name="SITE_B", housing="M10", t0="2025-01-01T00:00:00",
+        experiment_file="expB.txt", part_map={"H1_fast": "H_NEW"},
+    )
+    _mark_processed(con, exp_a, "all", "0.0,100.0", str(path_a))
+    _mark_processed(con, exp_b, "all", "0.0,100.0", str(path_b))
+
+    out_path = build_part_history_series("H_NEW", "", str(tmp_path), con=con, verbose=False)
+
+    assert out_path == tmp_path / "parts" / "H_NEW.parquet"
+    result = pq.read_table(out_path).to_pandas()
+
+    # row-count concatenation across experiments: 2 (SITE_A) + 3 (SITE_B)
+    assert len(result) == 5
+    assert result["timestamp"].is_monotonic_increasing
+    # SITE_B (t0=2025-01-01) sorts before SITE_A (t0=2025-06-01)
+    assert result["site_name"].tolist() == ["SITE_B"] * 3 + ["SITE_A"] * 2
+    assert result["experiment_id"].tolist() == [exp_b] * 3 + [exp_a] * 2
+    assert result["hoop_stress_MPa"].tolist() == [1.0, 2.0, 3.0, 10.0, 20.0]
+
+
+def test_build_part_history_series_warns_and_skips_pre_rename_parquet(
+    part_history_fixture, tmp_path, capsys
+):
+    con, exp_a, exp_b = part_history_fixture
+
+    # exp_a: current-format file (column already renamed to the part name).
+    path_a = save_hoop_parquet(
+        pd.DataFrame({"t": [0.0, 1.0], "H_NEW": [10.0, 20.0]}),
+        tmp_path / "expA.parquet",
+        site_name="SITE_A", housing="M9", t0="2025-06-01T00:00:00",
+        experiment_file="expA.txt", part_map={"H1_fast": "H_NEW"},
+    )
+    # exp_b: pre-rename file -- still has the raw slot-name column, not the
+    # part name (the schema `build_part_column_map`/save_hoop_parquet used
+    # before the Phase 2 rename).
+    path_b = save_hoop_parquet(
+        pd.DataFrame({"t": [0.0, 1.0], "H1_fast": [1.0, 2.0]}),
+        tmp_path / "expB.parquet",
+        site_name="SITE_B", housing="M10", t0="2025-01-01T00:00:00",
+        experiment_file="expB.txt", part_map={},
+    )
+    _mark_processed(con, exp_a, "all", "0.0,100.0", str(path_a))
+    _mark_processed(con, exp_b, "all", "0.0,100.0", str(path_b))
+
+    out_path = build_part_history_series("H_NEW", "", str(tmp_path), con=con, verbose=True)
+    captured = capsys.readouterr()
+
+    assert "[WARN]" in captured.out
+    assert "no 'H_NEW' column" in captured.out
+
+    result = pq.read_table(out_path).to_pandas()
+    assert len(result) == 2  # only SITE_A's file contributed
+    assert result["site_name"].unique().tolist() == ["SITE_A"]
+
+
+def test_build_part_history_series_returns_none_when_no_data(con, tmp_path):
+    insert_part(con, {"name": "H_UNUSED", "type": "helix"}, verbose=False)
+
+    out_path = build_part_history_series("H_UNUSED", "", str(tmp_path), con=con, verbose=False)
+
+    assert out_path is None
