@@ -1,7 +1,10 @@
 # Site → Assembly rename: cross-package migration plan
 
-**Status:** proposal only — nothing in this document has been executed. Do not
-implement until explicitly approved.
+**Status:** **Track A (Phases 1–7, this workspace) approved 2026-08-17** —
+ready to execute, nothing yet implemented. Track B (separate repos) scope
+corrected/expanded below (see Ecosystem map and Track B section);
+execution intentionally deferred to its own future planning pass, not
+part of this approval.
 
 ## Goal
 
@@ -66,6 +69,21 @@ machine at `~/github/`:
   recent messages ("fix assembly (aka site) name", "remove records from
   assembly -- aka site -- config") — you've informally been leaning this
   direction there for months.
+- **`~/github/python_magnetworkflows`** — a 4th ecosystem member, not found
+  in the original draft of this plan. Feel++ coupled electromagnetic-
+  thermal workflow package; its `.gitmodules` vendors `python_magnetapi`,
+  `python_magnetcooling`, and `python_magnetunits` as submodules, all from
+  the `MagnetDB` GitHub org. It is a consumer of `python_magnetapi`'s
+  `site` vocabulary (same `otype="site"` pattern as this workspace's
+  `python_magnetcooling/examples/flow_params.py`) and must be accounted
+  for wherever Track B eventually renames `python_magnetapi` — see Track B
+  below.
+
+Also noted, out of scope: `python_magnetdb/to_duckdb/` is a stale/
+prototype directory (`student.duckdb`, `streaming-data-extension.md`,
+etc.) living inside the `python_magnetdb` repo, not referenced from that
+repo's own README — an earlier, unrelated exploration, not this
+workspace's `to_duckdb`. No action needed.
 
 And critically, **as you noted**: `to_duckdb` (in this workspace) is a
 demonstrator/prototype of `python_magnetdb`'s own schema and API — not an
@@ -96,14 +114,23 @@ alone — it should eventually match whatever `python_magnetdb` and
 - `routes/api/*.py`: ~10 files reference `Site`/`site`. Notably,
   `resource_type == "site"` is used as a **polymorphic discriminator string**
   in `simulations.py`, `visualisations.py`, `mesh_attachments.py`,
-  `cad_attachments.py` — this string is almost certainly also sent *by*
-  whatever frontend talks to this API (a `lemon.magnetdb.local` subdomain is
-  referenced in the dev README, but its repo wasn't found under `~/github` —
-  worth checking if a frontend needs updating too, before renaming this
-  string). `routes/api/serializers.py` has a `_site_post_processor`
-  function and a `{Site: _site_post_processor}` dispatch entry driving JSON
-  response shape. `routes/api/home.py` has a dashboard-stats route counting
-  `Site.objects...` by status.
+  `cad_attachments.py`. `routes/api/serializers.py` has a
+  `_site_post_processor` function and a `{Site: _site_post_processor}`
+  dispatch entry driving JSON response shape. `routes/api/home.py` has a
+  dashboard-stats route counting `Site.objects...` by status.
+- **Frontend, confirmed** (corrected from an earlier draft, which treated
+  this as unconfirmed/external): the `lemon.magnetdb.local`/
+  `manager.lemon.magnetdb.local` subdomains referenced in the dev README
+  are **LemonLDAP::NG** (`tiredofit/lemonldap:2.0.24`, defined in
+  `docker-compose-traefik-ssl.yml`) — a third-party SSO/auth gateway, not a
+  frontend. The real frontend is `python_magnetdb/web/`: a Vue.js SPA
+  (`magnetdb-webapp` container, built from the local `web/` directory),
+  vendored directly inside the `python_magnetdb` repo rather than a
+  separate checkout. Confirmed 19 files / 232 "site" occurrences in
+  `web/src`, including a dedicated `services/siteService.js` and
+  `views/sites/` — this is real, in-scope surface for Track B, larger than
+  the original draft assumed, and it sends the `resource_type: "site"`
+  strings above, so it must move in lockstep with the server rename.
 - 24 existing Django migrations. A `Site`→`Assembly` rename needs a new one
   (`RenameModel`, `AlterField` for the 5 FKs above, `db_table` rename) —
   applied against what looks like a **live production database**, real
@@ -122,16 +149,18 @@ without a matching client-library update breaks every one of these call
 sites immediately, so these two repos must be renamed together, not
 independently.
 
-## Notable finding worth flagging directly
+## Notable finding, now resolved
 
-`stage/dashboard/src/pages/site_stats.py:14` already registers the page as
+`stage/dashboard/src/pages/site_stats.py:14` registers the page as
 `name="Assembly stats"` in the nav, while every other identifier in that
 same file (DataFrame columns, element ids like `site-stats-site-filter`,
-visible text like `f"Sites: {total_sites}"`) still says "Site". This looks
-like a half-finished start on exactly this rename, or a naming choice made
-in isolation. Worth confirming with you whether that nav label was
-intentional groundwork before this plan runs, since it's the one place the
-two vocabularies already visibly collide.
+visible text like `f"Sites: {total_sites}"`) still says "Site".
+`git log --follow -- stage/dashboard/src/pages/site_stats.py` shows this
+was **not** a half-finished rename in progress: `name="Assembly stats"`
+has been present since the file's very first commit (`94a027d`, 2026-07-28,
+"add stats to dashboard"). It was simply a friendlier user-facing label
+chosen at creation time and never propagated to the code beneath it — no
+special handling needed beyond the ordinary Phase 4 sequencing note below.
 
 ## Per-package findings
 
@@ -432,11 +461,11 @@ mixing an unrelated correctness fix into a rename.
   query param names for a transition period, since old links may be
   bookmarked/shared).
 - Coordinate with `PLAN_dashboard_hierarchy_rework.md`: that plan (awaiting
-  its own approval) also edits `site_stats.py`. Recommend sequencing —
-  either finish/land one plan before starting the other's edits to that
-  file, or fold this rename into that plan's step 7 retrofit pass so
-  `site_stats.py` is only touched once. Flagging for your call, not
-  deciding here.
+  its own approval) also edits `site_stats.py`. **Sequencing decision:**
+  land this rename's Phase 4 first — `PLAN_dashboard_hierarchy_rework.md`
+  isn't approved yet and doesn't block Track A, so `site_stats.py` is only
+  touched once, under the new `Assembly` vocabulary, before that plan's
+  edits land on top of the renamed version.
 
 **Phase 5 — `python_magnetrun`** (no hard dependency on Phases 1–4; can run
 in parallel)
@@ -451,17 +480,16 @@ in parallel)
   POST payload, keep that JSON key literally and rename only the Python
   attribute/accessor around it.
 - Edit: `simulation/simulation_run.py`, `bfield/bfield_run.py` — rename the
-  `site` param to something that isn't `assembly` (different concept).
-  Investigation finding: this param looks like **unused placeholder
-  scaffolding**, not live functionality — its only non-docstring occurrences
-  anywhere in the package are 3 call sites in `tests/test_protocol.py`
-  (`site="grenoble"`, `site="saclay"`), introduced in the single commit that
-  scaffolded both classes (`fd83fe5 start working on SimulationRun and
-  BFieldRun`); no production code path constructs either class with a
-  real value. Two reasonable options: rename to `location` (keeps the
-  field for whatever it was meant for) or drop it entirely (since nothing
-  depends on it). Your call — flagged in Assumptions below rather than
-  decided here, since you said you don't recall its original intent either.
+  `site` param to **`location`** (confirmed decision — keeps the field for
+  whatever it was originally meant for, under a name that doesn't collide
+  with the `Assembly` concept). Investigation finding: this param looks
+  like **unused placeholder scaffolding**, not live functionality — its
+  only non-docstring occurrences anywhere in the package are 3 call sites
+  in `tests/test_protocol.py` (`site="grenoble"`, `site="saclay"`),
+  introduced in the single commit that scaffolded both classes (`fd83fe5
+  start working on SimulationRun and BFieldRun`); no production code path
+  constructs either class with a real value. Update those 3 test call
+  sites to `location=` at the same time.
 - Leave untouched: `HousingConfig`/`housing_config.py` (already correctly
   named, confirmed — `housing` means the same bay/enclosure concept in both
   `python_magnetrun` and `to_duckdb`).
@@ -480,14 +508,15 @@ in parallel)
 - Leave untouched: `examples/flow_params.py` (talks to upstream API
   directly using its own vocabulary).
 
-**Phase 7 — cleanup (optional, low priority)**
-- Decide fate of stale artifacts found during investigation:
-  `to_duckdb/marimo/select_site.py`, `to_duckdb/test_site_stats.py`/`.ipynb`,
-  `stage/dash_site_stats.py`, `to_duckdb/dashboard/pages/magnets.py` (the
-  duplicate mini-dashboard). None of these are on the critical path; either
-  rename them for consistency or delete them if they're truly dead
-  (`stage/dash_site_stats.py` looks like the latter — not imported
-  anywhere).
+**Phase 7 — cleanup (low priority, fate confirmed)**
+- **Delete** `stage/dash_site_stats.py` — confirmed dead code, not
+  imported anywhere.
+- **Rename** the rest for vocabulary consistency, deferring their
+  eventual consolidation to the separately-planned dashboard-consolidation
+  work in `PROJECT_STRUCTURE_PLAN.md`: `to_duckdb/marimo/select_site.py`
+  (+ `select_site_note.md`), `to_duckdb/test_site_stats.py`/`.ipynb`,
+  `to_duckdb/dashboard/pages/magnets.py` (the duplicate mini-dashboard).
+  None of these are on the critical path.
 
 ## Track B — separate repos, backport when ready (not executed by this plan)
 
@@ -531,6 +560,72 @@ the real server catches up.
   `requests/` subpackage in *this* workspace — worth a follow-up
   conversation about whether those should just depend on `python_magnetapi`
   instead of maintaining parallel implementations. Not part of this rename.
+
+**`python_magnetdb/web/`** (frontend, vendored inside the server repo —
+found this session, not in the original draft)
+- Vue.js SPA (`magnetdb-webapp` container). Confirmed 19 files / 232
+  "site" occurrences in `web/src`, including `services/siteService.js` and
+  `views/sites/`. Must be renamed in the same coordinated pass as
+  `python_magnetdb`/`python_magnetapi` — it's the thing actually sending
+  the `resource_type: "site"` strings the server-side routes dispatch on.
+
+**`python_magnetworkflows`** (`~/github/python_magnetworkflows`, found this
+session, not in the original draft)
+- Feel++ coupled electromagnetic-thermal workflow package. Vendors
+  `python_magnetapi`/`python_magnetcooling`/`python_magnetunits` as
+  submodules from the `MagnetDB` org — a 4th consumer of
+  `python_magnetapi`'s `site` vocabulary. Needs the same lockstep-renaming
+  treatment as `python_magnetcooling/examples/flow_params.py` in this
+  workspace: leave alone until Track B renames the server/client
+  vocabulary, then update together.
+- Separately, its **own** code (not just the vendored submodules) hardcodes
+  `"MSite"`/`"MSite_Tout"` as literal dict/DataFrame column keys in
+  `commissioning.py:141,193-194`, `export.py:36,222`, and `error.py:52,482`
+  — same class of drift risk already flagged for `python_magnetsetup/ana.py`
+  in Phase 2 (a hardcoded string, not derived from the class's name/tag).
+  When this repo is eventually touched, these become `"Assembly"`/
+  `"Assembly_Tout"`.
+
+### Other consumers of `python_magnetgeo`'s `Assembly` rename (separate
+repos, checked this session — not part of the original draft)
+
+These depend on Phase 1's class rename specifically (concept #1: the
+geometry assembly class itself), not on the MagnetDB API vocabulary above.
+Unlike `python_magnetsetup` in Track A (whose `MSite` imports are dead
+code), the two mesh-generation consumers below have **real, load-bearing**
+coupling — `isinstance(x, MSite)` checks and dedicated `MSite`-named
+modules — so Phase 1's plain-alias design (`MSite = Assembly`, preserving
+object identity) matters here too: it keeps these `isinstance` checks
+working unchanged even before either repo is touched.
+
+- **`python_magnetgmsh`** (`~/github/python_magnetgmsh`) — mesh-generation
+  package, vendors `python_magnetgeo` as a submodule (own fork,
+  `branch = refactor_claude`). Real usage: `isinstance(Object, MSite)`
+  checks in `python_magnetgmsh/m3d/MeshData.py:123`,
+  `axi/MeshAxiData.py:124`, `axi/Air.py:21`; a dedicated
+  `axi/MSite.py` module (`gmsh_box`, `gmsh_ids`, `gmsh_bcs` functions
+  taking an `MSite` positional argument); `cfg.py`'s `MSite_Gmsh()`
+  function and `ObjectType = MSite | Bitters | Supras | ...` union type;
+  a CLI dispatch dict keyed by the `MSite` class in `cli.py`. When this
+  repo is touched: rename `axi/MSite.py` → `axi/Assembly.py`,
+  `MSite_Gmsh` → `Assembly_Gmsh`, and the `MSite` type-union/dispatch
+  entries, matching Phase 1's vocabulary.
+- **`hifimagnet.salome`** (`~/github/hifimagnet.salome`) — the Salome
+  CAD/mesh-generation plugin. `HIFIMAGNET/src/hifimagnet-salome/
+  generators/msite.py` implements `HIFIMAGNET_GenerateMSite`, imported via
+  `from python_magnetgeo.MSite import MSite`; `example_cli_main.py` has the
+  same `ObjectType = MSite | Bitters | ...` union and class-keyed dispatch
+  dict pattern as `python_magnetgmsh` above. Same treatment when touched:
+  `generators/msite.py` → `generators/assembly.py`,
+  `HIFIMAGNET_GenerateMSite` → `HIFIMAGNET_GenerateAssembly`.
+- **`magnet-scipy`** (`~/github/magnet-scipy`) — checked, **no** `site`/
+  `MSite` references found anywhere in the package (RL-circuit/PID-control
+  simulation, unrelated domain). Not affected by this rename; listed here
+  only because it was asked about.
+- **`hifimagnet.paraview`** (`~/github/hifimagnet.paraview`) — checked,
+  one incidental hit: a commented-out `"site"` entry in an argparse
+  `choices` list (`scripts/display_results_v0.1.py:79`), dead code, not
+  live. Negligible; no action needed.
 
 **`hifimagnet-projects`** (`~/github/hifimagnet-projects`)
 - Data files (`magnetdb.json/*.json`, per-assembly directories) don't
@@ -587,47 +682,38 @@ ones:
 
 ## Assumptions & open questions
 
-**Resolved by you already:**
+**Resolved:**
 - Target name: **`Assembly`** (dropping the `M` prefix from `MSite`) —
   confirmed.
 - `Housing` in `python_magnetrun` = `housing` in `to_duckdb`, same concept,
   stays as-is — confirmed.
-- `SimulationRun`/`BFieldRun`'s `site=` param needs a different word than
-  `Assembly` — confirmed direction; investigation found it's very likely
-  unused placeholder code (only referenced from 3 test call sites, no
-  production caller) — see Phase 5, pick `location` or removal, your call.
+- `SimulationRun`/`BFieldRun`'s `site=` param → renamed to **`location`**
+  (see Phase 5) — confirmed 2026-08-17.
 - MagnetDB API vocabulary (`python_magnetdb`/`python_magnetapi`) is in
   scope, not external — confirmed, now Track B above.
-
-**Still open:**
-1. `stage/dashboard/src/pages/site_stats.py`'s existing `name="Assembly
-   stats"` nav label — confirm whether this was intentional prior work or
-   coincidental, since it affects how Phase 4 is sequenced against
-   `PLAN_dashboard_hierarchy_rework.md`.
-2. Deprecation-alias window: proposed "one release cycle" everywhere within
-   Track A, mirroring the existing `python_magnetrun/pyproject.toml`
-   precedent. For Track B's Django migration specifically, "deprecation
-   window" means something bigger — a live production DB migration, not
-   just a Python alias — so treat that decision separately when you're
-   ready to schedule it.
-3. Whether `magnetdb.py`'s `site` CLI entity (Track A, `to_duckdb`) and
-   `python_magnetapi`'s `mtype="site"` (Track B, separate repo) are invoked
-   by name from any cron jobs, saved shell scripts, or muscle memory —
-   determines whether deprecated aliases are worth keeping past one cycle
-   in either place.
-4. Whether a frontend exists for `python_magnetdb` beyond what's checked
-   out under `~/github` (the dev README references `lemon.magnetdb.local`/
-   `manager.lemon.magnetdb.local` subdomains, suggesting one) — if it sends
-   `resource_type: "site"` in requests, it needs updating in lockstep with
-   Track B, and I can't see its code from here to confirm.
-5. Whether/when to actually schedule Track B — this plan documents it so
-   Track A's vocabulary choices stay compatible, but doesn't assume it
-   happens in the same session or even the same month. Say when you want a
-   dedicated plan for it (it's a big enough change — live DB migration,
-   two coordinated repos — to deserve its own approval pass rather than
-   riding along on this one).
-6. Phase 7 cleanup targets (`select_site.py`, `test_site_stats.py`,
-   `dash_site_stats.py`, `to_duckdb/dashboard/pages/magnets.py`) — say
-   whether you want these renamed for consistency, deleted as dead code, or
-   left alone until the separate dashboard-consolidation work mentioned in
-   `PROJECT_STRUCTURE_PLAN.md` happens.
+- `site_stats.py`'s `name="Assembly stats"` nav label — confirmed not an
+  in-progress rename; present since the file's first commit (see "Notable
+  finding, now resolved" above). Ordinary Phase 4 sequencing applies.
+- Deprecation-alias window — **one release cycle, everywhere in Track A**
+  (YAML/JSON compat, Python aliases, CLI flags), mirroring the existing
+  `python_magnetrun/pyproject.toml` precedent — confirmed 2026-08-17. Track
+  B's Django migration is a separate, bigger decision (live production DB
+  migration, not just a Python alias), to be made when Track B is actually
+  scheduled.
+- CLI/cron muscle-memory: checked — no crontab exists for this user, and no
+  system cron references `magnetdb.py` or `python_magnetapi`. Not a
+  blocker for keeping the deprecation window at one cycle in either place.
+- Frontend for `python_magnetdb`: confirmed to exist, and it's
+  `python_magnetdb/web/` (vendored in-repo, not a separate `~/github`
+  checkout as originally assumed) — see Ecosystem map and Track B above.
+  `lemon.magnetdb.local` is unrelated (LemonLDAP::NG, a third-party SSO
+  gateway).
+- Track B scheduling — **deferred to a separate future dedicated plan**,
+  not part of this approval. This session's corrections (the `web/`
+  frontend and `python_magnetworkflows` findings above) keep that future
+  plan's scope accurate in the meantime.
+- Phase 7 cleanup targets — confirmed: delete `stage/dash_site_stats.py`
+  (dead code), rename the rest (`select_site.py`, `test_site_stats.py`/
+  `.ipynb`, `to_duckdb/dashboard/pages/magnets.py`) for consistency,
+  deferring their consolidation fate to `PROJECT_STRUCTURE_PLAN.md`'s
+  separate dashboard work.
