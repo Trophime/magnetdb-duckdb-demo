@@ -2,7 +2,10 @@
   "name": "M1S2 Hifimagnet projects (local mount)",
   "build": {
     "dockerfile": "../Dockerfile",
-    "context": ".."
+    "context": "..",
+    "args": {
+      "BASE_IMAGE": "trophime/magnettools:trixie"
+    }
   },
   
   "runArgs": [

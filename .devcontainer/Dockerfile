@@ -1,4 +1,5 @@
-FROM debian:trixie
+ARG BASE_IMAGE=debian:trixie
+FROM ${BASE_IMAGE}
 
 # This Dockerfile adds a non-root user with sudo access. Use the "remoteUser"
 # property in devcontainer.json to use it. On Linux, the container user's GID/UIDs
