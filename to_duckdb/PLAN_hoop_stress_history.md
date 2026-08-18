@@ -1,20 +1,23 @@
 # Plan — hoop-stress part history, part-name columns, Bitter/Supra fatigue fix
 
 Status: Phase 1 (compute pipeline correctness), Phase 2 (Parquet part-name
-columns), and Phase 3 (`part-history` command) implemented, **all
-uncommitted**. Phase 4 (per-part stats/history tests) written and passing
-in isolation (2026-08-14) — see
-[PLAN_hoop_stress_per_part_tests.md](PLAN_hoop_stress_per_part_tests.md) for
-what's still blocked pending `magnettools` availability. Phase 5
-(fatigue-additivity question) not yet started.
+columns), Phase 3 (`part-history` command), Phase 4 (per-part stats/history
+tests), and Phase 5 (fatigue-additivity question) all implemented, **all
+uncommitted**.
 
-**Decided 2026-08-17:** on this machine, Phases 4–5 will be finalized via
+**Decided 2026-08-17:** on this machine, Phases 4–5 were to be finalized via
 the local devcontainer, rebuilt onto the `trophime/magnettools:trixie` base
 image (`.devcontainer/local/devcontainer.json`, commit `7066831`) — not the
 office machine, which was the only previously-known `magnettools`-equipped
-environment. Remaining before either phase can close: rebuild the local
-devcontainer, confirm `magnettools` actually imports inside it, then re-run
-Phase 4's blocked tests and both phases' real-DB cross-checks from there.
+environment.
+
+**Update 2026-08-18:** `magnettools` confirmed importable directly in this
+machine's `to_duckdb/venv-systempackages` (no devcontainer rebuild needed).
+Both Phase 4 and Phase 5 finalized against it — see
+[PLAN_hoop_stress_per_part_tests.md](PLAN_hoop_stress_per_part_tests.md) for
+full-suite and real-DB cross-check results, and
+[PLAN_hoop_stress_fatigue_additivity.md](PLAN_hoop_stress_fatigue_additivity.md)
+for the fatigue-additivity finding.
 
 ## Phase 1 — done (compute pipeline correctness)
 
@@ -103,13 +106,17 @@ previous phase landing:
   `c975a5d`).
 - **Phase 4** — [PLAN_hoop_stress_per_part_tests.md](PLAN_hoop_stress_per_part_tests.md):
   test coverage for Phase 3's aggregation/concatenation functions.
-  **Tests written and passing in isolation** (2026-08-14); full-suite
-  re-verification and the real-DB cross-check are blocked on `magnettools`
-  availability (this machine's venv lacks it) — see that file for details.
-  **To be finalized via the rebuilt local devcontainer** (decided
-  2026-08-17, see Status above), not the office machine.
+  **Done** (2026-08-18): tests written and passing since 2026-08-14;
+  full-suite re-verification (34/34 `-k hoop`, plus `test_stress_map.py`
+  12/12) and the real-DB cross-check (part `H21102801`, 71 real
+  experiments, `test-magnetdb.duckdb`) both completed against
+  `venv-systempackages`, where `magnettools` is now confirmed available —
+  see that file for full results.
 - **Phase 5** — [PLAN_hoop_stress_fatigue_additivity.md](PLAN_hoop_stress_fatigue_additivity.md):
   the `TODOs.md` "test if fatigue can be used like a cumulative stats??"
-  question. Depends on Phase 3 (satisfied). **Not started.** Its real-part
-  verification (see that file's Approach) needs `magnettools` too — same
-  devcontainer-based path as Phase 4 once started.
+  question. Depended on Phase 3 (satisfied). **Done** (2026-08-18): checked
+  against 3 real parts spanning 71 real experiments —
+  `sum_range3` is additive to float precision, `n_cycles` has a small
+  (~0.003%) boundary-residual discrepancy, not a general guarantee; 2 new
+  tests added, finding documented in `docs/hoop-stress.md` — see that file
+  for full results.

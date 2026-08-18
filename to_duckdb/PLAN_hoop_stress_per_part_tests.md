@@ -1,8 +1,11 @@
 # Plan — Phase 4: test hoop-stress stats and bin history per part
 
-Status: **tests written and passing (2026-08-14), uncommitted.** Part of the
-[hoop-stress history initiative](PLAN_hoop_stress_history.md) — see that
-file for the overall status and links to the other phases. Phase 3
+Status: **done (2026-08-18), uncommitted.** Tests written and passing since
+2026-08-14; full-suite re-verification and the real-DB cross-check
+(previously blocked on `magnettools`) completed 2026-08-18 against
+`venv-systempackages`, where `magnettools` is now confirmed importable. Part
+of the [hoop-stress history initiative](PLAN_hoop_stress_history.md) — see
+that file for the overall status and links to the other phases. Phase 3
 ([PLAN_hoop_stress_part_history.md](PLAN_hoop_stress_part_history.md)) had
 already landed (commit `c975a5d`, `part_history_stats`/
 `build_part_history_series` exist in `compute_hoop_stats.py`) even though
@@ -48,23 +51,34 @@ experiments/sites) — currently untested since they don't exist yet.
 - **Done** — new tests pass in isolation:
   `MPLBACKEND=Agg venv/bin/pytest to_duckdb/tests/test_compute_hoop_stats.py -k part_history`
   → 5 passed.
-- **Blocked (environment)** — full `MPLBACKEND=Agg pytest to_duckdb/tests -k hoop`
-  run: 27 passed + the 5 new ones, but 6 pre-existing
-  `test_compute_hoop_stress_history_*` orchestration tests
-  (`test_compute_hoop_stats.py`) error/fail because `stress_map.py` imports
-  `magnettools`, which isn't installed in this machine's `to_duckdb/venv`.
-  Unrelated to this phase's changes — confirmed pre-existing (those tests
-  predate this work and don't touch `part_history_stats`/
-  `build_part_history_series`). Needs the devcontainer (or the office
-  machine, where `magnettools` is available) to re-verify the full run.
-  `test_stress_map.py` also fails to collect for the same reason.
-- **Not done** — cross-check against a real part spanning >= 2 experiments
-  in a scratch DB (`test-magnetdb.duckdb`): needs the devcontainer/office
-  environment too (real `hoop-stress compute` run requires `magnettools`).
+- **Done (2026-08-18)** — full `MPLBACKEND=Agg to_duckdb/venv-systempackages/bin/python3 -m pytest to_duckdb/tests -k hoop`
+  run (`magnettools` confirmed importable in `venv-systempackages`): **34
+  passed**, 0 failed/errored — includes the 5 `part_history` tests and the
+  6 previously-blocked `test_compute_hoop_stress_history_*` orchestration
+  tests, all in `test_compute_hoop_stats.py`. `test_stress_map.py` (whose
+  test names don't match `-k hoop`, run separately) now collects and passes
+  **12/12**, vs. previously failing to collect at all. Unrelated pre-existing
+  failures in `test_checks.py`/`test_crud.py`/`test_populate.py` (36 failed,
+  40 errored) surfaced in a full non-`-k hoop` run — out of scope for this
+  phase, untouched by any hoop-stress change.
+- **Done (2026-08-18)** — real-DB cross-check: `python magnetdb.py
+  hoop-stress part-history H21102801 --db test-magnetdb.duckdb` against
+  part `H21102801` (Helix), which spans 71 real experiments on site
+  `M9_A230608_00` already computed in `test-magnetdb.duckdb` (from an
+  earlier real `hoop-stress compute` run, 2026-08-13 — no fresh `compute`
+  run needed). `part_history_stats`' aggregated bin stats summed to
+  664,948 + 337,089 + 281,367 = **1,283,404** samples;
+  `build_part_history_series`' output Parquet
+  (`hoop_parquet/parts/H21102801.parquet`) independently has **1,283,404
+  rows** across all 71 `experiment_id`s, exact match, confirming the two
+  functions agree on the same underlying data. Row-wise timestamps are
+  monotonically increasing (chronological concatenation verified), and
+  `hoop_stress_MPa` max (279.6 MPa) matches the top bin's reported max.
 
 ## Assumptions & open questions
 
-- None outstanding for the test-writing itself. Remaining work is purely
-  re-verifying the full suite and the real-DB cross-check once
-  `magnettools` is available, and then committing (Phase 1–4 are all still
-  **uncommitted** per `PLAN_hoop_stress_history.md`).
+- None outstanding. Test-writing, full-suite re-verification, and the
+  real-DB cross-check are all complete. Remaining step is committing
+  (Phase 1–4 are all still **uncommitted** per
+  `PLAN_hoop_stress_history.md`) — left to the user's discretion, not part
+  of this phase's scope.

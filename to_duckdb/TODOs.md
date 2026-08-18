@@ -8,7 +8,7 @@ See: [to_duckdb/PLAN_users_multi_source.md](PLAN_users_multi_source.md)
 # stress
 See: [to_duckdb/docs/hoop-stress.md](docs/hoop-stress.md) and [to_duckdb/PLAN_hoop_stress_history.md](PLAN_hoop_stress_history.md)
 - [ ] `magnetdb.py hoop-stress compute` | Compute and persist hoop-stress bin stats + fatigue -- do not compute fatigue at this point
-- [ ] test if fatigue can be used like a cumulative stats??
+- [x] test if fatigue can be used like a cumulative stats?? — answered: `sum_range3` is additive to float precision in practice, `n_cycles` is close but not exact (small boundary-residual effect); not a general guarantee, see [to_duckdb/docs/hoop-stress.md](docs/hoop-stress.md#is-fatigue-additive-across-experiments)
 - [ ] **POSTPONED, must come back to — `--check` mode must work smoothly.**
       `validate_fast_from_pupitre(..., check=True)` sanity-checks the fast
       path against `magnettools.Bmap.getHoop()`. Crash fixed here; the
@@ -44,6 +44,7 @@ See: [to_duckdb/PLAN_scheduled_populate.md](PLAN_scheduled_populate.md)
 
 # New features
 - [ ] work on life cycle of magnets and parts -- status for magnet|part with some standardized values (in_operation|in_stock|retired|dead) along with a json struct to hold description of the status, the date of the status change and eventually reports/images on incidents, maintenance, etc. -- 
+  See: [to_duckdb/PLAN_magnet_part_lifecycle.md](PLAN_magnet_part_lifecycle.md)
 - [ ] correct and update [python_magnetrun/examples/bilan.py](python_magnetrun/examples/bilan.py)
 - [ ] update numerical commissionning
 - [ ] prepare data structure to store commissionning data and results in duckdb for site -- aka assembly -- and propagate to magnets

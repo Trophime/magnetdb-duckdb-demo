@@ -92,6 +92,17 @@ Writes `<parquet_dir>/parts/<part_name>.parquet` (`timestamp`, `hoop_stress_MPa`
 |--------|---------|-------------|
 | `--parquet-dir` | `<db dir>/hoop_parquet` | Directory Parquet files live in; output goes to `<parquet_dir>/parts/` |
 
+### Is fatigue additive across experiments?
+
+`part_history_stats` sums each contributing experiment's own `hoop_stress_fatigue.n_cycles`/`sum_range3` rather than rainflow-counting the full concatenated series `build_part_history_series` writes. Checked against 3 real parts spanning the same 71 real experiments (`test-magnetdb.duckdb`, site `M9_A230608_00`):
+
+- `sum_range3` (the Miner's-rule-style cumulative damage proxy) agrees with a single rainflow pass on the concatenated series to float64 rounding (~1e-6 absolute out of ~1e9) — safe to treat as additive in practice.
+- `n_cycles` is close but not exact: off by 8 out of ~260,000 (~0.003%), concatenated always ≤ summed in all 3 parts checked.
+
+The mechanism (confirmed with small synthetic series): each real experiment's raw series starts and ends at 0 MPa (magnets ramp down between runs), but not every experiment's own turning-point sequence fully "closes" internally — 16 of the 71 real experiments leave an unresolved half-cycle residual (fractional `n_cycles`) even though their endpoints are both zero. Those leftover residuals pair up differently across a file boundary when the series is processed as one continuous whole versus counted per file, producing the small `n_cycles` gap; the affected cycles' ranges are small, so `sum_range3` barely moves.
+
+This additivity is **not** a general rainflow-counting guarantee — it depends on experiments idling near the same reference stress between runs. If an experiment's series doesn't return close to zero before the next one starts, summing per-experiment stats can diverge substantially from the true concatenated count (demonstrated with a synthetic boundary-discontinuity case in `tests/test_compute_hoop_stats.py`). For this codebase's real usage pattern, summing is a good approximation; `build_part_history_series`'s raw output remains the source of truth if exact fatigue cycle counts are ever needed.
+
 ---
 
 ## `hoop-stress barchart`

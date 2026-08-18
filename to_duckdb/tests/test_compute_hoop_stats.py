@@ -814,3 +814,96 @@ def test_build_part_history_series_returns_none_when_no_data(con, tmp_path):
     out_path = build_part_history_series("H_UNUSED", "", str(tmp_path), con=con, verbose=False)
 
     assert out_path is None
+
+
+# ---------------------------------------------------------------------------
+# Fatigue additivity (Phase 5) — is summing per-experiment n_cycles/sum_range3
+# equivalent to rainflow-counting the full concatenated series?
+# ---------------------------------------------------------------------------
+
+
+def test_part_history_fatigue_matches_concatenated_rainflow_when_experiments_idle_at_zero(
+    con, tmp_path
+):
+    """Real magnet experiments ramp down to zero stress between runs, and
+    when each experiment's own turning-point sequence fully resolves into
+    closed cycles (no leftover rainflow residual), summing per-experiment
+    fatigue stats exactly matches rainflow-counting the full chronologically
+    concatenated series -- confirmed against real multi-experiment DB data
+    for this same reason (see docs/hoop-stress.md)."""
+    insert_part(con, {"name": "H_FAT", "type": "helix"}, verbose=False)
+    insert_site(con, {"name": "SITE_F", "status": "in_operation"}, verbose=False)
+    insert_experiments(con, "SITE_F", [
+        {"name": "exp1", "file": "exp1.txt"},
+        {"name": "exp2", "file": "exp2.txt"},
+    ], verbose=False)
+    exp1, exp2 = con.execute(
+        "SELECT id FROM experiments WHERE site_name = 'SITE_F' ORDER BY id"
+    ).fetchdf()["id"].tolist()
+
+    # Both series start and end at 0 MPa, and are internally self-closed
+    # (integer n_cycles when rainflow-counted alone -- no leftover residual).
+    sigma_1 = [0.0, 40.0, 10.0, 60.0, 0.0]
+    sigma_2 = [0.0, 50.0, 5.0, 45.0, 0.0]
+
+    _insert_fatigue(con, exp1, "H_FAT", _rainflow_stats(pd.Series(sigma_1)))
+    _insert_fatigue(con, exp2, "H_FAT", _rainflow_stats(pd.Series(sigma_2)))
+    # build_part_history_series discovers contributing experiments via
+    # hoop_stress_bin_stats, not hoop_stress_fatigue -- a row per experiment
+    # is required even though this test doesn't examine bin-stats values.
+    _insert_bin_stats(con, exp1, "H_FAT", [{
+        "stress_bin_low": 0.0, "stress_bin_high": 100.0, "n_samples": 5,
+        "sum_dt": 4.0, "sum_x_dt": 110.0, "sum_x2_dt": 5400.0,
+        "min_x": 0.0, "max_x": 60.0,
+    }])
+    _insert_bin_stats(con, exp2, "H_FAT", [{
+        "stress_bin_low": 0.0, "stress_bin_high": 100.0, "n_samples": 5,
+        "sum_dt": 4.0, "sum_x_dt": 100.0, "sum_x2_dt": 4550.0,
+        "min_x": 0.0, "max_x": 50.0,
+    }])
+
+    path_1 = save_hoop_parquet(
+        pd.DataFrame({"t": list(range(len(sigma_1))), "H_FAT": sigma_1}),
+        tmp_path / "exp1.parquet",
+        site_name="SITE_F", housing="M9", t0="2025-01-01T00:00:00",
+        experiment_file="exp1.txt", part_map={"H1_fast": "H_FAT"},
+    )
+    path_2 = save_hoop_parquet(
+        pd.DataFrame({"t": list(range(len(sigma_2))), "H_FAT": sigma_2}),
+        tmp_path / "exp2.parquet",
+        site_name="SITE_F", housing="M9", t0="2025-01-02T00:00:00",
+        experiment_file="exp2.txt", part_map={"H1_fast": "H_FAT"},
+    )
+    _mark_processed(con, exp1, "all", "0.0,100.0", str(path_1))
+    _mark_processed(con, exp2, "all", "0.0,100.0", str(path_2))
+
+    summed = part_history_stats("H_FAT", "", con=con)["fatigue"]
+
+    out_path = build_part_history_series("H_FAT", "", str(tmp_path), con=con, verbose=False)
+    concatenated_series = pq.read_table(out_path).to_pandas()["hoop_stress_MPa"]
+    concatenated = _rainflow_stats(concatenated_series)
+
+    assert concatenated["n_cycles"] == pytest.approx(summed["n_cycles"])
+    assert concatenated["sum_range3"] == pytest.approx(summed["sum_range3"])
+
+
+def test_rainflow_stats_boundary_discontinuity_breaks_additivity():
+    """Additivity is not a general rainflow-counting guarantee: it relies on
+    experiments starting/ending at the same reference stress. If one
+    experiment's series ends far from where the next one begins, summing
+    per-experiment fatigue stats diverges substantially from rainflow-
+    counting the joined series -- unlike the zero-boundary case above."""
+    sigma_a = [0.0, 40.0, 10.0, 60.0, 100.0]  # ends away from zero
+    sigma_b = [0.0, 5.0, 45.0, 0.0]
+
+    fatigue_a = _rainflow_stats(pd.Series(sigma_a))
+    fatigue_b = _rainflow_stats(pd.Series(sigma_b))
+    summed = {
+        "n_cycles": fatigue_a["n_cycles"] + fatigue_b["n_cycles"],
+        "sum_range3": fatigue_a["sum_range3"] + fatigue_b["sum_range3"],
+    }
+
+    concatenated = _rainflow_stats(pd.Series(sigma_a + sigma_b))
+
+    assert concatenated["n_cycles"] != pytest.approx(summed["n_cycles"])
+    assert concatenated["sum_range3"] != pytest.approx(summed["sum_range3"])
