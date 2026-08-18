@@ -15,7 +15,7 @@ import scipy.signal as sg
 
 # Chemin absolu vers la base DuckDB (surchargable via variable d'environnement)
 DB_PATH = os.environ.get(
-    "MAGNETDB_DB_PATH", "/workspaces/2026-m1-hifimagnet/to_duckdb/magnetdb.duckdb"
+    "MAGNETDB_DB_PATH", "/workspaces/2026-m1-hifimagnet/to_duckdb/test-magnetdb.duckdb"
 )
 # Répertoire scanné pour lister les bases sélectionnables dans le dropdown
 DB_DIR = os.environ.get("MAGNETDB_DB_DIR", os.path.dirname(DB_PATH))
@@ -55,53 +55,53 @@ def get_all_tables(db_path=None):
         )
 
 
-_SITE_DATE_RE = re.compile(r"_A(\d{6})_\d{2}$")
+_ASSEMBLY_DATE_RE = re.compile(r"_A(\d{6})_\d{2}$")
 
 
-def _site_sort_key(site_name):
-    """Sort key extracting the YYMMDD date from a ``housing_AYYMMDD_NN`` site name."""
-    match = _SITE_DATE_RE.search(site_name)
-    return match.group(1) if match else site_name
+def _assembly_sort_key(assembly_name):
+    """Sort key extracting the YYMMDD date from a ``housing_AYYMMDD_NN`` assembly name."""
+    match = _ASSEMBLY_DATE_RE.search(assembly_name)
+    return match.group(1) if match else assembly_name
 
 
-def get_all_sites(db_path=None):
-    """Select the list of all sites for the first menu, sorted by ascending commissioning date."""
+def get_all_assemblies(db_path=None):
+    """Select the list of all assemblies for the first menu, sorted by ascending commissioning date."""
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
-            SELECT DISTINCT e.site_name
+            SELECT DISTINCT e.assembly_name
             FROM experiments AS e
-            JOIN sites AS s ON s.name = e.site_name
-            WHERE e.site_name IS NOT NULL
+            JOIN assemblies AS s ON s.name = e.assembly_name
+            WHERE e.assembly_name IS NOT NULL
             ORDER BY s.commissioned_at ASC
         """
-        return conn.execute(query).df()["site_name"].tolist()
+        return conn.execute(query).df()["assembly_name"].tolist()
 
 
-def get_magnet_types_for_site(site_name, db_path=None):
-    """Return the distinct magnet types (e.g. 'insert', 'bitters') defined for a site."""
+def get_magnet_types_for_assembly(assembly_name, db_path=None):
+    """Return the distinct magnet types (e.g. 'insert', 'bitters') defined for an assembly."""
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
             SELECT DISTINCT m.type
-            FROM site_magnets sm
+            FROM assembly_magnets sm
             JOIN magnets m ON m.name = sm.magnet_name
-            WHERE sm.site_name = ? AND m.type IS NOT NULL
+            WHERE sm.assembly_name = ? AND m.type IS NOT NULL
         """
-        return conn.execute(query, [site_name]).df()["type"].tolist()
+        return conn.execute(query, [assembly_name]).df()["type"].tolist()
 
 
-def get_files_for_site(site_name, table_name, db_path=None):
+def get_files_for_assembly(assembly_name, table_name, db_path=None):
     """
-    Interroge la table choisie pour sortir tous les fichiers du site.
+    Interroge la table choisie pour sortir tous les fichiers du assembly.
     C'est ta nouvelle requête SQL clé.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        query = f"SELECT DISTINCT file FROM {table_name} WHERE site_name = ? AND file IS NOT NULL"
-        df = conn.execute(query, [site_name]).df()
+        query = f"SELECT DISTINCT file FROM {table_name} WHERE assembly_name = ? AND file IS NOT NULL"
+        df = conn.execute(query, [assembly_name]).df()
         return df["file"].tolist()
 
 
-def get_overview_records_for_site(site_name, db_path=None):
-    """Return overview_records rows for a site, ordered chronologically.
+def get_overview_records_for_assembly(assembly_name, db_path=None):
+    """Return overview_records rows for an assembly, ordered chronologically.
 
     Unlike operationaldata, overview_records keys its files under
     ``filename`` (not ``file``) and each row is already a fully processed
@@ -111,10 +111,10 @@ def get_overview_records_for_site(site_name, db_path=None):
         query = """
             SELECT filename, housing, mode, t0
             FROM overview_records
-            WHERE site_name = ? AND merged_into IS NULL
+            WHERE assembly_name = ? AND merged_into IS NULL
             ORDER BY t0 NULLS LAST, filename
         """
-        return conn.execute(query, [site_name]).df().to_dict("records")
+        return conn.execute(query, [assembly_name]).df().to_dict("records")
 
 
 @functools.lru_cache(maxsize=16)
@@ -341,6 +341,68 @@ def get_linked_files(housing, pupitre_filename, db_path=None):
         """
         result = conn.execute(query, [housing, pupitre_filename]).df().to_dict("records")
     return result[0] if result else None
+
+
+def get_research_area_stats(housing=None, year=None, db_path=None):
+    """Return per-research-area usage statistics from the ``users`` table.
+
+    Parameters
+    ----------
+    housing : str, optional
+        Restrict to sessions on this housing (e.g. ``"M9"``). ``None``
+        includes all housings.
+    year : str or int, optional
+        Restrict to sessions whose ``hstart`` falls in this year. ``None``
+        includes all years.
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per research area, with columns ``research_area``,
+        ``n_experiments`` (distinct experiments), ``n_users`` (distinct
+        acronyms) and ``total_field_time_s`` (summed
+        ``overview_records.duration`` [s]).
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            WITH filtered_users AS (
+                SELECT *
+                FROM users
+                WHERE research_area IS NOT NULL
+                    AND (? IS NULL OR housing = ?)
+                    AND (? IS NULL OR EXTRACT(YEAR FROM hstart) = ?)
+            ),
+            exp_counts AS (
+                SELECT research_area, COUNT(DISTINCT eid) AS n_experiments
+                FROM filtered_users, UNNEST(experiments_ids) AS t(eid)
+                GROUP BY research_area
+            ),
+            user_counts AS (
+                SELECT research_area, COUNT(DISTINCT acronym) AS n_users
+                FROM filtered_users
+                GROUP BY research_area
+            ),
+            field_time AS (
+                SELECT fu.research_area, SUM(o.duration) AS total_field_time_s
+                FROM filtered_users AS fu, UNNEST(fu.overview_records_ids) AS t(ovid)
+                JOIN overview_records AS o ON o.filename = t.ovid AND o.merged_into IS NULL
+                GROUP BY fu.research_area
+            )
+            SELECT
+                u.research_area,
+                COALESCE(e.n_experiments, 0) AS n_experiments,
+                u.n_users,
+                COALESCE(f.total_field_time_s, 0.0) AS total_field_time_s
+            FROM user_counts AS u
+            LEFT JOIN exp_counts AS e ON e.research_area = u.research_area
+            LEFT JOIN field_time AS f ON f.research_area = u.research_area
+            ORDER BY u.research_area
+        """
+        year = None if year is None else int(year)
+        params = [housing, housing, year, year]
+        return conn.execute(query, params).df()
 
 
 def chrono_callback(func):

@@ -34,8 +34,8 @@ layout = html.Div([
         dbc.Col([
             html.Div([
                 html.Hr(),
-                html.Label("1. Choose Site :", style={'fontWeight': 'bold'}),
-                dcc.Dropdown(id='dd-site-compare', options=[], placeholder="Choose a site..."),
+                html.Label("1. Choose Assembly :", style={'fontWeight': 'bold'}),
+                dcc.Dropdown(id='dd-assembly-compare', options=[], placeholder="Choose an assembly..."),
             ], style={"padding": "10px"}),
 
             html.Div([
@@ -102,29 +102,29 @@ layout = html.Div([
 ])
 
 
-# Chargement des fichiers du site synchronises
+# Chargement des fichiers du assembly synchronises
 @dash.callback(
-    Output('dd-site-compare', 'options'),
+    Output('dd-assembly-compare', 'options'),
     Input('dd-database', 'value')
 )
-def update_site_dropdown(selected_db):
+def update_assembly_dropdown(selected_db):
     if not selected_db:
         return []
-    return db.get_all_sites(selected_db)
+    return db.get_all_assemblies(selected_db)
 
 
 
 @dash.callback(
     Output('dd-files-compare', 'options'),
     Output('dd-files-compare', 'value'),
-    Input('dd-site-compare', 'value'),
+    Input('dd-assembly-compare', 'value'),
     Input('dd-database', 'value')
 )
-def update_file_dropdown(selected_site, selected_db):
-    if not selected_site:
+def update_file_dropdown(selected_assembly, selected_db):
+    if not selected_assembly:
         return [], []
 
-    files = db.get_files_for_site(selected_site, TARGET_TABLE, selected_db)
+    files = db.get_files_for_assembly(selected_assembly, TARGET_TABLE, selected_db)
 
     pupitre_files = [f for f in files if f.endswith('.txt')]
     pigbrother_files = [f for f in files if f.endswith('.tdms')]
@@ -181,15 +181,15 @@ def update_file_dropdown(selected_site, selected_db):
 #     Output('dd-group', 'options'),
 #     Output('dd-group', 'value'),
 #     Input('dd-files-compare', 'value'),
-#     Input('dd-site-compare', 'value'),
+#     Input('dd-assembly-compare', 'value'),
 #     State('dd-group', 'value')
 # )
 # @db.chrono_callback
-# def update_group_dropdown(selected_files, selected_site, current_group):
-#     if not selected_files or not selected_site:
+# def update_group_dropdown(selected_files, selected_assembly, current_group):
+#     if not selected_files or not selected_assembly:
 #         return [], None
 
-#     housing = selected_site.split('_')[0]
+#     housing = selected_assembly.split('_')[0]
 #     valid_groups = db.get_common_groups(selected_files, housing)
 #     if not valid_groups:
 #         return [], None
@@ -210,13 +210,13 @@ def update_file_dropdown(selected_site, selected_db):
     Output('sensors-message', 'children'),
     Input('dd-group', 'value'),
     Input('dd-files-compare', 'value'),
-    State('dd-site-compare', 'value'),
+    State('dd-assembly-compare', 'value'),
 )
-def generate_pair_blocks(selected_group, selected_files, selected_site):
-    if not selected_files or not selected_group or not selected_site:
+def generate_pair_blocks(selected_group, selected_files, selected_assembly):
+    if not selected_files or not selected_group or not selected_assembly:
         return [], "Select your files and a group."
 
-    housing = selected_site.split('_')[0]
+    housing = selected_assembly.split('_')[0]
     pairs = db.get_comparable_pairs_for_group(selected_group, selected_files, housing)
     print(f"[comparison] generate_pair_blocks: selected_group={selected_group}, selected_files={selected_files}, housing={housing}")
     print(f"[comparison] generate_pair_blocks: pairs={len(pairs)}")
@@ -312,14 +312,14 @@ def generate_pair_blocks(selected_group, selected_files, selected_site):
     Output('sync-offsets-store', 'data'),
     Output('sync-offsets-display', 'children'),
     Input('dd-files-compare', 'value'),
-    Input('dd-site-compare', 'value')
+    Input('dd-assembly-compare', 'value')
 )
 @db.chrono_callback
-def calculate_all_offsets(selected_files, selected_site):
-    if not selected_files or not selected_site:
+def calculate_all_offsets(selected_files, selected_assembly):
+    if not selected_files or not selected_assembly:
         return {}, "No files selected for synchronization."
     
-    housing = selected_site.split('_')[0]
+    housing = selected_assembly.split('_')[0]
     
     # 1. Identifier le GROUPE de fichiers Maîtres
     overview_files = [f for f in selected_files if 'overview' in f.lower()]
@@ -432,7 +432,7 @@ def calculate_all_offsets(selected_files, selected_site):
     Input({'type': 'pair-checklist', 'index': MATCH}, 'value'),
     Input('comp-xaxis-selector', 'value'),
     Input('comp-method-selector', 'value'),
-    Input('dd-site-compare', 'value'),
+    Input('dd-assembly-compare', 'value'),
 
     State('sync-offsets-store', 'data'),
     State('dd-files-compare', 'value'),
@@ -440,9 +440,9 @@ def calculate_all_offsets(selected_files, selected_site):
     State({'type': 'pair-graph', 'index': ALL}, 'relayoutData')
 )
 @db.chrono_callback
-def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method, selected_site, sync_data, selected_files, selected_group, all_relayout_data):
+def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method, selected_assembly, sync_data, selected_files, selected_group, all_relayout_data):
     
-    if not selected_pair_channels or not selected_files or not selected_site:
+    if not selected_pair_channels or not selected_files or not selected_assembly:
         return go.Figure()
 
     # --- 1. Gestion du Zoom en mémoire ---
@@ -469,7 +469,7 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
     pupitre_sensors = [val.split(':')[1] for val in selected_pair_channels if val.startswith('pupitre:')]
     pigbrother_sensors = [val.split(':')[1] for val in selected_pair_channels if val.startswith('pigbrother:')]
 
-    housing = selected_site.split('_')[0]
+    housing = selected_assembly.split('_')[0]
     sync_data = sync_data or {}
     offsets = sync_data.get('offsets', {})
     t0_str = sync_data.get('t0_absolu')

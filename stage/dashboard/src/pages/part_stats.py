@@ -22,7 +22,7 @@ EXP_PART_BIN_STATS_COLUMNS = [
     "Part",
     "Type",
     "Magnet",
-    "Site",
+    "Assembly",
     "File",
     "Operating time (h)",
     "Peak hoop stress proxy (A^2)",
@@ -35,9 +35,9 @@ EXP_PART_BIN_STATS_COLUMNS = [
 def _warn_exp_part_bin_stats(reason: str, db_path: str) -> None:
     print(
         f"[part_stats] Table 'exp_part_bin_stats' {reason}.\n"
-        "  Populate it by running, for each site:\n"
+        "  Populate it by running, for each assembly:\n"
         "    to_duckdb/venv-systempackages/bin/python3 to_duckdb/compute_exp_stats.py "
-        f"--db {db_path} --site <SITE_NAME>"
+        f"--db {db_path} --assembly <ASSEMBLY_NAME>"
     )
 
 
@@ -45,7 +45,7 @@ def load_data(db_path=None):
     """Load per-experiment part-level operating stats joined with each part's magnet.
 
     Parts are not a direct column on ``experiments``: each experiment runs
-    on a site, ``site_magnets`` links that site to the magnet(s) mounted
+    on an assembly, ``assembly_magnets`` links that assembly to the magnet(s) mounted
     on it, and ``magnet_parts`` links each magnet to its parts (helices,
     bitters, rings). Joining through both fans one experiment row out into
     one row per part.
@@ -89,24 +89,24 @@ def load_data(db_path=None):
     df = con.execute("""
             SELECT
                 e.id AS ID, e.name AS Experiment, p.name AS Part, p.type AS Type,
-                mp.magnet_name AS Magnet, e.site_name AS Site, e.file AS File,
+                mp.magnet_name AS Magnet, e.assembly_name AS Assembly, e.file AS File,
                 ROUND(SUM(CASE WHEN s.channel = 'Icoil' THEN s.sum_dt END) / 3600, 2) AS "Operating time (h)",
                 ROUND(MAX(CASE WHEN s.channel = 'hoop_stress_proxy' THEN s.max_x END), 1) AS "Peak hoop stress proxy (A^2)",
                 CASE WHEN hp.experiment_id IS NOT NULL THEN 'Computed' ELSE 'Not computed' END AS "Hoop Stress Status",
             e.status AS Status
             FROM experiments AS e
-            JOIN site_magnets AS sm ON e.site_name = sm.site_name
+            JOIN assembly_magnets AS sm ON e.assembly_name = sm.assembly_name
             JOIN magnet_parts AS mp ON mp.magnet_name = sm.magnet_name
             JOIN parts AS p ON p.name = mp.part_name
             LEFT JOIN exp_part_bin_stats AS s ON s.experiment_id = e.id AND s.part_name = p.name
             LEFT JOIN (SELECT DISTINCT experiment_id FROM hoop_stress_processed) AS hp ON hp.experiment_id = e.id
             WHERE p.type IN ('bitter', 'helix', 'supra')
-            GROUP BY e.id, e.name, p.name, p.type, mp.magnet_name, e.site_name, e.file, e.status, hp.experiment_id
+            GROUP BY e.id, e.name, p.name, p.type, mp.magnet_name, e.assembly_name, e.file, e.status, hp.experiment_id
             ORDER BY p.name, e.name
         """).fetchdf()
 
     df["Experiment"] = pd.to_datetime(df["Experiment"])
-    df["Housing"] = df["Site"].str.extract(r"^(M\d+)")
+    df["Housing"] = df["Assembly"].str.extract(r"^(M\d+)")
 
     con.close()
 

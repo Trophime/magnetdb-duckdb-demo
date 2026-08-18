@@ -21,7 +21,7 @@ EXP_RUN_SCALARS_COLUMNS = [
     "ID",
     "Experiment",
     "Magnet",
-    "Site",
+    "Assembly",
     "File",
     "Energy (kWh)",
     "Extracted heat (kWh)",
@@ -35,9 +35,9 @@ EXP_RUN_SCALARS_COLUMNS = [
 def _warn_exp_run_scalars(reason: str, db_path: str) -> None:
     print(
         f"[magnet_stats] Table 'exp_run_scalars' {reason}.\n"
-        "  Populate it by running, for each site:\n"
+        "  Populate it by running, for each assembly:\n"
         "    to_duckdb/venv-systempackages/bin/python3 to_duckdb/compute_exp_stats.py "
-        f"--db {db_path} --site <SITE_NAME>"
+        f"--db {db_path} --assembly <ASSEMBLY_NAME>"
     )
 
 
@@ -45,7 +45,7 @@ def load_data(db_path=None):
     """Load per-experiment energy stats joined with each experiment's magnets.
 
     Magnets are not a direct column on ``experiments``: each experiment runs
-    on a site, and ``site_magnets`` links that site to the magnet(s) mounted
+    on an assembly, and ``assembly_magnets`` links that assembly to the magnet(s) mounted
     on it (typically an insert and a bitters magnet run together). Joining
     through it fans one experiment row out into one row per magnet.
 
@@ -83,21 +83,21 @@ def load_data(db_path=None):
     df = con.execute(f"""
             SELECT
                 e.id AS ID, e.name AS Experiment, sm.magnet_name AS Magnet,
-                e.site_name AS Site, e.file AS File,
+                e.assembly_name AS Assembly, e.file AS File,
                 ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 7) AS "Energy (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Extracted heat (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Field ON (s)",
             e.status AS Status
             FROM experiments AS e
-            JOIN site_magnets AS sm ON e.site_name = sm.site_name
+            JOIN assembly_magnets AS sm ON e.assembly_name = sm.assembly_name
             LEFT JOIN exp_run_scalars AS s ON e.id = s.experiment_id
-            GROUP BY e.id, e.name, sm.magnet_name, e.site_name, e.file, e.status
+            GROUP BY e.id, e.name, sm.magnet_name, e.assembly_name, e.file, e.status
             ORDER BY sm.magnet_name, e.name
         """).fetchdf()
 
     df["Experiment"] = pd.to_datetime(df["Experiment"])
-    df["Housing"] = df["Site"].str.extract(r"^(M\d+)")
+    df["Housing"] = df["Assembly"].str.extract(r"^(M\d+)")
 
     con.close()
 

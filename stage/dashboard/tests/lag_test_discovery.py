@@ -521,7 +521,7 @@ def main() -> None:
 
             if not df_pupitre.empty and not df_overview.empty:
                 rows = compare_group_fields(df_pupitre, df_overview, fields)
-                print(f"\nper-field metrics vs overview:")
+                print("\nper-field metrics vs overview:")
                 print(tabulate(rows, headers=metrics_headers, tablefmt="simple"))
 
                 col_pup, col_ov, col_ref_ov = pick_columns(df_pupitre, df_overview)

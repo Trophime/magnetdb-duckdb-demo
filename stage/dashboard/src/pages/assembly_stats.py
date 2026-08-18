@@ -20,7 +20,7 @@ S_TO_H = 3600
 EXP_RUN_SCALARS_COLUMNS = [
     "ID",
     "Experiment",
-    "Site",
+    "Assembly",
     "File",
     "Energy (kWh)",
     "Extracted heat (kWh)",
@@ -33,15 +33,15 @@ EXP_RUN_SCALARS_COLUMNS = [
 
 def _warn_exp_run_scalars(reason: str, db_path: str) -> None:
     print(
-        f"[site_stats] Table 'exp_run_scalars' {reason}.\n"
-        "  Populate it by running, for each site:\n"
+        f"[assembly_stats] Table 'exp_run_scalars' {reason}.\n"
+        "  Populate it by running, for each assembly:\n"
         "    to_duckdb/venv-systempackages/bin/python3 to_duckdb/compute_exp_stats.py "
-        f"--db {db_path} --site <SITE_NAME>"
+        f"--db {db_path} --assembly <ASSEMBLY_NAME>"
     )
 
 
 def load_data(db_path=None):
-    """Load per-experiment energy stats joined with site commissioning dates.
+    """Load per-experiment energy stats joined with assembly commissioning dates.
 
     Parameters
     ----------
@@ -76,7 +76,7 @@ def load_data(db_path=None):
 
     df = con.execute(f"""
             SELECT
-                e.id AS ID, e.name AS Experiment, e.site_name AS Site, e.file AS File,
+                e.id AS ID, e.name AS Experiment, e.assembly_name AS Assembly, e.file AS File,
                 ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 7) AS "Energy (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Extracted heat (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
@@ -85,21 +85,21 @@ def load_data(db_path=None):
             st.commissioned_at AS Commissioned
             FROM experiments AS e
             LEFT JOIN exp_run_scalars AS s ON e.id = s.experiment_id
-            LEFT JOIN sites AS st ON e.site_name = st.name
-            GROUP BY e.id, e.name, e.site_name, e.file, e.status, st.commissioned_at
-            ORDER BY e.site_name, e.name
+            LEFT JOIN assemblies AS st ON e.assembly_name = st.name
+            GROUP BY e.id, e.name, e.assembly_name, e.file, e.status, st.commissioned_at
+            ORDER BY e.assembly_name, e.name
         """).fetchdf()
 
     df["Experiment"] = pd.to_datetime(df["Experiment"])
-    df["Housing"] = df["Site"].str.extract(r"^(M\d+)")
+    df["Housing"] = df["Assembly"].str.extract(r"^(M\d+)")
 
     con.close()
 
     return df
 
 
-def load_site_summary(db_path=None):
-    """Count total sites and sites currently in operation.
+def load_assembly_summary(db_path=None):
+    """Count total assemblies and assemblies currently in operation.
 
     Parameters
     ----------
@@ -109,15 +109,15 @@ def load_site_summary(db_path=None):
     Returns
     -------
     tuple of int
-        ``(total_sites, sites_in_operation)``.
+        ``(total_assemblies, assemblies_in_operation)``.
     """
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
-    total_sites, sites_in_operation = con.execute(
-        "SELECT COUNT(*), SUM(CASE WHEN status = 'in_operation' THEN 1 ELSE 0 END) FROM sites"
+    total_assemblies, assemblies_in_operation = con.execute(
+        "SELECT COUNT(*), SUM(CASE WHEN status = 'in_operation' THEN 1 ELSE 0 END) FROM assemblies"
     ).fetchone()
     con.close()
-    return total_sites, sites_in_operation or 0
+    return total_assemblies, assemblies_in_operation or 0
 
 
 TABLE_COLUMNS = [
@@ -131,7 +131,7 @@ TABLE_COLUMNS = [
 ]
 
 
-def _build_page_content(df, total_sites, sites_in_operation):
+def _build_page_content(df, total_assemblies, assemblies_in_operation):
     """Build the figures, table rows, and summary text for a loaded experiments dataframe."""
     fig_per_exp = px.bar(
         df.sort_values("Experiment"),
@@ -139,7 +139,7 @@ def _build_page_content(df, total_sites, sites_in_operation):
         y="Energy (kWh)",
         color="Housing",
         color_discrete_map={"M9": "red", "M10": "blue"},
-        hover_data=["Site"],
+        hover_data=["Assembly"],
         title="Energy per Experiment",
     )
 
@@ -147,35 +147,35 @@ def _build_page_content(df, total_sites, sites_in_operation):
 
     fig_per_exp.update_traces(width=1000 * 60 * 60 * 24)
 
-    energy_by_site = df.groupby(["Site", "Housing"], as_index=False).agg(
+    energy_by_assembly = df.groupby(["Assembly", "Housing"], as_index=False).agg(
         {"Energy (kWh)": "sum", "Commissioned": "min"}
     )
-    energy_by_site = energy_by_site.sort_values("Commissioned")
+    energy_by_assembly = energy_by_assembly.sort_values("Commissioned")
 
-    fig_per_site = px.bar(
-        energy_by_site,
-        x="Site",
+    fig_per_assembly = px.bar(
+        energy_by_assembly,
+        x="Assembly",
         y="Energy (kWh)",
         color="Housing",
         color_discrete_map={"M9": "red", "M10": "blue"},
-        category_orders={"Site": energy_by_site["Site"].tolist()},
-        title="Energy per Site",
+        category_orders={"Assembly": energy_by_assembly["Assembly"].tolist()},
+        title="Energy per Assembly",
     )
 
-    field_on_by_site = df.groupby(["Site", "Housing"], as_index=False).agg(
+    field_on_by_assembly = df.groupby(["Assembly", "Housing"], as_index=False).agg(
         {"Field ON (s)": "sum", "Commissioned": "min"}
     )
-    field_on_by_site = field_on_by_site.sort_values("Commissioned")
-    field_on_by_site["Field ON (h)"] = field_on_by_site["Field ON (s)"] / S_TO_H
+    field_on_by_assembly = field_on_by_assembly.sort_values("Commissioned")
+    field_on_by_assembly["Field ON (h)"] = field_on_by_assembly["Field ON (s)"] / S_TO_H
 
     fig_field_on = px.bar(
-        field_on_by_site,
-        x="Site",
+        field_on_by_assembly,
+        x="Assembly",
         y="Field ON (h)",
         color="Housing",
         color_discrete_map={"M9": "red", "M10": "blue"},
-        category_orders={"Site": field_on_by_site["Site"].tolist()},
-        title="Magnet Time per Site (h)",
+        category_orders={"Assembly": field_on_by_assembly["Assembly"].tolist()},
+        title="Magnet Time per Assembly (h)",
     )
 
     df["Year"] = df["Experiment"].dt.year
@@ -219,9 +219,9 @@ def _build_page_content(df, total_sites, sites_in_operation):
     table_df["Experiment"] = df.apply(experiment_link, axis=1)
 
     summary = [
-        html.B(f"Sites: {total_sites}"),
+        html.B(f"Assemblies: {total_assemblies}"),
         html.Br(),
-        f"In operation: {sites_in_operation}",
+        f"In operation: {assemblies_in_operation}",
         html.Br(),
         html.B(f"Experiments: {len(df)}"),
         html.Br(),
@@ -230,7 +230,7 @@ def _build_page_content(df, total_sites, sites_in_operation):
 
     return (
         fig_per_exp,
-        fig_per_site,
+        fig_per_assembly,
         fig_field_on,
         fig_energy_year,
         fig_field_on_year,
@@ -244,18 +244,18 @@ def layout(**kwargs):
         [
             html.H1("MagnetDB Dashboard"),
             dcc.Dropdown(
-                id="site-stats-site-filter",
+                id="assembly-stats-assembly-filter",
                 options=[],
                 value=None,
-                placeholder="Filter by site...",
+                placeholder="Filter by assembly...",
                 clearable=True,
                 style={"width": "400px", "marginBottom": "15px"},
             ),
-            html.Div(id="site-stats-summary"),
+            html.Div(id="assembly-stats-summary"),
             html.Br(),
             dcc.Graph(id="fig-per-exp"),
             html.Br(),
-            dcc.Graph(id="fig-per-site"),
+            dcc.Graph(id="fig-per-assembly"),
             html.Br(),
             dcc.Graph(id="fig-field-on"),
             html.Br(),
@@ -264,7 +264,7 @@ def layout(**kwargs):
             dcc.Graph(id="fig-field-on-year"),
             html.Br(),
             DataTable(
-                id="site-stats-table",
+                id="assembly-stats-table",
                 columns=TABLE_COLUMNS,
                 data=[],
                 page_size=20,
@@ -280,19 +280,19 @@ def layout(**kwargs):
 
 @dash.callback(
     Output("fig-per-exp", "figure"),
-    Output("fig-per-site", "figure"),
-    Output("fig-per-site", "style"),
+    Output("fig-per-assembly", "figure"),
+    Output("fig-per-assembly", "style"),
     Output("fig-field-on", "figure"),
     Output("fig-field-on", "style"),
     Output("fig-energy-year", "figure"),
     Output("fig-field-on-year", "figure"),
-    Output("site-stats-table", "data"),
-    Output("site-stats-summary", "children"),
-    Output("site-stats-site-filter", "options"),
+    Output("assembly-stats-table", "data"),
+    Output("assembly-stats-summary", "children"),
+    Output("assembly-stats-assembly-filter", "options"),
     Input("dd-database", "value"),
-    Input("site-stats-site-filter", "value"),
+    Input("assembly-stats-assembly-filter", "value"),
 )
-def update_site_stats(selected_db, selected_site):
+def update_assembly_stats(selected_db, selected_assembly):
     if not selected_db:
         return (
             go.Figure(),
@@ -308,30 +308,30 @@ def update_site_stats(selected_db, selected_site):
         )
 
     df = load_data(selected_db)
-    site_options = sorted(df["Site"].unique())
-    total_sites, sites_in_operation = load_site_summary(selected_db)
+    assembly_options = sorted(df["Assembly"].unique())
+    total_assemblies, assemblies_in_operation = load_assembly_summary(selected_db)
 
-    plot_df = df[df["Site"] == selected_site] if selected_site else df
-    fig_per_site_style = {"display": "none"} if selected_site else {}
+    plot_df = df[df["Assembly"] == selected_assembly] if selected_assembly else df
+    fig_per_assembly_style = {"display": "none"} if selected_assembly else {}
 
     (
         fig_per_exp,
-        fig_per_site,
+        fig_per_assembly,
         fig_field_on,
         fig_energy_year,
         fig_field_on_year,
         table_records,
         summary,
-    ) = _build_page_content(plot_df, total_sites, sites_in_operation)
+    ) = _build_page_content(plot_df, total_assemblies, assemblies_in_operation)
     return (
         fig_per_exp,
-        fig_per_site,
-        fig_per_site_style,
+        fig_per_assembly,
+        fig_per_assembly_style,
         fig_field_on,
-        fig_per_site_style,
+        fig_per_assembly_style,
         fig_energy_year,
         fig_field_on_year,
         table_records,
         summary,
-        site_options,
+        assembly_options,
     )

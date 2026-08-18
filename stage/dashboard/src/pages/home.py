@@ -23,17 +23,21 @@ from natsort import natsorted
 
 dash.register_page(__name__, path="/home", name="File viewer", order=4)
 
-# `site`/`file` are populated by Dash Pages from the URL's query string (e.g. the
-# links generated on the "Assembly stats" page: /home?site=...&file=...), so the
+# `assembly`/`file` are populated by Dash Pages from the URL's query string (e.g. the
+# links generated on the "Assembly stats" page: /home?assembly=...&file=...), so the
 # dropdowns get their initial value at first render instead of via a callback
 # racing against the (async) options-loading callbacks below. Seeding `options`
 # with the value itself guarantees the label is shown immediately, rather than
 # a blank/placeholder box until the real option list (loaded from DuckDB by the
 # callbacks further down) happens to include a matching entry.
-def layout(site=None, file=None, **kwargs):
+#
+# `site` is a deprecated alias for `assembly` — old bookmarked/shared
+# `?site=...` links keep working for one release cycle, then remove.
+def layout(assembly=None, site=None, file=None, **kwargs):
+    assembly = assembly or site
     return html.Div(
         [
-            dcc.Store(id="pending-auto-plot", data=["Field"] if (site and file) else []),
+            dcc.Store(id="pending-auto-plot", data=["Field"] if (assembly and file) else []),
             html.Div(
                 [
                     html.H2(
@@ -41,12 +45,12 @@ def layout(site=None, file=None, **kwargs):
                         style={"marginTop": "0px", "marginBottom": "20px"},
                     ),
                     html.Hr(),
-                    html.Label("1. Choose Site :", style={"fontWeight": "bold"}),
+                    html.Label("1. Choose Assembly :", style={"fontWeight": "bold"}),
                     dcc.Dropdown(
-                        id="dd-site",
-                        options=[site] if site else [],
-                        value=site,
-                        placeholder="Choose a site...",
+                        id="dd-assembly",
+                        options=[assembly] if assembly else [],
+                        value=assembly,
+                        placeholder="Choose an assembly...",
                     ),
                     html.Br(),
                     html.Label("2. Choose Table :", style={"fontWeight": "bold"}),
@@ -104,29 +108,29 @@ def layout(site=None, file=None, **kwargs):
     )
 
 
-# CALLBACK 0 : Met à jour la liste des sites en fonction de la Database sélectionnée
-@dash.callback(Output("dd-site", "options"), Input("dd-database", "value"))
-def update_site_dropdown(selected_db):
+# CALLBACK 0 : Met à jour la liste des assemblies en fonction de la Database sélectionnée
+@dash.callback(Output("dd-assembly", "options"), Input("dd-database", "value"))
+def update_assembly_dropdown(selected_db):
     if not selected_db:
         return []
-    return db.get_all_sites(selected_db)
+    return db.get_all_assemblies(selected_db)
 
 
-# CALLBACK 1 : Met à jour la liste des fichiers en fonction du Site ET de la Table
+# CALLBACK 1 : Met à jour la liste des fichiers en fonction du Assembly ET de la Table
 @dash.callback(
     Output("dd-file", "options"),
-    Input("dd-site", "value"),
+    Input("dd-assembly", "value"),
     Input("dd-table", "value"),
     Input("dd-database", "value"),
 )
-def update_file_dropdown(selected_site, selected_table, selected_db):
-    if not selected_site or not selected_table:
+def update_file_dropdown(selected_assembly, selected_table, selected_db):
+    if not selected_assembly or not selected_table:
         return []
 
-    magnet_types = db.get_magnet_types_for_site(selected_site, selected_db)
-    print(f"[home.py] selected_site={selected_site!r} magnet_types={magnet_types}")
+    magnet_types = db.get_magnet_types_for_assembly(selected_assembly, selected_db)
+    print(f"[home.py] selected_assembly={selected_assembly!r} magnet_types={magnet_types}")
 
-    files = db.get_files_for_site(selected_site, selected_table, selected_db)
+    files = db.get_files_for_assembly(selected_assembly, selected_table, selected_db)
     return [{"label": f, "value": f} for f in files]
 
 
@@ -134,24 +138,24 @@ def update_file_dropdown(selected_site, selected_table, selected_db):
     Output("sensors-selectors-container", "children"),
     Output("pending-auto-plot", "data"),
     Input("dd-file", "value"),
-    Input("dd-site", "value"),
+    Input("dd-assembly", "value"),
     State({"type": "group-sensors-checklist", "index": ALL}, "value"),
     State({"type": "group-sensors-checklist", "index": ALL}, "id"),
     State("pending-auto-plot", "data"),
 )
 def update_sensors_menus(
     selected_file,
-    selected_site,
+    selected_assembly,
     current_sensor_values,
     current_sensor_ids,
     pending_auto_plot,
 ):
-    if not selected_file or not selected_site:
+    if not selected_file or not selected_assembly:
         return [], no_update
 
-    housing = selected_site.split("_")[0]
+    housing = selected_assembly.split("_")[0]
     print(
-        f"[home.py] update_sensors_menus: Loading data file: {selected_file} (site={selected_site}, housing={housing})"
+        f"[home.py] update_sensors_menus: Loading data file: {selected_file} (assembly={selected_assembly}, housing={housing})"
     )
     mrun = db.load_mrun_object(selected_file, housing)
 
@@ -296,7 +300,7 @@ def update_sensors_menus(
 @dash.callback(
     Output({"type": "dynamic-graph", "index": ALL}, "figure"),
     Input("dd-file", "value"),
-    Input("dd-site", "value"),
+    Input("dd-assembly", "value"),
     Input("dd-table", "value"),
     Input("dd-x-axis", "value"),
     Input({"type": "group-sensors-checklist", "index": ALL}, "value"),
@@ -306,7 +310,7 @@ def update_sensors_menus(
 )
 def update_outputs(
     selected_file,
-    selected_site,
+    selected_assembly,
     selected_table,
     selected_x,
     all_sensors_lists,
@@ -332,7 +336,7 @@ def update_outputs(
         margin=dict(l=20, r=20, t=30, b=20),
     )
 
-    if not selected_file or not selected_site:
+    if not selected_file or not selected_assembly:
         return [empty_fig for _ in all_sensors_ids]
 
     # --- ETAPE 1 : DETERMINER SI ON DOIT CONSERVER LE ZOOM ---
@@ -360,9 +364,9 @@ def update_outputs(
                     x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
                     break
 
-    housing = selected_site.split("_")[0]
+    housing = selected_assembly.split("_")[0]
     print(
-        f"[home.py] Loading data file: {selected_file} (site={selected_site}, housing={housing})"
+        f"[home.py] Loading data file: {selected_file} (assembly={selected_assembly}, housing={housing})"
     )
     mrun = db.load_mrun_object(selected_file, housing)
 
