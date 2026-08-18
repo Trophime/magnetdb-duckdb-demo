@@ -8,6 +8,14 @@ in isolation (2026-08-14) — see
 what's still blocked pending `magnettools` availability. Phase 5
 (fatigue-additivity question) not yet started.
 
+**Decided 2026-08-17:** on this machine, Phases 4–5 will be finalized via
+the local devcontainer, rebuilt onto the `trophime/magnettools:trixie` base
+image (`.devcontainer/local/devcontainer.json`, commit `7066831`) — not the
+office machine, which was the only previously-known `magnettools`-equipped
+environment. Remaining before either phase can close: rebuild the local
+devcontainer, confirm `magnettools` actually imports inside it, then re-run
+Phase 4's blocked tests and both phases' real-DB cross-checks from there.
+
 ## Phase 1 — done (compute pipeline correctness)
 
 Originally scoped as just the Bitter/Supra regex drop (item 5 below), this
@@ -98,6 +106,10 @@ previous phase landing:
   **Tests written and passing in isolation** (2026-08-14); full-suite
   re-verification and the real-DB cross-check are blocked on `magnettools`
   availability (this machine's venv lacks it) — see that file for details.
+  **To be finalized via the rebuilt local devcontainer** (decided
+  2026-08-17, see Status above), not the office machine.
 - **Phase 5** — [PLAN_hoop_stress_fatigue_additivity.md](PLAN_hoop_stress_fatigue_additivity.md):
   the `TODOs.md` "test if fatigue can be used like a cumulative stats??"
-  question. Depends on Phase 3 (satisfied). **Not started.**
+  question. Depends on Phase 3 (satisfied). **Not started.** Its real-part
+  verification (see that file's Approach) needs `magnettools` too — same
+  devcontainer-based path as Phase 4 once started.
