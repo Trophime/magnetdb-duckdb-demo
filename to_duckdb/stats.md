@@ -47,7 +47,7 @@ SELECT * FROM housing_summary LIMIT 10;
 
 # Dashboard
 
-A first dashboard prototype is available in  `dash_site_stats.py`. It reads 
+A first dashboard prototype is available in  `dashboard/pages/magnets.py`. It reads 
 data directly from the existing tables `experiments` and `exp_run_scalars` of 
 `magnetdb.duckdb`. The current version does not yet use the statistics calculated 
 by `import_housing_summary` and stored in the `housing_summary` table.
@@ -55,11 +55,11 @@ by `import_housing_summary` and stored in the `housing_summary` table.
 Current functionality:
 - loads experiment information directly from `magnetdb.duckdb`
 - displays the energy consumed by each experiment
-- displays the total energy per site
+- displays the total energy per assembly
 - provides a sortable table containing
     - experiment identifier
     - experiment date
-    - site
+    - assembly
     - energy
     - extracted heat
     - experiment duration

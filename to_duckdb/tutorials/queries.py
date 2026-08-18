@@ -22,11 +22,11 @@ except NameError:  # __file__ is undefined in Jupyter
 if __name__ == "__main__":
     con = duckdb.connect(DB_PATH, read_only=True)
 
-    # ── 1. Full site hierarchy ─────────────────────────────────────────────────
-    print("=== Site hierarchy ===")
+    # ── 1. Full assembly hierarchy ─────────────────────────────────────────────
+    print("=== Assembly hierarchy ===")
     hierarchy = con.execute("""
         SELECT
-            s.name        AS site,
+            s.name        AS assembly,
             m.name        AS magnet,
             m.type        AS magnet_type,
             p.type        AS part_type,
@@ -36,8 +36,8 @@ if __name__ == "__main__":
             p.geometry,
             mat.nuance,
             mat.rpe / 1e6 AS rpe_MPa
-        FROM sites s
-        JOIN site_magnets sm ON sm.site_name   = s.name
+        FROM assemblies s
+        JOIN assembly_magnets sm ON sm.assembly_name = s.name
         JOIN magnets m       ON m.name         = sm.magnet_name
         JOIN magnet_parts mp ON mp.magnet_name = m.name
         JOIN parts p         ON p.name        = mp.part_name
@@ -67,12 +67,12 @@ if __name__ == "__main__":
     """).df()
     print(coil_map.to_string())
 
-    # ── 3. All records for a site ─────────────────────────────────────────────
+    # ── 3. All records for an assembly ────────────────────────────────────────
     print("\n=== Records for M9_M19061901 ===")
     records = con.execute("""
         SELECT id, file, status
         FROM experiments
-        WHERE site_name = 'M9_M19061901'
+        WHERE assembly_name = 'M9_M19061901'
         ORDER BY file
     """).df()
     print(records.to_string())
@@ -125,25 +125,25 @@ if __name__ == "__main__":
     """).df()
     print(shared.to_string())
 
-    # ── 7. All sites in which a magnet has been used, sorted by commission date ─
-    print("\n=== Sites where magnet M19071101 has been used ===")
-    magnet_sites = con.execute("""
+    # ── 7. All assemblies in which a magnet has been used, sorted by commission date ─
+    print("\n=== Assemblies where magnet M19071101 has been used ===")
+    magnet_assemblies = con.execute("""
         SELECT
-            s.name              AS site,
+            s.name              AS assembly,
             s.housing,
             s.status,
             s.commissioned_at,
             s.decommissioned_at
-        FROM site_magnets sm
-        JOIN sites s ON s.name = sm.site_name
+        FROM assembly_magnets sm
+        JOIN assemblies s ON s.name = sm.assembly_name
         WHERE sm.magnet_name = 'M19071101'
         ORDER BY s.commissioned_at ASC NULLS LAST
     """).df()
-    print(magnet_sites.to_string())
+    print(magnet_assemblies.to_string())
 
-    # ── 8. All magnets and sites in which a part has been used,
-    #       sorted by site commission date ─────────────────────────────────────
-    print("\n=== Sites and magnets where part H15101601 has been used ===")
+    # ── 8. All magnets and assemblies in which a part has been used,
+    #       sorted by assembly commission date ────────────────────────────────
+    print("\n=== Assemblies and magnets where part H15101601 has been used ===")
     part_history = con.execute("""
         SELECT
             p.name              AS part,
@@ -151,15 +151,15 @@ if __name__ == "__main__":
             mp.coil_index,
             m.name              AS magnet,
             m.type              AS magnet_type,
-            s.name              AS site,
+            s.name              AS assembly,
             s.housing,
             s.commissioned_at,
             s.decommissioned_at
         FROM magnet_parts mp
         JOIN parts   p  ON p.name  = mp.part_name
         JOIN magnets m  ON m.name  = mp.magnet_name
-        JOIN site_magnets sm ON sm.magnet_name = m.name
-        JOIN sites   s  ON s.name  = sm.site_name
+        JOIN assembly_magnets sm ON sm.magnet_name = m.name
+        JOIN assemblies   s  ON s.name  = sm.assembly_name
         WHERE p.name = 'H15101601'
           AND p.type IN ('helix', 'bitter')
         ORDER BY s.commissioned_at ASC NULLS LAST

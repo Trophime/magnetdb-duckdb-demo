@@ -15,8 +15,8 @@ around that structure:
   `voila-Bmap.ipynb`, `voila-Bmap-db.ipynb`), but also in
   `project1/src/main.ipynb`, `project3/src/*.ipynb`, and loose inside
   `to_duckdb/` itself (`import_housing_summary.ipynb`,
-  `test_site_stats.ipynb`).
-- **marimo** has a single app: `to_duckdb/marimo/select_site.py`.
+  `test_assembly_stats.ipynb`).
+- **marimo** has a single app: `to_duckdb/marimo/select_assembly.py`.
 - **Dash dashboards** are duplicated: `to_duckdb/dashboard/` and
   `stage/dashboard/` are two separate, independent Dash apps, each with
   their own `src/`, `tests/`, `Dockerfile`.

@@ -25,8 +25,8 @@ def load_data():
 
     df = con.execute(
         f"""
-            SELECT 
-                e.id AS ID, e.name AS Experiment, e.site_name AS Site, 
+            SELECT
+                e.id AS ID, e.name AS Experiment, e.assembly_name AS Assembly,
                 ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Energy (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Extracted heat (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
@@ -34,13 +34,13 @@ def load_data():
             e.status AS Status
             FROM experiments AS e
             LEFT JOIN exp_run_scalars AS s ON e.id = s.experiment_id
-            GROUP BY e.id, e.name, e.site_name, e.status
-            ORDER BY e.site_name, e.name
+            GROUP BY e.id, e.name, e.assembly_name, e.status
+            ORDER BY e.assembly_name, e.name
         """
     ).fetchdf()
 
     df["Experiment"] = pd.to_datetime(df["Experiment"])
-    df["Magnet"] = df["Site"].str.extract(r"^(M\d+)")
+    df["Magnet"] = df["Assembly"].str.extract(r"^(M\d+)")
 
     con.close()
 
@@ -57,7 +57,7 @@ fig_per_exp = px.bar(
     y = "Energy (kWh)",
     color = "Magnet",
     color_discrete_map = {"M9": "red", "M10": "blue"},
-    hover_data = ["Site"],
+    hover_data = ["Assembly"],
     title = "Energy per Experiment"
 )
 
@@ -71,27 +71,27 @@ fig_per_exp.update_traces(
     width = 1000 * 60 * 60 * 24
 )
 
-energy_by_site = (
-    df.groupby("Site", as_index = False)["Energy (kWh)"].sum()
+energy_by_assembly = (
+    df.groupby("Assembly", as_index = False)["Energy (kWh)"].sum()
 )
 
-fig_per_site = px.bar(
-    energy_by_site,
-    x = "Site",
+fig_per_assembly = px.bar(
+    energy_by_assembly,
+    x = "Assembly",
     y = "Energy (kWh)",
-    title = "Energy per Site"
+    title = "Energy per Assembly"
 )
 
-fig_per_site_pie = px.pie(
-    energy_by_site,
-    names = "Site",
+fig_per_assembly_pie = px.pie(
+    energy_by_assembly,
+    names = "Assembly",
     values = "Energy (kWh)",
     color_discrete_map = {"M9": "red", "M10": "blue"},
     hole = 0.3,
-    title = "Energy per Site 2"
+    title = "Energy per Assembly 2"
 )
 
-fig_per_site_pie.update_traces(
+fig_per_assembly_pie.update_traces(
     textposition = "inside",
     textinfo = "percent+label"
 )
@@ -112,10 +112,10 @@ layout = html.Div(
         dcc.Graph(id = "energy-exp", figure = fig_per_exp),
         html.Br(),
 
-        dcc.Graph(id = "energy-site", figure = fig_per_site),
+        dcc.Graph(id = "energy-assembly", figure = fig_per_assembly),
         html.Br(),
 
-        dcc.Graph(id = "energy-site-pie", figure = fig_per_site_pie),
+        dcc.Graph(id = "energy-assembly-pie", figure = fig_per_assembly_pie),
         html.Br(),
 
         DataTable(

@@ -6,8 +6,8 @@ Two parallel families of subcommands are provided:
 
 | Family | Source tables | Description |
 |--------|--------------|-------------|
-| `scalars`, `site-bins`, `magnet-bins`, `part-bins` | `op_run_scalars`, `op_site_bin_stats`, `op_part_bin_stats` | Cumulative stats from operational data files |
-| `exp-scalars`, `exp-site-bins`, `exp-magnet-bins`, `exp-part-bins` | `exp_run_scalars`, `exp_site_bin_stats`, `exp_part_bin_stats` | Cumulative stats from experiment records |
+| `scalars`, `assembly-bins`, `magnet-bins`, `part-bins` | `op_run_scalars`, `op_assembly_bin_stats`, `op_part_bin_stats` | Cumulative stats from operational data files |
+| `exp-scalars`, `exp-assembly-bins`, `exp-magnet-bins`, `exp-part-bins` | `exp_run_scalars`, `exp_assembly_bin_stats`, `exp_part_bin_stats` | Cumulative stats from experiment records |
 
 Both families share identical aggregation logic, CLI flags, and output helpers.
 
@@ -34,7 +34,7 @@ python query_cumstats.py <subcommand> [options]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--db` | `student.duckdb` | Path to DuckDB file |
-| `--site` | — | Site name (FK into `sites`) |
+| `--assembly` | — | Assembly name (FK into `assemblies`) |
 | `--magnet` | — | Magnet name |
 | `--part` | — | Part name |
 | `--channels` | all | Comma-separated channel filter, e.g. `Ptot,tsb` |
@@ -45,8 +45,8 @@ python query_cumstats.py <subcommand> [options]
 
 | Subcommand | Required flag | Source table | Description |
 |------------|--------------|-------------|-------------|
-| `scalars` | `--site` or `--magnet` | `op_run_scalars` | Total scalar quantities (energy, heat, duration) |
-| `site-bins` | `--site` | `op_site_bin_stats` | Field-bin distributions at site level |
+| `scalars` | `--assembly` or `--magnet` | `op_run_scalars` | Total scalar quantities (energy, heat, duration) |
+| `assembly-bins` | `--assembly` | `op_assembly_bin_stats` | Field-bin distributions at assembly level |
 | `magnet-bins` | `--magnet` | `op_part_bin_stats` | Per-part field-bin distributions for a magnet |
 | `part-bins` | `--part` | `op_part_bin_stats` | Field-bin distributions for a single part |
 
@@ -54,8 +54,8 @@ python query_cumstats.py <subcommand> [options]
 
 | Subcommand | Required flag | Source table | Description |
 |------------|--------------|-------------|-------------|
-| `exp-scalars` | `--site` or `--magnet` | `exp_run_scalars` | Total scalar quantities across experiments |
-| `exp-site-bins` | `--site` | `exp_site_bin_stats` | Field-bin distributions at site level |
+| `exp-scalars` | `--assembly` or `--magnet` | `exp_run_scalars` | Total scalar quantities across experiments |
+| `exp-assembly-bins` | `--assembly` | `exp_assembly_bin_stats` | Field-bin distributions at assembly level |
 | `exp-magnet-bins` | `--magnet` | `exp_part_bin_stats` | Per-part field-bin distributions for a magnet |
 | `exp-part-bins` | `--part` | `exp_part_bin_stats` | Field-bin distributions for a single part |
 
@@ -68,23 +68,23 @@ python query_cumstats.py <subcommand> [options]
 ```bash
 DB=magnetdb.duckdb
 
-# Scalar totals for a site (energy, heat, duration)
-python query_cumstats.py --db $DB --site M9_M19061901 scalars
+# Scalar totals for an assembly (energy, heat, duration)
+python query_cumstats.py --db $DB --assembly M9_M19061901 scalars
 
 # Scalar totals aggregated over all runs of a magnet
 python query_cumstats.py --db $DB --magnet M9Bitters scalars
 
-# Field-bin distribution at site level — all channels, tabular
-python query_cumstats.py --db $DB --site M9_M19061901 site-bins
+# Field-bin distribution at assembly level — all channels, tabular
+python query_cumstats.py --db $DB --assembly M9_M19061901 assembly-bins
 
 # Selected channels with bar-chart PNG
-python query_cumstats.py --db $DB --site M9_M19061901 site-bins \
+python query_cumstats.py --db $DB --assembly M9_M19061901 assembly-bins \
     --channels Ptot,tsb --plot
 
 # Per-part stats for all parts of a magnet
 python query_cumstats.py --db $DB --magnet M9Bitters magnet-bins --plot
 
-# Stats for a single part across all runs and sites
+# Stats for a single part across all runs and assemblies
 python query_cumstats.py --db $DB --part M9Bi part-bins \
     --channels Icoil,hoop_stress_proxy --plot
 ```
@@ -92,15 +92,15 @@ python query_cumstats.py --db $DB --part M9Bi part-bins \
 ### Experiment data
 
 ```bash
-# Scalar totals for a site from experiment records
-python query_cumstats.py --db $DB --site M9_M19061901 exp-scalars
+# Scalar totals for an assembly from experiment records
+python query_cumstats.py --db $DB --assembly M9_M19061901 exp-scalars
 
-# Field-bin distribution at site level
-python query_cumstats.py --db $DB --site M9_M19061901 exp-site-bins
+# Field-bin distribution at assembly level
+python query_cumstats.py --db $DB --assembly M9_M19061901 exp-assembly-bins
 
 # Restrict to a single named experiment
-python query_cumstats.py --db $DB --site M9_M19061901 \
-    --experiment myrun_2024 exp-site-bins
+python query_cumstats.py --db $DB --assembly M9_M19061901 \
+    --experiment myrun_2024 exp-assembly-bins
 
 # Per-part field-bin stats for a magnet (with plot)
 python query_cumstats.py --db $DB --magnet M9Bitters exp-magnet-bins --plot
@@ -130,11 +130,11 @@ python query_cumstats.py --db $DB --part M9Bi \
   Heat extracted                       9.876  MWh  (42 files)
 ```
 
-### Bin output (`site-bins`, `magnet-bins`, `part-bins` and `exp-*` variants)
+### Bin output (`assembly-bins`, `magnet-bins`, `part-bins` and `exp-*` variants)
 
 ```
 ──────────────────────────────────────────────────────────────────────────
-  Ptot — site M9_M19061901
+  Ptot — assembly M9_M19061901
   Bin (T)          Hours         Mean        Std        Min        Max
 ──────────────────────────────────────────────────────────────────────────
   0.0–5.0          12.340      123.456     10.234     98.000    145.000
@@ -144,7 +144,7 @@ python query_cumstats.py --db $DB --part M9Bi \
 
 ### Plot output (`--plot`)
 
-A `cumstats_<scope>_<channel>.png` file is written in the current directory for each channel. Site-level commands produce one figure per channel; part/magnet commands produce one figure per channel with one bar group per part.
+A `cumstats_<scope>_<channel>.png` file is written in the current directory for each channel. Assembly-level commands produce one figure per channel; part/magnet commands produce one figure per channel with one bar group per part.
 
 ---
 
@@ -157,12 +157,12 @@ import duckdb
 from query_cumstats import (
     # Operational
     query_scalars,
-    query_site_bins,
+    query_assembly_bins,
     query_magnet_bins,
     query_part_bins,
     # Experiment
     query_exp_scalars,
-    query_exp_site_bins,
+    query_exp_assembly_bins,
     query_exp_magnet_bins,
     query_exp_part_bins,
 )
@@ -170,14 +170,14 @@ from query_cumstats import (
 con = duckdb.connect("magnetdb.duckdb", read_only=True)
 
 # All functions return a pandas DataFrame.
-df_scalars   = query_scalars(con, site_name="M9_M19061901")
-df_site      = query_site_bins(con, "M9_M19061901", channels=["Ptot", "tsb"])
+df_scalars   = query_scalars(con, assembly_name="M9_M19061901")
+df_assembly  = query_assembly_bins(con, "M9_M19061901", channels=["Ptot", "tsb"])
 df_magnet    = query_magnet_bins(con, "M9Bitters")
 df_part      = query_part_bins(con, "M9Bi", channels=["Icoil"])
 
 # Experiment variants — identical signatures, extra experiment_name kwarg
-df_exp_site  = query_exp_site_bins(con, "M9_M19061901", channels=["Ptot"])
-df_exp_part  = query_exp_part_bins(con, "M9Bi", experiment_name="myrun_2024")
+df_exp_assembly = query_exp_assembly_bins(con, "M9_M19061901", channels=["Ptot"])
+df_exp_part      = query_exp_part_bins(con, "M9Bi", experiment_name="myrun_2024")
 
 con.close()
 ```

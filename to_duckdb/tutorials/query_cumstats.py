@@ -4,7 +4,7 @@ query_cumstats.py
 Query and display cumulative operational and experiment statistics from DuckDB.
 
 All queries read only from the pre-computed tables (op_run_scalars,
-op_site_bin_stats, op_part_bin_stats, exp_run_scalars, exp_site_bin_stats,
+op_assembly_bin_stats, op_part_bin_stats, exp_run_scalars, exp_assembly_bin_stats,
 exp_part_bin_stats) — no raw record files are touched.
 
 Aggregation rules
@@ -17,11 +17,11 @@ Aggregation rules
 
 Usage
 -----
-    # Cumulative scalars for a site (operational data)
-    python query_cumstats.py --db magnetdb.duckdb --site M9_M19061901 scalars
+    # Cumulative scalars for an assembly (operational data)
+    python query_cumstats.py --db magnetdb.duckdb --assembly M9_M19061901 scalars
 
-    # Field-bin histogram for a site (time + Ptot mean)
-    python query_cumstats.py --db magnetdb.duckdb --site M9_M19061901 site-bins
+    # Field-bin histogram for an assembly (time + Ptot mean)
+    python query_cumstats.py --db magnetdb.duckdb --assembly M9_M19061901 assembly-bins
 
     # Field-bin stats per magnet
     python query_cumstats.py --db magnetdb.duckdb --magnet M9Bitters magnet-bins
@@ -30,16 +30,16 @@ Usage
     python query_cumstats.py --db magnetdb.duckdb --part M9Bi part-bins
 
     # All of the above with plots
-    python query_cumstats.py --db magnetdb.duckdb --site M9_M19061901 site-bins --plot
+    python query_cumstats.py --db magnetdb.duckdb --assembly M9_M19061901 assembly-bins --plot
 
     # Same queries for experiment data
-    python query_cumstats.py --db magnetdb.duckdb --site M9_M19061901 exp-scalars
-    python query_cumstats.py --db magnetdb.duckdb --site M9_M19061901 exp-site-bins
+    python query_cumstats.py --db magnetdb.duckdb --assembly M9_M19061901 exp-scalars
+    python query_cumstats.py --db magnetdb.duckdb --assembly M9_M19061901 exp-assembly-bins
     python query_cumstats.py --db magnetdb.duckdb --magnet M9Bitters exp-magnet-bins
     python query_cumstats.py --db magnetdb.duckdb --part M9Bi exp-part-bins
 
     # Filter experiment queries by experiment name
-    python query_cumstats.py --db magnetdb.duckdb --site M9_M19061901 --experiment myrun exp-site-bins
+    python query_cumstats.py --db magnetdb.duckdb --assembly M9_M19061901 --experiment myrun exp-assembly-bins
 """
 
 import argparse
@@ -63,20 +63,20 @@ except ImportError:
 # Scalar queries
 # ---------------------------------------------------------------------------
 
-def query_scalars(con, *, site_name: str | None = None,
+def query_scalars(con, *, assembly_name: str | None = None,
                   magnet_name: str | None = None) -> pd.DataFrame:
-    """Total scalar stats across all processed files for a site or magnet."""
-    if site_name:
-        where = "od.site_name = ?"
-        params = [site_name]
+    """Total scalar stats across all processed files for an assembly or magnet."""
+    if assembly_name:
+        where = "od.assembly_name = ?"
+        params = [assembly_name]
     elif magnet_name:
         where = "sm.magnet_name = ?"
         params = [magnet_name]
     else:
-        raise ValueError("Provide site_name or magnet_name")
+        raise ValueError("Provide assembly_name or magnet_name")
 
     join = (
-        "JOIN site_magnets sm ON sm.site_name = od.site_name" if magnet_name else ""
+        "JOIN assembly_magnets sm ON sm.assembly_name = od.assembly_name" if magnet_name else ""
     )
 
     return con.execute(f"""
@@ -94,21 +94,21 @@ def query_scalars(con, *, site_name: str | None = None,
 
 
 # ---------------------------------------------------------------------------
-# Site-level bin queries
+# Assembly-level bin queries
 # ---------------------------------------------------------------------------
 
-def query_site_bins(
+def query_assembly_bins(
     con,
-    site_name: str,
+    assembly_name: str,
     channels: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Cumulative field-bin stats for a site.
+    """Cumulative field-bin stats for an assembly.
 
     Returns one row per (field_bin_low, field_bin_high, channel) with:
       hours, mean_x, std_x, min_x, max_x
     """
     ch_filter = ""
-    params: list = [site_name]
+    params: list = [assembly_name]
     if channels:
         placeholders = ",".join("?" * len(channels))
         ch_filter = f"AND s.channel IN ({placeholders})"
@@ -130,9 +130,9 @@ def query_site_bins(
             )                                                  AS std_x,
             MIN(s.min_x)                                       AS min_x,
             MAX(s.max_x)                                       AS max_x
-        FROM op_site_bin_stats s
+        FROM op_assembly_bin_stats s
         JOIN operationaldata od ON od.id = s.operationaldata_id
-        WHERE od.site_name = ?
+        WHERE od.assembly_name = ?
           {ch_filter}
         GROUP BY s.field_bin_low, s.field_bin_high, s.channel
         ORDER BY s.channel, s.field_bin_low
@@ -175,7 +175,7 @@ def query_magnet_bins(
             MAX(s.max_x)                                       AS max_x
         FROM op_part_bin_stats s
         JOIN operationaldata od  ON od.id = s.operationaldata_id
-        JOIN site_magnets sm     ON sm.site_name = od.site_name
+        JOIN assembly_magnets sm ON sm.assembly_name = od.assembly_name
         JOIN magnet_parts mp     ON mp.magnet_name = sm.magnet_name
                                 AND mp.part_name   = s.part_name
         WHERE sm.magnet_name = ?
@@ -194,7 +194,7 @@ def query_part_bins(
     part_name: str,
     channels: list[str] | None = None,
 ) -> pd.DataFrame:
-    """Cumulative field-bin stats for a single part across all sites and runs."""
+    """Cumulative field-bin stats for a single part across all assemblies and runs."""
     ch_filter = ""
     params: list = [part_name]
     if channels:
@@ -230,21 +230,21 @@ def query_part_bins(
 # Experiment scalar queries
 # ---------------------------------------------------------------------------
 
-def query_exp_scalars(con, *, site_name: str | None = None,
+def query_exp_scalars(con, *, assembly_name: str | None = None,
                       magnet_name: str | None = None,
                       experiment_name: str | None = None) -> pd.DataFrame:
-    """Total scalar stats across all processed experiments for a site or magnet."""
-    if site_name:
-        where = "e.site_name = ?"
-        params: list = [site_name]
+    """Total scalar stats across all processed experiments for an assembly or magnet."""
+    if assembly_name:
+        where = "e.assembly_name = ?"
+        params: list = [assembly_name]
     elif magnet_name:
         where = "sm.magnet_name = ?"
         params = [magnet_name]
     else:
-        raise ValueError("Provide site_name or magnet_name")
+        raise ValueError("Provide assembly_name or magnet_name")
 
     join = (
-        "JOIN site_magnets sm ON sm.site_name = e.site_name" if magnet_name else ""
+        "JOIN assembly_magnets sm ON sm.assembly_name = e.assembly_name" if magnet_name else ""
     )
     exp_filter = ""
     if experiment_name:
@@ -267,17 +267,17 @@ def query_exp_scalars(con, *, site_name: str | None = None,
 
 
 # ---------------------------------------------------------------------------
-# Experiment site-level bin queries
+# Experiment assembly-level bin queries
 # ---------------------------------------------------------------------------
 
-def query_exp_site_bins(
+def query_exp_assembly_bins(
     con,
-    site_name: str,
+    assembly_name: str,
     channels: list[str] | None = None,
     experiment_name: str | None = None,
 ) -> pd.DataFrame:
-    """Cumulative field-bin stats for a site across all its experiments."""
-    params: list = [site_name]
+    """Cumulative field-bin stats for an assembly across all its experiments."""
+    params: list = [assembly_name]
     ch_filter = ""
     if channels:
         placeholders = ",".join("?" * len(channels))
@@ -304,9 +304,9 @@ def query_exp_site_bins(
             )                                                  AS std_x,
             MIN(s.min_x)                                       AS min_x,
             MAX(s.max_x)                                       AS max_x
-        FROM exp_site_bin_stats s
+        FROM exp_assembly_bin_stats s
         JOIN experiments e ON e.id = s.experiment_id
-        WHERE e.site_name = ?
+        WHERE e.assembly_name = ?
           {ch_filter}
           {exp_filter}
         GROUP BY s.field_bin_low, s.field_bin_high, s.channel
@@ -355,7 +355,7 @@ def query_exp_magnet_bins(
             MAX(s.max_x)                                       AS max_x
         FROM exp_part_bin_stats s
         JOIN experiments e   ON e.id          = s.experiment_id
-        JOIN site_magnets sm ON sm.site_name  = e.site_name
+        JOIN assembly_magnets sm ON sm.assembly_name  = e.assembly_name
         JOIN magnet_parts mp ON mp.magnet_name = sm.magnet_name
                              AND mp.part_name  = s.part_name
         WHERE sm.magnet_name = ?
@@ -429,6 +429,9 @@ _SCALAR_LABELS = {
 
 
 def print_scalars(df: pd.DataFrame, scope: str) -> None:
+    count_col, count_label = (
+        ("n_files", "files") if "n_files" in df.columns else ("n_experiments", "experiments")
+    )
     print(f"\n{'─'*55}")
     print(f"  Scalar statistics — {scope}")
     print(f"{'─'*55}")
@@ -436,7 +439,7 @@ def print_scalars(df: pd.DataFrame, scope: str) -> None:
         ch = row["channel"]
         label, unit, scale = _SCALAR_LABELS.get(ch, (ch, "", 1.0))
         val = row["total"] * scale
-        print(f"  {label:<30}  {val:>12.3f}  {unit}  ({int(row['n_files'])} files)")
+        print(f"  {label:<30}  {val:>12.3f}  {unit}  ({int(row[count_col])} {count_label})")
 
 
 def print_bins(df: pd.DataFrame, scope: str) -> None:
@@ -468,7 +471,7 @@ def _bar_bins(ax, grp: pd.DataFrame, label: str, color: str) -> None:
     )
 
 
-def plot_site_bins(df: pd.DataFrame, site_name: str) -> None:
+def plot_assembly_bins(df: pd.DataFrame, assembly_name: str) -> None:
     if not _HAS_MPL:
         print("matplotlib not available — skipping plots")
         return
@@ -480,10 +483,10 @@ def plot_site_bins(df: pd.DataFrame, site_name: str) -> None:
         _bar_bins(ax, grp, ch, colors[0])
         ax.set_xlabel("Magnetic field (T)")
         ax.set_ylabel("Hours")
-        ax.set_title(f"{site_name} — {ch}")
+        ax.set_title(f"{assembly_name} — {ch}")
         ax.grid(axis="y", alpha=0.4)
     plt.tight_layout()
-    fname = f"cumstats_site_{site_name}.png"
+    fname = f"cumstats_assembly_{assembly_name}.png"
     plt.savefig(fname, dpi=150)
     print(f"Saved {fname}")
     plt.show()
@@ -530,14 +533,14 @@ def plot_part_bins(df: pd.DataFrame, scope: str, label_col: str = "channel") -> 
 # ---------------------------------------------------------------------------
 
 SUBCOMMANDS = {
-    "scalars":          "Per-run scalar totals (energy, duration, heat) — operational data",
-    "site-bins":        "Site-level field-bin distributions — operational data",
-    "magnet-bins":      "Per-part field-bin distributions for a magnet — operational data",
-    "part-bins":        "Field-bin distributions for a single part — operational data",
-    "exp-scalars":      "Per-experiment scalar totals — experiment data",
-    "exp-site-bins":    "Site-level field-bin distributions — experiment data",
-    "exp-magnet-bins":  "Per-part field-bin distributions for a magnet — experiment data",
-    "exp-part-bins":    "Field-bin distributions for a single part — experiment data",
+    "scalars":            "Per-run scalar totals (energy, duration, heat) — operational data",
+    "assembly-bins":      "Assembly-level field-bin distributions — operational data",
+    "magnet-bins":        "Per-part field-bin distributions for a magnet — operational data",
+    "part-bins":          "Field-bin distributions for a single part — operational data",
+    "exp-scalars":        "Per-experiment scalar totals — experiment data",
+    "exp-assembly-bins":  "Assembly-level field-bin distributions — experiment data",
+    "exp-magnet-bins":    "Per-part field-bin distributions for a magnet — experiment data",
+    "exp-part-bins":      "Field-bin distributions for a single part — experiment data",
 }
 
 
@@ -549,7 +552,7 @@ def main() -> None:
     )
     parser.add_argument("command",    choices=list(SUBCOMMANDS))
     parser.add_argument("--db",       default=DEFAULT_DB)
-    parser.add_argument("--site",     default=None,  help="Site name")
+    parser.add_argument("--assembly", default=None,  help="Assembly name")
     parser.add_argument("--magnet",   default=None,  help="Magnet name")
     parser.add_argument("--part",     default=None,  help="Part name")
     parser.add_argument("--channels",   default=None,
@@ -564,19 +567,19 @@ def main() -> None:
     con = duckdb.connect(args.db, read_only=True)
 
     if args.command == "scalars":
-        if not args.site and not args.magnet:
-            parser.error("scalars requires --site or --magnet")
-        df = query_scalars(con, site_name=args.site, magnet_name=args.magnet)
-        scope = args.site or args.magnet
+        if not args.assembly and not args.magnet:
+            parser.error("scalars requires --assembly or --magnet")
+        df = query_scalars(con, assembly_name=args.assembly, magnet_name=args.magnet)
+        scope = args.assembly or args.magnet
         print_scalars(df, scope)
 
-    elif args.command == "site-bins":
-        if not args.site:
-            parser.error("site-bins requires --site")
-        df = query_site_bins(con, args.site, channels)
-        print_bins(df, f"site {args.site}")
+    elif args.command == "assembly-bins":
+        if not args.assembly:
+            parser.error("assembly-bins requires --assembly")
+        df = query_assembly_bins(con, args.assembly, channels)
+        print_bins(df, f"assembly {args.assembly}")
         if args.plot:
-            plot_site_bins(df, args.site)
+            plot_assembly_bins(df, args.assembly)
 
     elif args.command == "magnet-bins":
         if not args.magnet:
@@ -597,22 +600,22 @@ def main() -> None:
             plot_part_bins(df, f"part {args.part}")
 
     elif args.command == "exp-scalars":
-        if not args.site and not args.magnet:
-            parser.error("exp-scalars requires --site or --magnet")
+        if not args.assembly and not args.magnet:
+            parser.error("exp-scalars requires --assembly or --magnet")
         df = query_exp_scalars(
-            con, site_name=args.site, magnet_name=args.magnet,
+            con, assembly_name=args.assembly, magnet_name=args.magnet,
             experiment_name=args.experiment,
         )
-        scope = args.site or args.magnet
+        scope = args.assembly or args.magnet
         print_scalars(df, f"{scope} [experiments]")
 
-    elif args.command == "exp-site-bins":
-        if not args.site:
-            parser.error("exp-site-bins requires --site")
-        df = query_exp_site_bins(con, args.site, channels, args.experiment)
-        print_bins(df, f"site {args.site} [experiments]")
+    elif args.command == "exp-assembly-bins":
+        if not args.assembly:
+            parser.error("exp-assembly-bins requires --assembly")
+        df = query_exp_assembly_bins(con, args.assembly, channels, args.experiment)
+        print_bins(df, f"assembly {args.assembly} [experiments]")
         if args.plot:
-            plot_site_bins(df, args.site)
+            plot_assembly_bins(df, args.assembly)
 
     elif args.command == "exp-magnet-bins":
         if not args.magnet:

@@ -24,7 +24,7 @@ to_duckdb/
 ├── stress_map.py                ← hoop-stress analysis library (geometry, plots)
 ├── conftest.py                  ← pytest fixtures
 ├── docs/
-│   ├── loading.md               ← adding magnets, sites, materials
+│   ├── loading.md               ← adding magnets, assemblies, materials
 │   ├── populate.md              ← populate subcommands
 │   ├── statistics.md            ← operational statistics (compute + query)
 │   ├── query_cumstats.md        ← query_cumstats.py full CLI + API reference
@@ -34,7 +34,7 @@ to_duckdb/
 │   ├── test_schema.py
 │   ├── test_crud.py
 │   ├── test_add_magnet.py
-│   ├── test_add_site.py
+│   ├── test_add_assembly.py
 │   ├── test_magnetdb.py
 │   ├── test_material_db.py
 │   └── test_housing_config_db.py
@@ -46,8 +46,8 @@ to_duckdb/
 │   ├── student_statheures_note.md
 │   └── README_student_stress_map.md
 ├── marimo/
-│   ├── select_site.py           ← interactive Marimo site browser
-│   └── select_site_note.md
+│   ├── select_assembly.py       ← interactive Marimo assembly browser
+│   └── select_assembly_note.md
 └── deprecated/                  ← superseded standalone scripts
     └── DEPRECATED.md
 ```
@@ -84,15 +84,15 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | `db drop-table --table TABLE [TABLE ...] [--yes] [--dry-run]` | Drop one or more tables from the DB | [loading.md](docs/loading.md) |
 | `material add/view/delete` | Manage materials | [loading.md](docs/loading.md) |
 | `magnet add/view/delete` | Manage magnets | [loading.md](docs/loading.md) |
-| `site add/view/delete` | Manage sites + experiment records | [loading.md](docs/loading.md) |
-| `site update-magnet` | Patch positional/temporal SiteMagnet fields | [loading.md](docs/loading.md) |
+| `assembly add/view/delete` | Manage assemblies + experiment records | [loading.md](docs/loading.md) |
+| `assembly update-magnet` | Patch positional/temporal AssemblyMagnet fields | [loading.md](docs/loading.md) |
 | `housing view` | List housing configs | [loading.md](docs/loading.md#housing-configs) |
 | `experiments view` | List experiment records | [populate.md](docs/populate.md#experiments-view) |
 | `operationaldata view` | List operationaldata records | [populate.md](docs/populate.md#operationaldata-view) |
 | `overview-records view` | List overview_records | [populate.md](docs/populate.md#overview-records-view) |
-| `populate operationaldata [--site SITE\|--all]` | Register TDMS/pupitre files from filesystem | [populate.md](docs/populate.md) |
-| `populate experiments [--site SITE\|--all]` | Discover additional pupitre TXT files | [populate.md](docs/populate.md) |
-| `populate overview-records [--site SITE\|--all]` | Process Overview TDMS via python_magnetrun | [populate.md](docs/populate.md) |
+| `populate operationaldata [--assembly ASSEMBLY\|--all]` | Register TDMS/pupitre files from filesystem | [populate.md](docs/populate.md) |
+| `populate experiments [--assembly ASSEMBLY\|--all]` | Discover additional pupitre TXT files | [populate.md](docs/populate.md) |
+| `populate overview-records [--assembly ASSEMBLY\|--all]` | Process Overview TDMS via python_magnetrun | [populate.md](docs/populate.md) |
 | `populate overview-records-from-json` | Load overview_records from a summary JSON | [populate.md](docs/populate.md) |
 | `hoop-stress compute` | Compute and persist hoop-stress bin stats + fatigue | [hoop-stress.md](docs/hoop-stress.md) |
 | `hoop-stress barchart` | Bar chart: stress at given currents vs Rpe | [hoop-stress.md](docs/hoop-stress.md) |
@@ -104,12 +104,12 @@ Default DB: `magnetdb.duckdb` in the current directory.
 
 | Command | Filter options |
 |---|---|
-| `experiments view` | `--site`, `--magnet`, `--part`, `--from`/`--to` |
-| `operationaldata view` | `--site`, `--type`, `--magnet`, `--part`, `--from`/`--to` |
-| `overview-records view` | `--site`, `--magnet`, `--part`, `--from`/`--to`, `--signatures` (extra output flag, not a filter) |
+| `experiments view` | `--assembly`, `--magnet`, `--part`, `--from`/`--to` |
+| `operationaldata view` | `--assembly`, `--type`, `--magnet`, `--part`, `--from`/`--to` |
+| `overview-records view` | `--assembly`, `--magnet`, `--part`, `--from`/`--to`, `--signatures` (extra output flag, not a filter) |
 | `material view [name]` | positional `name`, `--nuance` |
 | `magnet view [name]` | positional `name`, `--type`, `--status` |
-| `site view [name]` | positional `name`, `--housing`, `--status` |
+| `assembly view [name]` | positional `name`, `--housing`, `--status` |
 | `housing view [name]` | positional `name` only |
 
 `--from`/`--to` accept `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`, filtering on the timestamp encoded in the record's filename. See [populate.md](docs/populate.md) and [loading.md](docs/loading.md) for details.
@@ -166,9 +166,9 @@ RECORDS=/mnt/LNCMIG-Data/records
 # 0. Create the database
 python magnetdb.py db create --db $DB
 
-# 1. Load sites (magnets auto-resolved from the same JSON directory)
+# 1. Load assemblies (magnets auto-resolved from the same JSON directory)
 for f in $JSON/M9_A19061901_*.json $JSON/M10_A19071101_*.json; do
-    python magnetdb.py site add "$f" --db $DB
+    python magnetdb.py assembly add "$f" --db $DB
 done
 
 # 2. Verify
@@ -178,20 +178,20 @@ python magnetdb.py check --db $DB   # flags missing geometry_data, bad file path
 # 3. Populate operationaldata from the filesystem
 python magnetdb.py populate operationaldata --all --db $DB \
     --records-base $RECORDS --type Archive Overview Pupitre
-# or for a single site:
-# python magnetdb.py populate operationaldata --site M9_A19061901_00 --db $DB \
+# or for a single assembly:
+# python magnetdb.py populate operationaldata --assembly M9_A19061901_00 --db $DB \
 #     --records-base $RECORDS --type Archive Overview Pupitre
 
 # 4. Ingest per-file operational statistics (idempotent)
 python -c "
 import duckdb
 con = duckdb.connect('$DB', read_only=True)
-for (s,) in con.execute('SELECT name FROM sites ORDER BY name').fetchall():
+for (s,) in con.execute('SELECT name FROM assemblies ORDER BY name').fetchall():
     print(s)
-" | while read SITE; do
+" | while read ASSEMBLY; do
     python compute_op_stats.py --db $DB \
         --records $RECORDS/srv-data-install \
-        --site "$SITE" --type Pupitre
+        --assembly "$ASSEMBLY" --type Pupitre
 done
 
 # 5. Ingest hoop-stress statistics (idempotent)
@@ -214,7 +214,7 @@ python magnetdb.py hoop-stress fatigue  M9_A19061901_00 --db $DB
 
 | Topic | File |
 |-------|------|
-| Adding magnets, sites, materials | [docs/loading.md](docs/loading.md) |
+| Adding magnets, assemblies, materials | [docs/loading.md](docs/loading.md) |
 | Populating TDMS / pupitre / overview tables | [docs/populate.md](docs/populate.md) |
 | Operational statistics (compute + query) | [docs/statistics.md](docs/statistics.md) |
 | Cumulative query CLI + Python API | [docs/query_cumstats.md](docs/query_cumstats.md) |
@@ -247,7 +247,7 @@ The diagram colour-codes tables by role:
 | Colour | Group |
 |--------|-------|
 | Green  | Reference tables (`materials`, `housing_config`) |
-| Blue   | Assembly tables (`parts`, `magnets`, `sites`, junction tables) |
+| Blue   | Assembly tables (`parts`, `magnets`, `assemblies`, junction tables) |
 | Yellow | Data tables (`experiments`, `operationaldata`, `overview_records`) |
 | Red    | Statistics tables (`*_processed`, `*_scalars`, `*_bin_stats`, `*_fatigue`) |
 
