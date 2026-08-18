@@ -437,7 +437,18 @@ mixing an unrelated correctness fix into a rename.
   run this CLI from any cron jobs or saved scripts today (confirm — see
   open questions).
 - Edit: `stress_map.py` — update the `MSite`/`Assembly` import and
-  construction to match Phase 1's rename; must land after Phase 1.
+  construction to match Phase 1's rename; must land after Phase 1. **Also**,
+  found during Phase 2 (2026-08-18): `stress_map.py:56` does
+  `from python_magnetsetup.ana import msite_setup` and calls it at line 694
+  — this is `python_magnetsetup/ana.py`'s **own** `msite_setup` (a separate
+  function from `setup.py`'s, which Phase 2 already renamed to
+  `assembly_setup`). Phase 2 deliberately left `ana.py`'s `msite_setup`
+  unrenamed specifically because this call site existed and wasn't in
+  Phase 2's scope. Land both together here: rename `python_magnetsetup/
+  python_magnetsetup/ana.py`'s `msite_setup` → `assembly_setup` (def at
+  line 326, internal debug strings, the `:func:` docstring cross-reference
+  in `setup()`, and the call site inside `ana.py`'s own `setup()`), and
+  update `stress_map.py`'s import/call to match.
 - Edit: import scripts (`import_housing_summary.py` etc.) — for now, keep
   reading upstream JSON's `"site"`-shaped records (that's what the live
   `python_magnetdb` server still emits until Track B below lands), mapping
