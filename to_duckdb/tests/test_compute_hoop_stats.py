@@ -31,8 +31,8 @@ from crud import (
     insert_magnet,
     insert_magnet_part_row,
     insert_part,
-    insert_site,
-    insert_site_magnets,
+    insert_assembly,
+    insert_assembly_magnets,
 )
 from schema import ensure_schema
 
@@ -66,8 +66,8 @@ def test_parse_bins_requires_at_least_two_edges():
 # ---------------------------------------------------------------------------
 
 
-def _build_hoop_site(con):
-    """Populate HOOP_SITE with two insert magnets (MAG_NEW, MAG_OLD) and one
+def _build_hoop_assembly(con):
+    """Populate HOOP_ASSEMBLY with two insert magnets (MAG_NEW, MAG_OLD) and one
     bitters magnet (MAG_B). Exercises rank ordering, commissioned_at DESC
     ordering across same-type magnets, and exclusion of non-coil parts
     (RING_NEW).
@@ -87,9 +87,9 @@ def _build_hoop_site(con):
     insert_magnet(con, {"name": "MAG_B"}, "bitters", verbose=False)
     insert_magnet_part_row(con, "MAG_B", "B_ONE", 0, 1)
 
-    insert_site(con, {"name": "HOOP_SITE", "status": "in_operation"}, verbose=False)
-    insert_site_magnets(
-        con, "HOOP_SITE",
+    insert_assembly(con, {"name": "HOOP_ASSEMBLY", "status": "in_operation"}, verbose=False)
+    insert_assembly_magnets(
+        con, "HOOP_ASSEMBLY",
         [
             {"name": "MAG_NEW", "commissioned_at": "2025-06-01 00:00:00"},
             {"name": "MAG_OLD", "commissioned_at": "2025-01-01 00:00:00"},
@@ -100,17 +100,17 @@ def _build_hoop_site(con):
 
 
 @pytest.fixture
-def hoop_site(con):
-    """HOOP_SITE with two insert magnets (MAG_NEW, MAG_OLD) and one bitters
+def hoop_assembly(con):
+    """HOOP_ASSEMBLY with two insert magnets (MAG_NEW, MAG_OLD) and one bitters
     magnet (MAG_B). Exercises rank ordering, commissioned_at DESC ordering
     across same-type magnets, and exclusion of non-coil parts (RING_NEW).
     """
-    _build_hoop_site(con)
+    _build_hoop_assembly(con)
     return con
 
 
-def test_build_part_column_map_orders_by_commissioned_at_desc_then_rank(hoop_site):
-    mapping = build_part_column_map("HOOP_SITE", "", con=hoop_site)
+def test_build_part_column_map_orders_by_commissioned_at_desc_then_rank(hoop_assembly):
+    mapping = build_part_column_map("HOOP_ASSEMBLY", "", con=hoop_assembly)
     assert mapping == {
         "H1_fast": "H_NEW",
         "H2_fast": "H_OLD",
@@ -118,8 +118,8 @@ def test_build_part_column_map_orders_by_commissioned_at_desc_then_rank(hoop_sit
     }
 
 
-def test_build_part_column_map_excludes_non_coil_parts(hoop_site):
-    mapping = build_part_column_map("HOOP_SITE", "", con=hoop_site)
+def test_build_part_column_map_excludes_non_coil_parts(hoop_assembly):
+    mapping = build_part_column_map("HOOP_ASSEMBLY", "", con=hoop_assembly)
     assert "RING_NEW" not in mapping.values()
 
 
@@ -128,14 +128,14 @@ def test_build_part_column_map_excludes_non_coil_parts(hoop_site):
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_z0_by_type_defaults_to_zero(hoop_site):
-    z0_h, z0_b = resolve_z0_by_type("HOOP_SITE", "", con=hoop_site)
+def test_resolve_z0_by_type_defaults_to_zero(hoop_assembly):
+    z0_h, z0_b = resolve_z0_by_type("HOOP_ASSEMBLY", "", con=hoop_assembly)
 
     assert z0_h == [0.0, 0.0]  # H1_fast -> H_NEW, H2_fast -> H_OLD
     assert z0_b == [0.0]       # B1_fast -> B_ONE
 
 
-def test_resolve_z0_by_type_reflects_site_magnets_z_offset(con):
+def test_resolve_z0_by_type_reflects_assembly_magnets_z_offset(con):
     insert_part(con, {"name": "H_NEW", "type": "helix"}, verbose=False)
     insert_part(con, {"name": "H_OLD", "type": "helix"}, verbose=False)
     insert_part(con, {"name": "B_ONE", "type": "bitter"}, verbose=False)
@@ -145,9 +145,9 @@ def test_resolve_z0_by_type_reflects_site_magnets_z_offset(con):
     insert_magnet_part_row(con, "MAG_OLD", "H_OLD", 0, 1)
     insert_magnet(con, {"name": "MAG_B"}, "bitters", verbose=False)
     insert_magnet_part_row(con, "MAG_B", "B_ONE", 0, 1)
-    insert_site(con, {"name": "HOOP_SITE", "status": "in_operation"}, verbose=False)
-    insert_site_magnets(
-        con, "HOOP_SITE",
+    insert_assembly(con, {"name": "HOOP_ASSEMBLY", "status": "in_operation"}, verbose=False)
+    insert_assembly_magnets(
+        con, "HOOP_ASSEMBLY",
         [
             {"name": "MAG_NEW", "commissioned_at": "2025-06-01 00:00:00", "z_offset": 0.05},
             {"name": "MAG_OLD", "commissioned_at": "2025-01-01 00:00:00"},
@@ -156,7 +156,7 @@ def test_resolve_z0_by_type_reflects_site_magnets_z_offset(con):
         verbose=False,
     )
 
-    z0_h, z0_b = resolve_z0_by_type("HOOP_SITE", "", con=con)
+    z0_h, z0_b = resolve_z0_by_type("HOOP_ASSEMBLY", "", con=con)
 
     # H1_fast -> H_NEW (MAG_NEW, commissioned_at DESC puts it first) -> 0.05
     # H2_fast -> H_OLD (MAG_OLD, no z_offset given) -> default 0.0
@@ -203,7 +203,7 @@ def test_save_hoop_parquet_round_trip(tmp_path):
 
     save_hoop_parquet(
         df, path,
-        site_name="HOOP_SITE",
+        assembly_name="HOOP_ASSEMBLY",
         housing="M9",
         t0="2025-01-01T00:00:00",
         experiment_file="exp.txt",
@@ -212,7 +212,7 @@ def test_save_hoop_parquet_round_trip(tmp_path):
 
     table = pq.read_table(path)
     meta = table.schema.metadata
-    assert meta[b"site_name"] == b"HOOP_SITE"
+    assert meta[b"assembly_name"] == b"HOOP_ASSEMBLY"
     assert meta[b"housing"] == b"M9"
     assert meta[b"t0"] == b"2025-01-01T00:00:00"
     assert json.loads(meta[b"part_map"]) == {"H1_fast": "H_NEW"}
@@ -305,27 +305,27 @@ def test_compute_dt_without_t_column_defaults_to_one():
 
 
 @pytest.fixture
-def hoop_site_with_experiments(hoop_site):
+def hoop_assembly_with_experiments(hoop_assembly):
     insert_experiments(
-        hoop_site, "HOOP_SITE",
+        hoop_assembly, "HOOP_ASSEMBLY",
         [
             {"name": "exp1", "file": "exp1.txt"},
             {"name": "exp2", "file": "exp2.txt"},
         ],
         verbose=False,
     )
-    return hoop_site
+    return hoop_assembly
 
 
-def test_get_experiments_returns_rows_ordered_by_id(hoop_site_with_experiments):
-    df = _get_experiments(hoop_site_with_experiments, "HOOP_SITE")
+def test_get_experiments_returns_rows_ordered_by_id(hoop_assembly_with_experiments):
+    df = _get_experiments(hoop_assembly_with_experiments, "HOOP_ASSEMBLY")
     assert df["name"].tolist() == ["exp1", "exp2"]
     assert set(df.columns) == {"id", "name", "file"}
 
 
-def test_check_processed_and_mark_processed_round_trip(hoop_site_with_experiments):
-    con = hoop_site_with_experiments
-    exp_id = int(_get_experiments(con, "HOOP_SITE").iloc[0]["id"])
+def test_check_processed_and_mark_processed_round_trip(hoop_assembly_with_experiments):
+    con = hoop_assembly_with_experiments
+    exp_id = int(_get_experiments(con, "HOOP_ASSEMBLY").iloc[0]["id"])
     bin_key = "0.0,100.0,200.0"
 
     done, others = _check_processed(con, exp_id, bin_key)
@@ -344,9 +344,9 @@ def test_check_processed_and_mark_processed_round_trip(hoop_site_with_experiment
     assert others == {bin_key}
 
 
-def test_insert_bin_stats_and_fatigue_round_trip(hoop_site_with_experiments):
-    con = hoop_site_with_experiments
-    exp_id = int(_get_experiments(con, "HOOP_SITE").iloc[0]["id"])
+def test_insert_bin_stats_and_fatigue_round_trip(hoop_assembly_with_experiments):
+    con = hoop_assembly_with_experiments
+    exp_id = int(_get_experiments(con, "HOOP_ASSEMBLY").iloc[0]["id"])
 
     rows = [{
         "stress_bin_low": 0.0, "stress_bin_high": 100.0, "n_samples": 2,
@@ -384,19 +384,19 @@ def test_insert_bin_stats_and_fatigue_round_trip(hoop_site_with_experiments):
 # compute_hoop_stress_history() opens its own DuckDB connection internally
 # (duckdb.connect(db_path)); a second, independent `:memory:` connection does
 # not see that state, so these tests use a file-backed DB under tmp_path
-# instead of the `con`/`hoop_site` fixtures.
+# instead of the `con`/`hoop_assembly` fixtures.
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 def hoop_db_path(tmp_path):
-    """File-backed HOOP_SITE + 2 experiments (exp1, exp2)."""
+    """File-backed HOOP_ASSEMBLY + 2 experiments (exp1, exp2)."""
     db_path = tmp_path / "hoop_orch.duckdb"
     con = duckdb.connect(str(db_path))
     ensure_schema(con)
-    _build_hoop_site(con)
+    _build_hoop_assembly(con)
     insert_experiments(
-        con, "HOOP_SITE",
+        con, "HOOP_ASSEMBLY",
         [
             {"name": "exp1", "file": "exp1.txt"},
             {"name": "exp2", "file": "exp2.txt"},
@@ -410,29 +410,29 @@ def hoop_db_path(tmp_path):
 @pytest.fixture
 def patched_hoop_pipeline(monkeypatch, tmp_path):
     """Fake the 4 stress_map functions compute_hoop_stress_history() imports
-    locally, matching the corrected (site-level, not per-magnet)
+    locally, matching the corrected (assembly-level, not per-magnet)
     prepare_geometry_directory call shape — a regression to the old
     per-magnet/``geometry_data=`` call raises TypeError here exactly as it
     would against the real function.
 
     Returns the geometry directory the fake creates, so tests can assert it
     gets cleaned up by compute_hoop_stress_history()'s `finally` block, and
-    a call counter to assert prepare_geometry_directory runs once per site,
+    a call counter to assert prepare_geometry_directory runs once per assembly,
     not once per magnet.
     """
     geom_dir = tmp_path / "geom_out"
     calls = {"prepare_geometry_directory": 0}
 
-    def fake_load_site_config_from_duckdb(site_name, db_path, con=None):
+    def fake_load_assembly_config_from_duckdb(assembly_name, db_path, con=None):
         return "M9", [
             ("MAG_NEW", {"geom": "MAG_NEW.yaml"}, None),
             ("MAG_OLD", {"geom": "MAG_OLD.yaml"}, None),
             ("MAG_B", {"geom": "MAG_B.yaml"}, None),
         ]
 
-    def fake_prepare_geometry_directory(site_name, config, db_path, geometries_dir=None, con=None):
+    def fake_prepare_geometry_directory(assembly_name, config, db_path, geometries_dir=None, con=None):
         calls["prepare_geometry_directory"] += 1
-        assert site_name == "HOOP_SITE"
+        assert assembly_name == "HOOP_ASSEMBLY"
         assert con is not None  # compute_hoop_stress_history must reuse its own connection
         assert isinstance(config, dict) and set(config) == {"name", "magnets"}
         assert len(config["magnets"]) == 3
@@ -442,7 +442,7 @@ def patched_hoop_pipeline(monkeypatch, tmp_path):
     def fake_load_magnettools(config, tempdir, debug=False):
         return "FAKE_MAGNETTOOLS_DATA"
 
-    monkeypatch.setattr("stress_map.load_site_config_from_duckdb", fake_load_site_config_from_duckdb)
+    monkeypatch.setattr("stress_map.load_assembly_config_from_duckdb", fake_load_assembly_config_from_duckdb)
     monkeypatch.setattr("stress_map.prepare_geometry_directory", fake_prepare_geometry_directory)
     monkeypatch.setattr("stress_map.load_magnettools", fake_load_magnettools)
     return geom_dir, calls
@@ -451,14 +451,14 @@ def patched_hoop_pipeline(monkeypatch, tmp_path):
 def test_compute_hoop_stress_history_full_run(patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path):
     geom_dir, calls = patched_hoop_pipeline
 
-    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, site=None, z0_h=None, z0_b=None):
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, assembly=None, z0_h=None, z0_b=None):
         return pd.DataFrame({"t": [0.0, 1.0, 2.0, 3.0], "H1_fast": [10.0, 60.0, 20.0, 80.0]})
 
     monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
 
     pq_dir = tmp_path / "pq"
     results = compute_hoop_stress_history(
-        "HOOP_SITE", hoop_db_path, parquet_dir=str(pq_dir), verbose=False,
+        "HOOP_ASSEMBLY", hoop_db_path, parquet_dir=str(pq_dir), verbose=False,
     )
 
     assert results == {"new": 2, "skipped": 0, "errors": []}
@@ -504,16 +504,16 @@ def test_compute_hoop_stress_history_full_run(patched_hoop_pipeline, hoop_db_pat
 
 
 def test_compute_hoop_stress_history_geometry_prep_failure_aborts(hoop_db_path, monkeypatch):
-    def fake_load_site_config_from_duckdb(site_name, db_path, con=None):
+    def fake_load_assembly_config_from_duckdb(assembly_name, db_path, con=None):
         return "M9", [("MAG_NEW", {"geom": "MAG_NEW.yaml"}, None)]
 
-    def fake_prepare_geometry_directory(site_name, config, db_path, geometries_dir=None, con=None):
+    def fake_prepare_geometry_directory(assembly_name, config, db_path, geometries_dir=None, con=None):
         raise RuntimeError("geometry boom")
 
-    monkeypatch.setattr("stress_map.load_site_config_from_duckdb", fake_load_site_config_from_duckdb)
+    monkeypatch.setattr("stress_map.load_assembly_config_from_duckdb", fake_load_assembly_config_from_duckdb)
     monkeypatch.setattr("stress_map.prepare_geometry_directory", fake_prepare_geometry_directory)
 
-    results = compute_hoop_stress_history("HOOP_SITE", hoop_db_path, verbose=False)
+    results = compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, verbose=False)
 
     assert results == {"new": 0, "skipped": 0, "errors": ["geometry boom"]}
 
@@ -521,16 +521,16 @@ def test_compute_hoop_stress_history_geometry_prep_failure_aborts(hoop_db_path, 
 def test_compute_hoop_stress_history_skips_already_processed_unless_reprocess(
     patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path
 ):
-    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, site=None, z0_h=None, z0_b=None):
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, assembly=None, z0_h=None, z0_b=None):
         return pd.DataFrame({"t": [0.0, 1.0], "H1_fast": [10.0, 20.0]})
 
     monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
     pq_dir = str(tmp_path / "pq")
 
-    r1 = compute_hoop_stress_history("HOOP_SITE", hoop_db_path, parquet_dir=pq_dir, verbose=False)
+    r1 = compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir, verbose=False)
     assert r1["new"] == 2 and r1["skipped"] == 0
 
-    r2 = compute_hoop_stress_history("HOOP_SITE", hoop_db_path, parquet_dir=pq_dir, verbose=False)
+    r2 = compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir, verbose=False)
     assert r2["new"] == 0 and r2["skipped"] == 2
 
     con = duckdb.connect(hoop_db_path, read_only=True)
@@ -541,7 +541,7 @@ def test_compute_hoop_stress_history_skips_already_processed_unless_reprocess(
         con.close()
 
     r3 = compute_hoop_stress_history(
-        "HOOP_SITE", hoop_db_path, parquet_dir=pq_dir, reprocess=True, verbose=False,
+        "HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir, reprocess=True, verbose=False,
     )
     assert r3["new"] == 2 and r3["skipped"] == 0
 
@@ -556,7 +556,7 @@ def test_compute_hoop_stress_history_dry_run_writes_nothing(
     pq_dir = tmp_path / "pq"
 
     results = compute_hoop_stress_history(
-        "HOOP_SITE", hoop_db_path, parquet_dir=str(pq_dir), dry_run=True, verbose=False,
+        "HOOP_ASSEMBLY", hoop_db_path, parquet_dir=str(pq_dir), dry_run=True, verbose=False,
     )
 
     assert results == {"new": 2, "skipped": 0, "errors": []}
@@ -573,18 +573,18 @@ def test_compute_hoop_stress_history_dry_run_writes_nothing(
 def test_compute_hoop_stress_history_different_bin_config_warns_and_reprocesses(
     patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path, capsys
 ):
-    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, site=None, z0_h=None, z0_b=None):
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, assembly=None, z0_h=None, z0_b=None):
         return pd.DataFrame({"t": [0.0, 1.0], "H1_fast": [10.0, 20.0]})
 
     monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
     pq_dir = str(tmp_path / "pq")
 
-    r1 = compute_hoop_stress_history("HOOP_SITE", hoop_db_path, parquet_dir=pq_dir, verbose=False)
+    r1 = compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir, verbose=False)
     assert r1["new"] == 2
     capsys.readouterr()  # discard first-run output
 
     r2 = compute_hoop_stress_history(
-        "HOOP_SITE", hoop_db_path, parquet_dir=pq_dir,
+        "HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir,
         bins=[(0.0, 50.0), (50.0, 150.0)], verbose=False,
     )
     captured = capsys.readouterr()
@@ -606,7 +606,7 @@ def test_compute_hoop_stress_history_different_bin_config_warns_and_reprocesses(
 def test_compute_hoop_stress_history_continues_after_one_experiment_errors(
     patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path
 ):
-    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, site=None, z0_h=None, z0_b=None):
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, assembly=None, z0_h=None, z0_b=None):
         if "exp1" in exp_file:
             raise RuntimeError("boom")
         return pd.DataFrame({"t": [0.0, 1.0], "H1_fast": [10.0, 20.0]})
@@ -614,7 +614,7 @@ def test_compute_hoop_stress_history_continues_after_one_experiment_errors(
     monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
 
     results = compute_hoop_stress_history(
-        "HOOP_SITE", hoop_db_path, parquet_dir=str(tmp_path / "pq"), verbose=False,
+        "HOOP_ASSEMBLY", hoop_db_path, parquet_dir=str(tmp_path / "pq"), verbose=False,
     )
 
     assert results["new"] == 1
@@ -631,13 +631,13 @@ def test_compute_hoop_stress_history_continues_after_one_experiment_errors(
 def test_compute_hoop_stress_history_skips_experiment_with_no_hoop_columns(
     patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path
 ):
-    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, site=None, z0_h=None, z0_b=None):
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, assembly=None, z0_h=None, z0_b=None):
         return pd.DataFrame({"t": [0.0, 1.0], "IH": [100.0, 200.0]})
 
     monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
 
     results = compute_hoop_stress_history(
-        "HOOP_SITE", hoop_db_path, parquet_dir=str(tmp_path / "pq"), verbose=False,
+        "HOOP_ASSEMBLY", hoop_db_path, parquet_dir=str(tmp_path / "pq"), verbose=False,
     )
 
     assert results["new"] == 0
@@ -646,31 +646,31 @@ def test_compute_hoop_stress_history_skips_experiment_with_no_hoop_columns(
 
 
 # ---------------------------------------------------------------------------
-# part_history_stats / build_part_history_series — cross-experiment/site
+# part_history_stats / build_part_history_series — cross-experiment/assembly
 # aggregation and chronological concatenation (Phase 3)
 # ---------------------------------------------------------------------------
 
 
-def _build_part_history_sites(con):
-    """Part 'H_NEW' recorded on two experiments across two different sites
-    (SITE_A, SITE_B). Returns (exp_a_id, exp_b_id).
+def _build_part_history_assemblies(con):
+    """Part 'H_NEW' recorded on two experiments across two different assemblies
+    (ASSEMBLY_A, ASSEMBLY_B). Returns (exp_a_id, exp_b_id).
     """
     insert_part(con, {"name": "H_NEW", "type": "helix"}, verbose=False)
-    insert_site(con, {"name": "SITE_A", "status": "in_operation"}, verbose=False)
-    insert_site(con, {"name": "SITE_B", "status": "in_operation"}, verbose=False)
-    insert_experiments(con, "SITE_A", [{"name": "expA", "file": "expA.txt"}], verbose=False)
-    insert_experiments(con, "SITE_B", [{"name": "expB", "file": "expB.txt"}], verbose=False)
-    exp_a = con.execute("SELECT id FROM experiments WHERE site_name = 'SITE_A'").fetchone()[0]
-    exp_b = con.execute("SELECT id FROM experiments WHERE site_name = 'SITE_B'").fetchone()[0]
+    insert_assembly(con, {"name": "ASSEMBLY_A", "status": "in_operation"}, verbose=False)
+    insert_assembly(con, {"name": "ASSEMBLY_B", "status": "in_operation"}, verbose=False)
+    insert_experiments(con, "ASSEMBLY_A", [{"name": "expA", "file": "expA.txt"}], verbose=False)
+    insert_experiments(con, "ASSEMBLY_B", [{"name": "expB", "file": "expB.txt"}], verbose=False)
+    exp_a = con.execute("SELECT id FROM experiments WHERE assembly_name = 'ASSEMBLY_A'").fetchone()[0]
+    exp_b = con.execute("SELECT id FROM experiments WHERE assembly_name = 'ASSEMBLY_B'").fetchone()[0]
     return exp_a, exp_b
 
 
 @pytest.fixture
 def part_history_fixture(con):
     """'H_NEW' with hoop_stress_bin_stats/hoop_stress_fatigue rows on two
-    experiments across two sites (SITE_A, SITE_B). Returns (con, exp_a, exp_b).
+    experiments across two assemblies (ASSEMBLY_A, ASSEMBLY_B). Returns (con, exp_a, exp_b).
     """
-    exp_a, exp_b = _build_part_history_sites(con)
+    exp_a, exp_b = _build_part_history_assemblies(con)
 
     _insert_bin_stats(con, exp_a, "H_NEW", [{
         "stress_bin_low": 0.0, "stress_bin_high": 100.0, "n_samples": 2,
@@ -695,18 +695,18 @@ def part_history_fixture(con):
     return con, exp_a, exp_b
 
 
-def test_part_history_stats_aggregates_bin_stats_and_fatigue_across_sites(part_history_fixture):
+def test_part_history_stats_aggregates_bin_stats_and_fatigue_across_assemblies(part_history_fixture):
     con, _exp_a, _exp_b = part_history_fixture
 
     stats = part_history_stats("H_NEW", "", con=con)
 
     assert stats["part_name"] == "H_NEW"
-    assert {e["site_name"] for e in stats["experiments"]} == {"SITE_A", "SITE_B"}
+    assert {e["assembly_name"] for e in stats["experiments"]} == {"ASSEMBLY_A", "ASSEMBLY_B"}
     assert len(stats["experiments"]) == 2
 
     bins = {(r["stress_bin_low"], r["stress_bin_high"]): r for r in stats["bin_stats"]}
 
-    # manual aggregation over the fixture: SITE_A's (0,100) row + SITE_B's (0,100) row
+    # manual aggregation over the fixture: ASSEMBLY_A's (0,100) row + ASSEMBLY_B's (0,100) row
     low = bins[(0.0, 100.0)]
     assert low["n_samples"] == 5       # 2 + 3
     assert low["sum_dt"] == pytest.approx(8.0)     # 3.0 + 5.0
@@ -715,7 +715,7 @@ def test_part_history_stats_aggregates_bin_stats_and_fatigue_across_sites(part_h
     assert low["min_x"] == 5.0   # min(10.0, 5.0)
     assert low["max_x"] == 70.0  # max(50.0, 70.0)
 
-    # (100, 200) only has SITE_B's row -- no aggregation needed
+    # (100, 200) only has ASSEMBLY_B's row -- no aggregation needed
     high = bins[(100.0, 200.0)]
     assert high["n_samples"] == 1
     assert high["sum_dt"] == pytest.approx(1.0)
@@ -737,23 +737,23 @@ def test_part_history_stats_empty_for_part_with_no_recorded_data(con):
     }
 
 
-def test_build_part_history_series_concatenates_chronologically_across_sites(
+def test_build_part_history_series_concatenates_chronologically_across_assemblies(
     part_history_fixture, tmp_path
 ):
     con, exp_a, exp_b = part_history_fixture
 
-    # SITE_B's t0 is earlier than SITE_A's, so the chronologically-correct
+    # ASSEMBLY_B's t0 is earlier than ASSEMBLY_A's, so the chronologically-correct
     # result must reorder them, not just concatenate in experiment_id order.
     path_a = save_hoop_parquet(
         pd.DataFrame({"t": [0.0, 1.0], "H_NEW": [10.0, 20.0]}),
         tmp_path / "expA.parquet",
-        site_name="SITE_A", housing="M9", t0="2025-06-01T00:00:00",
+        assembly_name="ASSEMBLY_A", housing="M9", t0="2025-06-01T00:00:00",
         experiment_file="expA.txt", part_map={"H1_fast": "H_NEW"},
     )
     path_b = save_hoop_parquet(
         pd.DataFrame({"t": [0.0, 1.0, 2.0], "H_NEW": [1.0, 2.0, 3.0]}),
         tmp_path / "expB.parquet",
-        site_name="SITE_B", housing="M10", t0="2025-01-01T00:00:00",
+        assembly_name="ASSEMBLY_B", housing="M10", t0="2025-01-01T00:00:00",
         experiment_file="expB.txt", part_map={"H1_fast": "H_NEW"},
     )
     _mark_processed(con, exp_a, "all", "0.0,100.0", str(path_a))
@@ -764,11 +764,11 @@ def test_build_part_history_series_concatenates_chronologically_across_sites(
     assert out_path == tmp_path / "parts" / "H_NEW.parquet"
     result = pq.read_table(out_path).to_pandas()
 
-    # row-count concatenation across experiments: 2 (SITE_A) + 3 (SITE_B)
+    # row-count concatenation across experiments: 2 (ASSEMBLY_A) + 3 (ASSEMBLY_B)
     assert len(result) == 5
     assert result["timestamp"].is_monotonic_increasing
-    # SITE_B (t0=2025-01-01) sorts before SITE_A (t0=2025-06-01)
-    assert result["site_name"].tolist() == ["SITE_B"] * 3 + ["SITE_A"] * 2
+    # ASSEMBLY_B (t0=2025-01-01) sorts before ASSEMBLY_A (t0=2025-06-01)
+    assert result["assembly_name"].tolist() == ["ASSEMBLY_B"] * 3 + ["ASSEMBLY_A"] * 2
     assert result["experiment_id"].tolist() == [exp_b] * 3 + [exp_a] * 2
     assert result["hoop_stress_MPa"].tolist() == [1.0, 2.0, 3.0, 10.0, 20.0]
 
@@ -782,7 +782,7 @@ def test_build_part_history_series_warns_and_skips_pre_rename_parquet(
     path_a = save_hoop_parquet(
         pd.DataFrame({"t": [0.0, 1.0], "H_NEW": [10.0, 20.0]}),
         tmp_path / "expA.parquet",
-        site_name="SITE_A", housing="M9", t0="2025-06-01T00:00:00",
+        assembly_name="ASSEMBLY_A", housing="M9", t0="2025-06-01T00:00:00",
         experiment_file="expA.txt", part_map={"H1_fast": "H_NEW"},
     )
     # exp_b: pre-rename file -- still has the raw slot-name column, not the
@@ -791,7 +791,7 @@ def test_build_part_history_series_warns_and_skips_pre_rename_parquet(
     path_b = save_hoop_parquet(
         pd.DataFrame({"t": [0.0, 1.0], "H1_fast": [1.0, 2.0]}),
         tmp_path / "expB.parquet",
-        site_name="SITE_B", housing="M10", t0="2025-01-01T00:00:00",
+        assembly_name="ASSEMBLY_B", housing="M10", t0="2025-01-01T00:00:00",
         experiment_file="expB.txt", part_map={},
     )
     _mark_processed(con, exp_a, "all", "0.0,100.0", str(path_a))
@@ -804,8 +804,8 @@ def test_build_part_history_series_warns_and_skips_pre_rename_parquet(
     assert "no 'H_NEW' column" in captured.out
 
     result = pq.read_table(out_path).to_pandas()
-    assert len(result) == 2  # only SITE_A's file contributed
-    assert result["site_name"].unique().tolist() == ["SITE_A"]
+    assert len(result) == 2  # only ASSEMBLY_A's file contributed
+    assert result["assembly_name"].unique().tolist() == ["ASSEMBLY_A"]
 
 
 def test_build_part_history_series_returns_none_when_no_data(con, tmp_path):
@@ -832,13 +832,13 @@ def test_part_history_fatigue_matches_concatenated_rainflow_when_experiments_idl
     concatenated series -- confirmed against real multi-experiment DB data
     for this same reason (see docs/hoop-stress.md)."""
     insert_part(con, {"name": "H_FAT", "type": "helix"}, verbose=False)
-    insert_site(con, {"name": "SITE_F", "status": "in_operation"}, verbose=False)
-    insert_experiments(con, "SITE_F", [
+    insert_assembly(con, {"name": "ASSEMBLY_F", "status": "in_operation"}, verbose=False)
+    insert_experiments(con, "ASSEMBLY_F", [
         {"name": "exp1", "file": "exp1.txt"},
         {"name": "exp2", "file": "exp2.txt"},
     ], verbose=False)
     exp1, exp2 = con.execute(
-        "SELECT id FROM experiments WHERE site_name = 'SITE_F' ORDER BY id"
+        "SELECT id FROM experiments WHERE assembly_name = 'ASSEMBLY_F' ORDER BY id"
     ).fetchdf()["id"].tolist()
 
     # Both series start and end at 0 MPa, and are internally self-closed
@@ -865,13 +865,13 @@ def test_part_history_fatigue_matches_concatenated_rainflow_when_experiments_idl
     path_1 = save_hoop_parquet(
         pd.DataFrame({"t": list(range(len(sigma_1))), "H_FAT": sigma_1}),
         tmp_path / "exp1.parquet",
-        site_name="SITE_F", housing="M9", t0="2025-01-01T00:00:00",
+        assembly_name="ASSEMBLY_F", housing="M9", t0="2025-01-01T00:00:00",
         experiment_file="exp1.txt", part_map={"H1_fast": "H_FAT"},
     )
     path_2 = save_hoop_parquet(
         pd.DataFrame({"t": list(range(len(sigma_2))), "H_FAT": sigma_2}),
         tmp_path / "exp2.parquet",
-        site_name="SITE_F", housing="M9", t0="2025-01-02T00:00:00",
+        assembly_name="ASSEMBLY_F", housing="M9", t0="2025-01-02T00:00:00",
         experiment_file="exp2.txt", part_map={"H1_fast": "H_FAT"},
     )
     _mark_processed(con, exp1, "all", "0.0,100.0", str(path_1))

@@ -1,14 +1,14 @@
 """
 compute_hoop_stats.py
 =====================
-Compute per-part hoop-stress statistics for every experiment at a site and
+Compute per-part hoop-stress statistics for every experiment at an assembly and
 persist the results in DuckDB.
 
 For each experiment file not yet processed this module:
   1. Calls validate_fast_from_pupitre() to get the full hoop-stress time series
      (columns H1_fast, B1_fast, Supra1_fast, … depending on magnet_type).
   2. Saves the time series to a Parquet file with per-column and table-level
-     PyArrow metadata (t0 timestamp, site name, unit/symbol per column, part map).
+     PyArrow metadata (t0 timestamp, assembly name, unit/symbol per column, part map).
   3. Computes per-part stress-bin distributions    → hoop_stress_bin_stats
   4. Computes per-part rainflow fatigue cycle counts → hoop_stress_fatigue
   5. Marks the experiment as processed in hoop_stress_processed (idempotent).
@@ -28,10 +28,10 @@ Default bins span 0–600 MPa in 100 MPa steps (6 bins).
 Usage
 -----
     # via magnetdb.py (recommended):
-    python magnetdb.py hoop-stress compute --site M9_M19061901 --db magnetdb.duckdb
+    python magnetdb.py hoop-stress compute --assembly M9_M19061901 --db magnetdb.duckdb
 
     # standalone:
-    python compute_hoop_stats.py --site M9_M19061901 --db magnetdb.duckdb
+    python compute_hoop_stats.py --assembly M9_M19061901 --db magnetdb.duckdb
 """
 
 import argparse
@@ -102,18 +102,18 @@ def _parse_bins(s: str) -> list[tuple[float, float]]:
 
 
 def build_part_column_map(
-    site_name: str,
+    assembly_name: str,
     db_path: str,
     con: "duckdb.DuckDBPyConnection | None" = None,
 ) -> dict[str, str]:
-    """Return {column_name: part_name} for all coil parts at a site.
+    """Return {column_name: part_name} for all coil parts at an assembly.
 
     Column names follow the same convention as validate_fast_from_pupitre():
       - helices  → H1_fast, H2_fast, …  (parts ordered by rank within insert magnets)
       - bitters  → B1_fast, B2_fast, …  (parts ordered by rank within bitter magnets)
       - supras   → Supra1_fast, …        (parts ordered by rank within supra magnets)
 
-    Magnets are ordered by commissioned_at DESC (same as load_site_config_from_duckdb).
+    Magnets are ordered by commissioned_at DESC (same as load_assembly_config_from_duckdb).
     Within each magnet, parts are ordered by rank.
 
     con : Reuse an already-open connection instead of opening a new read-only
@@ -127,13 +127,13 @@ def build_part_column_map(
     rows = con.execute("""
         SELECT m.name AS magnet_name, m.type AS magnet_type,
                p.name AS part_name,  p.type  AS part_type, mp.rank
-        FROM site_magnets sm
+        FROM assembly_magnets sm
         JOIN magnets      m  ON m.name         = sm.magnet_name
         JOIN magnet_parts mp ON mp.magnet_name = m.name
         JOIN parts        p  ON p.name         = mp.part_name
-        WHERE sm.site_name = ?
+        WHERE sm.assembly_name = ?
         ORDER BY sm.commissioned_at DESC NULLS LAST, mp.rank
-    """, [site_name]).fetchall()
+    """, [assembly_name]).fetchall()
     if owns_con:
         con.close()
 
@@ -156,12 +156,12 @@ def build_part_column_map(
 
 
 def resolve_z0_by_type(
-    site_name: str,
+    assembly_name: str,
     db_path: str,
     con: "duckdb.DuckDBPyConnection | None" = None,
 ) -> tuple[list[float], list[float]]:
     """Return (z0_h, z0_b): per-part observation z-position from
-    site_magnets.z_offset, in the same H1_fast/H2_fast/… and
+    assembly_magnets.z_offset, in the same H1_fast/H2_fast/… and
     B1_fast/B2_fast/… order build_part_column_map() assigns columns.
 
     z0_h has one entry per helix part (one per Tube); z0_b has one entry
@@ -179,13 +179,13 @@ def resolve_z0_by_type(
 
     rows = con.execute("""
         SELECT sm.z_offset, m.type AS magnet_type, p.type AS part_type
-        FROM site_magnets sm
+        FROM assembly_magnets sm
         JOIN magnets      m  ON m.name         = sm.magnet_name
         JOIN magnet_parts mp ON mp.magnet_name = m.name
         JOIN parts        p  ON p.name         = mp.part_name
-        WHERE sm.site_name = ?
+        WHERE sm.assembly_name = ?
         ORDER BY sm.commissioned_at DESC NULLS LAST, mp.rank
-    """, [site_name]).fetchall()
+    """, [assembly_name]).fetchall()
     if owns_con:
         con.close()
 
@@ -222,7 +222,7 @@ def save_hoop_parquet(
     df: pd.DataFrame,
     path: Path,
     *,
-    site_name: str,
+    assembly_name: str,
     housing: str,
     t0: str,
     experiment_file: str,
@@ -230,7 +230,7 @@ def save_hoop_parquet(
 ) -> Path:
     """Write *df* to a Parquet file with rich PyArrow metadata.
 
-    Table-level metadata: site_name, housing, t0 (ISO timestamp string),
+    Table-level metadata: assembly_name, housing, t0 (ISO timestamp string),
     experiment_file, part_map (JSON).
     Field-level metadata: unit and symbol for each *_fast column.
     """
@@ -250,7 +250,7 @@ def save_hoop_parquet(
 
     # Table-level metadata
     table_meta = {
-        b"site_name":       site_name.encode(),
+        b"assembly_name":       assembly_name.encode(),
         b"housing":         (housing or "").encode(),
         b"t0":              (t0 or "").encode(),
         b"experiment_file": experiment_file.encode(),
@@ -324,11 +324,11 @@ def _rainflow_stats(sigma: pd.Series) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 
 
-def _get_experiments(con, site_name: str) -> pd.DataFrame:
+def _get_experiments(con, assembly_name: str) -> pd.DataFrame:
     return con.execute(
         "SELECT id, name, file FROM experiments "
-        "WHERE site_name = ? AND file IS NOT NULL ORDER BY id",
-        [site_name],
+        "WHERE assembly_name = ? AND file IS NOT NULL ORDER BY id",
+        [assembly_name],
     ).df()
 
 
@@ -412,7 +412,7 @@ def _append_hoop_status(con, exp_id: int) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Part history (cross-experiment/site aggregation)
+# Part history (cross-experiment/assembly aggregation)
 # ---------------------------------------------------------------------------
 
 
@@ -439,7 +439,7 @@ def part_history_stats(
     dict
         ``{"part_name": str, "experiments": list[dict], "bin_stats": list[dict],
         "fatigue": dict}``. ``experiments`` entries have ``experiment_id``,
-        ``site_name``, ``experiment_name``. ``bin_stats`` entries are summed
+        ``assembly_name``, ``experiment_name``. ``bin_stats`` entries are summed
         across experiments, keyed by ``stress_bin_low``/``stress_bin_high``,
         with the same fields as ``hoop_stress_bin_stats``. ``fatigue`` is
         ``{"n_cycles": float, "sum_range3": float}`` summed across
@@ -450,11 +450,11 @@ def part_history_stats(
         con = duckdb.connect(db_path, read_only=True)
 
     experiments = con.execute("""
-        SELECT DISTINCT b.experiment_id, e.site_name, e.name AS experiment_name
+        SELECT DISTINCT b.experiment_id, e.assembly_name, e.name AS experiment_name
         FROM hoop_stress_bin_stats b
         JOIN experiments e ON e.id = b.experiment_id
         WHERE b.part_name = ?
-        ORDER BY e.site_name, b.experiment_id
+        ORDER BY e.assembly_name, b.experiment_id
     """, [part_name]).fetchall()
 
     bin_rows = con.execute("""
@@ -483,7 +483,7 @@ def part_history_stats(
     return {
         "part_name": part_name,
         "experiments": [
-            {"experiment_id": r[0], "site_name": r[1], "experiment_name": r[2]}
+            {"experiment_id": r[0], "assembly_name": r[1], "experiment_name": r[2]}
             for r in experiments
         ],
         "bin_stats": [
@@ -515,7 +515,7 @@ def build_part_history_series(
     ``hoop_stress_processed.parquet_path``, deduped by ``experiment_id``
     using the latest ``processed_at`` when multiple bin configs exist),
     pulls the ``part_name`` column and ``t``, and reconstructs an absolute
-    timestamp from the file's own ``t0``/``site_name`` table metadata (see
+    timestamp from the file's own ``t0``/``assembly_name`` table metadata (see
     :func:`save_hoop_parquet`). Experiments whose Parquet predates the
     part-name column rename (no ``part_name`` column) are skipped with a
     ``[WARN]``.
@@ -590,7 +590,7 @@ def build_part_history_series(
 
         meta = table.schema.metadata or {}
         t0_str = meta.get(b"t0", b"").decode()
-        site_name = meta.get(b"site_name", b"").decode()
+        assembly_name = meta.get(b"assembly_name", b"").decode()
         if not t0_str:
             if verbose:
                 print(f"  [WARN] [{exp_id}] {parquet_path}: no t0 metadata, skipping")
@@ -601,7 +601,7 @@ def build_part_history_series(
             "timestamp": pd.Timestamp(t0_str) + pd.to_timedelta(df["t"].astype(float), unit="s"),
             "hoop_stress_MPa": df[part_name].astype(float),
             "experiment_id": exp_id,
-            "site_name": site_name,
+            "assembly_name": assembly_name,
         }))
 
     if not frames:
@@ -635,7 +635,7 @@ def _compute_dt(df: pd.DataFrame) -> pd.Series:
 
 
 def compute_hoop_stress_history(
-    site_name: str,
+    assembly_name: str,
     db_path: str,
     *,
     magnet_type: str = DEFAULT_MAGNET_TYPE,
@@ -648,11 +648,11 @@ def compute_hoop_stress_history(
     pupitre_datadir: str = "",
     verbose: bool = True,
 ) -> dict:
-    """Process all experiment files for *site_name* and persist hoop-stress stats.
+    """Process all experiment files for *assembly_name* and persist hoop-stress stats.
 
     Parameters
     ----------
-    site_name      : site FK (must exist in the sites table)
+    assembly_name      : assembly FK (must exist in the assemblies table)
     db_path        : path to the DuckDB file
     magnet_type    : "H", "B", "S", or "all"
     bins           : list of (low, high) stress bins in MPa
@@ -665,7 +665,7 @@ def compute_hoop_stress_history(
     verbose        : print progress lines
     """
     from stress_map import (
-        load_site_config_from_duckdb,
+        load_assembly_config_from_duckdb,
         load_magnettools,
         prepare_geometry_directory,
         validate_fast_from_pupitre,
@@ -679,23 +679,23 @@ def compute_hoop_stress_history(
     con = duckdb.connect(db_path)
     ensure_schema(con)
 
-    experiments = _get_experiments(con, site_name)
+    experiments = _get_experiments(con, assembly_name)
     if experiments.empty:
         if verbose:
-            print(f"[INFO] No experiments found for site '{site_name}'.")
+            print(f"[INFO] No experiments found for assembly '{assembly_name}'.")
         con.close()
         return {"new": 0, "skipped": 0, "errors": []}
 
-    # ── Load site config and magnettools (shared across all experiments) ──────
+    # ── Load assembly config and magnettools (shared across all experiments) ──────
     try:
-        housing, magnet_configs = load_site_config_from_duckdb(site_name, db_path, con=con)
+        housing, magnet_configs = load_assembly_config_from_duckdb(assembly_name, db_path, con=con)
     except ValueError as exc:
-        print(f"[ERROR] Cannot load site config for '{site_name}': {exc}")
+        print(f"[ERROR] Cannot load assembly config for '{assembly_name}': {exc}")
         con.close()
         return {"new": 0, "skipped": 0, "errors": [str(exc)]}
 
-    part_map = build_part_column_map(site_name, db_path, con=con)
-    z0_h, z0_b = resolve_z0_by_type(site_name, db_path, con=con)
+    part_map = build_part_column_map(assembly_name, db_path, con=con)
+    z0_h, z0_b = resolve_z0_by_type(assembly_name, db_path, con=con)
 
     # Parquet output directory
     pq_dir = Path(parquet_dir) if parquet_dir else Path(db_path).parent / "hoop_parquet"
@@ -704,34 +704,34 @@ def compute_hoop_stress_history(
 
     results: dict = {"new": 0, "skipped": 0, "errors": []}
 
-    # Build the geometry directory once per site (geometry is rebuilt on the
+    # Build the geometry directory once per assembly (geometry is rebuilt on the
     # fly from parts.geometry_data — see prepare_geometry_directory()). It
     # creates and owns its own temp directory, cleaned up in the `finally`
     # below. con=con reuses our already-open connection instead of opening a
     # second one to the same file (DuckDB disallows mixed read-only/
     # read-write connections to one file).
-    site_config = {
-        "name": site_name,
+    assembly_config = {
+        "name": assembly_name,
         "magnets": [config for _magnet_name, config, _geo in magnet_configs],
     }
     try:
         tmpdir_path = prepare_geometry_directory(
-            site_name, site_config, db_path,
+            assembly_name, assembly_config, db_path,
             geometries_dir=geometries_dir, con=con,
         )
     except Exception as exc:
-        print(f"[ERROR] geometry prep for '{site_name}': {exc}")
+        print(f"[ERROR] geometry prep for '{assembly_name}': {exc}")
         con.close()
         return {"new": 0, "skipped": 0, "errors": [str(exc)]}
 
     try:
         # Load magnettools objects (Tubes, Helices, BMagnets, UMagnets, …).
-        # site_config is the same shape prepare_geometry_directory() used above —
-        # msite_setup() (inside load_magnettools) always expects confdata['magnets'].
+        # assembly_config is the same shape prepare_geometry_directory() used above —
+        # assembly_setup() (inside load_magnettools) always expects confdata['magnets'].
         try:
-            data = load_magnettools(site_config, tmpdir_path)
+            data = load_magnettools(assembly_config, tmpdir_path)
         except Exception as exc:
-            print(f"[ERROR] Cannot load magnettools for '{site_name}': {exc}")
+            print(f"[ERROR] Cannot load magnettools for '{assembly_name}': {exc}")
             con.close()
             return {"new": 0, "skipped": 0, "errors": [str(exc)]}
 
@@ -768,7 +768,7 @@ def compute_hoop_stress_history(
                     data, exp_file, housing,
                     magnet_type=magnet_type,
                     use_mrun=use_mrun,
-                    site=site_name,
+                    assembly=assembly_name,
                     z0_h=z0_h,
                     z0_b=z0_b,
                 )
@@ -805,7 +805,7 @@ def compute_hoop_stress_history(
             try:
                 save_hoop_parquet(
                     df.rename(columns=exp_part_map), pq_path,
-                    site_name=site_name,
+                    assembly_name=assembly_name,
                     housing=housing,
                     t0=t0_str,
                     experiment_file=exp_file,
@@ -860,8 +860,8 @@ def _parse_args(argv=None) -> argparse.Namespace:
     )
     parser.add_argument("--db",           default=DEFAULT_DB,
                         help=f"DuckDB file (default: {DEFAULT_DB})")
-    parser.add_argument("--site",         required=True,
-                        help="Site name (FK in sites table)")
+    parser.add_argument("--assembly",         required=True,
+                        help="Assembly name (FK in assemblies table)")
     parser.add_argument("--magnet-type",  default=DEFAULT_MAGNET_TYPE,
                         choices=["H", "B", "S", "all"],
                         dest="magnet_type",
@@ -899,7 +899,7 @@ def main(argv=None) -> None:
     )
 
     compute_hoop_stress_history(
-        site_name=args.site,
+        assembly_name=args.assembly,
         db_path=args.db,
         magnet_type=args.magnet_type,
         bins=bins,

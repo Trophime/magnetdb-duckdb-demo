@@ -6,8 +6,8 @@ import duckdb
 import pytest
 
 from magnetdb import main
-from magnetdb import _add_magnet as add_magnet, _add_site as add_site
-from tests.conftest import MAGNET_JSON, SITE_JSON
+from magnetdb import _add_magnet as add_magnet, _add_assembly as add_assembly
+from tests.conftest import MAGNET_JSON, ASSEMBLY_JSON
 
 
 # ---------------------------------------------------------------------------
@@ -31,9 +31,9 @@ def _db_with_magnet(tmp_path):
     return db
 
 
-def _db_with_site(tmp_path):
+def _db_with_assembly(tmp_path):
     db = _db_with_magnet(tmp_path)
-    add_site(SITE_JSON, db)
+    add_assembly(ASSEMBLY_JSON, db)
     return db
 
 
@@ -118,120 +118,120 @@ def test_cli_magnet_delete_missing_db_exits(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# site add
+# assembly add
 # ---------------------------------------------------------------------------
 
 
-def test_cli_site_add_creates_site(tmp_path, monkeypatch):
+def test_cli_assembly_add_creates_assembly(tmp_path, monkeypatch):
     db = _db_with_magnet(tmp_path)
-    json_path = tmp_path / "SITE_JSON_01.json"
-    json_path.write_text(json.dumps(SITE_JSON))
+    json_path = tmp_path / "ASSEMBLY_JSON_01.json"
+    json_path.write_text(json.dumps(ASSEMBLY_JSON))
 
-    _run(monkeypatch, "site", "add", str(json_path), "--db", str(db))
+    _run(monkeypatch, "assembly", "add", str(json_path), "--db", str(db))
 
-    assert _count(db, "sites") == 1
-    assert _count(db, "site_magnets") == 1
-    assert _count(db, "experiments") == len(SITE_JSON["records"])
+    assert _count(db, "assemblies") == 1
+    assert _count(db, "assembly_magnets") == 1
+    assert _count(db, "experiments") == len(ASSEMBLY_JSON["records"])
 
 
-def test_cli_site_add_dry_run_writes_nothing(tmp_path, monkeypatch):
+def test_cli_assembly_add_dry_run_writes_nothing(tmp_path, monkeypatch):
     db = _db_with_magnet(tmp_path)
-    json_path = tmp_path / "SITE_JSON_01.json"
-    json_path.write_text(json.dumps(SITE_JSON))
+    json_path = tmp_path / "ASSEMBLY_JSON_01.json"
+    json_path.write_text(json.dumps(ASSEMBLY_JSON))
 
-    _run(monkeypatch, "site", "add", str(json_path), "--db", str(db), "--dry-run")
+    _run(monkeypatch, "assembly", "add", str(json_path), "--db", str(db), "--dry-run")
 
-    assert _count(db, "sites") == 0
+    assert _count(db, "assemblies") == 0
 
 
-def test_cli_site_add_missing_json_exits(tmp_path, monkeypatch):
+def test_cli_assembly_add_missing_json_exits(tmp_path, monkeypatch):
     db = _db_with_magnet(tmp_path)
     with pytest.raises(SystemExit):
-        _run(monkeypatch, "site", "add", str(tmp_path / "NOPE.json"), "--db", str(db))
+        _run(monkeypatch, "assembly", "add", str(tmp_path / "NOPE.json"), "--db", str(db))
 
 
 # ---------------------------------------------------------------------------
-# site view
+# assembly view
 # ---------------------------------------------------------------------------
 
 
-def test_cli_site_view_list_all(tmp_path, monkeypatch, capsys):
-    db = _db_with_site(tmp_path)
-    _run(monkeypatch, "site", "view", "--db", str(db))
-    assert "SITE_JSON_01" in capsys.readouterr().out
+def test_cli_assembly_view_list_all(tmp_path, monkeypatch, capsys):
+    db = _db_with_assembly(tmp_path)
+    _run(monkeypatch, "assembly", "view", "--db", str(db))
+    assert "ASSEMBLY_JSON_01" in capsys.readouterr().out
 
 
-def test_cli_site_view_one(tmp_path, monkeypatch, capsys):
-    db = _db_with_site(tmp_path)
-    _run(monkeypatch, "site", "view", "SITE_JSON_01", "--db", str(db))
+def test_cli_assembly_view_one(tmp_path, monkeypatch, capsys):
+    db = _db_with_assembly(tmp_path)
+    _run(monkeypatch, "assembly", "view", "ASSEMBLY_JSON_01", "--db", str(db))
     out = capsys.readouterr().out
-    assert "SITE_JSON_01" in out
+    assert "ASSEMBLY_JSON_01" in out
     assert "M10" in out
 
 
-def test_cli_site_view_missing_db_exits(tmp_path, monkeypatch):
+def test_cli_assembly_view_missing_db_exits(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
-        _run(monkeypatch, "site", "view", "--db", str(tmp_path / "nope.duckdb"))
+        _run(monkeypatch, "assembly", "view", "--db", str(tmp_path / "nope.duckdb"))
 
 
 # ---------------------------------------------------------------------------
-# site delete
+# assembly delete
 # ---------------------------------------------------------------------------
 
 
-def test_cli_site_delete_removes_site_and_related(tmp_path, monkeypatch):
-    db = _db_with_site(tmp_path)
-    _run(monkeypatch, "site", "delete", "SITE_JSON_01", "--db", str(db))
-    assert _count(db, "sites") == 0
-    assert _count(db, "site_magnets") == 0
+def test_cli_assembly_delete_removes_assembly_and_related(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
+    _run(monkeypatch, "assembly", "delete", "ASSEMBLY_JSON_01", "--db", str(db))
+    assert _count(db, "assemblies") == 0
+    assert _count(db, "assembly_magnets") == 0
     assert _count(db, "experiments") == 0
 
 
-def test_cli_site_delete_missing_db_exits(tmp_path, monkeypatch):
+def test_cli_assembly_delete_missing_db_exits(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
-        _run(monkeypatch, "site", "delete", "SITE_JSON_01",
+        _run(monkeypatch, "assembly", "delete", "ASSEMBLY_JSON_01",
              "--db", str(tmp_path / "nope.duckdb"))
 
 
 # ---------------------------------------------------------------------------
-# site update-magnet
+# assembly update-magnet
 # ---------------------------------------------------------------------------
 
 
-def test_cli_site_update_magnet_changes_offset(tmp_path, monkeypatch):
-    db = _db_with_site(tmp_path)
+def test_cli_assembly_update_magnet_changes_offset(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
 
-    _run(monkeypatch, "site", "update-magnet",
-         "SITE_JSON_01", "MAG_JSON",
+    _run(monkeypatch, "assembly", "update-magnet",
+         "ASSEMBLY_JSON_01", "MAG_JSON",
          "--db", str(db),
          "--z-offset", "9.5")
 
-    row = _fetch_one(db, "SELECT z_offset FROM site_magnets WHERE magnet_name = 'MAG_JSON'")
+    row = _fetch_one(db, "SELECT z_offset FROM assembly_magnets WHERE magnet_name = 'MAG_JSON'")
     assert row[0] == 9.5
 
 
-def test_cli_site_update_magnet_invalid_metadata_exits(tmp_path, monkeypatch):
-    db = _db_with_site(tmp_path)
+def test_cli_assembly_update_magnet_invalid_metadata_exits(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
     with pytest.raises(SystemExit):
-        _run(monkeypatch, "site", "update-magnet",
-             "SITE_JSON_01", "MAG_JSON",
+        _run(monkeypatch, "assembly", "update-magnet",
+             "ASSEMBLY_JSON_01", "MAG_JSON",
              "--db", str(db),
              "--metadata", "NOT_JSON")
 
 
-def test_cli_site_update_magnet_missing_row_exits(tmp_path, monkeypatch):
-    db = _db_with_magnet(tmp_path)  # site not added → no site_magnets row
+def test_cli_assembly_update_magnet_missing_row_exits(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)  # assembly not added → no assembly_magnets row
     with pytest.raises(SystemExit):
-        _run(monkeypatch, "site", "update-magnet",
-             "NONEXISTENT_SITE", "MAG_JSON",
+        _run(monkeypatch, "assembly", "update-magnet",
+             "NONEXISTENT_ASSEMBLY", "MAG_JSON",
              "--db", str(db),
              "--z-offset", "1.0")
 
 
-def test_cli_site_update_magnet_missing_db_exits(tmp_path, monkeypatch):
+def test_cli_assembly_update_magnet_missing_db_exits(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
-        _run(monkeypatch, "site", "update-magnet",
-             "SITE_JSON_01", "MAG_JSON",
+        _run(monkeypatch, "assembly", "update-magnet",
+             "ASSEMBLY_JSON_01", "MAG_JSON",
              "--db", str(tmp_path / "nope.duckdb"),
              "--z-offset", "1.0")
 
@@ -260,62 +260,62 @@ def _summary_json_record(filename, **extra):
     }
 
 
-def test_cli_populate_overview_records_from_json_auto_resolves_site(tmp_path, monkeypatch):
-    db = _db_with_site(tmp_path)  # SITE_JSON_01, housing M10, commissioned 2025-01-01
+def test_cli_populate_overview_records_from_json_auto_resolves_assembly(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)  # ASSEMBLY_JSON_01, housing M10, commissioned 2025-01-01
     json_path = tmp_path / "M10_summary-2025.json"
     json_path.write_text(json.dumps([_summary_json_record("M10_Overview_250115-1200")]))
 
     _run(monkeypatch, "populate", "overview-records-from-json", str(json_path), "--db", str(db))
 
     row = _fetch_one(
-        db, "SELECT housing, site_name, t0, sources_overview FROM overview_records "
+        db, "SELECT housing, assembly_name, t0, sources_overview FROM overview_records "
         "WHERE filename = 'M10_Overview_250115-1200'"
     )
     assert row[0] == "M10"
-    assert row[1] == "SITE_JSON_01"
+    assert row[1] == "ASSEMBLY_JSON_01"
     assert row[2] is not None
     assert row[3] == ["M10_Overview_250115-1200.tdms"]
 
 
-def test_cli_populate_overview_records_from_json_unresolved_site_stays_null(tmp_path, monkeypatch):
-    db = _db_with_site(tmp_path)  # only a M10 site exists
+def test_cli_populate_overview_records_from_json_unresolved_assembly_stays_null(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)  # only a M10 assembly exists
     json_path = tmp_path / "M9_summary-2025.json"
     json_path.write_text(json.dumps([_summary_json_record("M9_Overview_250115-1200")]))
 
     _run(monkeypatch, "populate", "overview-records-from-json", str(json_path), "--db", str(db))
 
     row = _fetch_one(
-        db, "SELECT housing, site_name FROM overview_records "
+        db, "SELECT housing, assembly_name FROM overview_records "
         "WHERE filename = 'M9_Overview_250115-1200'"
     )
     assert row == ("M9", None)
 
 
-def test_cli_populate_overview_records_from_json_unknown_site_exits(tmp_path, monkeypatch):
-    db = _db_with_site(tmp_path)
+def test_cli_populate_overview_records_from_json_unknown_assembly_exits(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
     json_path = tmp_path / "M10_summary-2025.json"
     json_path.write_text(json.dumps([_summary_json_record("M10_Overview_250115-1200")]))
 
     with pytest.raises(SystemExit):
         _run(monkeypatch, "populate", "overview-records-from-json", str(json_path),
-             "--db", str(db), "--site", "NoSuchSite")
+             "--db", str(db), "--assembly", "NoSuchAssembly")
 
     assert _count(db, "overview_records") == 0
 
 
-def test_cli_populate_overview_records_from_json_site_override(tmp_path, monkeypatch):
-    db = _db_with_site(tmp_path)
+def test_cli_populate_overview_records_from_json_assembly_override(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
     json_path = tmp_path / "M10_summary-2025.json"
     json_path.write_text(json.dumps([_summary_json_record("M10_Overview_250115-1200")]))
 
     _run(monkeypatch, "populate", "overview-records-from-json", str(json_path),
-         "--db", str(db), "--site", "SITE_JSON_01")
+         "--db", str(db), "--assembly", "ASSEMBLY_JSON_01")
 
     row = _fetch_one(
-        db, "SELECT housing, site_name FROM overview_records "
+        db, "SELECT housing, assembly_name FROM overview_records "
         "WHERE filename = 'M10_Overview_250115-1200'"
     )
-    assert row == ("M10", "SITE_JSON_01")
+    assert row == ("M10", "ASSEMBLY_JSON_01")
 
 
 # ---------------------------------------------------------------------------

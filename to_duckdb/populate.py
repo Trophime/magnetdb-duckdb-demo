@@ -15,7 +15,7 @@ Public API
     _SRV_SUBDIR             default subdirectory for pupitre TXT files
     _PBSURV                 default subdirectory for TDMS files
 
-    load_site(site_name, db_path)          → dict | None
+    load_assembly(assembly_name, db_path)          → dict | None
     find_and_register_pupitre(...)         → list[(Path, datetime)]
     find_and_register_tdms(...)            → list[(Path, datetime, str)]
     resolve_operationaldata_path(...)      → Path
@@ -121,13 +121,13 @@ def as_aware(ts: datetime | None, tz: ZoneInfo) -> datetime | None:
     return ts.replace(tzinfo=tz) if ts.tzinfo is None else ts.astimezone(tz)
 
 
-def load_site(site_name: str, db_path: str) -> dict | None:
-    """Return the site row as a dict, or None if not found."""
+def load_assembly(assembly_name: str, db_path: str) -> dict | None:
+    """Return the assembly row as a dict, or None if not found."""
     with duckdb.connect(db_path, read_only=True) as con:
         row = con.execute(
             "SELECT name, housing, status, commissioned_at, decommissioned_at "
-            "FROM sites WHERE name = ?",
-            [site_name],
+            "FROM assemblies WHERE name = ?",
+            [assembly_name],
         ).fetchone()
     if row is None:
         return None
@@ -141,7 +141,7 @@ def load_site(site_name: str, db_path: str) -> dict | None:
 
 
 def _insert_operationaldata(
-    con, site_name: str, fpath: Path, file_type: str, records_base: Path
+    con, assembly_name: str, fpath: Path, file_type: str, records_base: Path
 ) -> bool:
     """Insert one file record. Returns True if newly inserted, False if already present."""
     try:
@@ -154,9 +154,9 @@ def _insert_operationaldata(
     if already:
         return False
     con.execute(
-        "INSERT INTO operationaldata (name, description, file, site_name, type, status) "
+        "INSERT INTO operationaldata (name, description, file, assembly_name, type, status) "
         "VALUES (?, '', ?, ?, ?, 'pending')",
-        [fpath.stem, relpath, site_name, file_type],
+        [fpath.stem, relpath, assembly_name, file_type],
     )
     return True
 
@@ -181,12 +181,12 @@ def resolve_operationaldata_path(relpath: str, records_base: Path = _RECORDS_BAS
     return records_base / relpath
 
 
-def _site_window(
-    site: dict, db_tz: ZoneInfo
+def _assembly_window(
+    assembly: dict, db_tz: ZoneInfo
 ) -> tuple[datetime | None, datetime | None]:
     """Return (t_start, t_end) both expressed in FILE_TZ (Europe/Paris)."""
-    t_start = as_aware(site["commissioned_at"],   db_tz)
-    t_end   = as_aware(site["decommissioned_at"], db_tz)
+    t_start = as_aware(assembly["commissioned_at"],   db_tz)
+    t_end   = as_aware(assembly["decommissioned_at"], db_tz)
     if t_start is not None:
         t_start = t_start.astimezone(FILE_TZ)
     if t_end is not None:
@@ -211,21 +211,21 @@ def parse_pupitre_file_ts(filename: str) -> datetime | None:
 
 
 def find_and_register_pupitre(
-    site:         dict,
+    assembly:         dict,
     db_path:      str,
     db_tz:        ZoneInfo,
     dry_run:      bool,
     records_base: Path = _RECORDS_BASE,
     srv_subdir:   str  = _SRV_SUBDIR,
 ) -> list[tuple[Path, datetime]]:
-    """Scan for pupitre TXT files in the site's operational window.
+    """Scan for pupitre TXT files in the assembly's operational window.
 
     Returns matched (path, timestamp) pairs. Writes to operationaldata
     unless *dry_run* is True.
     """
-    housing = site["housing"]
+    housing = assembly["housing"]
     if not housing:
-        print(f"[WARN] site '{site['name']}' has no housing value.")
+        print(f"[WARN] assembly '{assembly['name']}' has no housing value.")
         return []
 
     pupitre_dir = records_base / srv_subdir / housing
@@ -233,7 +233,7 @@ def find_and_register_pupitre(
         print(f"[WARN] pupitre directory not found: {pupitre_dir}")
         return []
 
-    t_start, t_end = _site_window(site, db_tz)
+    t_start, t_end = _assembly_window(assembly, db_tz)
 
     matches: list[tuple[Path, datetime]] = []
     for fpath in sorted(pupitre_dir.glob("*.txt")):
@@ -252,7 +252,7 @@ def find_and_register_pupitre(
         with duckdb.connect(db_path) as con:
             ensure_schema(con)
             new_count = sum(
-                _insert_operationaldata(con, site["name"], fpath, "Pupitre", records_base)
+                _insert_operationaldata(con, assembly["name"], fpath, "Pupitre", records_base)
                 for fpath, _ in matches
             )
         skipped = len(matches) - new_count
@@ -304,7 +304,7 @@ def scan_tdms_subdir(
 
 
 def find_and_register_tdms(
-    site:         dict,
+    assembly:         dict,
     db_path:      str,
     db_tz:        ZoneInfo,
     dry_run:      bool,
@@ -312,17 +312,17 @@ def find_and_register_tdms(
     records_base: Path = _RECORDS_BASE,
     pbsurv:       str  = _PBSURV,
 ) -> list[tuple[Path, datetime, str]]:
-    """Scan for TDMS files in the site's operational window.
+    """Scan for TDMS files in the assembly's operational window.
 
     Returns matched (path, timestamp, type) triples. Writes to operationaldata
     unless *dry_run* is True.
     """
-    housing = site["housing"]
+    housing = assembly["housing"]
     if not housing:
-        print(f"[WARN] site '{site['name']}' has no housing value.")
+        print(f"[WARN] assembly '{assembly['name']}' has no housing value.")
         return []
 
-    t_start, t_end = _site_window(site, db_tz)
+    t_start, t_end = _assembly_window(assembly, db_tz)
 
     active_types = type_filter if type_filter else TDMS_TYPES
     matches: list[tuple[Path, datetime, str]] = []
@@ -343,7 +343,7 @@ def find_and_register_tdms(
         with duckdb.connect(db_path) as con:
             ensure_schema(con)
             new_count = sum(
-                _insert_operationaldata(con, site["name"], fpath, file_type, records_base)
+                _insert_operationaldata(con, assembly["name"], fpath, file_type, records_base)
                 for fpath, _, file_type in matches
             )
         skipped = len(matches) - new_count

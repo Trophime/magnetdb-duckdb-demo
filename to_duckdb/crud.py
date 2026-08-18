@@ -25,17 +25,17 @@ check_geometry_data(con, name)
 print_geometry_check(results)
 
 parse_timestamp(value)
-insert_site(con, data, verbose, create_housing)
+insert_assembly(con, data, verbose, create_housing)
 insert_housing_config_from_magnetrun(con, housing_name, verbose)
-insert_site_magnets(con, site_name, magnet_entries, verbose)
-insert_experiments(con, site_name, records, verbose)
+insert_assembly_magnets(con, assembly_name, magnet_entries, verbose)
+insert_experiments(con, assembly_name, records, verbose)
 
-update_site_magnet(con, site_name, magnet_name, **kwargs)
+update_assembly_magnet(con, assembly_name, magnet_name, **kwargs)
 
-insert_overview_record(con, record, site_name, verbose)
-upsert_overview_record(con, record, site_name, verbose)
-insert_overview_record_from_dict(con, data, site_name, verbose, upsert)
-attach_site_to_overview_record(con, filename, site_name, verbose)
+insert_overview_record(con, record, assembly_name, verbose)
+upsert_overview_record(con, record, assembly_name, verbose)
+insert_overview_record_from_dict(con, data, assembly_name, verbose, upsert)
+attach_assembly_to_overview_record(con, filename, assembly_name, verbose)
 infer_overview_record_fields(con, filename, db_tz, verbose)
 infer_operating_mode(df)
 """
@@ -369,7 +369,7 @@ def insert_magnet_part_row(
 
 
 # ---------------------------------------------------------------------------
-# Site
+# Assembly
 # ---------------------------------------------------------------------------
 
 
@@ -379,10 +379,10 @@ def parse_timestamp(value) -> str | None:
     return str(value)
 
 
-def insert_site(
+def insert_assembly(
     con, data: dict, verbose: bool = True, create_housing: bool = True
 ) -> None:
-    """Insert a site row; skip silently if it already exists.
+    """Insert an assembly row; skip silently if it already exists.
 
     The ``housing`` field in *data* is treated as a ``housing_config.name``
     foreign key.
@@ -392,7 +392,7 @@ def insert_site(
     con:
         Open DuckDB connection.
     data:
-        Site dict with at least a ``name`` key.  ``housing`` must match a
+        Assembly dict with at least a ``name`` key.  ``housing`` must match a
         ``housing_config.name`` value.
     verbose:
         Print status lines.
@@ -403,9 +403,9 @@ def insert_site(
         missing.
     """
     name = data["name"]
-    if exists(con, "sites", name):
+    if exists(con, "assemblies", name):
         if verbose:
-            print(f"  ~ site      {name}  (already exists, skipped)")
+            print(f"  ~ assembly      {name}  (already exists, skipped)")
         return
 
     housing = data.get("housing") or None
@@ -422,7 +422,7 @@ def insert_site(
                 )
 
     con.execute(
-        "INSERT INTO sites VALUES (?,?,?,?,?,?)",
+        "INSERT INTO assemblies VALUES (?,?,?,?,?,?)",
         [
             name,
             data.get("description") or None,
@@ -433,17 +433,17 @@ def insert_site(
         ],
     )
     if verbose:
-        print(f"  + site      {name}  [{housing or '?'}]  {data.get('status', '')}")
+        print(f"  + assembly      {name}  [{housing or '?'}]  {data.get('status', '')}")
 
 
 def _magnet_entry_name(entry) -> str:
     return entry if isinstance(entry, str) else entry["name"]
 
 
-def insert_site_magnets(
-    con, site_name: str, magnet_entries: list, verbose: bool = True
+def insert_assembly_magnets(
+    con, assembly_name: str, magnet_entries: list, verbose: bool = True
 ) -> None:
-    """Link magnets to a site.
+    """Link magnets to an assembly.
 
     Each entry in *magnet_entries* is either a plain magnet name string or a
     dict with optional positional/temporal fields (z_offset, r_offset,
@@ -454,8 +454,8 @@ def insert_site_magnets(
         extra = entry if isinstance(entry, dict) else {}
 
         if con.execute(
-            "SELECT 1 FROM site_magnets WHERE site_name = ? AND magnet_name = ?",
-            [site_name, magnet_name],
+            "SELECT 1 FROM assembly_magnets WHERE assembly_name = ? AND magnet_name = ?",
+            [assembly_name, magnet_name],
         ).fetchone():
             if verbose:
                 print(f"  ~ magnet    {magnet_name}  (already linked, skipped)")
@@ -463,13 +463,13 @@ def insert_site_magnets(
 
         con.execute(
             """
-            INSERT INTO site_magnets
-                (site_name, magnet_name, z_offset, r_offset, parallax,
+            INSERT INTO assembly_magnets
+                (assembly_name, magnet_name, z_offset, r_offset, parallax,
                  commissioned_at, decommissioned_at, metadata)
             VALUES (?,?,?,?,?,?,?,?)
             """,
             [
-                site_name,
+                assembly_name,
                 magnet_name,
                 extra.get("z_offset", 0.0),
                 extra.get("r_offset", 0.0),
@@ -485,9 +485,9 @@ def insert_site_magnets(
 
 
 def insert_experiments(
-    con, site_name: str, records: list[dict], verbose: bool = True
+    con, assembly_name: str, records: list[dict], verbose: bool = True
 ) -> None:
-    """Insert experiment/record rows for a site; skip duplicates by file name."""
+    """Insert experiment/record rows for an assembly; skip duplicates by file name."""
     row = con.execute("SELECT COALESCE(MAX(id), 0) FROM experiments").fetchone()
     next_id = (row[0] or 0) + 1
     inserted = 0
@@ -496,8 +496,8 @@ def insert_experiments(
     for i, rec in enumerate(records):
         file_name = rec.get("file") or rec.get("name") or rec.get("record_file")
         if con.execute(
-            "SELECT 1 FROM experiments WHERE site_name = ? AND file = ?",
-            [site_name, file_name],
+            "SELECT 1 FROM experiments WHERE assembly_name = ? AND file = ?",
+            [assembly_name, file_name],
         ).fetchone():
             skipped += 1
             continue
@@ -509,7 +509,7 @@ def insert_experiments(
                 rec.get("name") or file_name,
                 rec.get("description") or None,
                 file_name,
-                site_name,
+                assembly_name,
             ],
         )
         inserted += 1
@@ -525,7 +525,7 @@ def insert_experiments(
 _FLOAT_FIELDS = frozenset({"z_offset", "r_offset", "parallax"})
 _TIMESTAMP_FIELDS = frozenset({"commissioned_at", "decommissioned_at"})
 _JSON_FIELDS = frozenset({"metadata"})
-_SITE_MAGNET_FIELDS = _FLOAT_FIELDS | _TIMESTAMP_FIELDS | _JSON_FIELDS
+_ASSEMBLY_MAGNET_FIELDS = _FLOAT_FIELDS | _TIMESTAMP_FIELDS | _JSON_FIELDS
 
 
 # ---------------------------------------------------------------------------
@@ -666,7 +666,7 @@ def view_magnet(con, name: str) -> None:
             print(f"    [{rank}] {pname}  ({ptype or '?'}){ci}")
 
 
-def view_sites(
+def view_assemblies(
     con,
     housing_filter: str | None = None,
     status_filter: str | None = None,
@@ -680,7 +680,7 @@ def view_sites(
         params.append(status_filter)
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     rows = con.execute(
-        f"SELECT name, housing, status FROM sites {where} ORDER BY name", params
+        f"SELECT name, housing, status FROM assemblies {where} ORDER BY name", params
     ).fetchall()
     if not rows:
         parts = []
@@ -689,7 +689,7 @@ def view_sites(
         if status_filter:
             parts.append(f"status '{status_filter}'")
         qualifier = " matching " + ", ".join(parts) if parts else ""
-        print(f"No sites{qualifier} in database.")
+        print(f"No assemblies{qualifier} in database.")
         return
     print(f"{'Name':<40} {'Housing':<15} Status")
     print("-" * 65)
@@ -697,23 +697,23 @@ def view_sites(
         print(f"{name:<40} {housing or '?':<15} {status or ''}")
 
 
-def view_site(con, name: str) -> None:
+def view_assembly(con, name: str) -> None:
     row = con.execute(
         "SELECT name, housing, status, commissioned_at, decommissioned_at "
-        "FROM sites WHERE name = ?",
+        "FROM assemblies WHERE name = ?",
         [name],
     ).fetchone()
     if not row:
-        print(f"Site '{name}' not found.")
+        print(f"Assembly '{name}' not found.")
         return
-    print(f"Site : {row[0]}")
+    print(f"Assembly : {row[0]}")
     print(f"  housing          : {row[1] or '?'}")
     print(f"  status           : {row[2] or ''}")
     print(f"  commissioned_at  : {row[3] or ''}")
     print(f"  decommissioned_at: {row[4] or ''}")
     magnets = con.execute(
         "SELECT magnet_name, z_offset, r_offset "
-        "FROM site_magnets WHERE site_name = ? ORDER BY magnet_name",
+        "FROM assembly_magnets WHERE assembly_name = ? ORDER BY magnet_name",
         [name],
     ).fetchall()
     if magnets:
@@ -721,7 +721,7 @@ def view_site(con, name: str) -> None:
         for mname, z, r in magnets:
             print(f"    {mname}  (z={z}, r={r})")
     count = con.execute(
-        "SELECT COUNT(*) FROM experiments WHERE site_name = ?", [name]
+        "SELECT COUNT(*) FROM experiments WHERE assembly_name = ?", [name]
     ).fetchone()[0]
     print(f"  experiments: {count}")
 
@@ -802,7 +802,7 @@ _OD_FILE_TS = (
 
 def view_experiments(
     con,
-    site_name: str | None = None,
+    assembly_name: str | None = None,
     magnet_name: str | None = None,
     part_name: str | None = None,
     from_ts: str | None = None,
@@ -810,11 +810,11 @@ def view_experiments(
 ) -> None:
     joins, conditions, params = [], [], []
 
-    if site_name:
-        conditions.append("e.site_name = ?")
-        params.append(site_name)
+    if assembly_name:
+        conditions.append("e.assembly_name = ?")
+        params.append(assembly_name)
     if magnet_name or part_name:
-        joins.append("JOIN site_magnets sm ON sm.site_name = e.site_name")
+        joins.append("JOIN assembly_magnets sm ON sm.assembly_name = e.assembly_name")
         if magnet_name:
             conditions.append("sm.magnet_name = ?")
             params.append(magnet_name)
@@ -838,23 +838,23 @@ def view_experiments(
             ts_params.append(to_ts)
         ts_where = "WHERE " + " AND ".join(ts_conds)
         rows = con.execute(
-            f"SELECT id, name, file, site_name, status FROM ("
-            f"SELECT {distinct}e.id, e.name, e.file, e.site_name, e.status,"
+            f"SELECT id, name, file, assembly_name, status FROM ("
+            f"SELECT {distinct}e.id, e.name, e.file, e.assembly_name, e.status,"
             f" {ts_expr} AS file_ts"
             f" FROM experiments e {join_sql} {where}"
-            f") t {ts_where} ORDER BY site_name, id",
+            f") t {ts_where} ORDER BY assembly_name, id",
             ts_params,
         ).fetchall()
     else:
         rows = con.execute(
-            f"SELECT {distinct}e.id, e.name, e.file, e.site_name, e.status "
-            f"FROM experiments e {join_sql} {where} ORDER BY e.site_name, e.id",
+            f"SELECT {distinct}e.id, e.name, e.file, e.assembly_name, e.status "
+            f"FROM experiments e {join_sql} {where} ORDER BY e.assembly_name, e.id",
             params,
         ).fetchall()
 
     labels = []
-    if site_name:
-        labels.append(f"site={site_name}")
+    if assembly_name:
+        labels.append(f"assembly={assembly_name}")
     if magnet_name:
         labels.append(f"magnet={magnet_name}")
     if part_name:
@@ -872,15 +872,15 @@ def view_experiments(
     print(f"experiments{qualifier}  ({len(rows)} row(s))\n")
     col_s = max((len(r[3] or "") for r in rows), default=20)
     col_f = min(max((len(r[2] or "") for r in rows), default=40), 60)
-    print(f"{'ID':<6} {'Site':<{col_s}} {'File':<{col_f}} Status")
+    print(f"{'ID':<6} {'Assembly':<{col_s}} {'File':<{col_f}} Status")
     print("-" * (col_s + col_f + 14))
-    for id_, name, file_, site_, status in rows:
-        print(f"{id_:<6} {(site_ or ''):<{col_s}} {(file_ or '')[:col_f]:<{col_f}} {status or ''}")
+    for id_, name, file_, assembly_, status in rows:
+        print(f"{id_:<6} {(assembly_ or ''):<{col_s}} {(file_ or '')[:col_f]:<{col_f}} {status or ''}")
 
 
 def view_operationaldata(
     con,
-    site_name: str | None = None,
+    assembly_name: str | None = None,
     type_filter: str | None = None,
     magnet_name: str | None = None,
     part_name: str | None = None,
@@ -889,14 +889,14 @@ def view_operationaldata(
 ) -> None:
     joins, conditions, params = [], [], []
 
-    if site_name:
-        conditions.append("od.site_name = ?")
-        params.append(site_name)
+    if assembly_name:
+        conditions.append("od.assembly_name = ?")
+        params.append(assembly_name)
     if type_filter:
         conditions.append("od.type = ?")
         params.append(type_filter)
     if magnet_name or part_name:
-        joins.append("JOIN site_magnets sm ON sm.site_name = od.site_name")
+        joins.append("JOIN assembly_magnets sm ON sm.assembly_name = od.assembly_name")
         if magnet_name:
             conditions.append("sm.magnet_name = ?")
             params.append(magnet_name)
@@ -920,23 +920,23 @@ def view_operationaldata(
             ts_params.append(to_ts)
         ts_where = "WHERE " + " AND ".join(ts_conds)
         rows = con.execute(
-            f"SELECT id, name, file, type, site_name, status FROM ("
-            f"SELECT {distinct}od.id, od.name, od.file, od.type, od.site_name, od.status,"
+            f"SELECT id, name, file, type, assembly_name, status FROM ("
+            f"SELECT {distinct}od.id, od.name, od.file, od.type, od.assembly_name, od.status,"
             f" {ts_expr} AS file_ts"
             f" FROM operationaldata od {join_sql} {where}"
-            f") t {ts_where} ORDER BY site_name, type, id",
+            f") t {ts_where} ORDER BY assembly_name, type, id",
             ts_params,
         ).fetchall()
     else:
         rows = con.execute(
-            f"SELECT {distinct}od.id, od.name, od.file, od.type, od.site_name, od.status "
-            f"FROM operationaldata od {join_sql} {where} ORDER BY od.site_name, od.type, od.id",
+            f"SELECT {distinct}od.id, od.name, od.file, od.type, od.assembly_name, od.status "
+            f"FROM operationaldata od {join_sql} {where} ORDER BY od.assembly_name, od.type, od.id",
             params,
         ).fetchall()
 
     labels = []
-    if site_name:
-        labels.append(f"site={site_name}")
+    if assembly_name:
+        labels.append(f"assembly={assembly_name}")
     if type_filter:
         labels.append(f"type={type_filter}")
     if magnet_name:
@@ -957,10 +957,10 @@ def view_operationaldata(
     col_s = max((len(r[4] or "") for r in rows), default=20)
     col_t = max((len(r[3] or "") for r in rows), default=10)
     col_f = min(max((len(r[2] or "") for r in rows), default=40), 60)
-    print(f"{'ID':<6} {'Site':<{col_s}} {'Type':<{col_t}} {'File':<{col_f}} Status")
+    print(f"{'ID':<6} {'Assembly':<{col_s}} {'Type':<{col_t}} {'File':<{col_f}} Status")
     print("-" * (col_s + col_t + col_f + 16))
-    for id_, name, file_, type_, site_, status in rows:
-        print(f"{id_:<6} {(site_ or ''):<{col_s}} {(type_ or ''):<{col_t}} {(file_ or '')[:col_f]:<{col_f}} {status or ''}")
+    for id_, name, file_, type_, assembly_, status in rows:
+        print(f"{id_:<6} {(assembly_ or ''):<{col_s}} {(type_ or ''):<{col_t}} {(file_ or '')[:col_f]:<{col_f}} {status or ''}")
 
 
 def _duration_str(seconds: float | None) -> str:
@@ -973,7 +973,7 @@ def _duration_str(seconds: float | None) -> str:
 
 def view_overview_records(
     con,
-    site_name: str | None = None,
+    assembly_name: str | None = None,
     show_signatures: bool = False,
     magnet_name: str | None = None,
     part_name: str | None = None,
@@ -982,11 +982,11 @@ def view_overview_records(
 ) -> None:
     joins, conditions, params = [], ["ovr.merged_into IS NULL"], []
 
-    if site_name:
-        conditions.append("ovr.site_name = ?")
-        params.append(site_name)
+    if assembly_name:
+        conditions.append("ovr.assembly_name = ?")
+        params.append(assembly_name)
     if magnet_name or part_name:
-        joins.append("JOIN site_magnets sm ON sm.site_name = ovr.site_name")
+        joins.append("JOIN assembly_magnets sm ON sm.assembly_name = ovr.assembly_name")
         if magnet_name:
             conditions.append("sm.magnet_name = ?")
             params.append(magnet_name)
@@ -1017,8 +1017,8 @@ def view_overview_records(
     ).fetchall()
 
     labels = []
-    if site_name:
-        labels.append(f"site={site_name}")
+    if assembly_name:
+        labels.append(f"assembly={assembly_name}")
     if magnet_name:
         labels.append(f"magnet={magnet_name}")
     if part_name:
@@ -1077,7 +1077,7 @@ def list_objects(con) -> dict[str, list[str]]:
     return {
         "materials": [r[0] for r in con.execute("SELECT name FROM materials ORDER BY name").fetchall()],
         "magnets":   [r[0] for r in con.execute("SELECT name FROM magnets ORDER BY name").fetchall()],
-        "sites":     [r[0] for r in con.execute("SELECT name FROM sites ORDER BY name").fetchall()],
+        "assemblies":     [r[0] for r in con.execute("SELECT name FROM assemblies ORDER BY name").fetchall()],
         "housings":  [r[0] for r in con.execute("SELECT name FROM housing_config ORDER BY name").fetchall()],
     }
 
@@ -1091,14 +1091,14 @@ def delete_magnet(con, name: str) -> None:
     print(f"Deleted magnet '{name}' and its part links.")
 
 
-def delete_site(con, name: str) -> None:
-    if not exists(con, "sites", name):
-        print(f"Site '{name}' not found.")
+def delete_assembly(con, name: str) -> None:
+    if not exists(con, "assemblies", name):
+        print(f"Assembly '{name}' not found.")
         return
-    con.execute("DELETE FROM experiments WHERE site_name = ?", [name])
-    con.execute("DELETE FROM site_magnets WHERE site_name = ?", [name])
-    con.execute("DELETE FROM sites WHERE name = ?", [name])
-    print(f"Deleted site '{name}', its magnet links, and its experiments.")
+    con.execute("DELETE FROM experiments WHERE assembly_name = ?", [name])
+    con.execute("DELETE FROM assembly_magnets WHERE assembly_name = ?", [name])
+    con.execute("DELETE FROM assemblies WHERE name = ?", [name])
+    print(f"Deleted assembly '{name}', its magnet links, and its experiments.")
 
 
 # ---------------------------------------------------------------------------
@@ -1392,7 +1392,7 @@ _OVERVIEW_JSON_COLUMNS = [
     "signatures", "sync_info", "flow_params", "metrics", "debitbrut", "plateaux",
 ]
 _OVERVIEW_RECORD_COLUMNS = (
-    ["filename", "site_name", "housing", "mode", "t0", "duration", "teb", "bp"]
+    ["filename", "assembly_name", "housing", "mode", "t0", "duration", "teb", "bp"]
     + _OVERVIEW_SOURCE_LIST_COLUMNS
     + _OVERVIEW_JSON_COLUMNS
 )
@@ -1451,19 +1451,19 @@ def _write_overview_record_row(
             dur = float(columns.get("duration") or 0.0)
             print(f"  + overview_record  {filename}  [{columns.get('housing')}]  duration={dur:.1f}s")
 
-    if columns.get("site_name") is not None:
+    if columns.get("assembly_name") is not None:
         _postprocess_overview_record(con, filename, verbose=verbose)
 
 
-def _overview_record_to_columns(record, site_name: str | None) -> dict:
+def _overview_record_to_columns(record, assembly_name: str | None) -> dict:
     """Build a ``_write_overview_record_row`` columns dict from an OverviewRecord.
 
     Parameters
     ----------
     record:
         An ``OverviewRecord`` dataclass instance (``data`` attribute is ignored).
-    site_name : str or None
-        Site name FK (references ``sites.name``).
+    assembly_name : str or None
+        Assembly name FK (references ``assemblies.name``).
 
     Returns
     -------
@@ -1473,7 +1473,7 @@ def _overview_record_to_columns(record, site_name: str | None) -> dict:
     src = _fileset_lists(record.sources)
     return {
         "filename": record.filename,
-        "site_name": site_name,
+        "assembly_name": assembly_name,
         "housing": record.housing,
         "mode": record.mode or None,
         "t0": str(record.t0) if record.t0 is not None else None,
@@ -1502,7 +1502,7 @@ def _overview_record_to_columns(record, site_name: str | None) -> dict:
 
 
 def insert_overview_record(
-    con, record, site_name: str | None = None, verbose: bool = True
+    con, record, assembly_name: str | None = None, verbose: bool = True
 ) -> None:
     """Insert an OverviewRecord row; skip silently if filename already exists.
 
@@ -1510,7 +1510,7 @@ def insert_overview_record(
     :func:`merge_duplicate_pupitre_records`, run separately from
     ``populate overview-records-infer``.
 
-    If *site_name* is given, also runs :func:`_postprocess_overview_record`
+    If *assembly_name* is given, also runs :func:`_postprocess_overview_record`
     (sets ``mode``) right after inserting.
 
     Parameters
@@ -1519,18 +1519,18 @@ def insert_overview_record(
         Open DuckDB connection.
     record:
         An ``OverviewRecord`` dataclass instance (``data`` attribute is ignored).
-    site_name:
-        Site name FK (references ``sites.name``).  Pass ``None`` to leave unset.
+    assembly_name:
+        Assembly name FK (references ``assemblies.name``).  Pass ``None`` to leave unset.
     verbose:
         Print a status line when inserting.
     """
     _write_overview_record_row(
-        con, _overview_record_to_columns(record, site_name), on_conflict="skip", verbose=verbose
+        con, _overview_record_to_columns(record, assembly_name), on_conflict="skip", verbose=verbose
     )
 
 
 def upsert_overview_record(
-    con, record, site_name: str | None = None, verbose: bool = True
+    con, record, assembly_name: str | None = None, verbose: bool = True
 ) -> None:
     """Insert or replace an OverviewRecord row (idempotent re-processing).
 
@@ -1538,7 +1538,7 @@ def upsert_overview_record(
     :func:`merge_duplicate_pupitre_records`, run separately from
     ``populate overview-records-infer``.
 
-    If *site_name* is given, also runs :func:`_postprocess_overview_record`
+    If *assembly_name* is given, also runs :func:`_postprocess_overview_record`
     (sets ``mode``) right after upserting.
 
     Parameters
@@ -1547,22 +1547,22 @@ def upsert_overview_record(
         Open DuckDB connection.
     record:
         An ``OverviewRecord`` dataclass instance (``data`` attribute is ignored).
-    site_name:
-        Site name FK (references ``sites.name``).  Pass ``None`` to leave unset.
+    assembly_name:
+        Assembly name FK (references ``assemblies.name``).  Pass ``None`` to leave unset.
     verbose:
         Print a status line when upserting.
     """
     _write_overview_record_row(
-        con, _overview_record_to_columns(record, site_name), on_conflict="replace", verbose=verbose
+        con, _overview_record_to_columns(record, assembly_name), on_conflict="replace", verbose=verbose
     )
 
 
 def insert_overview_record_from_dict(
-    con, data: dict, site_name: str | None = None, verbose: bool = True, upsert: bool = False
+    con, data: dict, assembly_name: str | None = None, verbose: bool = True, upsert: bool = False
 ) -> None:
     """Insert (or upsert) an overview_record row from a plain dict.
 
-    Accepts the dict format produced by ``find_site_overview_records --json``,
+    Accepts the dict format produced by ``find_assembly_overview_records --json``,
     the pandas-records JSON written by ``magnetrun analysis/cli.py``, or any
     dict whose keys match the ``overview_records`` table columns.
 
@@ -1576,7 +1576,7 @@ def insert_overview_record_from_dict(
     :func:`merge_duplicate_pupitre_records`, run separately from
     ``populate overview-records-infer``.
 
-    If a site name ends up set (from *site_name* or ``data["site_name"]``),
+    If an assembly name ends up set (from *assembly_name* or ``data["assembly_name"]``),
     also runs :func:`_postprocess_overview_record` (sets ``mode``) right
     after writing the row.
 
@@ -1586,8 +1586,8 @@ def insert_overview_record_from_dict(
         Open DuckDB connection.
     data:
         Dict representing one overview record.  ``filename`` is required.
-    site_name:
-        Site name FK.  If *data* already contains ``site_name`` that value
+    assembly_name:
+        Assembly name FK.  If *data* already contains ``assembly_name`` that value
         is used; this argument takes precedence when not ``None``.
     verbose:
         Print a status line.
@@ -1631,12 +1631,12 @@ def insert_overview_record_from_dict(
     t0_raw = data.get("t0")
     t0 = str(t0_raw) if t0_raw is not None else None
 
-    effective_site = site_name if site_name is not None else data.get("site_name")
+    effective_assembly = assembly_name if assembly_name is not None else data.get("assembly_name")
     bp = float(data.get("bp", data.get("BP", 0.0)) or 0.0)
 
     columns = {
         "filename": filename,
-        "site_name": effective_site,
+        "assembly_name": effective_assembly,
         "housing": data.get("housing") or None,
         "mode": data.get("mode") or None,
         "t0": t0,
@@ -1657,14 +1657,14 @@ def insert_overview_record_from_dict(
     )
 
 
-def attach_site_to_overview_record(
-    con, filename: str, site_name: str, verbose: bool = True
+def attach_assembly_to_overview_record(
+    con, filename: str, assembly_name: str, verbose: bool = True
 ) -> None:
-    """Set or overwrite site_name and housing on an existing overview_record row.
+    """Set or overwrite assembly_name and housing on an existing overview_record row.
 
-    The housing value is taken from sites.housing for the given site_name.
+    The housing value is taken from assemblies.housing for the given assembly_name.
     Also runs :func:`_postprocess_overview_record` (sets ``mode``) now that
-    ``site_name`` is known.
+    ``assembly_name`` is known.
 
     Parameters
     ----------
@@ -1672,16 +1672,16 @@ def attach_site_to_overview_record(
         Open DuckDB connection.
     filename:
         Primary key of the overview_records row (basename without extension).
-    site_name:
-        Site name to attach (must exist in the sites table).
+    assembly_name:
+        Assembly name to attach (must exist in the assemblies table).
     verbose:
         Print a status line on success.
 
     Raises
     ------
     ValueError
-        If *filename* is not found in overview_records, or *site_name* is not
-        found in sites.
+        If *filename* is not found in overview_records, or *assembly_name* is not
+        found in assemblies.
     """
     if con.execute(
         "SELECT 1 FROM overview_records WHERE filename = ?", [filename]
@@ -1689,18 +1689,18 @@ def attach_site_to_overview_record(
         raise ValueError(f"No overview_record found for filename '{filename}'")
 
     row = con.execute(
-        "SELECT housing FROM sites WHERE name = ?", [site_name]
+        "SELECT housing FROM assemblies WHERE name = ?", [assembly_name]
     ).fetchone()
     if row is None:
-        raise ValueError(f"No site found for site_name '{site_name}'")
+        raise ValueError(f"No assembly found for assembly_name '{assembly_name}'")
     housing = row[0]
 
     con.execute(
-        "UPDATE overview_records SET site_name = ?, housing = ? WHERE filename = ?",
-        [site_name, housing, filename],
+        "UPDATE overview_records SET assembly_name = ?, housing = ? WHERE filename = ?",
+        [assembly_name, housing, filename],
     )
     if verbose:
-        print(f"  ~ overview_record  {filename}  site_name → {site_name}  housing → {housing}")
+        print(f"  ~ overview_record  {filename}  assembly_name → {assembly_name}  housing → {housing}")
     _postprocess_overview_record(con, filename, verbose=verbose)
 
 
@@ -1736,8 +1736,8 @@ def _parse_overview_filename(filename: str) -> tuple[str, datetime | None]:
     return housing, naive.replace(tzinfo=FILE_TZ)
 
 
-def _find_site_for_timestamp(con, housing: str, t0: datetime, db_tz) -> str | None:
-    """Return the unique site whose operational window contains *t0*.
+def _find_assembly_for_timestamp(con, housing: str, t0: datetime, db_tz) -> str | None:
+    """Return the unique assembly whose operational window contains *t0*.
 
     Parameters
     ----------
@@ -1748,17 +1748,17 @@ def _find_site_for_timestamp(con, housing: str, t0: datetime, db_tz) -> str | No
     t0 : datetime
         Timezone-aware timestamp (Europe/Paris) to match.
     db_tz : zoneinfo.ZoneInfo
-        Timezone the ``sites.commissioned_at`` / ``decommissioned_at``
+        Timezone the ``assemblies.commissioned_at`` / ``decommissioned_at``
         columns are stored in.
 
     Returns
     -------
     str or None
-        The matching ``sites.name``, or ``None`` if zero or more than one
-        site matches (ambiguous — left for manual resolution).
+        The matching ``assemblies.name``, or ``None`` if zero or more than one
+        assembly matches (ambiguous — left for manual resolution).
     """
     rows = con.execute(
-        "SELECT name, commissioned_at, decommissioned_at FROM sites WHERE housing = ?",
+        "SELECT name, commissioned_at, decommissioned_at FROM assemblies WHERE housing = ?",
         [housing],
     ).fetchall()
 
@@ -1776,16 +1776,16 @@ def _find_site_for_timestamp(con, housing: str, t0: datetime, db_tz) -> str | No
     return matches[0] if len(matches) == 1 else None
 
 
-def resolve_overview_site(
+def resolve_overview_assembly(
     con, filename: str, db_tz
 ) -> tuple[str | None, datetime | None, str | None]:
-    """Resolve ``(housing, t0, site_name)`` for an overview_records filename.
+    """Resolve ``(housing, t0, assembly_name)`` for an overview_records filename.
 
     ``housing`` is always the ``_``-separated prefix of *filename* (see
-    :func:`_parse_overview_filename`), returned even when ``t0``/``site_name``
-    cannot be determined.  ``t0`` and ``site_name`` are only both set when the
-    filename's timestamp parses **and** it falls in exactly one site's
-    commissioned/decommissioned window (see :func:`_find_site_for_timestamp`).
+    :func:`_parse_overview_filename`), returned even when ``t0``/``assembly_name``
+    cannot be determined.  ``t0`` and ``assembly_name`` are only both set when the
+    filename's timestamp parses **and** it falls in exactly one assembly's
+    commissioned/decommissioned window (see :func:`_find_assembly_for_timestamp`).
 
     Parameters
     ----------
@@ -1799,19 +1799,19 @@ def resolve_overview_site(
     Returns
     -------
     tuple[str | None, datetime | None, str | None]
-        ``(housing, t0, site_name)``. ``housing`` is set whenever *filename*
+        ``(housing, t0, assembly_name)``. ``housing`` is set whenever *filename*
         has a ``_``-separated prefix. ``t0`` (naive, expressed in *db_tz*) is
         set whenever the filename's timestamp parses, independent of whether
-        a site was matched. ``site_name`` is ``None`` unless exactly one site's
+        an assembly was matched. ``assembly_name`` is ``None`` unless exactly one assembly's
         window contains ``t0``.
     """
     housing, t0 = _parse_overview_filename(filename)
     if t0 is None:
         return housing, None, None
 
-    site_name = _find_site_for_timestamp(con, housing, t0, db_tz)
+    assembly_name = _find_assembly_for_timestamp(con, housing, t0, db_tz)
     t0_db = t0.astimezone(db_tz).replace(tzinfo=None)
-    return housing, t0_db, site_name
+    return housing, t0_db, assembly_name
 
 
 def _mean_across_frames(dfs: list, column: str) -> float:
@@ -1928,11 +1928,11 @@ def _resolve_source_path(name: str, housing: str | None) -> str:
 
 
 def _postprocess_overview_record(con, filename: str, verbose: bool = True) -> str:
-    """Run mode inference (and future enrichment steps) once site_name is known.
+    """Run mode inference (and future enrichment steps) once assembly_name is known.
 
-    Called from every code path that sets ``overview_records.site_name``:
-    the insert/upsert/from_dict writers, :func:`attach_site_to_overview_record`,
-    and :func:`infer_overview_record_fields`.  A no-op until ``site_name`` is
+    Called from every code path that sets ``overview_records.assembly_name``:
+    the insert/upsert/from_dict writers, :func:`attach_assembly_to_overview_record`,
+    and :func:`infer_overview_record_fields`.  A no-op until ``assembly_name`` is
     non-NULL and at least one overview source file is on record and readable.
 
     Parameters
@@ -1947,19 +1947,19 @@ def _postprocess_overview_record(con, filename: str, verbose: bool = True) -> st
     Returns
     -------
     str
-        ``"applied"``, ``"skipped_no_site"``, ``"skipped_no_sources"``,
+        ``"applied"``, ``"skipped_no_assembly"``, ``"skipped_no_sources"``,
         ``"skipped_no_mode_data"``, or ``"not_found"``.
     """
     row = con.execute(
-        "SELECT site_name, sources_overview FROM overview_records WHERE filename = ?",
+        "SELECT assembly_name, sources_overview FROM overview_records WHERE filename = ?",
         [filename],
     ).fetchone()
     if row is None:
         return "not_found"
 
-    site_name, sources_overview = row
-    if site_name is None:
-        return "skipped_no_site"
+    assembly_name, sources_overview = row
+    if assembly_name is None:
+        return "skipped_no_assembly"
     if not sources_overview:
         return "skipped_no_sources"
 
@@ -1995,11 +1995,11 @@ def _postprocess_overview_record(con, filename: str, verbose: bool = True) -> st
 def infer_overview_record_fields(
     con, filename: str, db_tz, verbose: bool = True
 ) -> str:
-    """Infer ``housing``/``t0``/``site_name``/``duration``/``teb``/``bp`` for one row.
+    """Infer ``housing``/``t0``/``assembly_name``/``duration``/``teb``/``bp`` for one row.
 
     ``housing`` and ``t0`` are parsed from *filename* (python_magnetrun's
-    ``<housing>_Overview_<YYMMDD-HHMM>`` convention); ``site_name`` is the
-    unique ``sites`` row whose commissioned/decommissioned window contains
+    ``<housing>_Overview_<YYMMDD-HHMM>`` convention); ``assembly_name`` is the
+    unique ``assemblies`` row whose commissioned/decommissioned window contains
     ``t0``.  ``duration`` is only re-estimated when the stored value is
     ``0``: read directly from the single ``sources_overview`` file when
     there's exactly one, otherwise as ``(last file's t0 + duration) -
@@ -2008,7 +2008,7 @@ def infer_overview_record_fields(
     columns across every existing ``sources_pupitre`` file.  Requires
     ``python_magnetrun`` to be installed when either source list is
     non-empty.  On success, also runs :func:`_postprocess_overview_record`
-    (which sets ``mode`` now that ``site_name`` is known).  ``signatures``,
+    (which sets ``mode`` now that ``assembly_name`` is known).  ``signatures``,
     ``sync_info``, ``flow_params``, ``metrics``, ``debitbrut``, and
     ``plateaux`` are left untouched.
 
@@ -2027,7 +2027,7 @@ def infer_overview_record_fields(
     Returns
     -------
     str
-        ``"resolved"``, ``"no_site_match"``, ``"bad_filename"``, or
+        ``"resolved"``, ``"no_assembly_match"``, ``"bad_filename"``, or
         ``"not_found"``.
     """
     row = con.execute(
@@ -2040,19 +2040,19 @@ def infer_overview_record_fields(
         return "not_found"
     sources_overview, sources_pupitre, duration_db = row
 
-    housing, t0_db, site_name = resolve_overview_site(con, filename, db_tz)
+    housing, t0_db, assembly_name = resolve_overview_assembly(con, filename, db_tz)
     if t0_db is None:
         if verbose:
             print(f"  ! overview_record {filename}: could not parse timestamp from filename")
         return "bad_filename"
 
-    if site_name is None:
+    if assembly_name is None:
         if verbose:
             print(
-                f"  ! overview_record {filename}: no unique site match "
+                f"  ! overview_record {filename}: no unique assembly match "
                 f"for housing={housing} t0={t0_db}"
             )
-        return "no_site_match"
+        return "no_assembly_match"
 
     duration = float(duration_db or 0.0)
     if not duration and sources_overview:
@@ -2089,13 +2089,13 @@ def infer_overview_record_fields(
     bp = _mean_across_frames(pupitre_frames, "BP")
 
     con.execute(
-        "UPDATE overview_records SET site_name = ?, housing = ?, t0 = ?, "
+        "UPDATE overview_records SET assembly_name = ?, housing = ?, t0 = ?, "
         "duration = ?, teb = ?, bp = ? WHERE filename = ?",
-        [site_name, housing, t0_db, duration, teb, bp, filename],
+        [assembly_name, housing, t0_db, duration, teb, bp, filename],
     )
     if verbose:
         print(
-            f"  ~ overview_record  {filename}  site_name → {site_name}  t0={t0_db}  "
+            f"  ~ overview_record  {filename}  assembly_name → {assembly_name}  t0={t0_db}  "
             f"duration={duration:.1f}s  teb={teb:.2f}  bp={bp:.2f}"
         )
     _postprocess_overview_record(con, filename, verbose=verbose)
@@ -2113,7 +2113,7 @@ def _merge_overview_rows(existing: dict, incoming: dict) -> dict:
     """Combine two overview_records rows that share a pupitre source file.
 
     The row with the earlier ``t0`` supplies identity fields (``filename``,
-    ``site_name``, ``housing``, ``mode``, ``t0``); every ``sources_*``
+    ``assembly_name``, ``housing``, ``mode``, ``t0``); every ``sources_*``
     column is unioned and de-duplicated; ``duration`` is the span from the
     earlier row's ``t0`` to the true end of whichever constituent ends
     latest (falling back to the sum of the two rows' ``duration`` values
@@ -2143,7 +2143,7 @@ def _merge_overview_rows(existing: dict, incoming: dict) -> dict:
     )
     merged = {
         "filename": lower["filename"],
-        "site_name": lower["site_name"],
+        "assembly_name": lower["assembly_name"],
         "housing": lower["housing"],
         "mode": lower["mode"],
         "t0": lower["t0"],
@@ -2238,7 +2238,7 @@ def _find_pupitre_duplicate_pair(group: dict, max_gap_seconds: float) -> tuple[d
     ----------
     group : dict
         Maps ``filename`` to row dict, for rows already known to share the
-        same ``(housing, site_name)``.
+        same ``(housing, assembly_name)``.
     max_gap_seconds : float
         Maximum real-time gap (seconds) between the two rows' windows for
         them to still count as adjacent.
@@ -2285,7 +2285,7 @@ def merge_duplicate_pupitre_records(
     """Merge overview_records rows that share a pupitre source file and are time-adjacent.
 
     Table-wide sweep, intended to run from ``populate overview-records-infer``
-    once ``housing``/``site_name``/``t0`` have been resolved for the rows
+    once ``housing``/``assembly_name``/``t0`` have been resolved for the rows
     involved — never at insert time, and never scoped by ``housing`` alone.
 
     A pupitre log can legitimately be referenced by several genuinely
@@ -2295,10 +2295,10 @@ def merge_duplicate_pupitre_records(
     see :func:`_find_pupitre_duplicate_pair`, which additionally requires the
     real gap between the two rows' windows to be within *max_gap_seconds*.
 
-    Live rows (``merged_into IS NULL``) are grouped by ``(housing, site_name)``;
-    rows with ``site_name IS NULL`` form their own ``(housing, NULL)`` group
+    Live rows (``merged_into IS NULL``) are grouped by ``(housing, assembly_name)``;
+    rows with ``assembly_name IS NULL`` form their own ``(housing, NULL)`` group
     and are only ever compared against each other, never against a row that
-    already has a resolved ``site_name`` for that housing. Within each group,
+    already has a resolved ``assembly_name`` for that housing. Within each group,
     any qualifying pair is merged: the row with the lower ``t0`` is the
     survivor, updated in place (via :func:`_merge_overview_rows`); the other
     row is tombstoned — ``merged_into`` set to the survivor's filename —
@@ -2336,7 +2336,7 @@ def merge_duplicate_pupitre_records(
         row = dict(zip(_OVERVIEW_RECORD_COLUMNS, values))
         for key in _OVERVIEW_JSON_COLUMNS:
             row[key] = json.loads(row[key]) if row[key] else {}
-        groups.setdefault((row["housing"], row["site_name"]), {})[row["filename"]] = row
+        groups.setdefault((row["housing"], row["assembly_name"]), {})[row["filename"]] = row
 
     n_merges = 0
     for group in groups.values():
@@ -2378,23 +2378,23 @@ def merge_duplicate_pupitre_records(
     return {"groups_checked": len(groups), "merges": n_merges}
 
 
-def update_site_magnet(con, site_name: str, magnet_name: str, **kwargs) -> None:
-    """Update positional/temporal fields on an existing site_magnets row.
+def update_assembly_magnet(con, assembly_name: str, magnet_name: str, **kwargs) -> None:
+    """Update positional/temporal fields on an existing assembly_magnets row.
 
     Accepted kwargs: z_offset, r_offset, parallax, commissioned_at,
     decommissioned_at, metadata.  Only non-None values are updated.
-    Raises ValueError if the (site_name, magnet_name) row does not exist.
+    Raises ValueError if the (assembly_name, magnet_name) row does not exist.
     """
-    updates = {k: v for k, v in kwargs.items() if k in _SITE_MAGNET_FIELDS and v is not None}
+    updates = {k: v for k, v in kwargs.items() if k in _ASSEMBLY_MAGNET_FIELDS and v is not None}
     if not updates:
         print("Nothing to update.")
         return
 
     if not con.execute(
-        "SELECT 1 FROM site_magnets WHERE site_name = ? AND magnet_name = ?",
-        [site_name, magnet_name],
+        "SELECT 1 FROM assembly_magnets WHERE assembly_name = ? AND magnet_name = ?",
+        [assembly_name, magnet_name],
     ).fetchone():
-        raise ValueError(f"No link between site '{site_name}' and magnet '{magnet_name}'.")
+        raise ValueError(f"No link between assembly '{assembly_name}' and magnet '{magnet_name}'.")
 
     set_clauses = []
     values = []
@@ -2407,10 +2407,10 @@ def update_site_magnet(con, site_name: str, magnet_name: str, **kwargs) -> None:
         else:
             values.append(float(value))
 
-    values.extend([site_name, magnet_name])
+    values.extend([assembly_name, magnet_name])
     con.execute(
-        f"UPDATE site_magnets SET {', '.join(set_clauses)} "
-        "WHERE site_name = ? AND magnet_name = ?",
+        f"UPDATE assembly_magnets SET {', '.join(set_clauses)} "
+        "WHERE assembly_name = ? AND magnet_name = ?",
         values,
     )
-    print(f"Updated site_magnets ({site_name}, {magnet_name}): {sorted(updates)}")
+    print(f"Updated assembly_magnets ({assembly_name}, {magnet_name}): {sorted(updates)}")

@@ -1,30 +1,30 @@
 """
 stress_map.py
 =============
-Hoop-stress analysis for a site using DuckDB + YAML geometry files.
+Hoop-stress analysis for an assembly using DuckDB + YAML geometry files.
 
 Replaces the Django/ORM data-access layer of the MagnetDB production chain
 with DuckDB queries; everything from magnet_setup() onwards is identical.
 
 Public API
 ----------
-    load_site_config_from_duckdb(site_name, db_path)
-    prepare_geometry_directory(site_name, magnets, geometries_dir, tempdir)
+    load_assembly_config_from_duckdb(assembly_name, db_path)
+    prepare_geometry_directory(assembly_name, magnets, geometries_dir, tempdir)
     load_magnettools(config, tempdir, debug)
     compute_hoop_at_currents(data, i_h, i_b, i_s)
-    annotate_with_rpe(result, site_name, db_path)
+    annotate_with_rpe(result, assembly_name, db_path)
     compute_stress_stats(df)
     compute_fatigue(df, col)
     plot_stress_map(df, magnet_name, i_h)
-    plot_stress_history(df, site_name)
-    plot_fatigue(df, cycles_df, site_name, col, bins)
+    plot_stress_history(df, assembly_name)
+    plot_fatigue(df, cycles_df, assembly_name, col, bins)
 
 CLI (also accessible via ``magnetdb.py hoop-stress``)
 -----------------------------------------------------
-    python stress_map.py barchart <site> [--i-h ...] [--i-b ...] [--i-s ...]
-    python stress_map.py history  <site> [--pupitre ...] [--use-mrun]
-    python stress_map.py stats    <site> [--pupitre ...] [--output ...]
-    python stress_map.py fatigue  <site> [--pupitre ...] [--bins ...]
+    python stress_map.py barchart <assembly> [--i-h ...] [--i-b ...] [--i-s ...]
+    python stress_map.py history  <assembly> [--pupitre ...] [--use-mrun]
+    python stress_map.py stats    <assembly> [--pupitre ...] [--output ...]
+    python stress_map.py fatigue  <assembly> [--pupitre ...] [--bins ...]
 
 Note on Rpe units
 -----------------
@@ -53,7 +53,7 @@ from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE, _SRV_SUBDIR as _DEF
 from python_magnetrun.magnetdata import load_magnetdata
 from python_magnetrun.runetl import prepareData
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
-from python_magnetsetup.ana import msite_setup
+from python_magnetsetup.ana import assembly_setup
 from python_magnetsetup.config import appenv
 
 
@@ -83,32 +83,32 @@ def _format_material_row(row: dict) -> dict:
     }
 
 
-def load_site_config_from_duckdb(
-    site_name: str,
+def load_assembly_config_from_duckdb(
+    assembly_name: str,
     db_path: str,
     magnet_override: str | None = None,
     con: "duckdb.DuckDBPyConnection | None" = None,
 ) -> tuple[str, list[tuple[str, dict, str | None]]]:
     """
-    Return (housing, [(magnet_name, config, geometry_data), ...]) for every magnet at a site.
+    Return (housing, [(magnet_name, config, geometry_data), ...]) for every magnet at an assembly.
 
-    Resolve the site → magnet mapping and load the full part/material config
+    Resolve the assembly → magnet mapping and load the full part/material config
     in a single DB connection.  All magnets are returned regardless of
     commissioned/decommissioned status, ordered by commissioned_at DESC.
 
     Parameters
     ----------
-    site_name       : Site name registered in DuckDB (e.g. "M9")
+    assembly_name       : Assembly name registered in DuckDB (e.g. "M9")
     db_path         : Path to the DuckDB file
     magnet_override : Explicit magnet name; returns only that magnet.
-                      A warning is printed if it is not linked to the site.
+                      A warning is printed if it is not linked to the assembly.
     con             : Reuse an already-open connection instead of opening a new
                        read-only one (avoids DuckDB's "different configuration"
                        error when called from within a caller's open connection).
 
     Returns
     -------
-    housing : from sites.housing (e.g. "M9")
+    housing : from assemblies.housing (e.g. "M9")
     magnets : list of (magnet_name, config, geometry_data) triples — config is a
               dict ready for magnet_setup() / prepare_geometry_directory();
               geometry_data is the JSON-serialised python_magnetgeo object stored
@@ -116,42 +116,42 @@ def load_site_config_from_duckdb(
 
     Raises
     ------
-    ValueError : site not found, no magnet linked, MAT_ISOLANT missing,
+    ValueError : assembly not found, no magnet linked, MAT_ISOLANT missing,
                  or no magnet has parts in the DB.
     """
     owns_con = con is None
     if con is None:
         con = duckdb.connect(db_path, read_only=True)
 
-    # ── 1. Site housing ───────────────────────────────────────────────────────
-    site_row = con.execute(
-        "SELECT housing FROM sites WHERE name = ?", [site_name]
+    # ── 1. Assembly housing ───────────────────────────────────────────────────────
+    assembly_row = con.execute(
+        "SELECT housing FROM assemblies WHERE name = ?", [assembly_name]
     ).fetchone()
-    if site_row is None:
+    if assembly_row is None:
         if owns_con:
             con.close()
         raise ValueError(
-            f"Site '{site_name}' not found in DB. "
-            "Check the site name and ensure seeds are loaded."
+            f"Assembly '{assembly_name}' not found in DB. "
+            "Check the assembly name and ensure seeds are loaded."
         )
-    housing = site_row[0]
+    housing = assembly_row[0]
 
     # ── 2. Resolve magnet list ────────────────────────────────────────────────
     rows = con.execute(
         """
         SELECT magnet_name
-        FROM site_magnets
-        WHERE site_name = ?
+        FROM assembly_magnets
+        WHERE assembly_name = ?
         ORDER BY commissioned_at DESC NULLS LAST
         """,
-        [site_name],
+        [assembly_name],
     ).fetchall()
     if not rows:
         if owns_con:
             con.close()
         raise ValueError(
-            f"No magnet linked to site '{site_name}'. "
-            "Check the site name and ensure seeds are loaded."
+            f"No magnet linked to assembly '{assembly_name}'. "
+            "Check the assembly name and ensure seeds are loaded."
         )
     magnet_names = [r[0] for r in rows]
 
@@ -261,7 +261,7 @@ def load_site_config_from_duckdb(
 
     if not results:
         raise ValueError(
-            f"No magnet with parts found for site '{site_name}'. "
+            f"No magnet with parts found for assembly '{assembly_name}'. "
             "Check the magnet names and ensure seeds are loaded."
         )
 
@@ -269,37 +269,37 @@ def load_site_config_from_duckdb(
 
 
 # ---------------------------------------------------------------------------
-# Step 1b — Generate MSite YAML from DuckDB geometry_data + site offsets
-#            Mirrors Site.geometry_config_to_json() in python_magnetdb/models.py
+# Step 1b — Generate Assembly YAML from DuckDB geometry_data + assembly offsets
+#            Mirrors Assembly.geometry_config_to_json() in python_magnetdb/models.py
 # ---------------------------------------------------------------------------
 
 
 def geometry_config_to_yaml(
-    site_name: str,
+    assembly_name: str,
     db_path: str,
     output_dir: str | Path | None = None,
     geometries_dir: str | Path | None = None,
     con: "duckdb.DuckDBPyConnection | None" = None,
 ) -> str:
     """
-    Build a python_magnetgeo MSite by rebuilding each linked magnet's
+    Build a python_magnetgeo Assembly by rebuilding each linked magnet's
     assembly YAML on the fly from that magnet's own parts, then combining
-    them with each magnet's ``site_magnets`` positional offsets.
+    them with each magnet's ``assembly_magnets`` positional offsets.
 
-    Mirrors ``Site.geometry_config_to_json()`` in python_magnetdb/models.py,
+    Mirrors ``Assembly.geometry_config_to_json()`` in python_magnetdb/models.py,
     replacing the Django ORM with DuckDB queries.
 
     ``parts.geometry_data`` is the only geometry ever persisted — there is
-    no stored magnet- or site-level geometry to read. Each magnet linked to
-    *site_name* has its assembly YAML reconstructed by
+    no stored magnet- or assembly-level geometry to read. Each magnet linked to
+    *assembly_name* has its assembly YAML reconstructed by
     ``magnet_geometry_config_to_yaml()`` from its parts' ``geometry_data``;
-    this function combines those into one ``MSite``.
+    this function combines those into one ``Assembly``.
 
     Parameters
     ----------
-    site_name      : Site name as registered in DuckDB (e.g. ``"M9_M19061901_0"``)
+    assembly_name      : Assembly name as registered in DuckDB (e.g. ``"M9_M19061901_0"``)
     db_path        : Path to the DuckDB file
-    output_dir     : If given, also write ``<site_name>.yaml`` (and each
+    output_dir     : If given, also write ``<assembly_name>.yaml`` (and each
                      magnet's ``<magnet_name>.yaml``) to this directory via
                      ``write_to_yaml()``.  The YAML string is returned
                      regardless — this is a write location, not a read source.
@@ -315,18 +315,18 @@ def geometry_config_to_yaml(
     Returns
     -------
     str
-        YAML representation of the ``MSite``.
+        YAML representation of the ``Assembly``.
 
     Raises
     ------
     ValueError
-        If the site is not found, has no magnets, or any part of a linked
+        If the assembly is not found, has no magnets, or any part of a linked
         magnet is missing ``geometry_data``.
     """
     import yaml as _yaml
-    from python_magnetgeo.MSite import MSite
+    from python_magnetgeo.Assembly import Assembly
 
-    print(f"  ── Preparing geometry directory for site '{site_name}' …")
+    print(f"  ── Preparing geometry directory for assembly '{assembly_name}' …")
     geo_dir = Path(geometries_dir) if geometries_dir else None
 
     owns_con = con is None
@@ -334,28 +334,28 @@ def geometry_config_to_yaml(
         con = duckdb.connect(db_path, read_only=True)
 
     if (
-        con.execute("SELECT 1 FROM sites WHERE name = ?", [site_name]).fetchone()
+        con.execute("SELECT 1 FROM assemblies WHERE name = ?", [assembly_name]).fetchone()
         is None
     ):
         if owns_con:
             con.close()
-        raise ValueError(f"Site '{site_name}' not found in DB.")
+        raise ValueError(f"Assembly '{assembly_name}' not found in DB.")
 
     rows = con.execute(
         """
         SELECT m.name, m.geometry_data, sm.z_offset, sm.r_offset, sm.parallax
-        FROM site_magnets sm
+        FROM assembly_magnets sm
         JOIN magnets m ON m.name = sm.magnet_name
-        WHERE sm.site_name = ?
+        WHERE sm.assembly_name = ?
         ORDER BY sm.commissioned_at DESC NULLS LAST, m.name
     """,
-        [site_name],
+        [assembly_name],
     ).fetchall()
     if owns_con:
         con.close()
 
     if not rows:
-        raise ValueError(f"No magnets linked to site '{site_name}'.")
+        raise ValueError(f"No magnets linked to assembly '{assembly_name}'.")
 
     magnets = []
     z_offset: list[float] = []
@@ -377,8 +377,8 @@ def geometry_config_to_yaml(
         r_offset.append(float(r or 0.0))
         paralax.append(float(p or 0.0))
 
-    obj = MSite(
-        name=site_name,
+    obj = Assembly(
+        name=assembly_name,
         magnets=magnets,
         screens=[],
         z_offset=z_offset,
@@ -388,7 +388,7 @@ def geometry_config_to_yaml(
 
     if output_dir is not None:
         obj.write_to_yaml(str(output_dir))
-        print(f"   Written {Path(output_dir) / site_name}.yaml")
+        print(f"   Written {Path(output_dir) / assembly_name}.yaml")
 
     return obj.to_yaml()
 
@@ -597,7 +597,7 @@ def magnet_geometry_config_to_yaml(
 
 
 def prepare_geometry_directory(
-    site_name: str,
+    assembly_name: str,
     config: dict,
     db_path: str,
     geometries_dir: str | Path | None = None,
@@ -610,13 +610,13 @@ def prepare_geometry_directory(
         ├── config.json
         └── data/
             ├── geometries/
-            │   ├── {site_name}.yaml        ← MSite geometry (site + all magnets)
+            │   ├── {assembly_name}.yaml        ← Assembly geometry (assembly + all magnets)
             │   ├── {part_name}.yaml        ← one file per part
             │   └── ...
             └── cad/
 
-    site_name is used both for the temp-directory prefix and to look up the
-    site's magnets in the DB.
+    assembly_name is used both for the temp-directory prefix and to look up the
+    assembly's magnets in the DB.
 
     Geometry is rebuilt on the fly, bottom-up, from ``parts.geometry_data`` —
     the only geometry ever persisted — via ``geometry_config_to_yaml()``.
@@ -646,15 +646,15 @@ def prepare_geometry_directory(
         )
         src_dir = None
 
-    tempdir = Path(tempfile.mkdtemp(prefix=f"magnetdb_student_{site_name}_"))
+    tempdir = Path(tempfile.mkdtemp(prefix=f"magnetdb_student_{assembly_name}_"))
     data_geom = tempdir / "data" / "geometries"
     data_geom.mkdir(parents=True)
     (tempdir / "data" / "cad").mkdir()
 
     geometry_data = geometry_config_to_yaml(
-        site_name, db_path, output_dir=data_geom, geometries_dir=src_dir, con=con,
+        assembly_name, db_path, output_dir=data_geom, geometries_dir=src_dir, con=con,
     )
-    with open(data_geom / f"{site_name}.yaml", "w") as f:
+    with open(data_geom / f"{assembly_name}.yaml", "w") as f:
         f.write(geometry_data)
 
     # TODO: add save per magnet
@@ -691,7 +691,7 @@ def load_magnettools(config: dict, tempdir: Path, debug: bool = False) -> tuple:
         optim_repo=data_dir,
     )
     # print(f"load_magnettools: env={env}, config={config}")
-    return msite_setup(env, config, debug)
+    return assembly_setup(env, config, debug)
 
 
 # ---------------------------------------------------------------------------
@@ -750,7 +750,7 @@ def validate_fast_from_pupitre(
     magnet_type: str = "H",
     check: bool = False,
     use_mrun: bool = False,
-    site: str = "",
+    assembly: str = "",
     z0_h: list[float] | None = None,
     z0_b: list[float] | None = None,
 ) -> pd.DataFrame:
@@ -789,7 +789,7 @@ def validate_fast_from_pupitre(
     use_mrun     : If True, load via python_magnetrun.MagnetRun.load_mrun() instead
                    of load_magnetdata() + prepareData(); supports .tdms in addition
                    to .txt/.csv and handles path auto-resolution.
-    site         : Site name forwarded to load_mrun() (ignored when use_mrun=False)
+    assembly         : Assembly name forwarded to load_mrun() (ignored when use_mrun=False)
     z0_h         : Per-Tube observation z-position, in H1_fast/H2_fast/…
                    order (e.g. from resolve_z0_by_type()). Defaults to all
                    0.0 (magnets centered on z=0) when None.
@@ -943,7 +943,7 @@ def validate_fast_from_pupitre(
     if use_mrun:
         from python_magnetrun.MagnetRun import load_mrun
 
-        mrun = load_mrun(pupitre_file, housing=housing, site=site)
+        mrun = load_mrun(pupitre_file, housing=housing, assembly=assembly)
         mrun.MagnetData.Units()
         df = mrun.MagnetData.Data
         units = mrun.MagnetData.units
@@ -1120,21 +1120,21 @@ def _expand_pupitre_pattern(
 
 
 def resolve_pupitre_files(
-    site_name: str,
+    assembly_name: str,
     db_path: str,
     files: list[str] | None = None,
     pupitre_datadir: str = "",
     housing: str = "",
 ) -> list[str]:
     """
-    Return the ordered list of pupitre files to process for a site.
+    Return the ordered list of pupitre files to process for an assembly.
 
     Parameters
     ----------
-    site_name      : Site name registered in DuckDB (e.g. "M9")
+    assembly_name      : Assembly name registered in DuckDB (e.g. "M9")
     db_path        : Path to the DuckDB file
     files          : Explicit file list from --pupitre.
-                     - None or empty → fetch all experiment files for the site.
+                     - None or empty → fetch all experiment files for the assembly.
                      - Non-empty     → validate each against the experiments table;
                                        files absent from the table trigger a warning
                                        but are still included.
@@ -1156,18 +1156,18 @@ def resolve_pupitre_files(
     if not files:
         rows = con.execute(
             "SELECT file FROM experiments "
-            "WHERE site_name = ? AND file IS NOT NULL "
+            "WHERE assembly_name = ? AND file IS NOT NULL "
             "ORDER BY id",
-            [site_name],
+            [assembly_name],
         ).fetchall()
         con.close()
         result = [r[0] for r in rows if r[0]]
         if not result:
             raise ValueError(
-                f"No experiment files found for site '{site_name}'. "
+                f"No experiment files found for assembly '{assembly_name}'. "
                 "Populate the experiments table or pass --pupitre explicitly."
             )
-        print(f"   Found {len(result)} experiment file(s) for site '{site_name}'.")
+        print(f"   Found {len(result)} experiment file(s) for assembly '{assembly_name}'.")
         resolved: list[str] = []
         for f in result:
             resolved.extend(_expand_pupitre_pattern(f, pupitre_datadir, housing))
@@ -1182,12 +1182,12 @@ def resolve_pupitre_files(
             basename = Path(f).name
             row = con.execute(
                 "SELECT 1 FROM experiments "
-                "WHERE site_name = ? AND (file = ? OR file LIKE ?)",
-                [site_name, f, f"%/{basename}"],
+                "WHERE assembly_name = ? AND (file = ? OR file LIKE ?)",
+                [assembly_name, f, f"%/{basename}"],
             ).fetchone()
             if row is None:
                 print(
-                    f"  [WARN] '{f}' not found in experiments for site '{site_name}'."
+                    f"  [WARN] '{f}' not found in experiments for assembly '{assembly_name}'."
                 )
         resolved.extend(expanded)
     con.close()
@@ -1199,12 +1199,12 @@ def resolve_pupitre_files(
 # ---------------------------------------------------------------------------
 
 
-def annotate_with_rpe(result: dict, site_name: str, db_path: str) -> pd.DataFrame:
+def annotate_with_rpe(result: dict, assembly_name: str, db_path: str) -> pd.DataFrame:
     """
     Join hoop stress results with Rpe values from DuckDB to compute
     σ/Rpe safety ratios.
 
-    All coil parts (helix, bitter, supra) are fetched for the site, ordered
+    All coil parts (helix, bitter, supra) are fetched for the assembly, ordered
     helices first then bitters then supras (by rank within each type) to match
     the output order of bmap.getHoop, and aligned positionally with result["x"].
     """
@@ -1215,15 +1215,15 @@ def annotate_with_rpe(result: dict, site_name: str, db_path: str) -> pd.DataFram
         FROM magnet_parts mp
         JOIN parts        p  ON p.name  = mp.part_name
         JOIN magnets      m  ON m.name  = mp.magnet_name
-        JOIN site_magnets sm ON sm.magnet_name = m.name
+        JOIN assembly_magnets sm ON sm.magnet_name = m.name
         LEFT JOIN materials mat ON mat.name = p.material_name
-        WHERE sm.site_name = ?
+        WHERE sm.assembly_name = ?
           AND p.type IN ('helix', 'bitter', 'supra')
         ORDER BY
             CASE p.type WHEN 'helix' THEN 0 WHEN 'bitter' THEN 1 ELSE 2 END,
             mp.rank
         """,
-        [site_name],
+        [assembly_name],
     ).df()
     con.close()
     print(f"rpe: {rpe_df}")
@@ -1509,7 +1509,7 @@ def plot_stress_history(
 
 def _add_shared_args(p: argparse.ArgumentParser) -> None:
     """Add arguments common to every subcommand."""
-    p.add_argument("site_name", help="Site name as registered in DuckDB (e.g. M9)")
+    p.add_argument("assembly_name", help="Assembly name as registered in DuckDB (e.g. M9)")
     p.add_argument(
         "--db",
         default=DEFAULT_DB,
@@ -1533,7 +1533,7 @@ def _add_pupitre_args(p: argparse.ArgumentParser) -> None:
         default=None,
         metavar="FILE",
         help="Pupitre file(s) (.txt, .tdms, .csv). "
-        "Omit to use all experiment files registered for the site.",
+        "Omit to use all experiment files registered for the assembly.",
     )
     p.add_argument(
         "--records-base",
@@ -1577,27 +1577,27 @@ def _add_pupitre_args(p: argparse.ArgumentParser) -> None:
     )
 
 
-def _load_site(
+def _load_assembly(
     args: argparse.Namespace,
 ) -> tuple[list[tuple[tuple, object, str]], str]:
     """
-    Resolve site → all magnets, prepare geometry directories, and load
+    Resolve assembly → all magnets, prepare geometry directories, and load
     MagnetTools objects for each.
 
     Returns ([(data, tempdir, magnet_name), ...], housing).
     """
-    print(f"\n── Loading site '{args.site_name}' from DB '{args.db}' …")
-    housing, magnets = load_site_config_from_duckdb(args.site_name, args.db)
+    print(f"\n── Loading assembly '{args.assembly_name}' from DB '{args.db}' …")
+    housing, magnets = load_assembly_config_from_duckdb(args.assembly_name, args.db)
     # print(f"magnets: {magnets}")
     # print(type(magnets[0]))
 
-    site_config = {
-        "name": args.site_name,
+    assembly_config = {
+        "name": args.assembly_name,
         "magnets": [config for magnet_name, config, _ in magnets],
     }
     tempdir = prepare_geometry_directory(
-        args.site_name,
-        site_config,
+        args.assembly_name,
+        assembly_config,
         args.db,
         geometries_dir=args.geometries,
     )
@@ -1608,7 +1608,7 @@ def _load_site(
         )
 
     print("\n── Loading MagnetTools objects …")
-    data = load_magnettools(site_config, tempdir, debug=args.debug)
+    data = load_magnettools(assembly_config, tempdir, debug=args.debug)
     Tubes, Helices, OHelices, BMagnets, UMagnets, Shims = data
     print(
         f"Tubes: {len(Tubes)}  Helices: {len(Helices)}  "
@@ -1624,13 +1624,13 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
     concatenated DataFrame.
 
     File resolution:
-    - args.pupitre is None or [] → all experiment files for the site (DB order)
+    - args.pupitre is None or [] → all experiment files for the assembly (DB order)
     - args.pupitre is a list     → validated against experiments table (warn on miss)
     """
     if not housing:
         raise ValueError(
-            "Housing could not be determined from the site. "
-            "Check that sites.housing is set in the DB."
+            "Housing could not be determined from the assembly. "
+            "Check that assemblies.housing is set in the DB."
         )
 
     from compute_hoop_stats import resolve_z0_by_type
@@ -1641,13 +1641,13 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
         str(Path(records_base) / srv_subdir) if records_base else ""
     )
     files = resolve_pupitre_files(
-        args.site_name,
+        args.assembly_name,
         args.db,
         args.pupitre or None,
         pupitre_datadir=pupitre_datadir,
         housing=housing,
     )
-    z0_h, z0_b = resolve_z0_by_type(args.site_name, args.db)
+    z0_h, z0_b = resolve_z0_by_type(args.assembly_name, args.db)
     print(
         f"\n── Computing hoop stress time series (housing={housing}, "
         f"{len(files)} file(s)) …"
@@ -1664,7 +1664,7 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
             magnet_type=args.magnet_type,
             check=args.check,
             use_mrun=args.use_mrun,
-            site=args.site_name,
+            assembly=args.assembly_name,
             z0_h=z0_h,
             z0_b=z0_b,
         )
@@ -1697,7 +1697,7 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
 
 
 def cmd_barchart(args: argparse.Namespace) -> None:
-    tempdir, data, magnets, housing = _load_site(args)
+    tempdir, data, magnets, housing = _load_assembly(args)
     try:
         print(f"\n── Computing hoop stress at Ih={args.i_h/1e3:.1f} kA …")
         result = compute_hoop_at_currents(data, args.i_h, args.i_b, args.i_s)
@@ -1714,7 +1714,7 @@ def cmd_barchart(args: argparse.Namespace) -> None:
         )
 
         print("\n── Annotating with Rpe …")
-        df = annotate_with_rpe(result, args.site_name, args.db)
+        df = annotate_with_rpe(result, args.assembly_name, args.db)
         print(
             df[
                 [
@@ -1730,24 +1730,24 @@ def cmd_barchart(args: argparse.Namespace) -> None:
         )
 
         print(f"\n── Plotting … (df: {list(df.keys())})")
-        plot_stress_map(df, args.site_name, args.i_h)
+        plot_stress_map(df, args.assembly_name, args.i_h)
     finally:
         shutil.rmtree(tempdir, ignore_errors=True)
 
 
 def cmd_history(args: argparse.Namespace) -> None:
-    tempdir, data, magnets, housing = _load_site(args)
+    tempdir, data, magnets, housing = _load_assembly(args)
 
     try:
         df = _load_history(args, data, housing)
         print("\n── Plotting …")
-        plot_stress_history(df, args.site_name)
+        plot_stress_history(df, args.assembly_name)
     finally:
         shutil.rmtree(tempdir, ignore_errors=True)
 
 
 def cmd_stats(args: argparse.Namespace) -> None:
-    tempdir, data, magnets, housing = _load_site(args)
+    tempdir, data, magnets, housing = _load_assembly(args)
 
     try:
         df = _load_history(args, data, housing)
@@ -1762,7 +1762,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
 
 
 def cmd_fatigue(args: argparse.Namespace) -> None:
-    tempdir, data, magnets, housing = _load_site(args)
+    tempdir, data, magnets, housing = _load_assembly(args)
     try:
         df = _load_history(args, data, housing)
         fast_cols = [c for c in df.columns if re.match(r"(H|B|Supra)\d+_fast", c)]
@@ -1771,14 +1771,14 @@ def cmd_fatigue(args: argparse.Namespace) -> None:
             cycles_df = compute_fatigue(df, col)
             print(f"\n   {col}: {len(cycles_df)} cycles detected")
             print(cycles_df.describe().to_string())
-            plot_fatigue(df, cycles_df, args.site_name, col, bins=args.bins)
+            plot_fatigue(df, cycles_df, args.assembly_name, col, bins=args.bins)
     finally:
         shutil.rmtree(tempdir, ignore_errors=True)
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Hoop stress analysis for a site using DuckDB + YAML files.",
+        description="Hoop stress analysis for an assembly using DuckDB + YAML files.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

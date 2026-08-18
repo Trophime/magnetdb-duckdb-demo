@@ -113,7 +113,7 @@ def test_check_magnets_flags_part_type_not_valid_for_magnet_type(con_populated):
 
 
 def test_check_experiments_missing_file_on_disk(con_populated, tmp_path):
-    insert_experiments(con_populated, "SITE_01", [{"name": "exp1", "file": "/no/such/file.txt"}],
+    insert_experiments(con_populated, "ASSEMBLY_01", [{"name": "exp1", "file": "/no/such/file.txt"}],
                         verbose=False)
     results = check_experiments(con_populated)
     assert len(results) == 1
@@ -124,7 +124,7 @@ def test_check_experiments_missing_file_on_disk(con_populated, tmp_path):
 def test_check_experiments_ok_when_file_exists(con_populated, tmp_path):
     real_file = tmp_path / "real.txt"
     real_file.write_text("data")
-    insert_experiments(con_populated, "SITE_01", [{"name": "exp1", "file": str(real_file)}],
+    insert_experiments(con_populated, "ASSEMBLY_01", [{"name": "exp1", "file": str(real_file)}],
                         verbose=False)
     results = check_experiments(con_populated)
     assert results[0]["ok"]
@@ -132,8 +132,8 @@ def test_check_experiments_ok_when_file_exists(con_populated, tmp_path):
 
 def test_check_operationaldata_missing_file_on_disk(con_populated):
     con_populated.execute(
-        "INSERT INTO operationaldata (name, description, file, site_name) "
-        "VALUES ('od1', '', '/no/such/file.txt', 'SITE_01')"
+        "INSERT INTO operationaldata (name, description, file, assembly_name) "
+        "VALUES ('od1', '', '/no/such/file.txt', 'ASSEMBLY_01')"
     )
     results = check_operationaldata(con_populated)
     assert not results[0]["ok"]
@@ -144,8 +144,8 @@ def test_check_operationaldata_ok_when_file_exists(con_populated, tmp_path):
     real_file = tmp_path / "real.txt"
     real_file.write_text("data")
     con_populated.execute(
-        "INSERT INTO operationaldata (name, description, file, site_name) "
-        "VALUES ('od1', '', ?, 'SITE_01')",
+        "INSERT INTO operationaldata (name, description, file, assembly_name) "
+        "VALUES ('od1', '', ?, 'ASSEMBLY_01')",
         [str(real_file)],
     )
     results = check_operationaldata(con_populated)
@@ -158,11 +158,11 @@ def test_check_operationaldata_ok_when_file_exists(con_populated, tmp_path):
 
 
 def test_run_checks_all_combines_every_entity(con_populated):
-    insert_experiments(con_populated, "SITE_01", [{"name": "exp1", "file": "/no/such/file.txt"}],
+    insert_experiments(con_populated, "ASSEMBLY_01", [{"name": "exp1", "file": "/no/such/file.txt"}],
                         verbose=False)
     con_populated.execute(
-        "INSERT INTO operationaldata (name, description, file, site_name) "
-        "VALUES ('od1', '', '/no/such/file.txt', 'SITE_01')"
+        "INSERT INTO operationaldata (name, description, file, assembly_name) "
+        "VALUES ('od1', '', '/no/such/file.txt', 'ASSEMBLY_01')"
     )
     results = run_checks(con_populated, entity="all")
     entities = {r["entity"] for r in results}

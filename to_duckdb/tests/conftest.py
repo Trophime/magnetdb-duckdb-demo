@@ -64,9 +64,9 @@ MAGNET_DATA = {
     "geometry": None,
 }
 
-SITE_DATA = {
-    "name": "SITE_01",
-    "description": "Test site",
+ASSEMBLY_DATA = {
+    "name": "ASSEMBLY_01",
+    "description": "Test assembly",
     "status": "in_operation",
     "housing": "M10",
     "commissioned_at": "2025-01-01 00:00:00",
@@ -98,8 +98,8 @@ MAGNET_JSON = {
     ],
 }
 
-SITE_JSON = {
-    "name": "SITE_JSON_01",
+ASSEMBLY_JSON = {
+    "name": "ASSEMBLY_JSON_01",
     "description": "",
     "status": "in_operation",
     "housing": "M10",
@@ -132,13 +132,13 @@ def con():
 
 @pytest.fixture
 def con_populated(con):
-    """Connection with two materials, two parts, one magnet, and one site pre-loaded."""
+    """Connection with two materials, two parts, one magnet, and one assembly pre-loaded."""
     from crud import (
         insert_magnet,
         insert_magnet_part_row,
         insert_material,
         insert_part,
-        insert_site,
+        insert_assembly,
     )
     insert_material(con, MATERIAL_COPPER, verbose=False)
     insert_material(con, MATERIAL_STEEL, verbose=False)
@@ -147,5 +147,5 @@ def con_populated(con):
     insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
     insert_magnet_part_row(con, "MAG_01", "HELIX_01", 0, 1)
     insert_magnet_part_row(con, "MAG_01", "RING_01", 1, None)
-    insert_site(con, SITE_DATA, verbose=False)
+    insert_assembly(con, ASSEMBLY_DATA, verbose=False)
     return con

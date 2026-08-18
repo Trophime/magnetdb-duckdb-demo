@@ -10,7 +10,7 @@ For each experiments file not yet processed this script:
        'heat_extracted_j'    = sum((tsb - teb) * Q_m3s * rho_cp * dt)
        'duration_s'          = sum(dt)
        'duration_field_on_s' = sum(dt) where Field > field_threshold
-  3. Computes site-level field-bin stats → exp_site_bin_stats
+  3. Computes assembly-level field-bin stats → exp_assembly_bin_stats
        channels: Pmagnet, Ptot, tsb, teb, debitbrut  (configurable)
   4. Computes per-part field-bin stats  → exp_part_bin_stats
        channels: Icoil, Ucoil, hoop_stress_proxy (= I^2)
@@ -19,8 +19,8 @@ For each experiments file not yet processed this script:
 
 Usage
 -----
-    python compute_exp_stats.py --db magnetdb.duckdb --site M10_A250429_00
-    python compute_exp_stats.py --db magnetdb.duckdb --site M10_A250429_00 --reprocess
+    python compute_exp_stats.py --db magnetdb.duckdb --assembly M10_A250429_00
+    python compute_exp_stats.py --db magnetdb.duckdb --assembly M10_A250429_00 --reprocess
 
 Physical constants
 ------------------
@@ -70,7 +70,7 @@ DEFAULT_BINS: list[tuple[float, float]] = [
     (40.0, 45.0),
 ]
 
-SITE_CHANNELS = ["Field", "Pmagnet", "Ptot", "tsb", "teb", "debitbrut"]
+ASSEMBLY_CHANNELS = ["Field", "Pmagnet", "Ptot", "tsb", "teb", "debitbrut"]
 
 # ---------------------------------------------------------------------------
 # File loading  (identical logic to compute_op_stats)
@@ -125,31 +125,31 @@ def load_file(path: Path) -> tuple[pd.DataFrame, dict] | None:
 # ---------------------------------------------------------------------------
 
 
-def get_experiments(con, site_name: str) -> pd.DataFrame:
+def get_experiments(con, assembly_name: str) -> pd.DataFrame:
     return con.execute(
         """
         SELECT e.id, e.name, e.file, s.housing
         FROM experiments e
-        JOIN sites s ON s.name = e.site_name
-        WHERE e.site_name = ?
+        JOIN assemblies s ON s.name = e.assembly_name
+        WHERE e.assembly_name = ?
         ORDER BY e.name
         """,
-        [site_name],
+        [assembly_name],
     ).df()
 
 
-def get_site_parts(con, site_name: str) -> pd.DataFrame:
+def get_assembly_parts(con, assembly_name: str) -> pd.DataFrame:
     return con.execute(
         """
         SELECT p.name AS part_name, mp.coil_index, mp.magnet_name
-        FROM site_magnets sm
+        FROM assembly_magnets sm
         JOIN magnet_parts mp ON mp.magnet_name = sm.magnet_name
         JOIN parts p         ON p.name = mp.part_name
-        WHERE sm.site_name = ?
+        WHERE sm.assembly_name = ?
           AND mp.coil_index IS NOT NULL
         ORDER BY mp.coil_index
         """,
-        [site_name],
+        [assembly_name],
     ).df()
 
 
@@ -269,7 +269,7 @@ def insert_scalars(con, exp_id: int, scalars: dict[str, float]) -> None:
         )
 
 
-def compute_site_bin_stats(
+def compute_assembly_bin_stats(
     df: pd.DataFrame, bins: list[tuple], channels: list[str]
 ) -> list[dict]:
     field = df[FIELD_COL].astype(float)
@@ -290,11 +290,11 @@ def compute_site_bin_stats(
     return rows
 
 
-def insert_site_bin_stats(con, exp_id: int, rows: list[dict]) -> None:
+def insert_assembly_bin_stats(con, exp_id: int, rows: list[dict]) -> None:
     for r in rows:
         con.execute(
             """
-            INSERT OR REPLACE INTO exp_site_bin_stats
+            INSERT OR REPLACE INTO exp_assembly_bin_stats
                 (experiment_id, field_bin_low, field_bin_high, channel,
                  n_samples, sum_dt, sum_x_dt, sum_x2_dt, min_x, max_x)
             VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -401,19 +401,19 @@ def insert_part_bin_stats(con, exp_id: int, rows: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def ingest_site(
-    site_name: str,
+def ingest_assembly(
+    assembly_name: str,
     db_path: str,
     records_base: str = DEFAULT_RECORDS_BASE,
     srv_subdir: str = DEFAULT_SRV_SUBDIR,
     bins: list[tuple] = DEFAULT_BINS,
-    site_channels: list[str] = SITE_CHANNELS,
+    assembly_channels: list[str] = ASSEMBLY_CHANNELS,
     flow_to_m3s: float = FLOW_TO_M3S,
     rho_cp: float = RHO_CP,
     reprocess: bool = False,
     verbose: bool = True,
 ) -> dict:
-    """Process all experiment files for *site_name* and persist stats.
+    """Process all experiment files for *assembly_name* and persist stats.
 
     experiments.file stores only the filename; the full path is reconstructed
     as records_base / srv_subdir / housing / filename.
@@ -423,8 +423,8 @@ def ingest_site(
     con = duckdb.connect(db_path)
     ensure_schema(con)
 
-    exp_df = get_experiments(con, site_name)
-    parts = get_site_parts(con, site_name)
+    exp_df = get_experiments(con, assembly_name)
+    parts = get_assembly_parts(con, assembly_name)
 
     results = {"new": 0, "skipped": 0, "errors": []}
 
@@ -456,8 +456,8 @@ def ingest_site(
             scalars = compute_scalars(df, flow_to_m3s, rho_cp, units)
             insert_scalars(con, exp_id, scalars)
 
-            site_rows = compute_site_bin_stats(df, bins, site_channels)
-            insert_site_bin_stats(con, exp_id, site_rows)
+            assembly_rows = compute_assembly_bin_stats(df, bins, assembly_channels)
+            insert_assembly_bin_stats(con, exp_id, assembly_rows)
 
             for _, part in parts.iterrows():
                 part_rows = compute_part_bin_stats(
@@ -513,7 +513,10 @@ def main() -> None:
         epilog=__doc__,
     )
     parser.add_argument("--db", default=DEFAULT_DB, help="DuckDB file path")
-    parser.add_argument("--site", required=True, help="Site name (FK)")
+    parser.add_argument("--assembly", default=None, help="Assembly name (FK)")
+    parser.add_argument(
+        "--site", dest="assembly", help=argparse.SUPPRESS
+    )  # deprecated alias — keep for one release cycle, then remove
     parser.add_argument(
         "--records-base",
         default=DEFAULT_RECORDS_BASE,
@@ -533,8 +536,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--channels",
-        default=",".join(SITE_CHANNELS),
-        help="Comma-separated site-level channels",
+        default=",".join(ASSEMBLY_CHANNELS),
+        help="Comma-separated assembly-level channels",
     )
     parser.add_argument(
         "--flow-to-m3s",
@@ -547,17 +550,19 @@ def main() -> None:
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress per-file output")
     args = parser.parse_args()
+    if args.assembly is None:
+        parser.error("the following arguments are required: --assembly")
 
     bins = _parse_bins(args.bins) if args.bins else DEFAULT_BINS
     channels = [c.strip() for c in args.channels.split(",") if c.strip()]
 
-    ingest_site(
-        site_name=args.site,
+    ingest_assembly(
+        assembly_name=args.assembly,
         db_path=args.db,
         records_base=args.records_base,
         srv_subdir=args.srv_subdir,
         bins=bins,
-        site_channels=channels,
+        assembly_channels=channels,
         flow_to_m3s=args.flow_to_m3s,
         reprocess=args.reprocess,
         verbose=not args.quiet,

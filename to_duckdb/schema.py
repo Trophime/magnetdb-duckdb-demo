@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS magnet_parts (
     PRIMARY KEY (magnet_name, part_name)
 );
 
--- Housing configuration must be created before sites so the FK reference below resolves.
+-- Housing configuration must be created before assemblies so the FK reference below resolves.
 CREATE TABLE IF NOT EXISTS housing_config (
     name            VARCHAR PRIMARY KEY,
     coil_assignment MAP(VARCHAR, VARCHAR),
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS housing_config (
     extra_config    JSON
 );
 
-CREATE TABLE IF NOT EXISTS sites (
+CREATE TABLE IF NOT EXISTS assemblies (
     name               VARCHAR PRIMARY KEY,
     description        VARCHAR,
     status             VARCHAR,
@@ -79,8 +79,8 @@ CREATE TABLE IF NOT EXISTS sites (
     decommissioned_at  TIMESTAMP
 );
 
-CREATE TABLE IF NOT EXISTS site_magnets (
-    site_name          VARCHAR REFERENCES sites(name),
+CREATE TABLE IF NOT EXISTS assembly_magnets (
+    assembly_name      VARCHAR REFERENCES assemblies(name),
     magnet_name        VARCHAR REFERENCES magnets(name),
     z_offset           DOUBLE    DEFAULT 0.0,
     r_offset           DOUBLE    DEFAULT 0.0,
@@ -88,23 +88,23 @@ CREATE TABLE IF NOT EXISTS site_magnets (
     commissioned_at    TIMESTAMP,
     decommissioned_at  TIMESTAMP,
     metadata           JSON      DEFAULT '{}',
-    PRIMARY KEY (site_name, magnet_name)
+    PRIMARY KEY (assembly_name, magnet_name)
 );
 
--- idempotent migrations for databases that predate SiteMagnet positional fields
-ALTER TABLE site_magnets ADD COLUMN IF NOT EXISTS z_offset          DOUBLE    DEFAULT 0.0;
-ALTER TABLE site_magnets ADD COLUMN IF NOT EXISTS r_offset          DOUBLE    DEFAULT 0.0;
-ALTER TABLE site_magnets ADD COLUMN IF NOT EXISTS parallax          DOUBLE    DEFAULT 0.0;
-ALTER TABLE site_magnets ADD COLUMN IF NOT EXISTS commissioned_at   TIMESTAMP;
-ALTER TABLE site_magnets ADD COLUMN IF NOT EXISTS decommissioned_at TIMESTAMP;
-ALTER TABLE site_magnets ADD COLUMN IF NOT EXISTS metadata          JSON      DEFAULT '{}';
+-- idempotent migrations for databases that predate AssemblyMagnet positional fields
+ALTER TABLE assembly_magnets ADD COLUMN IF NOT EXISTS z_offset          DOUBLE    DEFAULT 0.0;
+ALTER TABLE assembly_magnets ADD COLUMN IF NOT EXISTS r_offset          DOUBLE    DEFAULT 0.0;
+ALTER TABLE assembly_magnets ADD COLUMN IF NOT EXISTS parallax          DOUBLE    DEFAULT 0.0;
+ALTER TABLE assembly_magnets ADD COLUMN IF NOT EXISTS commissioned_at   TIMESTAMP;
+ALTER TABLE assembly_magnets ADD COLUMN IF NOT EXISTS decommissioned_at TIMESTAMP;
+ALTER TABLE assembly_magnets ADD COLUMN IF NOT EXISTS metadata          JSON      DEFAULT '{}';
 
 CREATE TABLE IF NOT EXISTS experiments (
     id          INTEGER PRIMARY KEY,
     name        VARCHAR,
     description VARCHAR,
     file        VARCHAR,
-    site_name   VARCHAR REFERENCES sites(name),
+    assembly_name VARCHAR REFERENCES assemblies(name),
     status      VARCHAR DEFAULT 'pending'
 );
 
@@ -115,7 +115,7 @@ CREATE TABLE IF NOT EXISTS operationaldata (
     name        VARCHAR,
     description VARCHAR,
     file        VARCHAR UNIQUE,
-    site_name   VARCHAR REFERENCES sites(name),
+    assembly_name VARCHAR REFERENCES assemblies(name),
     type        VARCHAR DEFAULT 'Archive',
     status      VARCHAR DEFAULT 'pending'
 );
@@ -130,7 +130,7 @@ ALTER TABLE operationaldata ALTER COLUMN id SET DEFAULT nextval('operationaldata
 -- signatures / sync_info / flow_params / metrics / debitbrut / plateaux are stored as JSON.
 CREATE TABLE IF NOT EXISTS overview_records (
     filename                  VARCHAR PRIMARY KEY,
-    site_name                 VARCHAR REFERENCES sites(name),
+    assembly_name             VARCHAR REFERENCES assemblies(name),
     housing                   VARCHAR,
     mode                      VARCHAR,
     t0                        TIMESTAMP,
@@ -158,8 +158,8 @@ CREATE TABLE IF NOT EXISTS overview_records (
     merged_into               VARCHAR
 );
 
--- idempotent migration for databases that predate site_name
-ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS site_name VARCHAR;
+-- idempotent migration for databases that predate assembly_name
+ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS assembly_name VARCHAR;
 -- idempotent migration for databases that predate plateaux
 ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS plateaux JSON DEFAULT '{}';
 -- idempotent migration for databases that predate merged_into (dedup tombstone:
@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS op_run_scalars (
 );
 ALTER TABLE op_run_scalars ADD COLUMN IF NOT EXISTS unit VARCHAR;
 
--- Site-level field-bin distributions.
+-- Assembly-level field-bin distributions.
 -- One row per (file, field bin, channel).
 -- Channels: 'Pmagnet', 'Ptot', 'tsb', 'teb', 'debitbrut', ...
 -- Derived at query time:
@@ -201,7 +201,7 @@ ALTER TABLE op_run_scalars ADD COLUMN IF NOT EXISTS unit VARCHAR;
 --   time-weighted mean   = SUM(sum_x_dt) / SUM(sum_dt)
 --   time-weighted stddev = sqrt(SUM(sum_x2_dt)/SUM(sum_dt) - mean^2)
 --   peak value           = MAX(max_x)
-CREATE TABLE IF NOT EXISTS op_site_bin_stats (
+CREATE TABLE IF NOT EXISTS op_assembly_bin_stats (
     operationaldata_id  INTEGER  REFERENCES operationaldata(id),
     field_bin_low       DOUBLE   NOT NULL,
     field_bin_high      DOUBLE   NOT NULL,
@@ -258,14 +258,14 @@ CREATE TABLE IF NOT EXISTS exp_run_scalars (
 );
 ALTER TABLE exp_run_scalars ADD COLUMN IF NOT EXISTS unit VARCHAR;
 
--- Site-level field-bin distributions for experiments.
+-- Assembly-level field-bin distributions for experiments.
 -- One row per (experiment, field bin, channel).
 -- Derived at query time:
 --   operating time (h)   = SUM(sum_dt) / 3600
 --   time-weighted mean   = SUM(sum_x_dt) / SUM(sum_dt)
 --   time-weighted stddev = sqrt(SUM(sum_x2_dt)/SUM(sum_dt) - mean^2)
 --   peak value           = MAX(max_x)
-CREATE TABLE IF NOT EXISTS exp_site_bin_stats (
+CREATE TABLE IF NOT EXISTS exp_assembly_bin_stats (
     experiment_id   INTEGER  REFERENCES experiments(id),
     field_bin_low   DOUBLE   NOT NULL,
     field_bin_high  DOUBLE   NOT NULL,

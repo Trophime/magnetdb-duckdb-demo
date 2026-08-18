@@ -10,7 +10,7 @@ For each operationaldata file not yet processed this script:
        'heat_extracted_j'    = sum((tsb - teb) * Q_m3s * rho_cp * dt)
        'duration_s'          = sum(dt)
        'duration_field_on_s' = sum(dt) where Field > field_threshold
-  3. Computes site-level field-bin stats → op_site_bin_stats
+  3. Computes assembly-level field-bin stats → op_assembly_bin_stats
        channels: Pmagnet, Ptot, tsb, teb, debitbrut  (configurable)
   4. Computes per-part field-bin stats  → op_part_bin_stats
        channels: Icoil, Ucoil, hoop_stress_proxy (= I^2)
@@ -21,11 +21,11 @@ Usage
 -----
     python compute_op_stats.py --db magnetdb.duckdb --records-base /mnt/LNCMIG-Data/records \\
     python compute_op_stats.py --db magnetdb.duckdb --records-base /mnt/LNCMIG-Data/records \\
-        --site M9_M19061901
+        --assembly M9_M19061901
     python compute_op_stats.py --db magnetdb.duckdb --records-base /mnt/LNCMIG-Data/records \\
-        --site M9_M19061901 --type Pupitre --reprocess
+        --assembly M9_M19061901 --type Pupitre --reprocess
     python compute_op_stats.py --db magnetdb.duckdb --records-base /mnt/LNCMIG-Data/records \\
-        --site M9_M19061901 --type Pupitre --reprocess
+        --assembly M9_M19061901 --type Pupitre --reprocess
 
 Physical constants
 ------------------
@@ -71,7 +71,7 @@ DEFAULT_BINS: list[tuple[float, float]] = [
     (40.0, 45.0),
 ]
 
-SITE_CHANNELS = ["Field", "Pmagnet", "Ptot", "tsb", "teb", "debitbrut"]
+ASSEMBLY_CHANNELS = ["Field", "Pmagnet", "Ptot", "tsb", "teb", "debitbrut"]
 
 # ---------------------------------------------------------------------------
 # File loading
@@ -141,10 +141,10 @@ def load_file(path: Path) -> tuple[pd.DataFrame, dict] | None:
 # ---------------------------------------------------------------------------
 
 
-def get_operationaldata(con, site_name: str, od_type: str | None) -> pd.DataFrame:
-    """Return operationaldata rows for a site, optionally filtered by type."""
-    q = "SELECT id, name, file FROM operationaldata WHERE site_name = ?"
-    params = [site_name]
+def get_operationaldata(con, assembly_name: str, od_type: str | None) -> pd.DataFrame:
+    """Return operationaldata rows for an assembly, optionally filtered by type."""
+    q = "SELECT id, name, file FROM operationaldata WHERE assembly_name = ?"
+    params = [assembly_name]
     if od_type:
         q += " AND type = ?"
         params.append(od_type)
@@ -152,19 +152,19 @@ def get_operationaldata(con, site_name: str, od_type: str | None) -> pd.DataFram
     return con.execute(q, params).df()
 
 
-def get_site_parts(con, site_name: str) -> pd.DataFrame:
-    """Return parts with their coil_index for all magnets at a site."""
+def get_assembly_parts(con, assembly_name: str) -> pd.DataFrame:
+    """Return parts with their coil_index for all magnets at an assembly."""
     return con.execute(
         """
         SELECT p.name AS part_name, mp.coil_index, mp.magnet_name
-        FROM site_magnets sm
+        FROM assembly_magnets sm
         JOIN magnet_parts mp ON mp.magnet_name = sm.magnet_name
         JOIN parts p         ON p.name = mp.part_name
-        WHERE sm.site_name = ?
+        WHERE sm.assembly_name = ?
           AND mp.coil_index IS NOT NULL
         ORDER BY mp.coil_index
     """,
-        [site_name],
+        [assembly_name],
     ).df()
 
 
@@ -291,15 +291,15 @@ def insert_scalars(con, od_id: int, scalars: dict[str, float]) -> None:
         )
 
 
-# ── Site-level bin stats ─────────────────────────────────────────────────────
+# ── Assembly-level bin stats ─────────────────────────────────────────────────────
 
 
-def compute_site_bin_stats(
+def compute_assembly_bin_stats(
     df: pd.DataFrame,
     bins: list[tuple],
     channels: list[str],
 ) -> list[dict]:
-    """Return rows for op_site_bin_stats (missing channels are silently skipped)."""
+    """Return rows for op_assembly_bin_stats (missing channels are silently skipped)."""
     field = df[FIELD_COL].astype(float)
     bin_low = _assign_bins(field, bins)
     rows = []
@@ -318,11 +318,11 @@ def compute_site_bin_stats(
     return rows
 
 
-def insert_site_bin_stats(con, od_id: int, rows: list[dict]) -> None:
+def insert_assembly_bin_stats(con, od_id: int, rows: list[dict]) -> None:
     for r in rows:
         con.execute(
             """
-            INSERT OR REPLACE INTO op_site_bin_stats
+            INSERT OR REPLACE INTO op_assembly_bin_stats
                 (operationaldata_id, field_bin_low, field_bin_high, channel,
                  n_samples, sum_dt, sum_x_dt, sum_x2_dt, min_x, max_x)
             VALUES (?,?,?,?,?,?,?,?,?,?)
@@ -448,24 +448,24 @@ def insert_part_bin_stats(con, od_id: int, rows: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def ingest_site(
-    site_name: str,
+def ingest_assembly(
+    assembly_name: str,
     db_path: str,
     records_dir: str,
     od_type: str | None = None,
     bins: list[tuple] = DEFAULT_BINS,
-    site_channels: list[str] = SITE_CHANNELS,
+    assembly_channels: list[str] = ASSEMBLY_CHANNELS,
     flow_to_m3s: float = FLOW_TO_M3S,
     rho_cp: float = RHO_CP,
     reprocess: bool = False,
     verbose: bool = True,
 ) -> dict:
-    """Process all operationaldata files for *site_name* and persist stats.
+    """Process all operationaldata files for *assembly_name* and persist stats.
 
     Parameters
     ----------
-    site_name : str
-        Site FK (must exist in the ``sites`` table).
+    assembly_name : str
+        Assembly FK (must exist in the ``assemblies`` table).
     db_path : str
         Path to the DuckDB file.
     records_dir : str
@@ -475,8 +475,8 @@ def ingest_site(
         Filter operationaldata by type (e.g. ``"Pupitre"``), or None for all.
     bins : list of tuple
         List of (low, high) field bins in Tesla.
-    site_channels : list of str
-        Columns to track in ``op_site_bin_stats``.
+    assembly_channels : list of str
+        Columns to track in ``op_assembly_bin_stats``.
     flow_to_m3s : float
         Unit conversion for debitbrut → m³/s (default: 1/3600 for m³/h).
     rho_cp : float
@@ -494,8 +494,8 @@ def ingest_site(
     con = duckdb.connect(db_path)
     ensure_schema(con)
 
-    od_df = get_operationaldata(con, site_name, od_type)
-    parts = get_site_parts(con, site_name)
+    od_df = get_operationaldata(con, assembly_name, od_type)
+    parts = get_assembly_parts(con, assembly_name)
     records_path = Path(records_dir)
 
     results = {"new": 0, "skipped": 0, "errors": []}
@@ -523,9 +523,9 @@ def ingest_site(
             scalars = compute_scalars(df, flow_to_m3s, rho_cp, units)
             insert_scalars(con, od_id, scalars)
 
-            # 2. Site-level bin stats
-            site_rows = compute_site_bin_stats(df, bins, site_channels)
-            insert_site_bin_stats(con, od_id, site_rows)
+            # 2. Assembly-level bin stats
+            assembly_rows = compute_assembly_bin_stats(df, bins, assembly_channels)
+            insert_assembly_bin_stats(con, od_id, assembly_rows)
 
             # 3. Per-part bin stats
             for _, part in parts.iterrows():
@@ -580,7 +580,10 @@ def main() -> None:
         dest="records_base",
         help="Directory of record files",
     )
-    parser.add_argument("--site", required=True, help="Site name (FK)")
+    parser.add_argument("--assembly", default=None, help="Assembly name (FK)")
+    parser.add_argument(
+        "--site", dest="assembly", help=argparse.SUPPRESS
+    )  # deprecated alias — keep for one release cycle, then remove
     parser.add_argument(
         "--type", default=None, help="Filter operationaldata by type, e.g. 'pupitre'"
     )
@@ -591,8 +594,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--channels",
-        default=",".join(SITE_CHANNELS),
-        help="Comma-separated site-level channels (default: Pmagnet,Ptot,tsb,teb,debitbrut)",
+        default=",".join(ASSEMBLY_CHANNELS),
+        help="Comma-separated assembly-level channels (default: Pmagnet,Ptot,tsb,teb,debitbrut)",
     )
     parser.add_argument(
         "--flow-to-m3s",
@@ -605,17 +608,19 @@ def main() -> None:
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress per-file output")
     args = parser.parse_args()
+    if args.assembly is None:
+        parser.error("the following arguments are required: --assembly")
 
     bins = _parse_bins(args.bins) if args.bins else DEFAULT_BINS
     channels = [c.strip() for c in args.channels.split(",") if c.strip()]
 
-    ingest_site(
-        site_name=args.site,
+    ingest_assembly(
+        assembly_name=args.assembly,
         db_path=args.db,
         records_dir=args.records_base,
         od_type=args.type,
         bins=bins,
-        site_channels=channels,
+        assembly_channels=channels,
         flow_to_m3s=args.flow_to_m3s,
         reprocess=args.reprocess,
         verbose=not args.quiet,

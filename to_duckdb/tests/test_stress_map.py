@@ -148,7 +148,7 @@ def test_load_history_preview_includes_bitter_and_supra_columns(monkeypatch, cap
     monkeypatch.setattr(compute_hoop_stats, "resolve_z0_by_type", lambda *a, **k: ([], []))
 
     args = argparse.Namespace(
-        site_name="TEST_SITE", db="unused.duckdb", pupitre=None,
+        assembly_name="TEST_ASSEMBLY", db="unused.duckdb", pupitre=None,
         magnet_type="all", check=False, use_mrun=False,
     )
 
@@ -172,12 +172,12 @@ def test_cmd_fatigue_includes_bitter_and_supra_columns(monkeypatch, tmp_path):
         processed_cols.append(col)
         return pd.DataFrame({"range": [1.0], "mean": [0.0], "count": [1], "i_start": [0], "i_end": [1]})
 
-    monkeypatch.setattr(stress_map, "_load_site", lambda args: (str(tmp_path), object(), [], "M9"))
+    monkeypatch.setattr(stress_map, "_load_assembly", lambda args: (str(tmp_path), object(), [], "M9"))
     monkeypatch.setattr(stress_map, "_load_history", lambda args, data, housing: df)
     monkeypatch.setattr(stress_map, "compute_fatigue", fake_compute_fatigue)
     monkeypatch.setattr(stress_map, "plot_fatigue", lambda *a, **k: None)
 
-    args = argparse.Namespace(site_name="TEST_SITE", bins=15)
+    args = argparse.Namespace(assembly_name="TEST_ASSEMBLY", bins=15)
     stress_map.cmd_fatigue(args)
 
     assert processed_cols == ["H1_fast", "B1_fast", "Supra1_fast"]

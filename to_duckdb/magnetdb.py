@@ -21,40 +21,40 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py magnet check-geometry [<name>]   [--db ...]
     python magnetdb.py magnet delete <name>             [--db ...]
 
-    python magnetdb.py site add <json_file> [--db ...] [--input-dir ...] [--magnet-dir ...] [--dry-run]
-    python magnetdb.py site view [<name>]   [--db ...] [--housing HOUSING] [--status STATUS]
-    python magnetdb.py site delete <name>   [--db ...]
-    python magnetdb.py site update-magnet <site> <magnet> [--db ...] [--z-offset ...]
+    python magnetdb.py assembly add <json_file> [--db ...] [--input-dir ...] [--magnet-dir ...] [--dry-run]
+    python magnetdb.py assembly view [<name>]   [--db ...] [--housing HOUSING] [--status STATUS]
+    python magnetdb.py assembly delete <name>   [--db ...]
+    python magnetdb.py assembly update-magnet <assembly> <magnet> [--db ...] [--z-offset ...]
 
     python magnetdb.py housing view [<name>]                       [--db ...]
-    python magnetdb.py experiments view [--site <site>] [--magnet <magnet>] [--part <part>]
+    python magnetdb.py experiments view [--assembly <assembly>] [--magnet <magnet>] [--part <part>]
                                         [--from DATETIME] [--to DATETIME] [--db ...]
-    python magnetdb.py operationaldata view [--site <site>] [--type TYPE]
+    python magnetdb.py operationaldata view [--assembly <assembly>] [--type TYPE]
                                             [--magnet <magnet>] [--part <part>]
                                             [--from DATETIME] [--to DATETIME] [--db ...]
-    python magnetdb.py overview-records view [--site <site>] [--magnet <magnet>] [--part <part>]
+    python magnetdb.py overview-records view [--assembly <assembly>] [--magnet <magnet>] [--part <part>]
                                              [--from DATETIME] [--to DATETIME] [--signatures] [--db ...]
 
-    python magnetdb.py populate operationaldata [--site SITE ...] [--all] [--type ...] [--records-base ...] [--dry-run]
-    python magnetdb.py populate experiments     [--site SITE ...] [--all] [--dry-run]
-    python magnetdb.py populate overview-records [--site SITE ...] [--all] [--reprocess] [--dry-run]
-    python magnetdb.py populate overview-records-from-json <json_file> [--site SITE] [--db-tz ...] [--reprocess] [--dry-run] [--db ...]
+    python magnetdb.py populate operationaldata [--assembly ASSEMBLY ...] [--all] [--type ...] [--records-base ...] [--dry-run]
+    python magnetdb.py populate experiments     [--assembly ASSEMBLY ...] [--all] [--dry-run]
+    python magnetdb.py populate overview-records [--assembly ASSEMBLY ...] [--all] [--reprocess] [--dry-run]
+    python magnetdb.py populate overview-records-from-json <json_file> [--assembly ASSEMBLY] [--db-tz ...] [--reprocess] [--dry-run] [--db ...]
 
-    python magnetdb.py hoop-stress compute  [--site SITE ...] [--all] [--db ...] [--magnet-type H|B|S|all]
+    python magnetdb.py hoop-stress compute  [--assembly ASSEMBLY ...] [--all] [--db ...] [--magnet-type H|B|S|all]
                                             [--bins 0,100,200,...] [--parquet-dir ...] [--geometries ...]
                                             [--reprocess] [--dry-run] [--use-mrun]
                                             [--records-base ...] [--srv-subdir ...]
 
-    python magnetdb.py hoop-stress barchart <site> [--db ...] [--geometries ...] [--debug]
+    python magnetdb.py hoop-stress barchart <assembly> [--db ...] [--geometries ...] [--debug]
                                             [--i-h A] [--i-b A] [--i-s A]
-    python magnetdb.py hoop-stress history  <site> [--db ...] [--geometries ...] [--debug]
+    python magnetdb.py hoop-stress history  <assembly> [--db ...] [--geometries ...] [--debug]
                                             [--pupitre FILE ...] [--records-base DIR] [--srv-subdir DIR]
                                             [--use-mrun] [--check] [--magnet-type H|B|S|all]
-    python magnetdb.py hoop-stress stats    <site> [--db ...] [--geometries ...] [--debug]
+    python magnetdb.py hoop-stress stats    <assembly> [--db ...] [--geometries ...] [--debug]
                                             [--pupitre FILE ...] [--records-base DIR] [--srv-subdir DIR]
                                             [--use-mrun] [--check] [--magnet-type H|B|S|all]
                                             [--output CSV]
-    python magnetdb.py hoop-stress fatigue  <site> [--db ...] [--geometries ...] [--debug]
+    python magnetdb.py hoop-stress fatigue  <assembly> [--db ...] [--geometries ...] [--debug]
                                             [--pupitre FILE ...] [--records-base DIR] [--srv-subdir DIR]
                                             [--use-mrun] [--check] [--magnet-type H|B|S|all]
                                             [--bins N]
@@ -79,7 +79,7 @@ from crud import (
     check_geometry_data,
     delete_magnet,
     delete_material,
-    delete_site,
+    delete_assembly,
     infer_magnet_type,
     infer_overview_record_fields,
     insert_experiments,
@@ -89,14 +89,14 @@ from crud import (
     insert_overview_record,
     insert_overview_record_from_dict,
     insert_part,
-    insert_site,
-    insert_site_magnets,
+    insert_assembly,
+    insert_assembly_magnets,
     list_objects,
     load_json,
     merge_duplicate_pupitre_records,
     print_geometry_check,
-    resolve_overview_site,
-    update_site_magnet,
+    resolve_overview_assembly,
+    update_assembly_magnet,
     upsert_overview_record,
     view_experiments,
     view_housing_config,
@@ -107,8 +107,8 @@ from crud import (
     view_materials,
     view_operationaldata,
     view_overview_records,
-    view_site,
-    view_sites,
+    view_assembly,
+    view_assemblies,
 )
 from populate import (
     ALL_POPULATE_TYPES,
@@ -117,7 +117,7 @@ from populate import (
     _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR,
     find_and_register_pupitre as _pupitre_find_and_register,
     find_and_register_tdms as _tdms_find_and_register,
-    load_site as _load_site,
+    load_assembly as _load_assembly,
 )
 from config import DEFAULT_DB
 from schema import COIL_TYPES, ensure_schema
@@ -335,7 +335,7 @@ def _add_magnet(
     geometry_path=None,
 ) -> None:
     # db_path is created by DuckDB if absent — intentional: `magnet add` bootstraps the DB.
-    # `_add_site` requires the file to exist because a site depends on prior magnet records.
+    # `_add_assembly` requires the file to exist because an assembly depends on prior magnet records.
     db_path = Path(db_path)
     part_dir = Path(part_dir) if part_dir else Path(".")
 
@@ -401,7 +401,7 @@ def _magnet_name(entry) -> str:
     return entry if isinstance(entry, str) else entry["name"]
 
 
-def _validate_site(data: dict) -> list[str]:
+def _validate_assembly(data: dict) -> list[str]:
     errors = []
     if not data.get("name"):
         errors.append("Missing 'name'")
@@ -442,7 +442,7 @@ def _ensure_magnets(
     return errors
 
 
-def _add_site(data: dict, db_path, dry_run: bool = False, magnet_dir=None) -> None:
+def _add_assembly(data: dict, db_path, dry_run: bool = False, magnet_dir=None) -> None:
     db_path = Path(db_path)
     magnet_dir = Path(magnet_dir) if magnet_dir else Path(".")
 
@@ -455,7 +455,7 @@ def _add_site(data: dict, db_path, dry_run: bool = False, magnet_dir=None) -> No
     if data.get("name", "").endswith(".json"):
         data["name"] = data["name"][:-5]
 
-    errors = _validate_site(data)
+    errors = _validate_assembly(data)
     if errors:
         print("Validation errors:")
         for e in errors:
@@ -474,21 +474,21 @@ def _add_site(data: dict, db_path, dry_run: bool = False, magnet_dir=None) -> No
     if dry_run:
         magnet_names = [_magnet_name(e) for e in data.get("magnets", [])]
         print("[dry-run] Validation passed. Would insert:")
-        print(f"  site     : {data['name']}  [{data.get('housing', '?')}]")
+        print(f"  assembly     : {data['name']}  [{data.get('housing', '?')}]")
         print(f"  magnets  : {magnet_names}")
         return
 
     with duckdb.connect(str(db_path)) as con:
         ensure_schema(con)
-        site_name = data["name"]
-        print(f"\nAdding site '{site_name}' to {db_path.name} …\n")
+        assembly_name = data["name"]
+        print(f"\nAdding assembly '{assembly_name}' to {db_path.name} …\n")
 
-        insert_site(con, data)
-        insert_site_magnets(con, site_name, data.get("magnets", []))
+        insert_assembly(con, data)
+        insert_assembly_magnets(con, assembly_name, data.get("magnets", []))
 
         records = data.get("records") or []
         if records:
-            insert_experiments(con, site_name, records)
+            insert_experiments(con, assembly_name, records)
 
     print("\nDone.")
 
@@ -546,11 +546,11 @@ def cmd_magnet_delete(args) -> None:
 
 
 # ---------------------------------------------------------------------------
-# site handlers
+# assembly handlers
 # ---------------------------------------------------------------------------
 
 
-def cmd_site_add(args) -> None:
+def cmd_assembly_add(args) -> None:
     json_path = Path(args.json_file)
     if args.input_dir:
         json_path = Path(args.input_dir) / json_path
@@ -558,31 +558,31 @@ def cmd_site_add(args) -> None:
         print(f"Error: '{json_path}' not found.")
         sys.exit(1)
     magnet_dir = Path(args.magnet_dir) if args.magnet_dir else json_path.parent
-    _add_site(load_json(json_path), args.db, dry_run=args.dry_run, magnet_dir=magnet_dir)
+    _add_assembly(load_json(json_path), args.db, dry_run=args.dry_run, magnet_dir=magnet_dir)
 
 
-def cmd_site_view(args) -> None:
+def cmd_assembly_view(args) -> None:
     db_path = Path(args.db)
     if not db_path.exists():
         print(f"Error: '{db_path}' does not exist.")
         sys.exit(1)
     with duckdb.connect(str(db_path)) as con:
         if args.name:
-            view_site(con, args.name)
+            view_assembly(con, args.name)
         else:
-            view_sites(con, housing_filter=args.housing, status_filter=args.status)
+            view_assemblies(con, housing_filter=args.housing, status_filter=args.status)
 
 
-def cmd_site_delete(args) -> None:
+def cmd_assembly_delete(args) -> None:
     db_path = Path(args.db)
     if not db_path.exists():
         print(f"Error: '{db_path}' does not exist.")
         sys.exit(1)
     with duckdb.connect(str(db_path)) as con:
-        delete_site(con, args.name)
+        delete_assembly(con, args.name)
 
 
-def cmd_site_update_magnet(args) -> None:
+def cmd_assembly_update_magnet(args) -> None:
     metadata = None
     if args.metadata:
         try:
@@ -597,9 +597,9 @@ def cmd_site_update_magnet(args) -> None:
     with duckdb.connect(str(db_path)) as con:
         ensure_schema(con)
         try:
-            update_site_magnet(
+            update_assembly_magnet(
                 con,
-                args.site_name,
+                args.assembly_name,
                 args.magnet_name,
                 z_offset=args.z_offset,
                 r_offset=args.r_offset,
@@ -643,7 +643,7 @@ def cmd_experiments_view(args) -> None:
     with duckdb.connect(str(db_path), read_only=True) as con:
         view_experiments(
             con,
-            site_name=args.site,
+            assembly_name=args.assembly,
             magnet_name=args.magnet,
             part_name=args.part,
             from_ts=args.date_from,
@@ -664,7 +664,7 @@ def cmd_operationaldata_view(args) -> None:
     with duckdb.connect(str(db_path), read_only=True) as con:
         view_operationaldata(
             con,
-            site_name=args.site,
+            assembly_name=args.assembly,
             type_filter=args.type,
             magnet_name=args.magnet,
             part_name=args.part,
@@ -686,7 +686,7 @@ def cmd_overview_records_view(args) -> None:
     with duckdb.connect(str(db_path), read_only=True) as con:
         view_overview_records(
             con,
-            site_name=args.site,
+            assembly_name=args.assembly,
             show_signatures=args.signatures,
             magnet_name=args.magnet,
             part_name=args.part,
@@ -695,11 +695,11 @@ def cmd_overview_records_view(args) -> None:
         )
 
 
-def _resolve_site_names(args, db_path: str) -> list[str]:
+def _resolve_assembly_names(args, db_path: str) -> list[str]:
     if getattr(args, "all", False):
         with duckdb.connect(db_path, read_only=True) as con:
-            return [r[0] for r in con.execute("SELECT name FROM sites ORDER BY name").fetchall()]
-    return list(args.site or [])
+            return [r[0] for r in con.execute("SELECT name FROM assemblies ORDER BY name").fetchall()]
+    return list(args.assembly or [])
 
 
 # ---------------------------------------------------------------------------
@@ -718,9 +718,9 @@ def cmd_populate_operationaldata(args) -> None:
         print(f"Error: Unknown timezone '{args.db_tz}'")
         sys.exit(1)
 
-    site_names = _resolve_site_names(args, db_path)
-    if not site_names:
-        print("No sites specified. Use --site SITE or --all.")
+    assembly_names = _resolve_assembly_names(args, db_path)
+    if not assembly_names:
+        print("No assemblies specified. Use --assembly ASSEMBLY or --all.")
         sys.exit(1)
 
     records_base = Path(args.records_base)
@@ -728,20 +728,20 @@ def cmd_populate_operationaldata(args) -> None:
     tdms_types = [t for t in active_types if t != "Pupitre"]
     do_pupitre = "Pupitre" in active_types
 
-    for site_name in site_names:
-        site = _load_site(site_name, db_path)
-        if site is None:
-            print(f"[SKIP] '{site_name}' not found in DB.")
+    for assembly_name in assembly_names:
+        assembly = _load_assembly(assembly_name, db_path)
+        if assembly is None:
+            print(f"[SKIP] '{assembly_name}' not found in DB.")
             continue
-        print(f"\nSite: {site_name}  housing={site['housing']}")
+        print(f"\nAssembly: {assembly_name}  housing={assembly['housing']}")
         if do_pupitre:
             _pupitre_find_and_register(
-                site, db_path, db_tz, dry_run=args.dry_run,
+                assembly, db_path, db_tz, dry_run=args.dry_run,
                 records_base=records_base, srv_subdir=args.srv_subdir,
             )
         if tdms_types:
             _tdms_find_and_register(
-                site, db_path, db_tz, dry_run=args.dry_run,
+                assembly, db_path, db_tz, dry_run=args.dry_run,
                 type_filter=tdms_types, records_base=records_base, pbsurv=args.pbsurv,
             )
 
@@ -757,24 +757,24 @@ def cmd_populate_experiments(args) -> None:
         print(f"Error: Unknown timezone '{args.db_tz}'")
         sys.exit(1)
 
-    site_names = _resolve_site_names(args, db_path)
-    if not site_names:
-        print("No sites specified. Use --site SITE or --all.")
+    assembly_names = _resolve_assembly_names(args, db_path)
+    if not assembly_names:
+        print("No assemblies specified. Use --assembly ASSEMBLY or --all.")
         sys.exit(1)
 
     records_base = Path(args.records_base)
 
-    for site_name in site_names:
-        site = _load_site(site_name, db_path)
-        if site is None:
-            print(f"[SKIP] '{site_name}' not found in DB.")
+    for assembly_name in assembly_names:
+        assembly = _load_assembly(assembly_name, db_path)
+        if assembly is None:
+            print(f"[SKIP] '{assembly_name}' not found in DB.")
             continue
-        print(f"\nSite: {site_name}  housing={site['housing']}")
+        print(f"\nAssembly: {assembly_name}  housing={assembly['housing']}")
 
         # Scan filesystem for matching pupitre TXT files (dry_run=True so
         # find_and_register returns matches without writing to operationaldata).
         matches = _pupitre_find_and_register(
-            site, db_path, db_tz, dry_run=True,
+            assembly, db_path, db_tz, dry_run=True,
             records_base=records_base, srv_subdir=args.srv_subdir,
         )
 
@@ -792,7 +792,7 @@ def cmd_populate_experiments(args) -> None:
 
         with duckdb.connect(db_path) as con:
             ensure_schema(con)
-            insert_experiments(con, site_name, records, verbose=True)
+            insert_experiments(con, assembly_name, records, verbose=True)
 
 
 def cmd_populate_overview_records_from_json(args) -> None:
@@ -822,10 +822,10 @@ def cmd_populate_overview_records_from_json(args) -> None:
         print(f"Error: Unknown timezone '{args.db_tz}'")
         sys.exit(1)
 
-    site_override = args.site or None
-    site_row = _load_site(site_override, str(db_path)) if site_override else None
-    if site_override is not None and site_row is None:
-        print(f"Error: site '{site_override}' not found in DB.")
+    assembly_override = args.assembly or None
+    assembly_row = _load_assembly(assembly_override, str(db_path)) if assembly_override else None
+    if assembly_override is not None and assembly_row is None:
+        print(f"Error: assembly '{assembly_override}' not found in DB.")
         sys.exit(1)
 
     print(f"\nLoading {len(records)} overview record(s) from {json_path.name} …\n")
@@ -838,17 +838,17 @@ def cmd_populate_overview_records_from_json(args) -> None:
             filename = rec.get("filename", "<missing>")
             housing = rec.get("housing")
             t0 = rec.get("t0")
-            site_name = site_override
+            assembly_name = assembly_override
 
-            if site_override is not None:
-                housing = housing or site_row["housing"]
+            if assembly_override is not None:
+                housing = housing or assembly_row["housing"]
             else:
-                resolved_housing, resolved_t0, resolved_site = resolve_overview_site(
+                resolved_housing, resolved_t0, resolved_assembly = resolve_overview_assembly(
                     con, filename, db_tz
                 )
                 housing = housing or resolved_housing
-                if not rec.get("site_name") and resolved_site is not None:
-                    site_name = resolved_site
+                if not rec.get("assembly_name") and resolved_assembly is not None:
+                    assembly_name = resolved_assembly
                     t0 = resolved_t0
 
             duration = rec.get("duration")
@@ -871,14 +871,14 @@ def cmd_populate_overview_records_from_json(args) -> None:
                 dur = float(duration or 0.0)
                 print(
                     f"  [dry-run] would insert: {filename}  [{housing or '?'}]  "
-                    f"site={site_name or '?'}  duration={dur:.1f}s"
+                    f"assembly={assembly_name or '?'}  duration={dur:.1f}s"
                 )
                 continue
 
             rec_to_insert = {**rec, "housing": housing, "t0": t0, "duration": duration}
             try:
                 insert_overview_record_from_dict(
-                    con, rec_to_insert, site_name=site_name, verbose=True, upsert=args.reprocess
+                    con, rec_to_insert, assembly_name=assembly_name, verbose=True, upsert=args.reprocess
                 )
             except (ValueError, KeyError) as exc:
                 print(f"  [ERROR] {filename}: {exc}")
@@ -912,12 +912,12 @@ def cmd_populate_overview_records_infer(args) -> None:
         else:
             filenames = [
                 r[0] for r in con.execute(
-                    "SELECT filename FROM overview_records WHERE site_name IS NULL"
+                    "SELECT filename FROM overview_records WHERE assembly_name IS NULL"
                 ).fetchall()
             ]
 
     if not filenames:
-        print("No overview_records rows to infer (all already have a site_name).")
+        print("No overview_records rows to infer (all already have a assembly_name).")
     elif args.dry_run:
         for fname in filenames:
             print(f"  [dry-run] would infer: {fname}")
@@ -958,24 +958,24 @@ def cmd_populate_overview_records(args) -> None:
         print(f"Error: Unknown timezone '{args.db_tz}'")
         sys.exit(1)
 
-    site_names = _resolve_site_names(args, db_path)
-    if not site_names:
-        print("No sites specified. Use --site SITE or --all.")
+    assembly_names = _resolve_assembly_names(args, db_path)
+    if not assembly_names:
+        print("No assemblies specified. Use --assembly ASSEMBLY or --all.")
         sys.exit(1)
 
     records_base = Path(args.records_base)
     insert_fn = upsert_overview_record if args.reprocess else insert_overview_record
     config = ProcessingConfig(dry_run=args.dry_run)
 
-    for site_name in site_names:
-        site = _load_site(site_name, db_path)
-        if site is None:
-            print(f"[SKIP] '{site_name}' not found in DB.")
+    for assembly_name in assembly_names:
+        assembly = _load_assembly(assembly_name, db_path)
+        if assembly is None:
+            print(f"[SKIP] '{assembly_name}' not found in DB.")
             continue
-        print(f"\nSite: {site_name}  housing={site['housing']}")
+        print(f"\nAssembly: {assembly_name}  housing={assembly['housing']}")
 
         matches = _tdms_find_and_register(
-            site, db_path, db_tz, dry_run=True,
+            assembly, db_path, db_tz, dry_run=True,
             type_filter=["Overview"], records_base=records_base, pbsurv=args.pbsurv,
         )
         if not matches:
@@ -990,7 +990,7 @@ def cmd_populate_overview_records(args) -> None:
                 record = process_overview_file(str(fpath), config)
                 with duckdb.connect(db_path) as con:
                     ensure_schema(con)
-                    insert_fn(con, record, site_name=site_name, verbose=True)
+                    insert_fn(con, record, assembly_name=assembly_name, verbose=True)
             except Exception as exc:
                 print(f"  [ERROR] {fpath.name}: {exc}")
 
@@ -1008,9 +1008,9 @@ def cmd_hoop_stress_compute(args) -> None:
         print(f"Error: '{db_path}' does not exist.")
         sys.exit(1)
 
-    site_names = _resolve_site_names(args, db_path)
-    if not site_names:
-        print("No sites specified. Use --site SITE or --all.")
+    assembly_names = _resolve_assembly_names(args, db_path)
+    if not assembly_names:
+        print("No assemblies specified. Use --assembly ASSEMBLY or --all.")
         sys.exit(1)
 
     bins = _parse_bins(args.bins) if args.bins else DEFAULT_STRESS_BINS
@@ -1018,10 +1018,10 @@ def cmd_hoop_stress_compute(args) -> None:
         str(Path(args.records_base) / args.srv_subdir) if args.records_base else ""
     )
 
-    for site_name in site_names:
-        print(f"\nSite: {site_name}")
+    for assembly_name in assembly_names:
+        print(f"\nAssembly: {assembly_name}")
         compute_hoop_stress_history(
-            site_name=site_name,
+            assembly_name=assembly_name,
             db_path=db_path,
             magnet_type=args.magnet_type,
             bins=bins,
@@ -1082,7 +1082,7 @@ def cmd_hoop_stress_part_history(args) -> None:
     print(f"\nPart: {args.part_name}")
     print(f"Experiments ({len(experiments)}):")
     for e in experiments:
-        print(f"  [{e['experiment_id']}] {e['site_name']} — {e['experiment_name']}")
+        print(f"  [{e['experiment_id']}] {e['assembly_name']} — {e['experiment_name']}")
 
     print("\nAggregated bin stats:")
     for b in stats["bin_stats"]:
@@ -1124,10 +1124,15 @@ _DISPATCH = {
     ("magnet",            "view"):             cmd_magnet_view,
     ("magnet",            "check-geometry"):   cmd_magnet_check_geometry,
     ("magnet",            "delete"):           cmd_magnet_delete,
-    ("site",              "add"):             cmd_site_add,
-    ("site",              "view"):            cmd_site_view,
-    ("site",              "delete"):          cmd_site_delete,
-    ("site",              "update-magnet"):   cmd_site_update_magnet,
+    ("assembly",          "add"):             cmd_assembly_add,
+    ("assembly",          "view"):            cmd_assembly_view,
+    ("assembly",          "delete"):          cmd_assembly_delete,
+    ("assembly",          "update-magnet"):   cmd_assembly_update_magnet,
+    # deprecated alias — keep for one release cycle, then remove
+    ("site",              "add"):             cmd_assembly_add,
+    ("site",              "view"):            cmd_assembly_view,
+    ("site",              "delete"):          cmd_assembly_delete,
+    ("site",              "update-magnet"):   cmd_assembly_update_magnet,
     ("housing",           "view"):            cmd_housing_view,
     ("experiments",       "view"):            cmd_experiments_view,
     ("operationaldata",   "view"):            cmd_operationaldata_view,
@@ -1157,13 +1162,16 @@ def _input_dir_arg(p: argparse.ArgumentParser) -> None:
                         "(default: use the path given to json_file as-is)")
 
 
-def _sites_arg(p: argparse.ArgumentParser) -> None:
+def _assemblies_arg(p: argparse.ArgumentParser) -> None:
     p.add_argument(
-        "--site", action="append", metavar="SITE", dest="site",
-        help="Site name to process (repeat for multiple sites). Use --all instead to process every site.",
+        "--assembly", action="append", metavar="ASSEMBLY", dest="assembly",
+        help="Assembly name to process (repeat for multiple assemblies). Use --all instead to process every assembly.",
     )
+    p.add_argument(
+        "--site", action="append", dest="assembly", help=argparse.SUPPRESS
+    )  # deprecated alias — keep for one release cycle, then remove
     p.add_argument("--all", action="store_true",
-                   help="Process all sites in the database.")
+                   help="Process all assemblies in the database.")
 
 
 def _time_range_args(p: argparse.ArgumentParser) -> None:
@@ -1181,7 +1189,7 @@ def _time_range_args(p: argparse.ArgumentParser) -> None:
 
 def _hs_shared_args(p: argparse.ArgumentParser) -> None:
     """Arguments shared by all hoop-stress visualisation subcommands."""
-    p.add_argument("site_name", help="Site name as registered in DuckDB (e.g. M9)")
+    p.add_argument("assembly_name", help="Assembly name as registered in DuckDB (e.g. M9)")
     _db_arg(p)
     p.add_argument(
         "--geometries", default="geometries",
@@ -1196,7 +1204,7 @@ def _hs_pupitre_args(p: argparse.ArgumentParser) -> None:
     p.add_argument(
         "--pupitre", nargs="*", default=None, metavar="FILE",
         help="Pupitre file(s) (.txt, .tdms, .csv). "
-             "Omit to use all experiment files registered for the site.",
+             "Omit to use all experiment files registered for the assembly.",
     )
     p.add_argument(
         "--records-base", default=str(_DEFAULT_RECORDS_BASE), dest="records_base",
@@ -1233,11 +1241,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     entity = parser.add_subparsers(
         dest="entity", required=True,
-        metavar="{list,check,db,material,magnet,site,housing,experiments,operationaldata,overview-records,populate,hoop-stress}",
+        metavar="{list,check,db,material,magnet,assembly,housing,experiments,operationaldata,overview-records,populate,hoop-stress}",
     )
 
     # ── list ─────────────────────────────────────────────────────────────────
-    list_p = entity.add_parser("list", help="List all objects (materials, magnets, sites, housings).")
+    list_p = entity.add_parser("list", help="List all objects (materials, magnets, assemblies, housings).")
     _db_arg(list_p)
 
     # ── check ────────────────────────────────────────────────────────────────
@@ -1323,7 +1331,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Path to the assembly-level YAML geometry file "
                             "(Insert, Bitters, …) to store in magnets.geometry_data. "
                             "Not required for hoop-stress computation, which always "
-                            "rebuilds magnet/site geometry on the fly from parts' "
+                            "rebuilds magnet/assembly geometry on the fly from parts' "
                             "geometry_data; this stores an optional cached copy.")
     m_add.add_argument("--dry-run", action="store_true",
                        help="Validate and preview without writing")
@@ -1350,13 +1358,13 @@ def build_parser() -> argparse.ArgumentParser:
     m_del.add_argument("name", help="Magnet name")
     _db_arg(m_del)
 
-    # ── site ─────────────────────────────────────────────────────────────────
-    site_p = entity.add_parser("site", help="Manage sites.")
-    site_sub = site_p.add_subparsers(dest="action", required=True,
+    # ── assembly ─────────────────────────────────────────────────────────────────
+    assembly_p = entity.add_parser("assembly", aliases=["site"], help="Manage assemblies.")
+    assembly_sub = assembly_p.add_subparsers(dest="action", required=True,
                                      metavar="{add,view,delete,update-magnet}")
 
-    s_add = site_sub.add_parser("add", help="Add a site from a JSON export.")
-    s_add.add_argument("json_file", help="Path to the site JSON file (or bare name with --input-dir)")
+    s_add = assembly_sub.add_parser("add", help="Add an assembly from a JSON export.")
+    s_add.add_argument("json_file", help="Path to the assembly JSON file (or bare name with --input-dir)")
     _db_arg(s_add)
     _input_dir_arg(s_add)
     s_add.add_argument("--magnet-dir",
@@ -1365,23 +1373,23 @@ def build_parser() -> argparse.ArgumentParser:
     s_add.add_argument("--dry-run", action="store_true",
                        help="Validate and preview without writing")
 
-    s_view = site_sub.add_parser("view", help="List all sites or show one.")
+    s_view = assembly_sub.add_parser("view", help="List all assemblies or show one.")
     s_view.add_argument("name", nargs="?", default=None,
-                        help="Site name (omit to list all)")
+                        help="Assembly name (omit to list all)")
     s_view.add_argument("--housing", default=None,
                         help="Filter list by housing name (ignored when <name> is given)")
     s_view.add_argument("--status", default=None,
                         help="Filter list by status (ignored when <name> is given)")
     _db_arg(s_view)
 
-    s_del = site_sub.add_parser("delete",
-                                 help="Delete a site, its magnet links, and experiments.")
-    s_del.add_argument("name", help="Site name")
+    s_del = assembly_sub.add_parser("delete",
+                                 help="Delete an assembly, its magnet links, and experiments.")
+    s_del.add_argument("name", help="Assembly name")
     _db_arg(s_del)
 
-    s_upd = site_sub.add_parser("update-magnet",
-                                 help="Update SiteMagnet fields for a site/magnet pair.")
-    s_upd.add_argument("site_name", help="Site name")
+    s_upd = assembly_sub.add_parser("update-magnet",
+                                 help="Update AssemblyMagnet fields for an assembly/magnet pair.")
+    s_upd.add_argument("assembly_name", help="Assembly name")
     s_upd.add_argument("magnet_name", help="Magnet name")
     _db_arg(s_upd)
     s_upd.add_argument("--z-offset", type=float, dest="z_offset", help="z offset (m)")
@@ -1409,12 +1417,15 @@ def build_parser() -> argparse.ArgumentParser:
                                    metavar="{view}")
 
     e_view = exp_sub.add_parser("view", help="List experiments, optionally filtered.")
-    e_view.add_argument("--site", default=None, metavar="SITE",
-                        help="Filter by site name")
+    e_view.add_argument("--assembly", default=None, metavar="ASSEMBLY",
+                        help="Filter by assembly name")
+    e_view.add_argument(
+        "--site", dest="assembly", help=argparse.SUPPRESS
+    )  # deprecated alias — keep for one release cycle, then remove
     e_view.add_argument("--magnet", default=None, metavar="MAGNET",
-                        help="Filter by magnet name (shows all sites that used this magnet)")
+                        help="Filter by magnet name (shows all assemblies that used this magnet)")
     e_view.add_argument("--part", default=None, metavar="PART",
-                        help="Filter by part name (shows all sites that used this part)")
+                        help="Filter by part name (shows all assemblies that used this part)")
     _time_range_args(e_view)
     _db_arg(e_view)
 
@@ -1426,16 +1437,19 @@ def build_parser() -> argparse.ArgumentParser:
     o_view = opdata_sub.add_parser(
         "view", help="List operationaldata records, optionally filtered."
     )
-    o_view.add_argument("--site", default=None, metavar="SITE",
-                        help="Filter by site name")
+    o_view.add_argument("--assembly", default=None, metavar="ASSEMBLY",
+                        help="Filter by assembly name")
+    o_view.add_argument(
+        "--site", dest="assembly", help=argparse.SUPPRESS
+    )  # deprecated alias — keep for one release cycle, then remove
     o_view.add_argument(
         "--type", default=None, choices=ALL_POPULATE_TYPES, metavar="TYPE",
         help=f"Filter by file type ({', '.join(ALL_POPULATE_TYPES)})",
     )
     o_view.add_argument("--magnet", default=None, metavar="MAGNET",
-                        help="Filter by magnet name (shows all sites that used this magnet)")
+                        help="Filter by magnet name (shows all assemblies that used this magnet)")
     o_view.add_argument("--part", default=None, metavar="PART",
-                        help="Filter by part name (shows all sites that used this part)")
+                        help="Filter by part name (shows all assemblies that used this part)")
     _time_range_args(o_view)
     _db_arg(o_view)
 
@@ -1447,12 +1461,15 @@ def build_parser() -> argparse.ArgumentParser:
     ov_view = ovr_sub.add_parser(
         "view", help="List overview_records, optionally filtered."
     )
-    ov_view.add_argument("--site", default=None, metavar="SITE",
-                         help="Filter by site name")
+    ov_view.add_argument("--assembly", default=None, metavar="ASSEMBLY",
+                         help="Filter by assembly name")
+    ov_view.add_argument(
+        "--site", dest="assembly", help=argparse.SUPPRESS
+    )  # deprecated alias — keep for one release cycle, then remove
     ov_view.add_argument("--magnet", default=None, metavar="MAGNET",
-                         help="Filter by magnet name (shows all sites that used this magnet)")
+                         help="Filter by magnet name (shows all assemblies that used this magnet)")
     ov_view.add_argument("--part", default=None, metavar="PART",
-                         help="Filter by part name (shows all sites that used this part)")
+                         help="Filter by part name (shows all assemblies that used this part)")
     _time_range_args(ov_view)
     ov_view.add_argument("--signatures", action="store_true",
                          help="Include per-record signature and sync details")
@@ -1469,7 +1486,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scan filesystem and register TDMS/pupitre files in operationaldata.",
     )
     _db_arg(p_opdata)
-    _sites_arg(p_opdata)
+    _assemblies_arg(p_opdata)
     p_opdata.add_argument(
         "--type", nargs="+", choices=ALL_POPULATE_TYPES, dest="types", metavar="TYPE",
         help=f"File type(s) to scan ({', '.join(ALL_POPULATE_TYPES)}). Default: all.",
@@ -1499,7 +1516,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scan filesystem for pupitre TXT files and register them in experiments.",
     )
     _db_arg(p_exp)
-    _sites_arg(p_exp)
+    _assemblies_arg(p_exp)
     p_exp.add_argument(
         "--records-base", default=str(_DEFAULT_RECORDS_BASE), dest="records_base",
         help=f"Root of the records tree (default: {_DEFAULT_RECORDS_BASE})",
@@ -1521,7 +1538,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Scan the filesystem for Overview TDMS files and process them via python_magnetrun.",
     )
     _db_arg(p_ov)
-    _sites_arg(p_ov)
+    _assemblies_arg(p_ov)
     p_ov.add_argument(
         "--records-base", default=str(_DEFAULT_RECORDS_BASE), dest="records_base",
         help=f"Root of the records tree (default: {_DEFAULT_RECORDS_BASE})",
@@ -1557,9 +1574,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     p_ov_json.add_argument(
-        "--site", default=None, metavar="SITE",
-        help="Site name to assign to all loaded records (overrides any site_name in the JSON).",
+        "--assembly", default=None, metavar="ASSEMBLY",
+        help="Assembly name to assign to all loaded records (overrides any assembly_name in the JSON).",
     )
+    p_ov_json.add_argument(
+        "--site", dest="assembly", help=argparse.SUPPRESS
+    )  # deprecated alias — keep for one release cycle, then remove
     p_ov_json.add_argument(
         "--db-tz", default="UTC", dest="db_tz",
         help="Timezone of commissioned_at / decommissioned_at in the DB (default: UTC)",
@@ -1575,8 +1595,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_ov_infer = pop_sub.add_parser(
         "overview-records-infer",
         help=(
-            "Infer housing/t0/site_name/duration/teb/bp for overview_records rows "
-            "missing a site_name, via python_magnetrun."
+            "Infer housing/t0/assembly_name/duration/teb/bp for overview_records rows "
+            "missing a assembly_name, via python_magnetrun."
         ),
     )
     _db_arg(p_ov_infer)
@@ -1586,7 +1606,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ov_infer.add_argument(
         "--reprocess", action="store_true",
-        help="Re-infer rows that already have a site_name (default: only NULL ones).",
+        help="Re-infer rows that already have a assembly_name (default: only NULL ones).",
     )
     p_ov_infer.add_argument(
         "--max-gap-seconds", type=float, default=60.0, dest="max_gap_seconds",
@@ -1607,7 +1627,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compute hoop-stress time series, bin stats, and fatigue for experiments.",
     )
     _db_arg(hs_compute)
-    _sites_arg(hs_compute)
+    _assemblies_arg(hs_compute)
     hs_compute.add_argument(
         "--magnet-type", default="all", choices=["H", "B", "S", "all"],
         dest="magnet_type",

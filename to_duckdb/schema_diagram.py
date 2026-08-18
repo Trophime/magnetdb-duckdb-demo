@@ -214,10 +214,10 @@ _POSITIONS: dict[str, tuple[float, float]] = {
     # ── row 1: core assembly ─────────────────────────────────────────────────
     "parts":                     ( 0.0,  6.4),
     "magnets":                   ( 4.5,  6.4),
-    "sites":                     ( 9.0,  6.4),
+    "assemblies":                     ( 9.0,  6.4),
     # ── row 2: junction tables ────────────────────────────────────────────────
     "magnet_parts":              ( 2.25, 3.2),
-    "site_magnets":              ( 6.75, 3.2),
+    "assembly_magnets":              ( 6.75, 3.2),
     # ── row 3: data / operational ────────────────────────────────────────────
     "experiments":               ( 0.0,  0.0),
     "operationaldata":           ( 4.5,  0.0),
@@ -230,9 +230,9 @@ _POSITIONS: dict[str, tuple[float, float]] = {
     "exp_run_scalars":           (-2.5, -6.4),
     "op_run_scalars":            ( 2.0, -6.4),
     # ── row 6: per-bin stats ─────────────────────────────────────────────────
-    "exp_site_bin_stats":        (-3.5, -9.6),
+    "exp_assembly_bin_stats":        (-3.5, -9.6),
     "exp_part_bin_stats":        ( 0.0, -9.6),
-    "op_site_bin_stats":         ( 3.5, -9.6),
+    "op_assembly_bin_stats":         ( 3.5, -9.6),
     "op_part_bin_stats":         ( 6.5, -9.6),
     "hoop_stress_bin_stats":     ( 9.5, -9.6),
     "hoop_stress_fatigue":       (12.5, -9.6),
@@ -245,9 +245,9 @@ _COLORS: dict[str, str] = {
     # assembly
     "parts":                "#cce5ff",
     "magnets":              "#cce5ff",
-    "sites":                "#cce5ff",
+    "assemblies":                "#cce5ff",
     "magnet_parts":         "#cce5ff",
-    "site_magnets":         "#cce5ff",
+    "assembly_magnets":         "#cce5ff",
     # data
     "experiments":          "#fff3cd",
     "operationaldata":      "#fff3cd",
@@ -319,8 +319,8 @@ def draw_diagram(
     _stats_tables = {
         "op_stats_processed", "exp_stats_processed", "hoop_stress_processed",
         "op_run_scalars", "exp_run_scalars",
-        "op_site_bin_stats", "op_part_bin_stats",
-        "exp_site_bin_stats", "exp_part_bin_stats",
+        "op_assembly_bin_stats", "op_part_bin_stats",
+        "exp_assembly_bin_stats", "exp_part_bin_stats",
         "hoop_stress_bin_stats", "hoop_stress_fatigue",
     }
 

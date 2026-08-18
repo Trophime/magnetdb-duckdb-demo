@@ -6,11 +6,11 @@ from datetime import datetime
 import pytest
 
 from crud import (
-    _find_site_for_timestamp,
+    _find_assembly_for_timestamp,
     _parse_overview_filename,
     _postprocess_overview_record,
     delete_magnet,
-    delete_site,
+    delete_assembly,
     exists,
     infer_magnet_type,
     infer_operating_mode,
@@ -22,17 +22,17 @@ from crud import (
     insert_material,
     insert_overview_record_from_dict,
     insert_part,
-    insert_site,
-    insert_site_magnets,
+    insert_assembly,
+    insert_assembly_magnets,
     merge_duplicate_pupitre_records,
     parse_timestamp,
-    resolve_overview_site,
-    update_site_magnet,
+    resolve_overview_assembly,
+    update_assembly_magnet,
     view_magnet,
     view_magnets,
     view_overview_records,
-    view_site,
-    view_sites,
+    view_assembly,
+    view_assemblies,
 )
 from populate import FILE_TZ
 from tests.conftest import (
@@ -41,7 +41,7 @@ from tests.conftest import (
     MATERIAL_STEEL,
     PART_HELIX,
     PART_RING,
-    SITE_DATA,
+    ASSEMBLY_DATA,
 )
 
 
@@ -248,60 +248,60 @@ def test_parse_timestamp(value, expected):
 
 
 # ---------------------------------------------------------------------------
-# insert_site()
+# insert_assembly()
 # ---------------------------------------------------------------------------
 
 
-def test_insert_site_creates_row(con):
-    insert_site(con, SITE_DATA, verbose=False)
+def test_insert_assembly_creates_row(con):
+    insert_assembly(con, ASSEMBLY_DATA, verbose=False)
     row = con.execute(
-        "SELECT housing, status FROM sites WHERE name = 'SITE_01'"
+        "SELECT housing, status FROM assemblies WHERE name = 'ASSEMBLY_01'"
     ).fetchone()
     assert row == ("M10", "in_operation")
 
 
-def test_insert_site_skips_duplicate(con):
-    insert_site(con, SITE_DATA, verbose=False)
-    insert_site(con, SITE_DATA, verbose=False)
-    count = con.execute("SELECT COUNT(*) FROM sites WHERE name = 'SITE_01'").fetchone()[0]
+def test_insert_assembly_skips_duplicate(con):
+    insert_assembly(con, ASSEMBLY_DATA, verbose=False)
+    insert_assembly(con, ASSEMBLY_DATA, verbose=False)
+    count = con.execute("SELECT COUNT(*) FROM assemblies WHERE name = 'ASSEMBLY_01'").fetchone()[0]
     assert count == 1
 
 
-def test_insert_site_null_decommissioned(con):
-    insert_site(con, {**SITE_DATA, "decommissioned_at": None}, verbose=False)
-    row = con.execute("SELECT decommissioned_at FROM sites WHERE name = 'SITE_01'").fetchone()
+def test_insert_assembly_null_decommissioned(con):
+    insert_assembly(con, {**ASSEMBLY_DATA, "decommissioned_at": None}, verbose=False)
+    row = con.execute("SELECT decommissioned_at FROM assemblies WHERE name = 'ASSEMBLY_01'").fetchone()
     assert row[0] is None
 
 
 # ---------------------------------------------------------------------------
-# insert_site_magnets()
+# insert_assembly_magnets()
 # ---------------------------------------------------------------------------
 
 
-def test_insert_site_magnets_creates_row(con_populated):
-    insert_site_magnets(con_populated, "SITE_01", ["MAG_01"], verbose=False)
+def test_insert_assembly_magnets_creates_row(con_populated):
+    insert_assembly_magnets(con_populated, "ASSEMBLY_01", ["MAG_01"], verbose=False)
     row = con_populated.execute(
-        "SELECT z_offset FROM site_magnets WHERE site_name = 'SITE_01' AND magnet_name = 'MAG_01'"
+        "SELECT z_offset FROM assembly_magnets WHERE assembly_name = 'ASSEMBLY_01' AND magnet_name = 'MAG_01'"
     ).fetchone()
     assert row is not None
     assert row[0] == 0.0
 
 
-def test_insert_site_magnets_stores_offsets(con_populated):
+def test_insert_assembly_magnets_stores_offsets(con_populated):
     entry = {"name": "MAG_01", "z_offset": 1.5, "r_offset": 0.3, "parallax": 0.01}
-    insert_site_magnets(con_populated, "SITE_01", [entry], verbose=False)
+    insert_assembly_magnets(con_populated, "ASSEMBLY_01", [entry], verbose=False)
     row = con_populated.execute(
-        "SELECT z_offset, r_offset, parallax FROM site_magnets "
-        "WHERE site_name = 'SITE_01' AND magnet_name = 'MAG_01'"
+        "SELECT z_offset, r_offset, parallax FROM assembly_magnets "
+        "WHERE assembly_name = 'ASSEMBLY_01' AND magnet_name = 'MAG_01'"
     ).fetchone()
     assert row == (1.5, 0.3, 0.01)
 
 
-def test_insert_site_magnets_skips_duplicate(con_populated):
-    insert_site_magnets(con_populated, "SITE_01", ["MAG_01"], verbose=False)
-    insert_site_magnets(con_populated, "SITE_01", ["MAG_01"], verbose=False)
+def test_insert_assembly_magnets_skips_duplicate(con_populated):
+    insert_assembly_magnets(con_populated, "ASSEMBLY_01", ["MAG_01"], verbose=False)
+    insert_assembly_magnets(con_populated, "ASSEMBLY_01", ["MAG_01"], verbose=False)
     count = con_populated.execute(
-        "SELECT COUNT(*) FROM site_magnets WHERE site_name = 'SITE_01' AND magnet_name = 'MAG_01'"
+        "SELECT COUNT(*) FROM assembly_magnets WHERE assembly_name = 'ASSEMBLY_01' AND magnet_name = 'MAG_01'"
     ).fetchone()[0]
     assert count == 1
 
@@ -316,17 +316,17 @@ def test_insert_experiments_creates_rows(con_populated):
         {"name": "run_001.txt", "file": "run_001.txt", "description": ""},
         {"name": "run_002.txt", "file": "run_002.txt", "description": ""},
     ]
-    insert_experiments(con_populated, "SITE_01", records, verbose=False)
+    insert_experiments(con_populated, "ASSEMBLY_01", records, verbose=False)
     count = con_populated.execute(
-        "SELECT COUNT(*) FROM experiments WHERE site_name = 'SITE_01'"
+        "SELECT COUNT(*) FROM experiments WHERE assembly_name = 'ASSEMBLY_01'"
     ).fetchone()[0]
     assert count == 2
 
 
 def test_insert_experiments_skips_duplicate_file(con_populated):
     records = [{"name": "run_001.txt", "file": "run_001.txt"}]
-    insert_experiments(con_populated, "SITE_01", records, verbose=False)
-    insert_experiments(con_populated, "SITE_01", records, verbose=False)
+    insert_experiments(con_populated, "ASSEMBLY_01", records, verbose=False)
+    insert_experiments(con_populated, "ASSEMBLY_01", records, verbose=False)
     count = con_populated.execute(
         "SELECT COUNT(*) FROM experiments WHERE file = 'run_001.txt'"
     ).fetchone()[0]
@@ -334,37 +334,37 @@ def test_insert_experiments_skips_duplicate_file(con_populated):
 
 
 # ---------------------------------------------------------------------------
-# update_site_magnet()
+# update_assembly_magnet()
 # ---------------------------------------------------------------------------
 
 
-def test_update_site_magnet_updates_offset(con_populated):
-    insert_site_magnets(con_populated, "SITE_01", ["MAG_01"], verbose=False)
-    update_site_magnet(con_populated, "SITE_01", "MAG_01", z_offset=12.5)
+def test_update_assembly_magnet_updates_offset(con_populated):
+    insert_assembly_magnets(con_populated, "ASSEMBLY_01", ["MAG_01"], verbose=False)
+    update_assembly_magnet(con_populated, "ASSEMBLY_01", "MAG_01", z_offset=12.5)
     row = con_populated.execute(
-        "SELECT z_offset FROM site_magnets WHERE site_name = 'SITE_01' AND magnet_name = 'MAG_01'"
+        "SELECT z_offset FROM assembly_magnets WHERE assembly_name = 'ASSEMBLY_01' AND magnet_name = 'MAG_01'"
     ).fetchone()
     assert row[0] == 12.5
 
 
-def test_update_site_magnet_updates_only_passed_fields(con_populated):
-    insert_site_magnets(con_populated, "SITE_01", [{"name": "MAG_01", "r_offset": 0.5}], verbose=False)
-    update_site_magnet(con_populated, "SITE_01", "MAG_01", z_offset=3.0)
+def test_update_assembly_magnet_updates_only_passed_fields(con_populated):
+    insert_assembly_magnets(con_populated, "ASSEMBLY_01", [{"name": "MAG_01", "r_offset": 0.5}], verbose=False)
+    update_assembly_magnet(con_populated, "ASSEMBLY_01", "MAG_01", z_offset=3.0)
     row = con_populated.execute(
-        "SELECT z_offset, r_offset FROM site_magnets WHERE site_name = 'SITE_01' AND magnet_name = 'MAG_01'"
+        "SELECT z_offset, r_offset FROM assembly_magnets WHERE assembly_name = 'ASSEMBLY_01' AND magnet_name = 'MAG_01'"
     ).fetchone()
     assert row[0] == 3.0
     assert row[1] == 0.5  # unchanged
 
 
-def test_update_site_magnet_raises_when_row_missing(con_populated):
+def test_update_assembly_magnet_raises_when_row_missing(con_populated):
     with pytest.raises(ValueError, match="No link"):
-        update_site_magnet(con_populated, "SITE_01", "NONEXISTENT", z_offset=1.0)
+        update_assembly_magnet(con_populated, "ASSEMBLY_01", "NONEXISTENT", z_offset=1.0)
 
 
-def test_update_site_magnet_nothing_to_update(con_populated, capsys):
-    insert_site_magnets(con_populated, "SITE_01", ["MAG_01"], verbose=False)
-    update_site_magnet(con_populated, "SITE_01", "MAG_01")
+def test_update_assembly_magnet_nothing_to_update(con_populated, capsys):
+    insert_assembly_magnets(con_populated, "ASSEMBLY_01", ["MAG_01"], verbose=False)
+    update_assembly_magnet(con_populated, "ASSEMBLY_01", "MAG_01")
     captured = capsys.readouterr()
     assert "Nothing to update" in captured.out
 
@@ -406,34 +406,34 @@ def test_view_magnet_shows_coil_index(con_populated, capsys):
 
 
 # ---------------------------------------------------------------------------
-# view_sites() / view_site()
+# view_assemblies() / view_assembly()
 # ---------------------------------------------------------------------------
 
 
-def test_view_sites_empty(con, capsys):
-    view_sites(con)
-    assert "No sites" in capsys.readouterr().out
+def test_view_assemblies_empty(con, capsys):
+    view_assemblies(con)
+    assert "No assemblies" in capsys.readouterr().out
 
 
-def test_view_sites_lists_row(con_populated, capsys):
-    view_sites(con_populated)
+def test_view_assemblies_lists_row(con_populated, capsys):
+    view_assemblies(con_populated)
     out = capsys.readouterr().out
-    assert "SITE_01" in out
+    assert "ASSEMBLY_01" in out
     assert "M10" in out
 
 
-def test_view_site_not_found(con, capsys):
-    view_site(con, "NONEXISTENT")
+def test_view_assembly_not_found(con, capsys):
+    view_assembly(con, "NONEXISTENT")
     assert "not found" in capsys.readouterr().out
 
 
-def test_view_site_shows_detail(con_populated, capsys):
-    insert_site_magnets(con_populated, "SITE_01", ["MAG_01"], verbose=False)
+def test_view_assembly_shows_detail(con_populated, capsys):
+    insert_assembly_magnets(con_populated, "ASSEMBLY_01", ["MAG_01"], verbose=False)
     records = [{"name": "run.txt", "file": "run.txt"}]
-    insert_experiments(con_populated, "SITE_01", records, verbose=False)
-    view_site(con_populated, "SITE_01")
+    insert_experiments(con_populated, "ASSEMBLY_01", records, verbose=False)
+    view_assembly(con_populated, "ASSEMBLY_01")
     out = capsys.readouterr().out
-    assert "SITE_01" in out
+    assert "ASSEMBLY_01" in out
     assert "M10" in out
     assert "MAG_01" in out
     assert "experiments: 1" in out
@@ -470,36 +470,36 @@ def test_delete_magnet_leaves_parts_table_intact(con_populated):
 
 
 # ---------------------------------------------------------------------------
-# delete_site()
+# delete_assembly()
 # ---------------------------------------------------------------------------
 
 
-def test_delete_site_removes_site_row(con_populated):
-    delete_site(con_populated, "SITE_01")
-    assert not exists(con_populated, "sites", "SITE_01")
+def test_delete_assembly_removes_assembly_row(con_populated):
+    delete_assembly(con_populated, "ASSEMBLY_01")
+    assert not exists(con_populated, "assemblies", "ASSEMBLY_01")
 
 
-def test_delete_site_removes_site_magnet_links(con_populated):
-    insert_site_magnets(con_populated, "SITE_01", ["MAG_01"], verbose=False)
-    delete_site(con_populated, "SITE_01")
+def test_delete_assembly_removes_assembly_magnet_links(con_populated):
+    insert_assembly_magnets(con_populated, "ASSEMBLY_01", ["MAG_01"], verbose=False)
+    delete_assembly(con_populated, "ASSEMBLY_01")
     count = con_populated.execute(
-        "SELECT COUNT(*) FROM site_magnets WHERE site_name = 'SITE_01'"
+        "SELECT COUNT(*) FROM assembly_magnets WHERE assembly_name = 'ASSEMBLY_01'"
     ).fetchone()[0]
     assert count == 0
 
 
-def test_delete_site_removes_experiments(con_populated):
+def test_delete_assembly_removes_experiments(con_populated):
     records = [{"name": "run.txt", "file": "run.txt"}]
-    insert_experiments(con_populated, "SITE_01", records, verbose=False)
-    delete_site(con_populated, "SITE_01")
+    insert_experiments(con_populated, "ASSEMBLY_01", records, verbose=False)
+    delete_assembly(con_populated, "ASSEMBLY_01")
     count = con_populated.execute(
-        "SELECT COUNT(*) FROM experiments WHERE site_name = 'SITE_01'"
+        "SELECT COUNT(*) FROM experiments WHERE assembly_name = 'ASSEMBLY_01'"
     ).fetchone()[0]
     assert count == 0
 
 
-def test_delete_site_not_found(con, capsys):
-    delete_site(con, "NONEXISTENT")
+def test_delete_assembly_not_found(con, capsys):
+    delete_assembly(con, "NONEXISTENT")
     assert "not found" in capsys.readouterr().out
 
 
@@ -521,86 +521,86 @@ def test_parse_overview_filename_bad_timestamp():
 
 
 # ---------------------------------------------------------------------------
-# _find_site_for_timestamp()
+# _find_assembly_for_timestamp()
 # ---------------------------------------------------------------------------
 
 
-def _insert_m9_sites(con):
+def _insert_m9_assemblies(con):
     """Two consecutive M9 operational windows, with a gap in between."""
-    insert_site(con, {
-        "name": "M9_SITE_A", "housing": "M9",
+    insert_assembly(con, {
+        "name": "M9_ASSEMBLY_A", "housing": "M9",
         "commissioned_at": "2022-01-01 00:00:00",
         "decommissioned_at": "2022-01-10 00:00:00",
     }, verbose=False)
-    insert_site(con, {
-        "name": "M9_SITE_B", "housing": "M9",
+    insert_assembly(con, {
+        "name": "M9_ASSEMBLY_B", "housing": "M9",
         "commissioned_at": "2022-01-18 00:00:00",
         "decommissioned_at": None,
     }, verbose=False)
 
 
-def test_find_site_for_timestamp_matches_unique_site(con):
-    _insert_m9_sites(con)
+def test_find_assembly_for_timestamp_matches_unique_assembly(con):
+    _insert_m9_assemblies(con)
     t0 = datetime(2022, 1, 27, 17, 56, tzinfo=FILE_TZ)
-    assert _find_site_for_timestamp(con, "M9", t0, FILE_TZ) == "M9_SITE_B"
+    assert _find_assembly_for_timestamp(con, "M9", t0, FILE_TZ) == "M9_ASSEMBLY_B"
 
 
-def test_find_site_for_timestamp_matches_open_ended_window(con):
-    _insert_m9_sites(con)
+def test_find_assembly_for_timestamp_matches_open_ended_window(con):
+    _insert_m9_assemblies(con)
     t0 = datetime(2022, 1, 5, 12, 0, tzinfo=FILE_TZ)
-    assert _find_site_for_timestamp(con, "M9", t0, FILE_TZ) == "M9_SITE_A"
+    assert _find_assembly_for_timestamp(con, "M9", t0, FILE_TZ) == "M9_ASSEMBLY_A"
 
 
-def test_find_site_for_timestamp_no_match_in_gap(con):
-    _insert_m9_sites(con)
+def test_find_assembly_for_timestamp_no_match_in_gap(con):
+    _insert_m9_assemblies(con)
     t0 = datetime(2022, 1, 14, 0, 0, tzinfo=FILE_TZ)
-    assert _find_site_for_timestamp(con, "M9", t0, FILE_TZ) is None
+    assert _find_assembly_for_timestamp(con, "M9", t0, FILE_TZ) is None
 
 
-def test_find_site_for_timestamp_ambiguous_match(con):
-    _insert_m9_sites(con)
-    insert_site(con, {
-        "name": "M9_SITE_OVERLAP", "housing": "M9",
+def test_find_assembly_for_timestamp_ambiguous_match(con):
+    _insert_m9_assemblies(con)
+    insert_assembly(con, {
+        "name": "M9_ASSEMBLY_OVERLAP", "housing": "M9",
         "commissioned_at": "2022-01-20 00:00:00",
         "decommissioned_at": None,
     }, verbose=False)
     t0 = datetime(2022, 1, 27, 17, 56, tzinfo=FILE_TZ)
-    assert _find_site_for_timestamp(con, "M9", t0, FILE_TZ) is None
+    assert _find_assembly_for_timestamp(con, "M9", t0, FILE_TZ) is None
 
 
-def test_find_site_for_timestamp_no_housing_match(con):
-    _insert_m9_sites(con)
+def test_find_assembly_for_timestamp_no_housing_match(con):
+    _insert_m9_assemblies(con)
     t0 = datetime(2022, 1, 27, 17, 56, tzinfo=FILE_TZ)
-    assert _find_site_for_timestamp(con, "M10", t0, FILE_TZ) is None
+    assert _find_assembly_for_timestamp(con, "M10", t0, FILE_TZ) is None
 
 
 # ---------------------------------------------------------------------------
-# resolve_overview_site()
+# resolve_overview_assembly()
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_overview_site_matches_unique_site(con):
-    _insert_m9_sites(con)
-    housing, t0, site_name = resolve_overview_site(con, "M9_Overview_220127-1756", FILE_TZ)
+def test_resolve_overview_assembly_matches_unique_assembly(con):
+    _insert_m9_assemblies(con)
+    housing, t0, assembly_name = resolve_overview_assembly(con, "M9_Overview_220127-1756", FILE_TZ)
     assert housing == "M9"
     assert t0 == datetime(2022, 1, 27, 17, 56)
-    assert site_name == "M9_SITE_B"
+    assert assembly_name == "M9_ASSEMBLY_B"
 
 
-def test_resolve_overview_site_bad_filename_returns_housing_only(con):
-    _insert_m9_sites(con)
-    housing, t0, site_name = resolve_overview_site(con, "M9_Overview_notatimestamp", FILE_TZ)
+def test_resolve_overview_assembly_bad_filename_returns_housing_only(con):
+    _insert_m9_assemblies(con)
+    housing, t0, assembly_name = resolve_overview_assembly(con, "M9_Overview_notatimestamp", FILE_TZ)
     assert housing == "M9"
     assert t0 is None
-    assert site_name is None
+    assert assembly_name is None
 
 
-def test_resolve_overview_site_no_site_match_still_returns_housing_and_t0(con):
-    _insert_m9_sites(con)
-    housing, t0, site_name = resolve_overview_site(con, "M9_Overview_220114-0000", FILE_TZ)
+def test_resolve_overview_assembly_no_assembly_match_still_returns_housing_and_t0(con):
+    _insert_m9_assemblies(con)
+    housing, t0, assembly_name = resolve_overview_assembly(con, "M9_Overview_220114-0000", FILE_TZ)
     assert housing == "M9"
     assert t0 == datetime(2022, 1, 14, 0, 0)
-    assert site_name is None
+    assert assembly_name is None
 
 
 # ---------------------------------------------------------------------------
@@ -651,25 +651,25 @@ def _overview_dict(filename, t0, duration, teb, bp, pupitre, housing="M9", **ext
     }
 
 
-def _ensure_site(con, site_name, housing):
-    """Insert a minimal housing_config + sites row, satisfying overview_records's FK."""
+def _ensure_assembly(con, assembly_name, housing):
+    """Insert a minimal housing_config + assemblies row, satisfying overview_records's FK."""
     if con.execute("SELECT 1 FROM housing_config WHERE name = ?", [housing]).fetchone() is None:
         con.execute(
             "INSERT INTO housing_config (name, coil_assignment, formats) VALUES (?, MAP{}, [])",
             [housing],
         )
-    if con.execute("SELECT 1 FROM sites WHERE name = ?", [site_name]).fetchone() is None:
+    if con.execute("SELECT 1 FROM assemblies WHERE name = ?", [assembly_name]).fetchone() is None:
         con.execute(
-            "INSERT INTO sites (name, housing, status, commissioned_at, decommissioned_at) "
+            "INSERT INTO assemblies (name, housing, status, commissioned_at, decommissioned_at) "
             "VALUES (?, ?, 'active', '2022-01-01 00:00:00', NULL)",
-            [site_name, housing],
+            [assembly_name, housing],
         )
 
 
 def _insert_overview(con, *args, **kwargs):
     data = _overview_dict(*args, **kwargs)
-    if data.get("site_name"):
-        _ensure_site(con, data["site_name"], data["housing"])
+    if data.get("assembly_name"):
+        _ensure_assembly(con, data["assembly_name"], data["housing"])
     insert_overview_record_from_dict(con, data, verbose=False)
 
 
@@ -678,12 +678,12 @@ def test_merge_duplicate_pupitre_records_merges_shared_pupitre_lower_t0_first(co
     # the default 60s adjacency threshold.
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
-        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+        ["p1.tdms", "p2.tdms"], assembly_name="M9_ASSEMBLY_A",
         signatures={"sigA": {"min": 0, "max": 1}},
     )
     _insert_overview(
         con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 200.0, 20.0, 2.0,
-        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+        ["p2.tdms", "p3.tdms"], assembly_name="M9_ASSEMBLY_A",
         signatures={"sigB": {"min": 2, "max": 3}},
     )
 
@@ -718,11 +718,11 @@ def test_merge_duplicate_pupitre_records_merges_shared_pupitre_lower_t0_first(co
 def test_merge_duplicate_pupitre_records_merges_shared_pupitre_higher_t0_first(con):
     _insert_overview(
         con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 200.0, 20.0, 2.0,
-        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+        ["p2.tdms", "p3.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
-        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+        ["p1.tdms", "p2.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
 
     merge_duplicate_pupitre_records(con, verbose=False)
@@ -750,11 +750,11 @@ def test_merge_duplicate_pupitre_records_no_merge_when_gap_too_large(con):
     """
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
-        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+        ["p1.tdms", "p2.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
-        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+        ["p2.tdms", "p3.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
 
     result = merge_duplicate_pupitre_records(con, verbose=False)
@@ -779,11 +779,11 @@ def test_merge_duplicate_pupitre_records_no_merge_when_gap_too_large(con):
 def test_merge_duplicate_pupitre_records_no_merge_when_housing_differs(con):
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
-        ["shared.tdms"], housing="M9", site_name="M9_SITE_A",
+        ["shared.tdms"], housing="M9", assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M10_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
-        ["shared.tdms"], housing="M10", site_name="M10_SITE_A",
+        ["shared.tdms"], housing="M10", assembly_name="M10_ASSEMBLY_A",
     )
 
     result = merge_duplicate_pupitre_records(con, verbose=False)
@@ -798,14 +798,14 @@ def test_merge_duplicate_pupitre_records_no_merge_when_housing_differs(con):
     ]
 
 
-def test_merge_duplicate_pupitre_records_no_merge_when_site_name_differs(con):
+def test_merge_duplicate_pupitre_records_no_merge_when_assembly_name_differs(con):
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
-        ["shared.tdms"], site_name="M9_SITE_A",
+        ["shared.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
-        ["shared.tdms"], site_name="M9_SITE_B",
+        ["shared.tdms"], assembly_name="M9_ASSEMBLY_B",
     )
 
     result = merge_duplicate_pupitre_records(con, verbose=False)
@@ -823,11 +823,11 @@ def test_merge_duplicate_pupitre_records_no_merge_when_site_name_differs(con):
 def test_merge_duplicate_pupitre_records_no_merge_without_shared_pupitre(con):
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
-        ["p1.tdms"], site_name="M9_SITE_A",
+        ["p1.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1800", "2022-01-27 18:00:00", 200.0, 20.0, 2.0,
-        ["p2.tdms"], site_name="M9_SITE_A",
+        ["p2.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
 
     result = merge_duplicate_pupitre_records(con, verbose=False)
@@ -847,15 +847,15 @@ def test_merge_duplicate_pupitre_records_chains_three_way(con):
     # all three gaps (20s) are within the default 60s threshold.
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
-        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+        ["p1.tdms", "p2.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 100.0, 10.0, 1.0,
-        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+        ["p2.tdms", "p3.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1704", "2022-01-27 17:04:00", 100.0, 10.0, 1.0,
-        ["p3.tdms", "p4.tdms"], site_name="M9_SITE_A",
+        ["p3.tdms", "p4.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
 
     result = merge_duplicate_pupitre_records(con, verbose=False)
@@ -893,19 +893,19 @@ def test_merge_duplicate_pupitre_records_chain_does_not_drift_with_summed_durati
     """
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
-        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+        ["p1.tdms", "p2.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1702", "2022-01-27 17:02:05", 100.0, 10.0, 1.0,
-        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+        ["p2.tdms", "p3.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1704", "2022-01-27 17:04:10", 100.0, 10.0, 1.0,
-        ["p3.tdms", "p4.tdms"], site_name="M9_SITE_A",
+        ["p3.tdms", "p4.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1706", "2022-01-27 17:06:15", 100.0, 10.0, 1.0,
-        ["p4.tdms", "p5.tdms"], site_name="M9_SITE_A",
+        ["p4.tdms", "p5.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
 
     result = merge_duplicate_pupitre_records(con, verbose=False)
@@ -931,11 +931,11 @@ def test_merge_duplicate_pupitre_records_chain_does_not_drift_with_summed_durati
 def test_merge_duplicate_pupitre_records_flattens_pointer_on_re_merge(con):
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
-        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+        ["p1.tdms", "p2.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 100.0, 10.0, 1.0,
-        ["p2.tdms"], site_name="M9_SITE_A",
+        ["p2.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     merge_duplicate_pupitre_records(con, verbose=False)
     assert con.execute(
@@ -947,7 +947,7 @@ def test_merge_duplicate_pupitre_records_flattens_pointer_on_re_merge(con):
     # Ends at 16:59:50 (duration=50s) — 10s before the 17:00 survivor's t0.
     _insert_overview(
         con, "M9_Overview_220127-1659", "2022-01-27 16:59:00", 50.0, 5.0, 0.5,
-        ["p2.tdms"], site_name="M9_SITE_A",
+        ["p2.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     merge_duplicate_pupitre_records(con, verbose=False)
 
@@ -964,11 +964,11 @@ def test_merge_duplicate_pupitre_records_flattens_pointer_on_re_merge(con):
 def test_merge_duplicate_pupitre_records_idempotent_on_rerun(con):
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
-        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+        ["p1.tdms", "p2.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 200.0, 20.0, 2.0,
-        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+        ["p2.tdms", "p3.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
 
     first = merge_duplicate_pupitre_records(con, verbose=False)
@@ -988,11 +988,11 @@ def test_merge_duplicate_pupitre_records_idempotent_on_rerun(con):
 def test_view_overview_records_excludes_merged_rows(con, capsys):
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
-        ["p1.tdms", "p2.tdms"], site_name="M9_SITE_A",
+        ["p1.tdms", "p2.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     _insert_overview(
         con, "M9_Overview_220127-1702", "2022-01-27 17:02:00", 200.0, 20.0, 2.0,
-        ["p2.tdms", "p3.tdms"], site_name="M9_SITE_A",
+        ["p2.tdms", "p3.tdms"], assembly_name="M9_ASSEMBLY_A",
     )
     merge_duplicate_pupitre_records(con, verbose=False)
 
@@ -1007,29 +1007,29 @@ def test_view_overview_records_excludes_merged_rows(con, capsys):
 # ---------------------------------------------------------------------------
 
 
-def test_infer_overview_record_fields_resolves_site_and_t0(con):
-    _insert_m9_sites(con)
+def test_infer_overview_record_fields_resolves_assembly_and_t0(con):
+    _insert_m9_assemblies(con)
     insert_overview_record_from_dict(con, {"filename": "M9_Overview_220127-1756"}, verbose=False)
 
     status = infer_overview_record_fields(con, "M9_Overview_220127-1756", FILE_TZ, verbose=False)
 
     assert status == "resolved"
     row = con.execute(
-        "SELECT site_name, housing, t0, duration, teb, bp FROM overview_records "
+        "SELECT assembly_name, housing, t0, duration, teb, bp FROM overview_records "
         "WHERE filename = 'M9_Overview_220127-1756'"
     ).fetchone()
-    assert row == ("M9_SITE_B", "M9", datetime(2022, 1, 27, 17, 56), 0.0, 0.0, 0.0)
+    assert row == ("M9_ASSEMBLY_B", "M9", datetime(2022, 1, 27, 17, 56), 0.0, 0.0, 0.0)
 
 
-def test_infer_overview_record_fields_no_site_match_leaves_site_name_null(con):
-    _insert_m9_sites(con)
+def test_infer_overview_record_fields_no_assembly_match_leaves_assembly_name_null(con):
+    _insert_m9_assemblies(con)
     insert_overview_record_from_dict(con, {"filename": "M9_Overview_220114-0000"}, verbose=False)
 
     status = infer_overview_record_fields(con, "M9_Overview_220114-0000", FILE_TZ, verbose=False)
 
-    assert status == "no_site_match"
+    assert status == "no_assembly_match"
     row = con.execute(
-        "SELECT site_name FROM overview_records WHERE filename = 'M9_Overview_220114-0000'"
+        "SELECT assembly_name FROM overview_records WHERE filename = 'M9_Overview_220114-0000'"
     ).fetchone()
     assert row == (None,)
 
@@ -1061,7 +1061,7 @@ def test_infer_overview_record_fields_resolves_source_basenames(con, monkeypatch
         "python_magnetrun.data_dirs.PUPITRE_DATA_DIR", str(tmp_path / "pupitre")
     )
 
-    _insert_m9_sites(con)
+    _insert_m9_assemblies(con)
     insert_overview_record_from_dict(
         con,
         {
@@ -1163,19 +1163,19 @@ def test_postprocess_overview_record_not_found(con):
     assert status == "not_found"
 
 
-def test_postprocess_overview_record_skipped_no_site(con):
+def test_postprocess_overview_record_skipped_no_assembly(con):
     insert_overview_record_from_dict(con, {"filename": "M9_Overview_220127-1756"}, verbose=False)
 
     status = _postprocess_overview_record(con, "M9_Overview_220127-1756", verbose=False)
 
-    assert status == "skipped_no_site"
+    assert status == "skipped_no_assembly"
 
 
 def test_postprocess_overview_record_skipped_no_sources(con):
-    _insert_m9_sites(con)
+    _insert_m9_assemblies(con)
     insert_overview_record_from_dict(
         con,
-        {"filename": "M9_Overview_220127-1756", "site_name": "M9_SITE_B"},
+        {"filename": "M9_Overview_220127-1756", "assembly_name": "M9_ASSEMBLY_B"},
         verbose=False,
     )
 
@@ -1185,12 +1185,12 @@ def test_postprocess_overview_record_skipped_no_sources(con):
 
 
 def test_postprocess_overview_record_applied_sets_mode(con, monkeypatch):
-    _insert_m9_sites(con)
+    _insert_m9_assemblies(con)
     insert_overview_record_from_dict(
         con,
         {
             "filename": "M9_Overview_220127-1756",
-            "site_name": "M9_SITE_B",
+            "assembly_name": "M9_ASSEMBLY_B",
             "sources_overview": ["M9_Overview_220127-1756.tdms"],
         },
         verbose=False,
@@ -1217,12 +1217,12 @@ def test_postprocess_overview_record_skipped_no_mode_data(con, monkeypatch):
     # that name matches a real .tdms file on some dev machines' mounted
     # PIGBROTHER_DATA_DIR, whose insert-time internal postprocess call would
     # load real data and set mode before this test's monkeypatch is installed.
-    _insert_m9_sites(con)
+    _insert_m9_assemblies(con)
     insert_overview_record_from_dict(
         con,
         {
             "filename": "M9_Overview_010101-0101",
-            "site_name": "M9_SITE_B",
+            "assembly_name": "M9_ASSEMBLY_B",
             "sources_overview": ["M9_Overview_010101-0101.tdms"],
         },
         verbose=False,
@@ -1251,12 +1251,12 @@ def test_postprocess_overview_record_resolves_bare_basename(con, monkeypatch, tm
     (overview_dir / "M9_Overview_220127-1756.tdms").touch()
     monkeypatch.setattr("python_magnetrun.data_dirs.PIGBROTHER_DATA_DIR", str(tmp_path))
 
-    _insert_m9_sites(con)
+    _insert_m9_assemblies(con)
     insert_overview_record_from_dict(
         con,
         {
             "filename": "M9_Overview_220127-1756",
-            "site_name": "M9_SITE_B",
+            "assembly_name": "M9_ASSEMBLY_B",
             "sources_overview": ["M9_Overview_220127-1756.tdms"],
         },
         verbose=False,

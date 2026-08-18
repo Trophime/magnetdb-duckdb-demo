@@ -6,7 +6,7 @@ Only genuinely cross-cutting values live here.  Domain-specific constants
 the module that owns them.
 """
 
-DEFAULT_DB = "magnetdb.duckdb"
+DEFAULT_DB = "test-magnetdb.duckdb"
 
 MW_TO_W = 1e6      # MW → W
 J_TO_KWH = 3.6e6   # J → kWh
