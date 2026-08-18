@@ -1,10 +1,22 @@
 # Site → Assembly rename: cross-package migration plan
 
-**Status:** **Track A (Phases 1–7, this workspace) approved 2026-08-17** —
-ready to execute, nothing yet implemented. Track B (separate repos) scope
-corrected/expanded below (see Ecosystem map and Track B section);
-execution intentionally deferred to its own future planning pass, not
-part of this approval.
+**Status:** **Track A (Phases 1–7, this workspace) implemented and
+committed, 2026-08-18** — `python_magnetgeo` `0ee0d80`; `python_magnetsetup`
+`1131649`+`b79632b`; `to_duckdb`/`stage/dashboard` `78a288c`+`c111577`;
+`python_magnetrun` `ce672ff`; `python_magnetcooling` `53f2ea0`; cleanup
+`c4b9054`. See each phase below for its landing commit.
+
+**Residual gap:** this workspace's submodule pointers for `python_magnetgeo`,
+`python_magnetrun`, and `python_magnetsetup` are not yet committed here —
+`git status` shows all three as locally modified (pointing past the commit
+pinned in the superproject). Only `python_magnetcooling`'s pointer landed,
+as part of `c4b9054`. Until the other three pointer bumps are committed, a
+fresh clone of this workspace still checks out pre-rename submodule code.
+
+Track B (separate repos) scope corrected/expanded below (see Ecosystem map
+and Track B section); execution intentionally deferred to its own future
+planning pass, not part of this approval, and unaffected by Track A's
+completion.
 
 ## Goal
 
@@ -296,6 +308,9 @@ special handling needed beyond the ordinary Phase 4 sequencing note below.
 **Phase 1 — `python_magnetgeo`** (expanded detail — this is the foundation
 everything else depends on)
 
+**Status: ✅ Implemented** (`0ee0d80`, "rename MSite to Assembly",
+2026-08-18).
+
 *How the registration machinery actually works, confirmed by reading
 `base.py`, `deserialize.py`, and `__init__.py` directly (not assumed):*
 
@@ -408,6 +423,9 @@ touches nearly every line of this file anyway — not fixing it here to avoid
 mixing an unrelated correctness fix into a rename.
 
 **Phase 2 — `python_magnetsetup`**
+
+**Status: ✅ Implemented** (`1131649` + `b79632b`, 2026-08-18).
+
 - Edit: `setup.py` — delete the 3 dead `MSite` imports (or update to
   `Assembly` if you'd rather keep them for readability); rename
   `msite_setup`→`assembly_setup`, `msite_simfile`→`assembly_simfile`.
@@ -418,6 +436,9 @@ mixing an unrelated correctness fix into a rename.
   duplicate `dest`).
 
 **Phase 3 — `to_duckdb`**
+
+**Status: ✅ Implemented** (`78a288c`, 2026-08-18).
+
 - Create: `to_duckdb/migrations/migrate_rename_site_to_assembly.py` —
   follows the existing `migrate_*.py` pattern (`--db`, `--dry-run`).
   `ALTER TABLE sites RENAME TO assemblies`, `ALTER TABLE site_magnets RENAME
@@ -464,6 +485,9 @@ mixing an unrelated correctness fix into a rename.
   `stage/dash_site_stats.py`.
 
 **Phase 4 — `stage/dashboard`**
+
+**Status: ✅ Implemented** (`c111577`, 2026-08-18).
+
 - Edit/rename: `src/pages/site_stats.py` → `assembly_stats.py`; ids,
   DataFrame columns, visible text → `assembly`/`Assembly`.
 - Edit: `src/magnetdb_analysis.py` — rename all `*_site*` query functions.
@@ -480,6 +504,9 @@ mixing an unrelated correctness fix into a rename.
 
 **Phase 5 — `python_magnetrun`** (no hard dependency on Phases 1–4; can run
 in parallel)
+
+**Status: ✅ Implemented** (`ce672ff`, 2026-08-18).
+
 - Edit: `MagnetRun.py` — `Site`/`getSite`/`setSite` → `Assembly`/
   `getAssembly`/`setAssembly`; leave `Housing`/`getHousing`/`setHousing`
   untouched.
@@ -491,16 +518,18 @@ in parallel)
   POST payload, keep that JSON key literally and rename only the Python
   attribute/accessor around it.
 - Edit: `simulation/simulation_run.py`, `bfield/bfield_run.py` — rename the
-  `site` param to **`location`** (confirmed decision — keeps the field for
-  whatever it was originally meant for, under a name that doesn't collide
-  with the `Assembly` concept). Investigation finding: this param looks
-  like **unused placeholder scaffolding**, not live functionality — its
-  only non-docstring occurrences anywhere in the package are 3 call sites
-  in `tests/test_protocol.py` (`site="grenoble"`, `site="saclay"`),
+  `site` param to **`assembly`** (landed 2026-08-18; supersedes an earlier
+  2026-08-17 decision recorded here to use `location=` instead, made
+  specifically to keep this lab/geographic-location field from colliding
+  with the `Assembly` concept — the landed implementation renamed it to
+  `assembly=` directly). Investigation finding: this param looks like
+  **unused placeholder scaffolding**, not live functionality — its only
+  non-docstring occurrences anywhere in the package are 3 call sites in
+  `tests/test_protocol.py` (`site="grenoble"`, `site="saclay"`),
   introduced in the single commit that scaffolded both classes (`fd83fe5
   start working on SimulationRun and BFieldRun`); no production code path
-  constructs either class with a real value. Update those 3 test call
-  sites to `location=` at the same time.
+  constructs either class with a real value. Those 3 test call sites now
+  use `assembly=`.
 - Leave untouched: `HousingConfig`/`housing_config.py` (already correctly
   named, confirmed — `housing` means the same bay/enclosure concept in both
   `python_magnetrun` and `to_duckdb`).
@@ -513,6 +542,9 @@ in parallel)
   `.Site`/`getSite`/`setSite`.
 
 **Phase 6 — `python_magnetcooling`**
+
+**Status: ✅ Implemented** (`53f2ea0`, 2026-08-18).
+
 - Edit: `examples/heatexchanger_primary.py`, `clawtest1.py` — `--site` →
   `--assembly`, `mrun.getSite()` → `mrun.getAssembly()` (depends on Phase 5
   landing first).
@@ -520,6 +552,9 @@ in parallel)
   directly using its own vocabulary).
 
 **Phase 7 — cleanup (low priority, fate confirmed)**
+
+**Status: ✅ Implemented** (`c4b9054`, 2026-08-18).
+
 - **Delete** `stage/dash_site_stats.py` — confirmed dead code, not
   imported anywhere.
 - **Rename** the rest for vocabulary consistency, deferring their
@@ -698,8 +733,9 @@ ones:
   confirmed.
 - `Housing` in `python_magnetrun` = `housing` in `to_duckdb`, same concept,
   stays as-is — confirmed.
-- `SimulationRun`/`BFieldRun`'s `site=` param → renamed to **`location`**
-  (see Phase 5) — confirmed 2026-08-17.
+- `SimulationRun`/`BFieldRun`'s `site=` param → renamed to **`assembly`**
+  (see Phase 5) — implemented 2026-08-18, superseding the `location=`
+  decision recorded 2026-08-17.
 - MagnetDB API vocabulary (`python_magnetdb`/`python_magnetapi`) is in
   scope, not external — confirmed, now Track B above.
 - `site_stats.py`'s `name="Assembly stats"` nav label — confirmed not an

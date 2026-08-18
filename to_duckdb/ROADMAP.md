@@ -49,18 +49,25 @@ not yet sizeable).
   `PLAN_hoop_stress_history.md` lands so the columns' vocabulary matches
   the finished pipeline.
 - `PLAN_site_to_assembly_rename.md` — **Track A (Phases 1–7, this
-  workspace) approved 2026-08-17** (`9a7c513`), nothing yet implemented.
-  Status upgraded from "pending approval" (was blocking the `Now`-phase row
-  below); the plan itself also grew substantially in this pass — corrected
-  ecosystem map (found a 4th sibling repo, `python_magnetworkflows`; Track B
-  now recognized as your own `python_magnetdb`/`python_magnetapi`, not a
-  third-party system) and a 9-row "what does 'site' mean here" table
-  clarifying scope (`housing`, the lab/geographic `site=` param, and the
-  proposals-CSV `Site` column are explicitly **not** renamed). Track B
-  (separate repos) execution intentionally deferred, not part of this
-  approval. See the `Now`-phase row below for the sequencing recommendation
-  against `PLAN_lifecycle_status.md`, which is now sharper: that plan can
-  proceed straight to `Assembly` vocabulary since the rename is approved.
+  workspace) implemented and committed, 2026-08-18** (`0ee0d80`, `1131649`,
+  `b79632b`, `78a288c`, `c111577`, `ce672ff`, `53f2ea0`, `c4b9054`).
+  Upgraded from "approved, nothing yet implemented" — all seven phases
+  landed the same day: `python_magnetgeo`'s `Assembly` class (with a
+  deprecated `MSite` alias), `python_magnetsetup`'s `assembly_setup`,
+  `to_duckdb`'s `assemblies`/`assembly_magnets` schema + CRUD + migration
+  script, `stage/dashboard`'s `assembly_stats.py` and friends,
+  `python_magnetrun`'s `getAssembly`/`setAssembly`, `python_magnetcooling`'s
+  `--assembly` flag, and Phase 7 cleanup (`stage/dash_site_stats.py`
+  deleted, `select_site.py`→`select_assembly.py`, etc.). One residual gap:
+  this workspace's submodule pointers for `python_magnetgeo`,
+  `python_magnetrun`, `python_magnetsetup` aren't committed yet (`git
+  status` shows them locally modified past their pinned commit) — only
+  `python_magnetcooling`'s pointer landed, in `c4b9054`. Track B (separate
+  repos) execution remains intentionally deferred, unaffected by Track A's
+  completion. `PLAN_lifecycle_status.md` and
+  `stage/dashboard/PLAN_dashboard_hierarchy_rework.md` (both referenced in
+  the `Now`/`Next`-phase rows below) have been updated to `Assembly`
+  vocabulary to match — see their own status lines.
 - `PLAN_hoop_stress_history.md` — Phase 4 (per-part stats/history tests,
   `PLAN_hoop_stress_per_part_tests.md`) **written and passing in isolation**
   (`f582871`, 2026-08-14, still uncommitted per the plan's own status line
@@ -217,48 +224,47 @@ not yet sizeable).
   which now also collides with `PLAN_site_to_assembly_rename.md` below —
   see that entry.
 - `PLAN_site_to_assembly_rename.md` (repo root, not `to_duckdb`-local) —
-  **new (2026-08-14), pending approval**. Not triggered by a `TODOs.md`
-  line — user-initiated terminology cleanup: the "Site"/`MSite` concept
-  (a magnet geometry assembly, e.g. `"M9"`) is being renamed to `Assembly`
-  across the whole ecosystem, because "site" collides with unrelated
-  meanings in sibling packages (`housing`, a lab/geographic location, and
-  the word "site" as in "website"). Full multi-repo plan lives in that
-  file; **only the `to_duckdb`/`stage/dashboard` slice (its Phases 3–4)
-  belongs on this roadmap** — Phases 1/2/5/6/7 touch `python_magnetgeo`,
-  `python_magnetsetup`, `python_magnetrun`, `python_magnetcooling`, and a
-  "Track B" in `~/github/python_magnetdb`/`~/github/python_magnetapi`
-  (separate repos, backported later, no roadmap of their own currently).
-  **Directly collides with two items already in this roadmap**:
-  - `PLAN_lifecycle_status.md` (below, `Now`, approved but not yet
-    implemented) adds substantial *new* `sites`/`site_magnets` surface —
-    a `SiteStatus` enum, `decommission_site()`, `check_sites()`, a
-    `magnetdb.py site decommission` subcommand, `"site"` added to
-    `check --entity` choices — none of which exists yet. Writing that
-    today under the old vocabulary just means renaming it again almost
-    immediately. Recommend implementing `PLAN_lifecycle_status.md`
-    directly against `Assembly`/`assemblies`/`assembly_magnets` naming
-    from the start, i.e. do (or at least lock in the naming from) the
-    `to_duckdb` schema/CRUD rename first, or fold the two into one
-    coordinated pass.
+  **Track A implemented and committed 2026-08-18** (see the snapshot entry
+  above). Not triggered by a `TODOs.md` line — user-initiated terminology
+  cleanup: the "Site"/`MSite` concept (a magnet geometry assembly, e.g.
+  `"M9"`) has been renamed to `Assembly` across the whole ecosystem,
+  because "site" collided with unrelated meanings in sibling packages
+  (`housing`, a lab/geographic location, and the word "site" as in
+  "website"). Full multi-repo plan lives in that file; **only the
+  `to_duckdb`/`stage/dashboard` slice (its Phases 3–4) belongs on this
+  roadmap**, and both have landed — Phases 1/2/5/6/7 touch
+  `python_magnetgeo`, `python_magnetsetup`, `python_magnetrun`,
+  `python_magnetcooling` (also all landed), and a "Track B" in
+  `~/github/python_magnetdb`/`~/github/python_magnetapi` (separate repos,
+  still deferred, no roadmap of their own currently).
+  **Previously collided with two items on this roadmap — both resolved
+  now that the rename has landed**:
+  - `PLAN_lifecycle_status.md` (below, `Now`) has been updated to reference
+    `Assembly`/`assemblies`/`assembly_magnets` throughout — see its own
+    status line. Not yet implemented, but no longer at risk of being
+    written under vocabulary that would need renaming again immediately.
   - `PLAN_dashboard_hierarchy_rework.md` (above, `Next`, pending approval)
-    edits `site_stats.py` — same file the rename's Phase 4 touches
-    (ids, labels, query functions). Sequence so that file is only touched
-    once.
+    was already rewritten to `Assembly` vocabulary as part of the rename's
+    Phase 4 commit (`c111577`) — it edits `assembly_stats.py` (the renamed
+    `site_stats.py`), touched exactly once, under the new vocabulary.
 
 ## Phase: Now — scoped, ready to execute
 
 | Item | Effort | Notes |
 |---|---|---|
-| Execute `PLAN_hoop_stress_history.md` Phases 4–5 | S–M | Phases 1–3 implemented, verified, and committed 2026-08-13 (compute pipeline correctness, Parquet part-name columns, `part-history` command). Phase 4 tests written and passing in isolation (2026-08-14, `f582871`), but still uncommitted and blocked on `magnettools` not being installed in this machine's `venv`. **Decided 2026-08-17: finalize both phases on this machine via the local devcontainer** (rebuilt onto `trophime/magnettools:trixie`, `7066831`), not the office machine — rebuild the devcontainer, confirm `magnettools` imports inside it, then re-run the blocked tests and the real-DB cross-check from there. Phase 5 (fatigue-additivity question) still pending approval, not started; its Phase 3 dependency is satisfied. |
-| Housing-summary notebook fixes | S | Fix `h.site`→`h.housing` in cell `1387a3c9` (still present as of 2026-08-13); re-run notebook end-to-end for consistent outputs; decide fate of the `PROPOSALS` dead-end section. |
-| Site→Assembly rename — `to_duckdb`/dashboard slice (`PLAN_site_to_assembly_rename.md` Phases 3–4) | M | **Track A approved 2026-08-17** (`9a7c513`) — ready to execute, nothing implemented yet. Recommend sequencing **before or together with** `PLAN_lifecycle_status.md` below — that plan is about to add new `sites`/`site_magnets` code (`SiteStatus` enum, `decommission_site()`, `check_sites()`, `site decommission` CLI) that doesn't exist yet; better to write it once, directly as `Assembly`/`assemblies`/`assembly_magnets`, than rename it again immediately after. Rest of that plan (`python_magnetgeo`/`python_magnetsetup`/`python_magnetrun`/`python_magnetcooling`, plus the separate-repo `python_magnetdb`/`python_magnetapi` backport, now confirmed to be your own repos not a third-party system) is outside this roadmap's scope, deferred to its own planning pass. |
-| Execute `PLAN_lifecycle_status.md` | L | Approved 2026-08-14. Phase A (site lifecycle) → Phase B (magnet/part status + cascades) → Phase C (docs/cleanup); no external unknowns, two small opens carried as defaults (see plan). **Sequencing note:** see the rename row above — now that Track A is approved, this can go straight to `Assembly`/`assemblies`/`assembly_magnets` vocabulary rather than writing `sites` code first and renaming it later. |
+| Execute `PLAN_hoop_stress_history.md` Phases 4–5 | S–M | **Done — implemented, verified, and committed 2026-08-18** (`00f8636`), on top of Phases 1–3 (committed 2026-08-13). Phase 4: full-suite re-verification (34/34 `-k hoop`, `test_stress_map.py` 12/12) and a real-DB cross-check against `test-magnetdb.duckdb` (part `H21102801`, 71 experiments) — see `PLAN_hoop_stress_per_part_tests.md`. Phase 5 (fatigue-additivity question): checked against 3 real parts/71 experiments (`sum_range3` additive to float precision, `n_cycles` has a small ~0.003% boundary-residual discrepancy), 2 new tests, finding documented in `docs/hoop-stress.md` — see `PLAN_hoop_stress_fatigue_additivity.md`. Note: both of those per-phase plan files still say "uncommitted" in their own status lines — that wording is stale, `git log`/`git status` confirm the code and tests landed in `00f8636`. |
+| Housing-summary notebook fixes | S | Partially done, **uncommitted**: `h.site`→`h.housing` fix in cell `1387a3c9` and a full top-to-bottom re-run (large diff, `638 insertions(+), 380 deletions(-)`) are both present in the current working-tree edit of `stage/import_housing_summary.ipynb`, but not yet committed. Still open: deciding the fate of the `PROPOSALS` dead-end section (`Magnet Sites` column still entirely null) — that section is untouched by the re-run. |
+| Site→Assembly rename — `to_duckdb`/dashboard slice (`PLAN_site_to_assembly_rename.md` Phases 3–4) | M | **Done — implemented and committed 2026-08-18** (`78a288c`, `c111577`), landed in under a day. `PLAN_lifecycle_status.md` below has been updated to reference `Assembly`/`assemblies`/`assembly_magnets` directly, so it no longer needs to write `sites`/`site_magnets` code first. Rest of the original plan (`python_magnetgeo`/`python_magnetsetup`/`python_magnetrun`/`python_magnetcooling` — also all landed the same day, see `PLAN_site_to_assembly_rename.md` — plus the separate-repo `python_magnetdb`/`python_magnetapi` backport) was outside this roadmap's scope; Track B remains deferred. |
+| Execute `PLAN_lifecycle_status.md` | L | Approved 2026-08-14, updated 2026-08-18 to `Assembly` vocabulary (see `PLAN_lifecycle_status.md`). Phase A (assembly lifecycle) → Phase B (magnet/part status + cascades) → Phase C (docs/cleanup); no external unknowns, two small opens carried as defaults (see plan). **Sequencing note:** the rename above has landed, so this proceeds directly against `Assembly`/`assemblies`/`assembly_magnets` vocabulary — no further coordination needed. |
 
 ## Phase: Next — needs a short scoping pass, or has a design sketch with opens to close
 
 | Item | Effort | Notes |
 |---|---|---|
-| Dashboard hierarchy rework (`stage/dashboard/PLAN_dashboard_hierarchy_rework.md`) | M | Pending approval, but not blocked on anything else in this roadmap — scoped independently of the processing-status flag/hoop-stress dependency that gates the stress/fatigue-linking remainder in `Later`. Touches `to_duckdb/schema.py` (`magnets.created_at`) — sequence with `PLAN_lifecycle_status.md`'s magnet/part schema work to avoid duplicate migrations. Also edits `site_stats.py` — sequence after the `Now`-phase Site→Assembly rename lands so that file isn't touched under both vocabularies. **New:** an untracked draft `/overviews` page (`stage/dashboard/src/pages/overview-record.py`) already exists and overlaps this plan's overview-record viewer item — reconcile before formal approval/implementation so the draft isn't duplicated or lost. |
+| Dashboard hierarchy rework (`stage/dashboard/PLAN_dashboard_hierarchy_rework.md`) | M | Pending approval, but not blocked on anything else in this roadmap — scoped independently of the processing-status flag/hoop-stress dependency that gates the stress/fatigue-linking remainder in `Later`. Touches `to_duckdb/schema.py` (`magnets.created_at`) — sequence with `PLAN_lifecycle_status.md`'s magnet/part schema work to avoid duplicate migrations. Also edits `assembly_stats.py` (the renamed `site_stats.py`) — the
+  `Now`-phase Site→Assembly rename has already landed (2026-08-18) and this
+  plan was updated to the new vocabulary as part of that commit, so no
+  further sequencing is needed here. **New:** an untracked draft `/overviews` page (`stage/dashboard/src/pages/overview-record.py`) already exists and overlaps this plan's overview-record viewer item — reconcile before formal approval/implementation so the draft isn't duplicated or lost. |
 | overview-record: signature (Field for classification, Ref currents for ODE, A1–A2/Iddct1–4 for lag) | M | Builds on the now-committed dedup schema. Signature and lag are related — worth scoping together. |
 | overview-record: lag | M | Blocked on open question 1 below — sharpened 2026-08-17: two working lag implementations already exist (`python_magnetrun/analysis/synchronization.py`'s `compute_lag`/`compute_lag_interpolated`, already wired to `overview_records.sync_info` but switched off by default; Wolali's FFT-cross-correlation `get_lag()` in `stage/dashboard/tests/lag_test*.py`, validated but not wired in). Needs a head-to-head comparison (tooling for it already exists), not a design discussion. |
 | overview-record: plateaux | S–M | **Direction decided 2026-08-17** — `nplateaus()` over `sources_pupitre`/`sources_overview` into the already-reserved `overview_records.plateaux` column, adapting the existing `get_plateaux_per_pupitre()` prototype (see Open Question 2). Downgraded from `M` since the algorithm, storage column, and a near-complete prototype already exist; kept at S–M rather than S because per-source threshold tuning and the one-file-vs-row-list decision (see Open Question 2) still need closing first. |
@@ -308,9 +314,9 @@ Effort → elapsed time at this pace:
 
 | Item | Window |
 |---|---|
-| Hoop-stress Phases 4–5 | Aug 18 – Sep 8 |
-| Housing-summary notebook fixes | Sep 8 – Sep 22 |
-| Site→Assembly rename (`to_duckdb`/dashboard slice) | Sep 22 – Oct 20 |
+| Hoop-stress Phases 4–5 | **Done — landed 2026-08-18** | Landed same-day, ~3 weeks ahead of this window. |
+| Housing-summary notebook fixes | **Mostly done, uncommitted** | 2 of 3 items done in the working tree (2026-08-18); `PROPOSALS` section fate still open. |
+| Site→Assembly rename (`to_duckdb`/dashboard slice) | **Done — landed 2026-08-18** | Landed same-day, ~5 weeks ahead of this window. |
 | `PLAN_lifecycle_status.md` | Oct 20 – late Dec | Largest single item (L); dominates this phase. |
 
 ### Next — unblocked items (late Dec 2026 – late Apr 2027)
