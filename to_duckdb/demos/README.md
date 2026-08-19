@@ -46,6 +46,23 @@ python to_duckdb/demos/users_table_demo.py --link-only
 
 ---
 
+## list_users_unlinked.py
+
+Prints `users` rows where both `experiments_ids` and `overview_records_ids`
+are `NULL` — i.e. sessions that couldn't be linked to any `experiments` or
+`overview_records` row.
+
+```bash
+python to_duckdb/demos/list_users_unlinked.py
+python to_duckdb/demos/list_users_unlinked.py --db to_duckdb/test-magnetdb.duckdb
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db` | `to_duckdb/test-magnetdb.duckdb` | Target DuckDB file |
+
+---
+
 ## Building `Data/unmatched_users.csv`
 
 This file is a report of `EXPERIENCES_LOG` acronyms that `users_table_demo.py`
