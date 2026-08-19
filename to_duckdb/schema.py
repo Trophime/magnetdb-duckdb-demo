@@ -58,6 +58,10 @@ ALTER TABLE magnets ADD COLUMN IF NOT EXISTS geometry_data JSON;
 ALTER TABLE parts   ADD COLUMN IF NOT EXISTS status_history JSON DEFAULT '[]';
 ALTER TABLE magnets ADD COLUMN IF NOT EXISTS status_history JSON DEFAULT '[]';
 
+-- idempotent migrations for databases that predate assembled_at/manufactured_at
+ALTER TABLE magnets ADD COLUMN IF NOT EXISTS assembled_at    TIMESTAMP;
+ALTER TABLE parts   ADD COLUMN IF NOT EXISTS manufactured_at TIMESTAMP;
+
 CREATE TABLE IF NOT EXISTS magnet_parts (
     magnet_name VARCHAR REFERENCES magnets(name),
     part_name   VARCHAR REFERENCES parts(name),

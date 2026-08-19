@@ -307,8 +307,8 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
     con.execute(
         """
         INSERT INTO parts
-            (name, type, status, material_name, geometry, geometry_data, cad, design_office_reference)
-        VALUES (?,?,?,?,?,?,?,?)
+            (name, type, status, material_name, geometry, geometry_data, cad, design_office_reference, manufactured_at)
+        VALUES (?,?,?,?,?,?,?,?,?)
         """,
         [
             name,
@@ -319,6 +319,7 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
             geometry_data,
             part.get("cad") or None,
             part.get("design_office_reference") or None,
+            manufactured_at_from_name(name),
         ],
     )
     if verbose:
@@ -342,8 +343,8 @@ def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> No
     con.execute(
         """
         INSERT INTO magnets
-            (name, type, status, geometry, geometry_data, design_office_reference)
-        VALUES (?,?,?,?,?,?)
+            (name, type, status, geometry, geometry_data, design_office_reference, assembled_at)
+        VALUES (?,?,?,?,?,?,?)
         """,
         [
             name,
@@ -352,6 +353,7 @@ def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> No
             data.get("geometry") or None,
             geometry_data,
             data.get("design_office_reference") or None,
+            assembled_at_from_name(name),
         ],
     )
     if verbose:
@@ -522,6 +524,33 @@ def parse_timestamp(value) -> str | None:
     if not value or str(value).lower() in ("none", "null", ""):
         return None
     return str(value)
+
+
+def _date_from_coded_name(name: str, prefix_pattern: str) -> str | None:
+    """Parse a ``YYMMDD`` date out of an LNCMI coded name, or None.
+
+    Matches ``^{prefix_pattern}(\\d{6})\\d{2}$`` (date + 2-digit serial) and
+    parses the captured group as ``%y%m%d``. Returns ``None`` for
+    non-conforming names (e.g. hand-built Bitter magnets/parts) or invalid
+    dates (e.g. month 13).
+    """
+    match = re.match(rf"^{prefix_pattern}(\d{{6}})\d{{2}}$", name)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%y%m%d").strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def assembled_at_from_name(name: str) -> str | None:
+    """Derive a magnet's assembly date from its coded ``name`` (``MYYMMDDXX``)."""
+    return _date_from_coded_name(name, "M")
+
+
+def manufactured_at_from_name(name: str) -> str | None:
+    """Derive a part's manufacture date from its coded ``name`` (``[HR]YYMMDDXX``)."""
+    return _date_from_coded_name(name, "[HR]")
 
 
 def _assembly_is_active(con, name: str) -> bool:

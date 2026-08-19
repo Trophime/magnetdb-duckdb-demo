@@ -9,6 +9,7 @@ from crud import (
     _find_assembly_for_timestamp,
     _parse_overview_filename,
     _postprocess_overview_record,
+    assembled_at_from_name,
     decommission_assembly,
     delete_magnet,
     delete_assembly,
@@ -25,6 +26,7 @@ from crud import (
     insert_part,
     insert_assembly,
     insert_assembly_magnets,
+    manufactured_at_from_name,
     merge_duplicate_pupitre_records,
     parse_timestamp,
     resolve_overview_assembly,
@@ -139,6 +141,32 @@ def test_insert_part_rejects_invalid_status(con):
         insert_part(con, {**PART_HELIX, "status": "bogus"}, verbose=False)
 
 
+def test_insert_part_sets_manufactured_at_from_conforming_name(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "name": "H23012001"}, verbose=False)
+    row = con.execute("SELECT manufactured_at FROM parts WHERE name = 'H23012001'").fetchone()
+    assert str(row[0]) == "2023-01-20 00:00:00"
+
+
+def test_insert_part_leaves_manufactured_at_null_for_non_conforming_name(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "name": "M9Bi"}, verbose=False)
+    row = con.execute("SELECT manufactured_at FROM parts WHERE name = 'M9Bi'").fetchone()
+    assert row[0] is None
+
+
+def test_insert_part_ignores_created_at_for_manufactured_at(con):
+    """The JSON export's own created_at must not influence manufactured_at."""
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(
+        con,
+        {**PART_HELIX, "name": "H23012001", "created_at": "1999-01-01T00:00:00Z"},
+        verbose=False,
+    )
+    row = con.execute("SELECT manufactured_at FROM parts WHERE name = 'H23012001'").fetchone()
+    assert str(row[0]) == "2023-01-20 00:00:00"
+
+
 # ---------------------------------------------------------------------------
 # infer_magnet_type()
 # ---------------------------------------------------------------------------
@@ -191,6 +219,30 @@ def test_insert_magnet_defaults_status_to_in_stock(con):
 def test_insert_magnet_rejects_invalid_status(con):
     with pytest.raises(ValueError):
         insert_magnet(con, {**MAGNET_DATA, "status": "bogus"}, "insert", verbose=False)
+
+
+def test_insert_magnet_sets_assembled_at_from_conforming_name(con):
+    insert_magnet(con, {**MAGNET_DATA, "name": "M23012001"}, "insert", verbose=False)
+    row = con.execute("SELECT assembled_at FROM magnets WHERE name = 'M23012001'").fetchone()
+    assert str(row[0]) == "2023-01-20 00:00:00"
+
+
+def test_insert_magnet_leaves_assembled_at_null_for_non_conforming_name(con):
+    insert_magnet(con, {**MAGNET_DATA, "name": "M9Bitters"}, "insert", verbose=False)
+    row = con.execute("SELECT assembled_at FROM magnets WHERE name = 'M9Bitters'").fetchone()
+    assert row[0] is None
+
+
+def test_insert_magnet_ignores_created_at_for_assembled_at(con):
+    """The JSON export's own created_at must not influence assembled_at."""
+    insert_magnet(
+        con,
+        {**MAGNET_DATA, "name": "M23012001", "created_at": "1999-01-01T00:00:00Z"},
+        "insert",
+        verbose=False,
+    )
+    row = con.execute("SELECT assembled_at FROM magnets WHERE name = 'M23012001'").fetchone()
+    assert str(row[0]) == "2023-01-20 00:00:00"
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +363,35 @@ def test_insert_magnet_part_row_skips_duplicate(con_populated):
 ])
 def test_parse_timestamp(value, expected):
     assert parse_timestamp(value) == expected
+
+
+# ---------------------------------------------------------------------------
+# assembled_at_from_name() / manufactured_at_from_name()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("M23012001", "2023-01-20"),
+    ("M09052601", "2009-05-26"),
+    ("M9Bitters", None),
+    ("M10Bitters", None),
+    ("H23012001", None),  # wrong prefix for a magnet
+    ("M231301", None),  # too short to carry a 2-digit serial
+    ("M23132001", None),  # month 13 is invalid
+])
+def test_assembled_at_from_name(name, expected):
+    assert assembled_at_from_name(name) == expected
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("H23012001", "2023-01-20"),
+    ("R09052601", "2009-05-26"),
+    ("M9Bi", None),
+    ("M9_newBi08", None),
+    ("M23012001", None),  # wrong prefix for a part
+])
+def test_manufactured_at_from_name(name, expected):
+    assert manufactured_at_from_name(name) == expected
 
 
 # ---------------------------------------------------------------------------
