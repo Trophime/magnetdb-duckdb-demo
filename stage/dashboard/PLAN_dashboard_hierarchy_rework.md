@@ -1,6 +1,6 @@
 # Dashboard hierarchy rework
 
-**Status:** Awaiting approval — do not implement until explicitly approved (`approve`/`approved`/`go`/`proceed`/`LGTM`). Anything else (questions, edits, silence) is not approval; revise and re-present.
+**Status:** Approved and implemented 2026-08-19. All 8 approach steps landed and verified: schema/crud/migrations for `assembled_at`/`manufactured_at` (13/17 magnets, 160/166 parts backfilled in `test-magnetdb.duckdb`), new `magnetdb_analysis.py` query functions, `create_annotated_plot` in `magnetdb_plot.py`, `overview_record_link`, `comparison`/`metrics`/`summary` moved to `pages_disabled/`, `housing_stats.py` and `overview_records.py` built, `assembly_stats.py`/`magnet_stats.py`/`part_stats.py` retrofitted with Overview-records/history accordions + DB-wide counts + filter-aware text + missing-data banners, and the final nav order (`housing_stats` → `assembly_stats` → `magnet_stats` → `part_stats` → `overview_records` → `home` → `research-area`). Verified against `test-magnetdb.duckdb` via live Dash callbacks, not just unit tests. Deactivated pages moved to `pages_disabled/` (not commented out in place); `parts.manufactured_at` stays write-only (no page displays it).
 
 ## Goal
 
@@ -134,8 +134,18 @@ is safe. Note `src/metrics.py` (shared module, used by `comparison.py` for
 - `stage/dashboard/src/pages/part_stats.py` — `order`→4; add "Overview records" accordion; add
   "Magnet history" accordion (`get_magnet_history_for_part`, ordered by `magnets.assembled_at`);
   summary counts + filter-aware text; missing-data banner.
-- `stage/dashboard/src/pages/home.py` — `order` only (4→6). No other changes; rename deferred
-  ("eventually", per user).
+- `stage/dashboard/src/pages/home.py` — `order` only (4→6) at the time this plan landed; rename
+  deferred ("eventually", per user). **Follow-up, 2026-08-19: renamed to
+  `file_viewer.py`, route `/home`→`/file_viewer`, deprecated `site=` alias dropped** (nothing
+  generated `?site=...` links anymore since the old `site_stats.py` page was deleted in the
+  Site→Assembly rename). `experiment_links.py`'s `experiment_link()` and `magnetdb_plot.py`'s
+  comment updated to match.
+  **Second follow-up, still pending approval:** the rename surfaced that `file_viewer.py` is the
+  one page that never gets typed styling (per `PLOT_STYLE.md`) — it passes a composite
+  `"<file> - <group>"` string as `create_plot()`'s `filename`, which never matches `.txt`/`.tdms`.
+  Fixing that, plus making the dashboard's plot-style config a real bundled+overridable
+  `style.json` (rather than in-code-only defaults), is scoped separately in
+  `stage/dashboard/PLAN_plot_style_config.md`.
 - `stage/dashboard/src/pages/stats_research_area.py` — `order` only (7→7, confirmed after the
   others move). No content changes — tabled for later discussion per user.
 

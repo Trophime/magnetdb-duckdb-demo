@@ -15,7 +15,7 @@ traces:
    2nd underscore-part of the filename, e.g. `M9_Archive_251202-1430.tdms`
    → `"archive"` — normalized to one of `overview` / `archive` / `default`
    / `spike` / `trigger`.
-3. Anything else (unrecognised name, or a composite string like `home.py`'s
+3. Anything else (unrecognised name, or a composite string like `file_viewer.py`'s
    `f"{selected_file} - {group_name}"` plot title) → `None`, and the trace
    falls back to Plotly's own default color cycling, unstyled.
 
@@ -65,10 +65,12 @@ Example JSON overriding a single type:
 
 - `comparison.py` — yes, passes the raw filename straight through to
   `create_plot()`.
-- `home.py` — no. It passes a composite `"<file> - <group>"` string (used
+- `file_viewer.py` — no. It passes a composite `"<file> - <group>"` string (used
   for the plot title), which never matches `.txt`/`.tdms`, so it falls back
   to Plotly's default coloring. Unaffected by design, not a bug.
-- `overview-record.py` — doesn't call `create_plot()` yet (page is WIP).
+- `overview_records.py` — yes, calls `create_annotated_plot()` (not `create_plot()`),
+  but resolves styling the same way, passing each file's raw filename through to
+  `_resolve_file_style()`.
 
 ## Adding a new PigBrother acquisition mode
 

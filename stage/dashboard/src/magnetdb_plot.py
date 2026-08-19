@@ -95,7 +95,7 @@ def _resolve_file_style(filename: str) -> TraceStyle | None:
 
     None (rather than a fallback style) lets callers keep Plotly's default
     per-trace color cycling for filenames that don't map to a known type —
-    e.g. home.py passes a composite "file - group" string for the plot title.
+    e.g. file_viewer.py passes a composite "file - group" string for the plot title.
     """
     if filename.endswith('.txt'):
         return FILE_TYPE_STYLES.get('pupitre')
@@ -412,6 +412,157 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
         spikedash="solid",
         spikecolor="#FF0000",
         spikethickness=1
+    )
+
+    return fig
+
+
+def create_annotated_plot(files_data: list, x_col: str, method: str, group_name: str = "") -> go.Figure:
+    """Single-subplot overlay of several files' data for one group.
+
+    Regular/pupitre/overview/archive files are drawn as line traces;
+    default/spike/trigger event files are drawn as a single marker+text
+    annotation at their peak absolute value instead of a line — same
+    classification (:func:`~python_magnetrun.utils.files.classify_pigbrother_file`)
+    and styling (`FILE_TYPE_STYLES`) as :func:`create_comparison_plot`, but
+    without its lag/sync correction and two-row raw/aligned layout: this is
+    a single shared-axis overlay for files that are already time-aligned to
+    a common wall-clock axis (``x_col="timestamp"``), as used by the
+    overview-records file-viewer page.
+
+    Parameters
+    ----------
+    files_data : list of dict
+        One dict per file: ``{'file': str, 'df': pandas.DataFrame, 'sensors':
+        list[str], 'mrun': MagnetRun or None}``.
+    x_col : str
+        Column to use for the x-axis (``"timestamp"`` or ``"t"``).
+    method : str
+        Downsampling method name, or ``"raw data"``/``"none"`` to disable.
+        Event files are never downsampled, regardless of this value.
+    group_name : str, optional
+        Used as the figure title.
+
+    Returns
+    -------
+    :class:`~plotly.graph_objects.Figure`
+        One line trace per non-event file/sensor, one marker+text trace per
+        event file/sensor. Empty figure if *files_data* is empty.
+    """
+    if not files_data:
+        return go.Figure()
+
+    ylabel = "Value"
+    for item in files_data:
+        mrun_obj = item.get('mrun')
+        sensors_list = item.get('sensors', [])
+        if mrun_obj and sensors_list:
+            sensor = sensors_list[0]
+            symbol, unit_str = None, None
+            try:
+                symbol, unit_str = mrun_obj.getUnit(sensor)
+            except RuntimeError:
+                try:
+                    if group_name:
+                        symbol, unit_str = mrun_obj.getUnit(f"{group_name}/{sensor}")
+                except RuntimeError:
+                    pass
+
+            if symbol and unit_str is not None:
+                ylabel = f"{symbol} [{unit_str:~P}]"
+                break
+            elif symbol:
+                ylabel = symbol
+                break
+
+    fig = go.Figure()
+    downsample_method = 'none' if (not method or method in ['raw data', 'raw', 'none']) else method
+    event_counters = {'default': 0, 'spike': 0, 'trigger': 0}
+
+    for item in files_data:
+        file = item['file']
+        df_raw = item.get('df')
+        sensors = item.get('sensors') or []
+
+        if df_raw is None or df_raw.empty or not sensors:
+            continue
+
+        style = _resolve_file_style(file)
+        line_kwargs = dict(width=style.width, color=style.color, dash=style.dash) if style else dict(width=2)
+        trace_opacity = style.opacity if style else 1.0
+
+        file_type = classify_pigbrother_file(file)
+        is_event = file_type in ('default', 'spike', 'trigger')
+
+        event_label = ""
+        if is_event:
+            event_counters[file_type] += 1
+            event_label = f"#{file_type}{event_counters[file_type]}"
+
+        if is_event or downsample_method == 'none':
+            df_plot = df_raw.copy()
+        else:
+            try:
+                config = DownsampleConfig(n_out=_DEFAULT_N_OUT, method=_METHOD_MAP.get(downsample_method, 'stride'))
+                df_plot = downsample_dataframe(df_raw, time_col=x_col, value_cols=list(sensors), config=config)
+            except Exception:
+                df_plot = df_raw.copy()
+
+        for sensor in sensors:
+            target_col = None
+            sub_df = df_plot[sensor] if (isinstance(df_plot, dict) and sensor in df_plot) else df_plot
+            short_name = sensor.split('/')[-1]
+
+            if sensor in sub_df.columns:
+                target_col = sensor
+            elif short_name in sub_df.columns:
+                target_col = short_name
+
+            if not (target_col and x_col in sub_df.columns):
+                continue
+
+            x_data = sub_df[x_col]
+
+            if is_event:
+                max_idx = sub_df[target_col].abs().values.argmax()
+                fig.add_trace(go.Scatter(
+                    x=[x_data.iloc[max_idx]],
+                    y=[sub_df[target_col].iloc[max_idx]],
+                    mode='markers+text',
+                    text=[event_label],
+                    textposition="top center",
+                    textfont=dict(color=style.color if style else "red", size=11, family="Arial Black"),
+                    marker=dict(
+                        size=14,
+                        symbol='x' if file_type == 'default' else 'star',
+                        color=style.color if style else "red",
+                        line=dict(width=2, color='DarkSlateGrey'),
+                    ),
+                    name=f"{file} - {sensor}",
+                    legendgroup=file,
+                ))
+            else:
+                fig.add_trace(go.Scatter(
+                    x=x_data,
+                    y=sub_df[target_col],
+                    mode='lines',
+                    name=f"{file} - {sensor}",
+                    legendgroup=file,
+                    line=line_kwargs,
+                    opacity=trace_opacity,
+                ))
+
+    x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time'}
+    fig.update_layout(
+        title=group_name,
+        template="plotly_white",
+        margin=dict(l=40, r=40, t=60, b=40),
+        xaxis=dict(title=x_label_mapping.get(x_col, x_col)),
+        yaxis=dict(title=ylabel),
+        showlegend=True,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        hovermode="x unified",
+        uirevision='constant',
     )
 
     return fig

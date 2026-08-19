@@ -21,20 +21,16 @@ import magnetdb_plot as plot
 import pandas as pd
 from natsort import natsorted
 
-dash.register_page(__name__, path="/home", name="File viewer", order=4)
+dash.register_page(__name__, path="/file_viewer", name="File viewer", order=6)
 
 # `assembly`/`file` are populated by Dash Pages from the URL's query string (e.g. the
-# links generated on the "Assembly stats" page: /home?assembly=...&file=...), so the
+# links generated on the "Assembly stats" page: /file_viewer?assembly=...&file=...), so the
 # dropdowns get their initial value at first render instead of via a callback
 # racing against the (async) options-loading callbacks below. Seeding `options`
 # with the value itself guarantees the label is shown immediately, rather than
 # a blank/placeholder box until the real option list (loaded from DuckDB by the
 # callbacks further down) happens to include a matching entry.
-#
-# `site` is a deprecated alias for `assembly` — old bookmarked/shared
-# `?site=...` links keep working for one release cycle, then remove.
-def layout(assembly=None, site=None, file=None, **kwargs):
-    assembly = assembly or site
+def layout(assembly=None, file=None, **kwargs):
     return html.Div(
         [
             dcc.Store(id="pending-auto-plot", data=["Field"] if (assembly and file) else []),
@@ -128,7 +124,7 @@ def update_file_dropdown(selected_assembly, selected_table, selected_db):
         return []
 
     magnet_types = db.get_magnet_types_for_assembly(selected_assembly, selected_db)
-    print(f"[home.py] selected_assembly={selected_assembly!r} magnet_types={magnet_types}")
+    print(f"[file_viewer.py] selected_assembly={selected_assembly!r} magnet_types={magnet_types}")
 
     files = db.get_files_for_assembly(selected_assembly, selected_table, selected_db)
     return [{"label": f, "value": f} for f in files]
@@ -155,7 +151,7 @@ def update_sensors_menus(
 
     housing = selected_assembly.split("_")[0]
     print(
-        f"[home.py] update_sensors_menus: Loading data file: {selected_file} (assembly={selected_assembly}, housing={housing})"
+        f"[file_viewer.py] update_sensors_menus: Loading data file: {selected_file} (assembly={selected_assembly}, housing={housing})"
     )
     mrun = db.load_mrun_object(selected_file, housing)
 
@@ -366,7 +362,7 @@ def update_outputs(
 
     housing = selected_assembly.split("_")[0]
     print(
-        f"[home.py] Loading data file: {selected_file} (assembly={selected_assembly}, housing={housing})"
+        f"[file_viewer.py] Loading data file: {selected_file} (assembly={selected_assembly}, housing={housing})"
     )
     mrun = db.load_mrun_object(selected_file, housing)
 

@@ -8,10 +8,10 @@ from dash.dash_table import DataTable
 import plotly.express as px
 from plotly import graph_objects as go
 import magnetdb_analysis as db
-from experiment_links import experiment_link
+from experiment_links import experiment_link, overview_record_link
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/part_stats", name="Part stats", order=3)
+dash.register_page(__name__, path="/part_stats", name="Part stats", order=4)
 
 
 S_TO_H = 3600
@@ -123,8 +123,75 @@ TABLE_COLUMNS = [
     if c != "File"
 ]
 
+OVERVIEW_RECORD_COLUMNS = [
+    {"name": c, "id": c, "presentation": "markdown"} if c == "Overview Record" else {"name": c, "id": c}
+    for c in ("Overview Record", "Housing", "Mode", "t0")
+]
 
-def _build_page_content(df):
+MAGNET_HISTORY_COLUMNS = [
+    {"name": c, "id": c}
+    for c in ("magnet_name", "type", "status", "assembled_at", "rank", "coil_index")
+]
+
+
+def _overview_records_section(selected_part, db_path):
+    """Build the "Overview records" accordion for the selected part."""
+    if not selected_part:
+        return html.Div(
+            "Select a part above to see its overview records.",
+            style={"color": "#888", "fontStyle": "italic"},
+        )
+
+    records = db.get_overview_records_for_part(selected_part, db_path)
+    if not records:
+        return html.Div(
+            f"No overview records found for {selected_part}.",
+            style={"color": "#888", "fontStyle": "italic"},
+        )
+
+    table_df = pd.DataFrame(records).rename(
+        columns={"filename": "Overview Record", "assembly_name": "Assembly", "housing": "Housing", "mode": "Mode"}
+    )
+    table_df["Overview Record"] = table_df.apply(overview_record_link, axis=1)
+
+    return DataTable(
+        columns=OVERVIEW_RECORD_COLUMNS,
+        data=table_df[["Overview Record", "Housing", "Mode", "t0"]].to_dict("records"),
+        page_size=10,
+        sort_action="native",
+        style_table={"overflowX": "auto"},
+        style_cell={"textAlign": "center", "padding": "6px"},
+        style_header={"fontWeight": "bold"},
+    )
+
+
+def _magnet_history_section(selected_part, db_path):
+    """Build the "Magnet history" accordion for the selected part, ascending by magnets.assembled_at."""
+    if not selected_part:
+        return html.Div(
+            "Select a part above to see its magnet history.",
+            style={"color": "#888", "fontStyle": "italic"},
+        )
+
+    history = db.get_magnet_history_for_part(selected_part, db_path)
+    if not history:
+        return html.Div(
+            f"No magnet history found for {selected_part}.",
+            style={"color": "#888", "fontStyle": "italic"},
+        )
+
+    return DataTable(
+        columns=MAGNET_HISTORY_COLUMNS,
+        data=history,
+        page_size=10,
+        sort_action="native",
+        style_table={"overflowX": "auto"},
+        style_cell={"textAlign": "center", "padding": "6px"},
+        style_header={"fontWeight": "bold"},
+    )
+
+
+def _build_page_content(df, selected_part=None, db_path=None):
     """Build the figures, table rows, and summary text for a loaded (experiment, part) dataframe."""
     exp_df = df.drop_duplicates(subset="ID").copy()
 
@@ -146,12 +213,19 @@ def _build_page_content(df):
     table_df = df.drop(columns=["File"])
     table_df["Experiment"] = df.apply(experiment_link, axis=1)
 
+    counts = db.get_db_counts(db_path)
+    parts_line = f"Parts: 1 selected of {counts['parts']}" if selected_part else f"Parts: {counts['parts']}"
     summary = [
+        html.B(parts_line),
+        html.Br(),
         html.B(f"Experiments: {len(exp_df)}"),
         html.Br(),
         f"Processed: {(exp_df['Status'] == 'STATS DONE').sum()}",
         html.Br(),
-        f"Parts: {df['Part'].nunique()}",
+        html.B(
+            f"DB-wide: {counts['assemblies']} assemblies, {counts['magnets']} magnets, "
+            f"{counts['overview_records']} overview records"
+        ),
     ]
 
     return (
@@ -173,7 +247,25 @@ def layout(**kwargs):
                 clearable=True,
                 style={"width": "400px", "marginBottom": "15px"},
             ),
+            html.Div(id="part-stats-missing-banner", style={"color": "#a94442", "fontWeight": "bold"}),
             html.Div(id="part-stats-summary"),
+            html.Br(),
+            html.Details(
+                [
+                    html.Summary("📁 Overview records", style={"fontWeight": "bold", "cursor": "pointer"}),
+                    html.Div(id="part-stats-overview-records", style={"padding": "10px"}),
+                ],
+                open=False,
+                style={"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "10px"},
+            ),
+            html.Details(
+                [
+                    html.Summary("📁 Magnet history", style={"fontWeight": "bold", "cursor": "pointer"}),
+                    html.Div(id="part-stats-magnet-history", style={"padding": "10px"}),
+                ],
+                open=False,
+                style={"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "20px"},
+            ),
             html.Br(),
             dcc.Graph(id="part-stats-fig-hours"),
             html.Br(),
@@ -198,6 +290,9 @@ def layout(**kwargs):
     Output("part-stats-table", "data"),
     Output("part-stats-summary", "children"),
     Output("part-stats-part-filter", "options"),
+    Output("part-stats-missing-banner", "children"),
+    Output("part-stats-overview-records", "children"),
+    Output("part-stats-magnet-history", "children"),
     Input("dd-database", "value"),
     Input("part-stats-part-filter", "value"),
 )
@@ -209,10 +304,14 @@ def update_part_stats(selected_db, selected_part):
             [],
             [],
             [],
+            "",
+            "",
+            "",
         )
 
     df = load_data(selected_db)
     part_options = sorted(df["Part"].unique())
+    missing_banner = "" if not df.empty else "No experiment data found for this database."
 
     plot_df = df[df["Part"] == selected_part] if selected_part else df
     fig_hours_style = {"display": "none"} if selected_part else {}
@@ -221,11 +320,16 @@ def update_part_stats(selected_db, selected_part):
         fig_hours,
         table_records,
         summary,
-    ) = _build_page_content(plot_df)
+    ) = _build_page_content(plot_df, selected_part, selected_db)
+    overview_records_section = _overview_records_section(selected_part, selected_db)
+    magnet_history_section = _magnet_history_section(selected_part, selected_db)
     return (
         fig_hours,
         fig_hours_style,
         table_records,
         summary,
         part_options,
+        missing_banner,
+        overview_records_section,
+        magnet_history_section,
     )

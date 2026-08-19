@@ -8,10 +8,10 @@ from dash.dash_table import DataTable
 import plotly.express as px
 from plotly import graph_objects as go
 import magnetdb_analysis as db
-from experiment_links import experiment_link
+from experiment_links import experiment_link, overview_record_link
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/", name="Assembly stats", order=1)
+dash.register_page(__name__, path="/assembly_stats", name="Assembly stats", order=2)
 
 
 J_TO_KWH = 3.6e6
@@ -130,8 +130,58 @@ TABLE_COLUMNS = [
     if c != "File"
 ]
 
+OVERVIEW_RECORD_COLUMNS = [
+    {"name": c, "id": c, "presentation": "markdown"} if c == "Overview Record" else {"name": c, "id": c}
+    for c in ("Overview Record", "Housing", "Mode", "t0")
+]
 
-def _build_page_content(df, total_assemblies, assemblies_in_operation):
+
+def _overview_records_section(selected_assembly, db_path):
+    """Build the "Overview records" accordion for the selected assembly.
+
+    Parameters
+    ----------
+    selected_assembly : str or None
+        Assembly name from the page's filter dropdown.
+    db_path : str, optional
+        Path to the DuckDB database.
+
+    Returns
+    -------
+    :class:`~dash.html.Div`
+        Placeholder text if no assembly is selected, a "no records" message
+        if the assembly has none, or a `DataTable` of its overview records
+        (linked into ``/overview-records``) otherwise.
+    """
+    if not selected_assembly:
+        return html.Div(
+            "Select an assembly above to see its overview records.",
+            style={"color": "#888", "fontStyle": "italic"},
+        )
+
+    records = db.get_overview_records_for_assembly(selected_assembly, db_path)
+    if not records:
+        return html.Div(
+            f"No overview records found for {selected_assembly}.",
+            style={"color": "#888", "fontStyle": "italic"},
+        )
+
+    table_df = pd.DataFrame(records).rename(columns={"filename": "Overview Record", "housing": "Housing", "mode": "Mode"})
+    table_df["Assembly"] = selected_assembly
+    table_df["Overview Record"] = table_df.apply(overview_record_link, axis=1)
+
+    return DataTable(
+        columns=OVERVIEW_RECORD_COLUMNS,
+        data=table_df[["Overview Record", "Housing", "Mode", "t0"]].to_dict("records"),
+        page_size=10,
+        sort_action="native",
+        style_table={"overflowX": "auto"},
+        style_cell={"textAlign": "center", "padding": "6px"},
+        style_header={"fontWeight": "bold"},
+    )
+
+
+def _build_page_content(df, total_assemblies, assemblies_in_operation, selected_assembly=None, db_path=None):
     """Build the figures, table rows, and summary text for a loaded experiments dataframe."""
     fig_per_exp = px.bar(
         df.sort_values("Experiment"),
@@ -218,14 +268,23 @@ def _build_page_content(df, total_assemblies, assemblies_in_operation):
     table_df = df.drop(columns=["File"])
     table_df["Experiment"] = df.apply(experiment_link, axis=1)
 
+    assemblies_line = (
+        f"Assemblies: 1 selected of {total_assemblies}" if selected_assembly else f"Assemblies: {total_assemblies}"
+    )
+    counts = db.get_db_counts(db_path)
     summary = [
-        html.B(f"Assemblies: {total_assemblies}"),
+        html.B(assemblies_line),
         html.Br(),
         f"In operation: {assemblies_in_operation}",
         html.Br(),
         html.B(f"Experiments: {len(df)}"),
         html.Br(),
         f"Processed: {(df['Status'] == 'STATS DONE').sum()}",
+        html.Br(),
+        html.B(
+            f"DB-wide: {counts['magnets']} magnets, {counts['parts']} parts, "
+            f"{counts['overview_records']} overview records"
+        ),
     ]
 
     return (
@@ -251,7 +310,17 @@ def layout(**kwargs):
                 clearable=True,
                 style={"width": "400px", "marginBottom": "15px"},
             ),
+            html.Div(id="assembly-stats-missing-banner", style={"color": "#a94442", "fontWeight": "bold"}),
             html.Div(id="assembly-stats-summary"),
+            html.Br(),
+            html.Details(
+                [
+                    html.Summary("📁 Overview records", style={"fontWeight": "bold", "cursor": "pointer"}),
+                    html.Div(id="assembly-stats-overview-records", style={"padding": "10px"}),
+                ],
+                open=False,
+                style={"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "20px"},
+            ),
             html.Br(),
             dcc.Graph(id="fig-per-exp"),
             html.Br(),
@@ -289,6 +358,8 @@ def layout(**kwargs):
     Output("assembly-stats-table", "data"),
     Output("assembly-stats-summary", "children"),
     Output("assembly-stats-assembly-filter", "options"),
+    Output("assembly-stats-missing-banner", "children"),
+    Output("assembly-stats-overview-records", "children"),
     Input("dd-database", "value"),
     Input("assembly-stats-assembly-filter", "value"),
 )
@@ -305,11 +376,14 @@ def update_assembly_stats(selected_db, selected_assembly):
             [],
             [],
             [],
+            "",
+            "",
         )
 
     df = load_data(selected_db)
     assembly_options = sorted(df["Assembly"].unique())
     total_assemblies, assemblies_in_operation = load_assembly_summary(selected_db)
+    missing_banner = "" if not df.empty else "No experiment data found for this database."
 
     plot_df = df[df["Assembly"] == selected_assembly] if selected_assembly else df
     fig_per_assembly_style = {"display": "none"} if selected_assembly else {}
@@ -322,7 +396,8 @@ def update_assembly_stats(selected_db, selected_assembly):
         fig_field_on_year,
         table_records,
         summary,
-    ) = _build_page_content(plot_df, total_assemblies, assemblies_in_operation)
+    ) = _build_page_content(plot_df, total_assemblies, assemblies_in_operation, selected_assembly, selected_db)
+    overview_records_section = _overview_records_section(selected_assembly, selected_db)
     return (
         fig_per_exp,
         fig_per_assembly,
@@ -334,4 +409,6 @@ def update_assembly_stats(selected_db, selected_assembly):
         table_records,
         summary,
         assembly_options,
+        missing_banner,
+        overview_records_section,
     )
