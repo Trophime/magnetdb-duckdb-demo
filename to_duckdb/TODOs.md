@@ -43,8 +43,8 @@ See: [to_duckdb/PLAN_scheduled_populate.md](PLAN_scheduled_populate.md)
 - [ ] compute ECCO params -- see claude on calcul22
 
 # New features
-- [ ] work on life cycle of magnets and parts -- status for magnet|part with some standardized values (in_operation|in_stock|retired|dead) along with a json struct to hold description of the status, the date of the status change and eventually reports/images on incidents, maintenance, etc. -- 
-  See: [to_duckdb/PLAN_magnet_part_lifecycle.md](PLAN_magnet_part_lifecycle.md)
+- [x] work on life cycle of magnets and parts -- status for magnet|part with some standardized values (in_operation|in_stock|retired|dead) along with a json struct to hold description of the status, the date of the status change and eventually reports/images on incidents, maintenance, etc. -- done: assembly/magnet/part status is now rule-driven with cascades and an append-only `status_history` log, see [to_duckdb/docs/schema.md](docs/schema.md#lifecycle)
+  See: [to_duckdb/PLAN_lifecycle_status.md](PLAN_lifecycle_status.md)
 - [ ] correct and update [python_magnetrun/examples/bilan.py](python_magnetrun/examples/bilan.py)
 - [ ] update numerical commissionning
 - [ ] prepare data structure to store commissionning data and results in duckdb for site -- aka assembly -- and propagate to magnets

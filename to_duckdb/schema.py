@@ -54,6 +54,10 @@ CREATE TABLE IF NOT EXISTS magnets (
 ALTER TABLE parts   ADD COLUMN IF NOT EXISTS geometry_data JSON;
 ALTER TABLE magnets ADD COLUMN IF NOT EXISTS geometry_data JSON;
 
+-- idempotent migrations for databases that predate status_history
+ALTER TABLE parts   ADD COLUMN IF NOT EXISTS status_history JSON DEFAULT '[]';
+ALTER TABLE magnets ADD COLUMN IF NOT EXISTS status_history JSON DEFAULT '[]';
+
 CREATE TABLE IF NOT EXISTS magnet_parts (
     magnet_name VARCHAR REFERENCES magnets(name),
     part_name   VARCHAR REFERENCES parts(name),
@@ -78,6 +82,13 @@ CREATE TABLE IF NOT EXISTS assemblies (
     commissioned_at    TIMESTAMP,
     decommissioned_at  TIMESTAMP
 );
+
+-- idempotent migration for databases that predate status_history
+ALTER TABLE assemblies ADD COLUMN IF NOT EXISTS status_history JSON DEFAULT '[]';
+
+-- idempotent data migration: the ad hoc 'decommisioned' (typo) status value
+-- is replaced by the AssemblyStatus vocabulary's 'disassembled'.
+UPDATE assemblies SET status = 'disassembled' WHERE status = 'decommisioned';
 
 CREATE TABLE IF NOT EXISTS assembly_magnets (
     assembly_name      VARCHAR REFERENCES assemblies(name),

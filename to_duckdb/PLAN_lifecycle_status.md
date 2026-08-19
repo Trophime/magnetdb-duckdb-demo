@@ -1,11 +1,14 @@
 # Plan — lifecycle status for assemblies, magnets, and parts
 
-Status: **approved (2026-08-14), updated to `Assembly` vocabulary
-2026-08-18 following the site→assembly rename
-(`PLAN_site_to_assembly_rename.md`, Track A implemented and committed
-2026-08-18) — not yet implemented.** 2 open assumptions (see below) carried
-into implementation as current defaults; revisit if wrong before Phase A/B
-land.
+Status: **implemented (2026-08-19), Phases A+B+C complete** — approved
+2026-08-14, updated to `Assembly` vocabulary 2026-08-18 following the
+site→assembly rename (`PLAN_site_to_assembly_rename.md`, Track A implemented
+and committed 2026-08-18), extended and re-approved 2026-08-18 with
+default-status and commissioning-cascade rules (see "Domain rules — creation
+defaults and commissioning cascade" below). All three phases landed
+2026-08-19: enums/schema/crud/checks/CLI + full test coverage (Phase A+B),
+`docs/schema.md` lifecycle section + `TODOs.md` checkoff (Phase C). 4 open
+assumptions (see below) remain as shipped defaults; revisit if wrong.
 
 ## Goal
 
@@ -55,10 +58,57 @@ status can't be kept internally consistent without it.
   `--description` nor `--attachment` is supplied on a dead call, the CLI
   prints a prominent (non-blocking) multi-line warning nudging toward
   attaching an incident report.
-- **No upward cascade** (see open question 2): status only ever moves down
-  automatically (toward stock/retired/dead); moving up (e.g. back to
-  `in_operation`) is always an explicit `update-status` call, never implied
-  by linking a magnet to an assembly or a part to a magnet.
+- **No upward cascade, except commissioning** (see open question 2):
+  status only ever moves down automatically (toward stock/retired/dead) —
+  *except* the commissioning cascade below, which is the one deliberate
+  upward exception. Moving up any other way (e.g. `in_stock` back to
+  `in_operation` outside of commissioning) is always an explicit
+  `update-status` call.
+
+## Domain rules — creation defaults and commissioning cascade
+
+Added 2026-08-18 after the rules above were already approved; resolves open
+question 2 (partially — see its updated text) and surfaces three
+consistency gaps in the original rules, all confirmed in scope.
+
+- **Part creation default**: `insert_part` defaults `status` to `"in_stock"`
+  when the caller supplies none; an explicit value (e.g. `in_study`, for a
+  part still being designed) is still honored as-is.
+- **Magnet creation default** (open assumption 3): `insert_magnet` likewise
+  defaults `status` to `"in_stock"` when unspecified, mirroring parts.
+- **Magnet-parts linkage requires in-stock parts**: `insert_magnet_parts`
+  validates *all* parts being linked up front, before inserting any row (so
+  a rejected call leaves zero `magnet_parts` rows, never a partial set), and
+  raises `ValueError` if any part's current `status != "in_stock"` — applies
+  even when the magnet itself is `in_study`. `insert_magnet_part_row` (the
+  low-level pre-computed-row helper — its docstring's "used by
+  seeds_to_duckdb" is stale, since `to_duckdb/deprecated/seeds_to_duckdb.py`
+  has no live callers, only test fixtures) is *not* subject to this check;
+  docstring corrected to stop pointing at dead code.
+- **Commissioning cascade**: `insert_assembly_magnets`, at link time, checks
+  whether the target assembly is currently active
+  (`decommissioned_at IS NULL AND status != 'in_study'`, via a new shared
+  helper `_assembly_is_active()` also used by the auto-close fix below). If
+  active: the magnet is promoted `in_stock → in_operation` (only if
+  currently `NULL`/`in_stock` — never un-retires a `dead`/`retired`
+  magnet), *and* its linked parts currently `NULL`/`in_stock` cascade to
+  `in_operation` too (symmetric with the existing downward part cascade —
+  closes the double-linking gap below). If not active: the magnet keeps its
+  current/default status.
+- **One-active-assembly-per-magnet guard**: `insert_assembly_magnets` raises
+  `ValueError` if the magnet already has an open link
+  (`decommissioned_at IS NULL`) to a *different* assembly — nothing in the
+  schema (`assembly_magnets` PK is `(assembly_name, magnet_name)`) otherwise
+  prevented one physical magnet being "active" in two assemblies at once.
+- **Auto-close now fully cascades**: the original "auto-close on add" rule
+  above only set the old assembly's `status`/`status_history`, not its
+  magnets — an inconsistency (a `disassembled` assembly whose magnets still
+  said `in_operation`) that predates this addendum but is fixed here:
+  `insert_assembly`'s auto-close branch now calls the same cascade logic as
+  `decommission_assembly()` (factored into a shared internal helper) for
+  the assembly being closed, so it also closes that assembly's
+  `assembly_magnets` rows and pushes its magnets (and, transitively, their
+  parts) to `in_stock`.
 
 ## Files affected
 
@@ -69,13 +119,18 @@ status can't be kept internally consistent without it.
 - `to_duckdb/schema.py` — edit: add `status_history JSON DEFAULT '[]'` to
   `assemblies`, `parts`, `magnets`; idempotent migration rewriting existing
   `assemblies.status = 'decommisioned'` rows to `'disassembled'`.
-- `to_duckdb/crud.py` — edit: overlap guard + auto-close + status-derivation
-  in the existing `insert_assembly` (post site→assembly rename); new
-  `decommission_assembly()`; status validation in `insert_part`/
-  `insert_magnet`; new `update_part_status`/`update_magnet_status` (cascade
-  to parts, `dead_parts` requirement, warning); new `view_parts`/
-  `view_part` (parts have no view functions today); extend `view_magnet`
-  to print `status_history`; cascade helpers.
+- `to_duckdb/crud.py` — edit: overlap guard + auto-close (now via the
+  shared cascade helper, see above) + status-derivation in the existing
+  `insert_assembly`; new `decommission_assembly()` and shared
+  `_assembly_is_active()` / disassembly-cascade helpers; status validation
+  + in-stock default in `insert_part`/`insert_magnet`; hard in-stock
+  validation (two-pass, no partial writes) in `insert_magnet_parts`;
+  docstring fix in `insert_magnet_part_row`; commissioning cascade +
+  one-active-assembly-per-magnet guard in `insert_assembly_magnets`; new
+  `update_part_status`/`update_magnet_status` (cascade to parts,
+  `dead_parts` requirement, warning); new `view_parts`/`view_part` (parts
+  have no view functions today); extend `view_magnet` to print
+  `status_history`.
 - `to_duckdb/checks.py` — edit: new `check_assemblies` (overlap/consistency
   audit); extend `check_parts`/`check_magnets` for status validity and a
   dead-invariant audit (catches data that predates this rule).
@@ -90,74 +145,93 @@ status can't be kept internally consistent without it.
 
 ## Approach
 
-**Phase A — Assembly lifecycle (foundation; magnet/part cascades depend on it)**
+Phase A and B are implemented together: the commissioning cascade needs
+both the assembly-active derivation (originally Phase A) and the
+`LifecycleStatus` vocabulary (originally Phase B), so they can no longer
+ship as independently-reviewable increments. Phase C (docs/cleanup) follows.
+
+**Phase A+B — Assembly, magnet, part lifecycle + cascades**
 1. `AssemblyStatus` enum in `enums.py`.
-2. `status_history` column on `assemblies`; idempotent `decommisioned` →
-   `disassembled` data migration in `ensure_schema()`.
-3. `insert_assembly`: derive `status` from `decommissioned_at` for
-   non-`in_study` assemblies (ignore/override a contradicting
-   caller-supplied value); reject on housing overlap; auto-close the
-   previous open assembly on that housing (status + `status_history` event)
-   if one exists.
-4. `decommission_assembly(con, name, decommissioned_at=None, description="",
+2. `LifecycleStatus` enum in `enums.py`.
+3. `status_history` column on `assemblies`, `parts`, `magnets`; idempotent
+   `decommisioned` → `disassembled` data migration in `ensure_schema()`.
+4. `_assembly_is_active(con, name) -> bool` internal helper in `crud.py`:
+   `decommissioned_at IS NULL AND status != 'in_study'`.
+5. `decommission_assembly(con, name, decommissioned_at=None, description="",
    attachments=None, verbose=True)`: sets `decommissioned_at`/
    `status='disassembled'`, appends a `status_history` event, closes the
-   matching `assembly_magnets` row(s), and cascades linked magnets to
-   `in_stock`.
-5. `check_assemblies(con, name=None)` in `checks.py` (status/
-   decommissioned_at consistency, residual per-housing overlaps); add
-   `"assembly"` to `magnetdb.py check --entity` choices.
-6. `magnetdb.py assembly decommission <name> [--decommissioned-at TS]
-   [--description TEXT] [--attachment KIND=PATH]`.
-
-**Phase B — Magnet/part status + cascades**
-7. `LifecycleStatus` enum; `status_history` column on `parts`/`magnets`
-   (idempotent migration).
-8. Validate `status` in `insert_part`/`insert_magnet` against
-   `LifecycleStatus` when provided (stays optional at insert time).
-9. `update_part_status`/`update_magnet_status` in `crud.py`.
-   `update_magnet_status(con, name, status, description="", changed_at=None,
-   attachments=None, dead_parts=None, verbose=True)`:
-   - `status == "dead"` requires `dead_parts`: a non-empty list of part
-     names belonging to this magnet (validated against `magnet_parts`);
-     each is set/confirmed dead first (own `status_history` event), then the
-     magnet's own status/history is updated. Missing/empty `dead_parts` →
-     `ValueError`.
-   - `dead_parts` given with a non-`dead` status → `ValueError`.
-   - Transition to `in_stock`/`retired`/`dead` cascades remaining parts (not
-     in `dead_parts`) with `NULL`/`in_operation` status to `in_stock`.
-   - No `description`/`attachments` on a dead call → prints the prominent
-     warning; still succeeds.
-10. `view_parts`/`view_part` in `crud.py`; extend `view_magnet` to print
+   matching `assembly_magnets` row(s), and cascades linked magnets (and
+   their parts) to `in_stock`. Its cascade body is factored into a shared
+   internal helper so step 6 can reuse it.
+6. `insert_assembly`: derive `status` from `decommissioned_at` for
+   non-`in_study` assemblies (ignore/override a contradicting
+   caller-supplied value); reject on housing overlap; auto-close the
+   previous open assembly on that housing by calling the shared cascade
+   helper from step 5 (not a bare status update) if one exists.
+7. `insert_part`/`insert_magnet`: validate `status` against
+   `LifecycleStatus` when provided; default to `"in_stock"` when
+   unspecified.
+8. `insert_magnet_parts`: two-pass — validate every part's
+   `status == "in_stock"` before inserting any row; raise `ValueError`
+   (naming the offending part and its actual status) otherwise. Correct
+   the stale docstring on `insert_magnet_part_row` (not validated).
+9. `insert_assembly_magnets`: reject (via `ValueError`) if the magnet
+   already has an open link to a different assembly; otherwise, if
+   `_assembly_is_active()` is true for the target assembly, cascade the
+   magnet (if `NULL`/`in_stock`) to `in_operation` and its `NULL`/`in_stock`
+   parts to `in_operation`.
+10. `update_part_status`/`update_magnet_status` in `crud.py`.
+    `update_magnet_status(con, name, status, description="", changed_at=None,
+    attachments=None, dead_parts=None, verbose=True)`:
+    - `status == "dead"` requires `dead_parts`: a non-empty list of part
+      names belonging to this magnet (validated against `magnet_parts`);
+      each is set/confirmed dead first (own `status_history` event), then the
+      magnet's own status/history is updated. Missing/empty `dead_parts` →
+      `ValueError`.
+    - `dead_parts` given with a non-`dead` status → `ValueError`.
+    - Transition to `in_stock`/`retired`/`dead` cascades remaining parts (not
+      in `dead_parts`) with `NULL`/`in_operation` status to `in_stock`.
+    - No `description`/`attachments` on a dead call → prints the prominent
+      warning; still succeeds.
+11. `view_parts`/`view_part` in `crud.py`; extend `view_magnet` to print
     `status_history`.
-11. Extend `check_parts`/`check_magnets` for status validity + dead-invariant
+12. `check_assemblies(con, name=None)` in `checks.py` (status/
+    decommissioned_at consistency, residual per-housing overlaps); add
+    `"assembly"` to `magnetdb.py check --entity` choices. Extend
+    `check_parts`/`check_magnets` for status validity + dead-invariant
     audit (flags a `dead` magnet with zero `dead` parts, for data that
     predates this rule).
-12. `part view`, `part update-status`, `magnet update-status` (incl.
-    `--dead-part`, repeatable) in `magnetdb.py`.
+13. `magnetdb.py assembly decommission <name> [--decommissioned-at TS]
+    [--description TEXT] [--attachment KIND=PATH]`; `part view`,
+    `part update-status`, `magnet update-status` (incl. `--dead-part`,
+    repeatable).
 
 **Phase C — Docs & cleanup**
-13. Update `docs/schema.md`.
-14. Check off the `TODOs.md` lifecycle line.
-15. Full suite: `to_duckdb/venv-systempackages/bin/python3 -m pytest
+14. Update `docs/schema.md`.
+15. Check off the `TODOs.md` lifecycle line.
+16. Full suite: `to_duckdb/venv-systempackages/bin/python3 -m pytest
     to_duckdb/tests/`.
 
 ## Verification
 
-- Phase A: `test_crud.py` covers overlap rejection, auto-close on add,
-  `in_study` exemption, and the assembly→magnet cascade (including that a
-  magnet already `retired`/`dead` is left untouched); `test_schema.py`
-  covers the new column and the `decommisioned`→`disassembled` migration on
-  a DB fixture seeded with the old value; `test_magnetdb.py` covers the
-  `assembly decommission` CLI path end-to-end via the existing `_run`/
-  `_fetch_one` harness.
-- Phase B: `test_crud.py` covers the magnet→part cascade, all four
+- Phase A+B: `test_crud.py` covers overlap rejection, auto-close on add now
+  cascading the old assembly's magnets to `in_stock`, `in_study` exemption,
+  the assembly→magnet cascade on `decommission_assembly` (including that a
+  magnet already `retired`/`dead` is left untouched), part/magnet status
+  defaults on insert, `insert_magnet_parts` rejecting a non-`in_stock` part
+  with zero rows written (partial-application case), the commissioning
+  cascade promoting both a magnet and its parts on `insert_assembly_magnets`,
+  rejection of linking a magnet already actively linked to a different
+  assembly, the magnet→part cascade on `update_magnet_status`, all four
   dead-invariant cases (missing `dead_parts`, a `dead_parts` name not
   belonging to the magnet, valid `dead_parts` succeeding, `dead_parts` with
   a non-dead status), the same-status re-call log-without-cascade case, and
   the warning text (via `capsys`) when a dead call has no
-  description/attachment; `test_magnetdb.py` covers the new `part`/`magnet`
-  CLI subcommands.
+  description/attachment. `test_schema.py` covers the new columns and the
+  `decommisioned`→`disassembled` migration on a DB fixture seeded with the
+  old value. `test_magnetdb.py` covers the `assembly decommission` CLI path
+  and the new `part`/`magnet` CLI subcommands end-to-end via the existing
+  `_run`/`_fetch_one` harness.
 - Phase C: full `to_duckdb/tests/` suite stays green throughout; no
   behavior change for any pre-existing test.
 
@@ -168,7 +242,17 @@ status can't be kept internally consistent without it.
    consistency, not something explicitly requested — flag if
    `assembly_magnets` timestamps should stay independent of the assembly's
    own `decommissioned_at`.
-2. **No upward cascade**: linking a magnet to an assembly, or a part to a
-   magnet, does not auto-promote status back to `in_operation` — that's
-   always an explicit `update-status` call. Confirm this is correct, since
-   only the downward (disassembly/retirement) direction was specified.
+2. **No upward cascade, except commissioning** — updated 2026-08-18:
+   originally, linking a magnet to an assembly, or a part to a magnet, was
+   assumed not to auto-promote status. Resolved (partially) by the
+   commissioning cascade above: linking a magnet to an *active* assembly
+   does promote `in_stock → in_operation` for the magnet and its parts.
+   Everything else about the original assumption still holds — no other
+   linking action auto-promotes status.
+3. **Magnet creation default to `in_stock`** (2026-08-18, not yet field-
+   tested): assumed to mirror the part default; flag if magnets should keep
+   no default at insert time.
+4. **`insert_magnet_part_row` left unvalidated** (2026-08-18): the seed/
+   pre-computed-row path does not enforce the in-stock-parts rule, since it
+   has no live production caller (only test fixtures) — flag if it should
+   validate too, e.g. if it ever gains a real caller.

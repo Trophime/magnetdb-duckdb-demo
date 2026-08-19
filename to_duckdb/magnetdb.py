@@ -5,7 +5,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
 
     python magnetdb.py list                  [--db ...]
 
-    python magnetdb.py check [--db ...] [--entity part|magnet|experiment|operationaldata|all]
+    python magnetdb.py check [--db ...] [--entity part|magnet|assembly|experiment|operationaldata|all]
                              [--name NAME] [--fix]
 
     python magnetdb.py db create            [--db ...]
@@ -16,15 +16,23 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py material view [<name>]   [--db ...] [--nuance NUANCE]
     python magnetdb.py material delete <name>   [--db ...]
 
+    python magnetdb.py part view [<name>]               [--db ...] [--type TYPE] [--status STATUS]
+    python magnetdb.py part update-status <name> --status STATUS
+                                            [--db ...] [--description ...] [--changed-at ...] [--attachment KIND=PATH ...]
+
     python magnetdb.py magnet add <json_file> [--db ...] [--input-dir ...] [--part-dir ...] [--geometry ...] [--dry-run]
     python magnetdb.py magnet view [<name>]             [--db ...] [--type insert|bitters|supras] [--status STATUS]
     python magnetdb.py magnet check-geometry [<name>]   [--db ...]
     python magnetdb.py magnet delete <name>             [--db ...]
+    python magnetdb.py magnet update-status <name> --status STATUS [--dead-part PART ...]
+                                            [--db ...] [--description ...] [--changed-at ...] [--attachment KIND=PATH ...]
 
     python magnetdb.py assembly add <json_file> [--db ...] [--input-dir ...] [--magnet-dir ...] [--dry-run]
     python magnetdb.py assembly view [<name>]   [--db ...] [--housing HOUSING] [--status STATUS]
     python magnetdb.py assembly delete <name>   [--db ...]
     python magnetdb.py assembly update-magnet <assembly> <magnet> [--db ...] [--z-offset ...]
+    python magnetdb.py assembly decommission <name> [--db ...] [--decommissioned-at ...]
+                                            [--description ...] [--attachment KIND=PATH ...]
 
     python magnetdb.py housing view [<name>]                       [--db ...]
     python magnetdb.py experiments view [--assembly <assembly>] [--magnet <magnet>] [--part <part>]
@@ -77,6 +85,7 @@ from checks import print_check_report, run_checks
 from crud import (
     _resolve_source_path,
     check_geometry_data,
+    decommission_assembly,
     delete_magnet,
     delete_material,
     delete_assembly,
@@ -97,6 +106,8 @@ from crud import (
     print_geometry_check,
     resolve_overview_assembly,
     update_assembly_magnet,
+    update_magnet_status,
+    update_part_status,
     upsert_overview_record,
     view_experiments,
     view_housing_config,
@@ -107,6 +118,8 @@ from crud import (
     view_materials,
     view_operationaldata,
     view_overview_records,
+    view_part,
+    view_parts,
     view_assembly,
     view_assemblies,
 )
@@ -494,6 +507,42 @@ def _add_assembly(data: dict, db_path, dry_run: bool = False, magnet_dir=None) -
 
 
 # ---------------------------------------------------------------------------
+# part handlers
+# ---------------------------------------------------------------------------
+
+
+def cmd_part_view(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path)) as con:
+        if args.name:
+            view_part(con, args.name)
+        else:
+            view_parts(con, type_filter=args.type, status_filter=args.status)
+
+
+def cmd_part_update_status(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    attachments = _parse_attachments(args.attachment)
+    with duckdb.connect(str(db_path)) as con:
+        try:
+            update_part_status(
+                con, args.name, args.status,
+                description=args.description or "",
+                changed_at=args.changed_at,
+                attachments=attachments,
+            )
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+
+
+# ---------------------------------------------------------------------------
 # magnet handlers
 # ---------------------------------------------------------------------------
 
@@ -543,6 +592,26 @@ def cmd_magnet_delete(args) -> None:
         sys.exit(1)
     with duckdb.connect(str(db_path)) as con:
         delete_magnet(con, args.name)
+
+
+def cmd_magnet_update_status(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    attachments = _parse_attachments(args.attachment)
+    with duckdb.connect(str(db_path)) as con:
+        try:
+            update_magnet_status(
+                con, args.name, args.status,
+                description=args.description or "",
+                changed_at=args.changed_at,
+                attachments=attachments,
+                dead_parts=args.dead_part,
+            )
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
 
 
 # ---------------------------------------------------------------------------
@@ -607,6 +676,25 @@ def cmd_assembly_update_magnet(args) -> None:
                 commissioned_at=args.commissioned_at,
                 decommissioned_at=args.decommissioned_at,
                 metadata=metadata,
+            )
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+
+
+def cmd_assembly_decommission(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    attachments = _parse_attachments(args.attachment)
+    with duckdb.connect(str(db_path)) as con:
+        try:
+            decommission_assembly(
+                con, args.name,
+                decommissioned_at=args.decommissioned_at,
+                description=args.description or "",
+                attachments=attachments,
             )
         except ValueError as exc:
             print(f"Error: {exc}")
@@ -1120,14 +1208,18 @@ _DISPATCH = {
     ("material",          "add"):             cmd_material_add,
     ("material",          "view"):            cmd_material_view,
     ("material",          "delete"):          cmd_material_delete,
+    ("part",              "view"):             cmd_part_view,
+    ("part",              "update-status"):    cmd_part_update_status,
     ("magnet",            "add"):              cmd_magnet_add,
     ("magnet",            "view"):             cmd_magnet_view,
     ("magnet",            "check-geometry"):   cmd_magnet_check_geometry,
     ("magnet",            "delete"):           cmd_magnet_delete,
+    ("magnet",            "update-status"):    cmd_magnet_update_status,
     ("assembly",          "add"):             cmd_assembly_add,
     ("assembly",          "view"):            cmd_assembly_view,
     ("assembly",          "delete"):          cmd_assembly_delete,
     ("assembly",          "update-magnet"):   cmd_assembly_update_magnet,
+    ("assembly",          "decommission"):    cmd_assembly_decommission,
     # deprecated alias — keep for one release cycle, then remove
     ("site",              "add"):             cmd_assembly_add,
     ("site",              "view"):            cmd_assembly_view,
@@ -1187,6 +1279,28 @@ def _time_range_args(p: argparse.ArgumentParser) -> None:
     )
 
 
+def _attachment_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--attachment", action="append", metavar="KIND=PATH", dest="attachment",
+        help="Attachment to log on this status_history event, as KIND=PATH "
+             "(e.g. report=/path/to/incident.pdf). Repeatable.",
+    )
+
+
+def _parse_attachments(raw: list[str] | None) -> list[dict] | None:
+    """Parse repeated --attachment KIND=PATH values into status_history's shape."""
+    if not raw:
+        return None
+    attachments = []
+    for item in raw:
+        if "=" not in item:
+            print(f"Error: --attachment must be KIND=PATH, got '{item}'.")
+            sys.exit(1)
+        kind, path = item.split("=", 1)
+        attachments.append({"kind": kind, "path": path})
+    return attachments
+
+
 def _hs_shared_args(p: argparse.ArgumentParser) -> None:
     """Arguments shared by all hoop-stress visualisation subcommands."""
     p.add_argument("assembly_name", help="Assembly name as registered in DuckDB (e.g. M9)")
@@ -1241,7 +1355,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     entity = parser.add_subparsers(
         dest="entity", required=True,
-        metavar="{list,check,db,material,magnet,assembly,housing,experiments,operationaldata,overview-records,populate,hoop-stress}",
+        metavar="{list,check,db,material,part,magnet,assembly,housing,experiments,operationaldata,overview-records,populate,hoop-stress}",
     )
 
     # ── list ─────────────────────────────────────────────────────────────────
@@ -1257,7 +1371,7 @@ def build_parser() -> argparse.ArgumentParser:
     _db_arg(check_p)
     check_p.add_argument(
         "--entity", dest="check_entity", default="all",
-        choices=["all", "part", "magnet", "experiment", "operationaldata"],
+        choices=["all", "part", "magnet", "assembly", "experiment", "operationaldata"],
         help="Restrict the check to one entity type (default: all)",
     )
     check_p.add_argument(
@@ -1315,10 +1429,35 @@ def build_parser() -> argparse.ArgumentParser:
     ma_del.add_argument("name", help="Material name")
     _db_arg(ma_del)
 
+    # ── part ────────────────────────────────────────────────────────────────
+    part_p = entity.add_parser("part", help="View and manage part lifecycle status.")
+    part_sub = part_p.add_subparsers(dest="action", required=True,
+                                     metavar="{view,update-status}")
+
+    pt_view = part_sub.add_parser("view", help="List all parts or show one.")
+    pt_view.add_argument("name", nargs="?", default=None,
+                         help="Part name (omit to list all)")
+    pt_view.add_argument("--type", default=None,
+                         help="Filter list by part type (ignored when <name> is given)")
+    pt_view.add_argument("--status", default=None,
+                         help="Filter list by status (ignored when <name> is given)")
+    _db_arg(pt_view)
+
+    pt_upd = part_sub.add_parser("update-status", help="Set a part's lifecycle status.")
+    pt_upd.add_argument("name", help="Part name")
+    _db_arg(pt_upd)
+    pt_upd.add_argument("--status", required=True,
+                        help="New status (in_operation, in_stock, in_study, retired, dead)")
+    pt_upd.add_argument("--description", default=None,
+                        help="Free-text note appended to status_history")
+    pt_upd.add_argument("--changed-at", dest="changed_at", default=None,
+                        help="Timestamp for this change (default: now)")
+    _attachment_arg(pt_upd)
+
     # ── magnet ──────────────────────────────────────────────────────────────
     magnet_p = entity.add_parser("magnet", help="Manage magnets.")
     magnet_sub = magnet_p.add_subparsers(dest="action", required=True,
-                                         metavar="{add,view,check-geometry,delete}")
+                                         metavar="{add,view,check-geometry,delete,update-status}")
 
     m_add = magnet_sub.add_parser("add", help="Add a magnet from a JSON export.")
     m_add.add_argument("json_file", help="Path to the magnet JSON file (or bare name with --input-dir)")
@@ -1358,10 +1497,27 @@ def build_parser() -> argparse.ArgumentParser:
     m_del.add_argument("name", help="Magnet name")
     _db_arg(m_del)
 
+    m_upd_status = magnet_sub.add_parser(
+        "update-status",
+        help="Set a magnet's lifecycle status. 'dead' requires --dead-part "
+             "(repeatable) naming at least one part to mark dead in the same call.",
+    )
+    m_upd_status.add_argument("name", help="Magnet name")
+    _db_arg(m_upd_status)
+    m_upd_status.add_argument("--status", required=True,
+                              help="New status (in_operation, in_stock, in_study, retired, dead)")
+    m_upd_status.add_argument("--dead-part", action="append", dest="dead_part", metavar="PART",
+                              help="Part name to mark dead (repeatable); required with --status dead")
+    m_upd_status.add_argument("--description", default=None,
+                              help="Free-text note appended to status_history")
+    m_upd_status.add_argument("--changed-at", dest="changed_at", default=None,
+                              help="Timestamp for this change (default: now)")
+    _attachment_arg(m_upd_status)
+
     # ── assembly ─────────────────────────────────────────────────────────────────
     assembly_p = entity.add_parser("assembly", aliases=["site"], help="Manage assemblies.")
     assembly_sub = assembly_p.add_subparsers(dest="action", required=True,
-                                     metavar="{add,view,delete,update-magnet}")
+                                     metavar="{add,view,delete,update-magnet,decommission}")
 
     s_add = assembly_sub.add_parser("add", help="Add an assembly from a JSON export.")
     s_add.add_argument("json_file", help="Path to the assembly JSON file (or bare name with --input-dir)")
@@ -1400,6 +1556,19 @@ def build_parser() -> argparse.ArgumentParser:
     s_upd.add_argument("--decommissioned-at", dest="decommissioned_at",
                        help="Decommissioning timestamp (YYYY-MM-DD or datetime)")
     s_upd.add_argument("--metadata", help="JSON string for metadata field")
+
+    s_decom = assembly_sub.add_parser(
+        "decommission",
+        help="Disassemble an assembly: close it and cascade its magnets (and "
+             "their parts) to in_stock.",
+    )
+    s_decom.add_argument("name", help="Assembly name")
+    _db_arg(s_decom)
+    s_decom.add_argument("--decommissioned-at", dest="decommissioned_at", default=None,
+                         help="Decommissioning timestamp (default: now)")
+    s_decom.add_argument("--description", default=None,
+                         help="Free-text note appended to status_history")
+    _attachment_arg(s_decom)
 
     # ── housing ──────────────────────────────────────────────────────────────
     housing_p = entity.add_parser("housing", help="View housing configurations.")

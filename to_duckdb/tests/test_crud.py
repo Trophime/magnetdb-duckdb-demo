@@ -9,6 +9,7 @@ from crud import (
     _find_assembly_for_timestamp,
     _parse_overview_filename,
     _postprocess_overview_record,
+    decommission_assembly,
     delete_magnet,
     delete_assembly,
     exists,
@@ -28,6 +29,8 @@ from crud import (
     parse_timestamp,
     resolve_overview_assembly,
     update_assembly_magnet,
+    update_magnet_status,
+    update_part_status,
     view_magnet,
     view_magnets,
     view_overview_records,
@@ -115,6 +118,27 @@ def test_insert_part_accepts_nested_material_dict(con):
     assert row[0] == "MAT_COPPER"
 
 
+def test_insert_part_defaults_status_to_in_stock(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    part = {k: v for k, v in PART_HELIX.items() if k != "status"}
+    insert_part(con, part, verbose=False)
+    row = con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()
+    assert row[0] == "in_stock"
+
+
+def test_insert_part_honors_explicit_status(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_study"}, verbose=False)
+    row = con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()
+    assert row[0] == "in_study"
+
+
+def test_insert_part_rejects_invalid_status(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    with pytest.raises(ValueError):
+        insert_part(con, {**PART_HELIX, "status": "bogus"}, verbose=False)
+
+
 # ---------------------------------------------------------------------------
 # infer_magnet_type()
 # ---------------------------------------------------------------------------
@@ -157,6 +181,18 @@ def test_insert_magnet_skips_duplicate(con):
     assert count == 1
 
 
+def test_insert_magnet_defaults_status_to_in_stock(con):
+    data = {k: v for k, v in MAGNET_DATA.items() if k != "status"}
+    insert_magnet(con, data, "insert", verbose=False)
+    row = con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()
+    assert row[0] == "in_stock"
+
+
+def test_insert_magnet_rejects_invalid_status(con):
+    with pytest.raises(ValueError):
+        insert_magnet(con, {**MAGNET_DATA, "status": "bogus"}, "insert", verbose=False)
+
+
 # ---------------------------------------------------------------------------
 # insert_magnet_parts()
 # ---------------------------------------------------------------------------
@@ -165,8 +201,8 @@ def test_insert_magnet_skips_duplicate(con):
 def test_insert_magnet_parts_assigns_coil_index(con):
     insert_material(con, MATERIAL_COPPER, verbose=False)
     insert_material(con, MATERIAL_STEEL, verbose=False)
-    insert_part(con, PART_HELIX, verbose=False)
-    insert_part(con, PART_RING, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_part(con, {**PART_RING, "status": "in_stock"}, verbose=False)
     insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
 
     parts = [{"name": "HELIX_01", "type": "helix"}, {"name": "RING_01", "type": "ring"}]
@@ -181,7 +217,7 @@ def test_insert_magnet_parts_assigns_coil_index(con):
 
 def test_insert_magnet_parts_skips_duplicate(con):
     insert_material(con, MATERIAL_COPPER, verbose=False)
-    insert_part(con, PART_HELIX, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
     insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
 
     parts = [{"name": "HELIX_01", "type": "helix"}]
@@ -197,7 +233,7 @@ def test_insert_magnet_parts_multiple_coil_channels(con):
     mats = {**MATERIAL_COPPER}
     insert_material(con, mats, verbose=False)
     for i in range(1, 4):
-        insert_part(con, {**PART_HELIX, "name": f"H_{i:02d}"}, verbose=False)
+        insert_part(con, {**PART_HELIX, "name": f"H_{i:02d}", "status": "in_stock"}, verbose=False)
     insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
 
     parts = [{"name": f"H_{i:02d}", "type": "helix"} for i in range(1, 4)]
@@ -207,6 +243,36 @@ def test_insert_magnet_parts_multiple_coil_channels(con):
         "SELECT coil_index FROM magnet_parts WHERE magnet_name = 'MAG_01' ORDER BY rank"
     ).fetchall()
     assert [r[0] for r in indexes] == [1, 2, 3]
+
+
+def test_insert_magnet_parts_rejects_non_in_stock_part(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_operation"}, verbose=False)
+    insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
+    with pytest.raises(ValueError, match="not 'in_stock'"):
+        insert_magnet_parts(con, "MAG_01", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+
+
+def test_insert_magnet_parts_rejects_unknown_part(con):
+    insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
+    with pytest.raises(ValueError, match="not found"):
+        insert_magnet_parts(con, "MAG_01", [{"name": "NOPE", "type": "helix"}], verbose=False)
+
+
+def test_insert_magnet_parts_rejection_writes_zero_rows(con):
+    """A rejected call must leave zero magnet_parts rows — validated up front,
+    before any row is inserted, so a bad part later in the list doesn't leave
+    a partial set from the good parts earlier in the list."""
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_material(con, MATERIAL_STEEL, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_part(con, {**PART_RING, "status": "in_operation"}, verbose=False)
+    insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
+    parts = [{"name": "HELIX_01", "type": "helix"}, {"name": "RING_01", "type": "ring"}]
+    with pytest.raises(ValueError):
+        insert_magnet_parts(con, "MAG_01", parts, verbose=False)
+    count = con.execute("SELECT COUNT(*) FROM magnet_parts WHERE magnet_name = 'MAG_01'").fetchone()[0]
+    assert count == 0
 
 
 # ---------------------------------------------------------------------------
@@ -273,6 +339,162 @@ def test_insert_assembly_null_decommissioned(con):
     assert row[0] is None
 
 
+def test_insert_assembly_derives_disassembled_status(con):
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": "2025-02-01 00:00:00",
+    }, verbose=False)
+    row = con.execute("SELECT status FROM assemblies WHERE name = 'A1'").fetchone()
+    assert row[0] == "disassembled"
+
+
+def test_insert_assembly_overrides_contradicting_status(con):
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10", "status": "disassembled",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    row = con.execute("SELECT status FROM assemblies WHERE name = 'A1'").fetchone()
+    assert row[0] == "in_operation"
+
+
+def test_insert_assembly_in_study_exempt_from_derivation(con):
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10", "status": "in_study",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    row = con.execute("SELECT status FROM assemblies WHERE name = 'A1'").fetchone()
+    assert row[0] == "in_study"
+
+
+def test_insert_assembly_in_study_exempt_from_overlap(con):
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    insert_assembly(con, {
+        "name": "A2", "housing": "M10", "status": "in_study",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    row = con.execute("SELECT status FROM assemblies WHERE name = 'A2'").fetchone()
+    assert row[0] == "in_study"
+
+
+def test_insert_assembly_rejects_overlap_with_closed_assembly(con):
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": "2025-02-01 00:00:00",
+    }, verbose=False)
+    with pytest.raises(ValueError, match="overlaps"):
+        insert_assembly(con, {
+            "name": "A2", "housing": "M10",
+            "commissioned_at": "2025-01-15 00:00:00", "decommissioned_at": "2025-03-01 00:00:00",
+        }, verbose=False)
+
+
+def test_insert_assembly_rejects_starting_before_open_predecessor(con):
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-02-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    with pytest.raises(ValueError, match="before"):
+        insert_assembly(con, {
+            "name": "A2", "housing": "M10",
+            "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+        }, verbose=False)
+
+
+def test_insert_assembly_auto_closes_open_predecessor(con):
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    insert_assembly(con, {
+        "name": "A2", "housing": "M10",
+        "commissioned_at": "2025-02-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    row = con.execute(
+        "SELECT status, decommissioned_at FROM assemblies WHERE name = 'A1'"
+    ).fetchone()
+    assert row[0] == "disassembled"
+    assert row[1] is not None
+
+
+def test_insert_assembly_auto_close_cascades_magnets_to_in_stock(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    insert_assembly_magnets(con, "A1", ["MAG_01"], verbose=False)
+    assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "in_operation"
+
+    insert_assembly(con, {
+        "name": "A2", "housing": "M10",
+        "commissioned_at": "2025-02-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+
+    assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "in_stock"
+    row = con.execute(
+        "SELECT decommissioned_at FROM assembly_magnets WHERE assembly_name = 'A1' AND magnet_name = 'MAG_01'"
+    ).fetchone()
+    assert row[0] is not None
+
+
+# ---------------------------------------------------------------------------
+# decommission_assembly()
+# ---------------------------------------------------------------------------
+
+
+def test_decommission_assembly_sets_status_and_timestamp(con):
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    decommission_assembly(con, "A1", decommissioned_at="2025-06-01 00:00:00", verbose=False)
+    row = con.execute("SELECT status, decommissioned_at FROM assemblies WHERE name = 'A1'").fetchone()
+    assert row[0] == "disassembled"
+    assert row[1] is not None
+
+
+def test_decommission_assembly_cascades_magnet_to_in_stock(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    insert_assembly_magnets(con, "A1", ["MAG_01"], verbose=False)
+    assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "in_operation"
+
+    decommission_assembly(con, "A1", verbose=False)
+
+    assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "in_stock"
+
+
+def test_decommission_assembly_leaves_retired_magnet_untouched(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    insert_assembly_magnets(con, "A1", ["MAG_01"], verbose=False)
+    update_magnet_status(con, "MAG_01", "retired", verbose=False)
+
+    decommission_assembly(con, "A1", verbose=False)
+
+    assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "retired"
+
+
+def test_decommission_assembly_raises_for_unknown(con):
+    with pytest.raises(ValueError):
+        decommission_assembly(con, "NOPE", verbose=False)
+
+
 # ---------------------------------------------------------------------------
 # insert_assembly_magnets()
 # ---------------------------------------------------------------------------
@@ -306,6 +528,50 @@ def test_insert_assembly_magnets_skips_duplicate(con_populated):
     assert count == 1
 
 
+def test_insert_assembly_magnets_commissions_magnet_and_parts(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
+    insert_magnet_part_row(con, "MAG_01", "HELIX_01", 0, 1)
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+
+    insert_assembly_magnets(con, "A1", ["MAG_01"], verbose=False)
+
+    assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "in_operation"
+    assert con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "in_operation"
+
+
+def test_insert_assembly_magnets_no_cascade_when_assembly_not_active(con):
+    insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10", "status": "in_study",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+
+    insert_assembly_magnets(con, "A1", ["MAG_01"], verbose=False)
+
+    assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "in_stock"
+
+
+def test_insert_assembly_magnets_rejects_magnet_already_active_elsewhere(con):
+    insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    insert_assembly_magnets(con, "A1", ["MAG_01"], verbose=False)
+
+    insert_assembly(con, {
+        "name": "A2", "housing": "M9",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    with pytest.raises(ValueError, match="already actively linked"):
+        insert_assembly_magnets(con, "A2", ["MAG_01"], verbose=False)
+
+
 # ---------------------------------------------------------------------------
 # insert_experiments()
 # ---------------------------------------------------------------------------
@@ -331,6 +597,115 @@ def test_insert_experiments_skips_duplicate_file(con_populated):
         "SELECT COUNT(*) FROM experiments WHERE file = 'run_001.txt'"
     ).fetchone()[0]
     assert count == 1
+
+
+# ---------------------------------------------------------------------------
+# update_part_status()
+# ---------------------------------------------------------------------------
+
+
+def test_update_part_status_appends_history(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, PART_HELIX, verbose=False)
+    update_part_status(con, "HELIX_01", "retired", description="worn out", verbose=False)
+    row = con.execute("SELECT status, status_history FROM parts WHERE name = 'HELIX_01'").fetchone()
+    assert row[0] == "retired"
+    history = json.loads(row[1])
+    assert history[-1]["status"] == "retired"
+    assert history[-1]["description"] == "worn out"
+
+
+def test_update_part_status_raises_for_unknown_part(con):
+    with pytest.raises(ValueError):
+        update_part_status(con, "NOPE", "retired", verbose=False)
+
+
+def test_update_part_status_raises_for_invalid_status(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, PART_HELIX, verbose=False)
+    with pytest.raises(ValueError):
+        update_part_status(con, "HELIX_01", "bogus", verbose=False)
+
+
+# ---------------------------------------------------------------------------
+# update_magnet_status()
+# ---------------------------------------------------------------------------
+
+
+def test_update_magnet_status_cascades_parts_to_in_stock(con_populated):
+    update_magnet_status(con_populated, "MAG_01", "in_stock", verbose=False)
+    assert con_populated.execute(
+        "SELECT status FROM magnets WHERE name = 'MAG_01'"
+    ).fetchone()[0] == "in_stock"
+    assert con_populated.execute(
+        "SELECT status FROM parts WHERE name = 'HELIX_01'"
+    ).fetchone()[0] == "in_stock"
+    assert con_populated.execute(
+        "SELECT status FROM parts WHERE name = 'RING_01'"
+    ).fetchone()[0] == "in_stock"
+
+
+def test_update_magnet_status_raises_for_unknown_magnet(con):
+    with pytest.raises(ValueError):
+        update_magnet_status(con, "NOPE", "in_stock", verbose=False)
+
+
+def test_update_magnet_status_dead_requires_dead_parts(con_populated):
+    with pytest.raises(ValueError, match="at least one dead part"):
+        update_magnet_status(con_populated, "MAG_01", "dead", verbose=False)
+
+
+def test_update_magnet_status_dead_rejects_unknown_dead_part(con_populated):
+    with pytest.raises(ValueError, match="do not belong"):
+        update_magnet_status(con_populated, "MAG_01", "dead", dead_parts=["NOT_A_PART"], verbose=False)
+
+
+def test_update_magnet_status_dead_succeeds_with_valid_dead_parts(con_populated):
+    update_magnet_status(con_populated, "MAG_01", "dead", dead_parts=["HELIX_01"],
+                         description="burst", verbose=False)
+    assert con_populated.execute(
+        "SELECT status FROM magnets WHERE name = 'MAG_01'"
+    ).fetchone()[0] == "dead"
+    assert con_populated.execute(
+        "SELECT status FROM parts WHERE name = 'HELIX_01'"
+    ).fetchone()[0] == "dead"
+    # RING_01 wasn't named dead — the ordinary downward cascade still applies to it
+    assert con_populated.execute(
+        "SELECT status FROM parts WHERE name = 'RING_01'"
+    ).fetchone()[0] == "in_stock"
+
+
+def test_update_magnet_status_dead_parts_rejected_with_non_dead_status(con_populated):
+    with pytest.raises(ValueError, match="only valid with"):
+        update_magnet_status(con_populated, "MAG_01", "in_stock", dead_parts=["HELIX_01"], verbose=False)
+
+
+def test_update_magnet_status_same_status_recall_logs_without_recascading(con_populated):
+    update_magnet_status(con_populated, "MAG_01", "in_stock", verbose=False)
+    history_1 = json.loads(
+        con_populated.execute("SELECT status_history FROM magnets WHERE name = 'MAG_01'").fetchone()[0]
+    )
+    update_magnet_status(con_populated, "MAG_01", "in_stock", verbose=False)
+    row = con_populated.execute(
+        "SELECT status, status_history FROM magnets WHERE name = 'MAG_01'"
+    ).fetchone()
+    assert row[0] == "in_stock"
+    history_2 = json.loads(row[1])
+    assert len(history_2) == len(history_1) + 1
+    assert con_populated.execute(
+        "SELECT status FROM parts WHERE name = 'HELIX_01'"
+    ).fetchone()[0] == "in_stock"
+
+
+def test_update_magnet_status_dead_warns_without_description_or_attachment(con_populated, capsys):
+    update_magnet_status(con_populated, "MAG_01", "dead", dead_parts=["HELIX_01"], verbose=False)
+    assert "WARNING" in capsys.readouterr().out
+
+
+def test_update_magnet_status_dead_no_warning_with_description(con_populated, capsys):
+    update_magnet_status(con_populated, "MAG_01", "dead", dead_parts=["HELIX_01"],
+                         description="incident report attached", verbose=False)
+    assert "WARNING" not in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -559,11 +934,15 @@ def test_find_assembly_for_timestamp_no_match_in_gap(con):
 
 def test_find_assembly_for_timestamp_ambiguous_match(con):
     _insert_m9_assemblies(con)
-    insert_assembly(con, {
-        "name": "M9_ASSEMBLY_OVERLAP", "housing": "M9",
-        "commissioned_at": "2022-01-20 00:00:00",
-        "decommissioned_at": None,
-    }, verbose=False)
+    # insert_assembly() now rejects/auto-closes overlapping windows (the new
+    # no-overlap invariant), so this deliberately-ambiguous fixture — two
+    # open windows on the same housing — is inserted directly to simulate
+    # legacy data that predates the invariant.
+    con.execute(
+        "INSERT INTO assemblies (name, status, housing, commissioned_at, decommissioned_at) "
+        "VALUES (?,?,?,?,?)",
+        ["M9_ASSEMBLY_OVERLAP", "in_operation", "M9", "2022-01-20 00:00:00", None],
+    )
     t0 = datetime(2022, 1, 27, 17, 56, tzinfo=FILE_TZ)
     assert _find_assembly_for_timestamp(con, "M9", t0, FILE_TZ) is None
 

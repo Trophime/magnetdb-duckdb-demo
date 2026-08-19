@@ -3,6 +3,7 @@
 import pytest
 
 from checks import (
+    check_assemblies,
     check_experiments,
     check_magnets,
     check_operationaldata,
@@ -107,6 +108,90 @@ def test_check_magnets_flags_part_type_not_valid_for_magnet_type(con_populated):
     assert any("RING_01" in p and "not valid for a insert magnet" in p for p in mag["problems"])
 
 
+def test_check_magnets_flags_invalid_status(con_populated):
+    con_populated.execute("UPDATE magnets SET status = 'bogus' WHERE name = 'MAG_01'")
+    results = check_magnets(con_populated)
+    mag = _result_for(results, "MAG_01")
+    assert not mag["ok"]
+    assert any("not a valid LifecycleStatus" in p for p in mag["problems"])
+
+
+def test_check_magnets_flags_dead_magnet_with_no_dead_parts(con_populated):
+    """MAG_01 marked dead directly (bypassing update_magnet_status) with both
+    parts still in_operation must fail the dead-part invariant audit."""
+    con_populated.execute("UPDATE magnets SET status = 'dead' WHERE name = 'MAG_01'")
+    results = check_magnets(con_populated)
+    mag = _result_for(results, "MAG_01")
+    assert not mag["ok"]
+    assert any("dead-part invariant" in p for p in mag["problems"])
+
+
+def test_check_magnets_dead_with_one_dead_part_satisfies_invariant(con_populated):
+    con_populated.execute("UPDATE magnets SET status = 'dead' WHERE name = 'MAG_01'")
+    con_populated.execute("UPDATE parts SET status = 'dead' WHERE name = 'HELIX_01'")
+    results = check_magnets(con_populated)
+    mag = _result_for(results, "MAG_01")
+    assert not any("dead-part invariant" in p for p in mag["problems"])
+
+
+# ---------------------------------------------------------------------------
+# check_assemblies
+# ---------------------------------------------------------------------------
+
+
+def test_check_assemblies_ok_for_consistent_assembly(con_populated):
+    results = check_assemblies(con_populated)
+    a = _result_for(results, "ASSEMBLY_01")
+    assert a["ok"]
+    assert a["problems"] == []
+
+
+def test_check_assemblies_flags_status_inconsistent_with_decommissioned_at(con_populated):
+    """ASSEMBLY_01 is in_operation (decommissioned_at IS NULL); force-set it
+    to 'disassembled' directly and expect the consistency check to flag it."""
+    con_populated.execute("UPDATE assemblies SET status = 'disassembled' WHERE name = 'ASSEMBLY_01'")
+    results = check_assemblies(con_populated)
+    a = _result_for(results, "ASSEMBLY_01")
+    assert not a["ok"]
+    assert any("inconsistent with decommissioned_at" in p for p in a["problems"])
+
+
+def test_check_assemblies_flags_invalid_status(con_populated):
+    con_populated.execute("UPDATE assemblies SET status = 'bogus' WHERE name = 'ASSEMBLY_01'")
+    results = check_assemblies(con_populated)
+    a = _result_for(results, "ASSEMBLY_01")
+    assert not a["ok"]
+    assert any("not a valid AssemblyStatus" in p for p in a["problems"])
+
+
+def test_check_assemblies_in_study_exempt_from_consistency_check(con_populated):
+    con_populated.execute("UPDATE assemblies SET status = 'in_study' WHERE name = 'ASSEMBLY_01'")
+    results = check_assemblies(con_populated)
+    a = _result_for(results, "ASSEMBLY_01")
+    assert a["ok"]
+
+
+def test_check_assemblies_flags_residual_overlap(con_populated):
+    """insert_assembly() prevents new overlaps, so simulate legacy data by
+    inserting the overlapping row directly."""
+    con_populated.execute(
+        "INSERT INTO assemblies (name, status, housing, commissioned_at, decommissioned_at) "
+        "VALUES ('ASSEMBLY_OVERLAP', 'in_operation', 'M10', '2025-01-15 00:00:00', NULL)"
+    )
+    results = check_assemblies(con_populated)
+    a1 = _result_for(results, "ASSEMBLY_01")
+    a2 = _result_for(results, "ASSEMBLY_OVERLAP")
+    assert not a1["ok"]
+    assert not a2["ok"]
+    assert any("overlaps assembly" in p for p in a1["problems"])
+    assert any("overlaps assembly" in p for p in a2["problems"])
+
+
+def test_check_assemblies_name_filter(con_populated):
+    results = check_assemblies(con_populated, name="ASSEMBLY_01")
+    assert [r["name"] for r in results] == ["ASSEMBLY_01"]
+
+
 # ---------------------------------------------------------------------------
 # check_experiments / check_operationaldata
 # ---------------------------------------------------------------------------
@@ -152,6 +237,60 @@ def test_check_operationaldata_ok_when_file_exists(con_populated, tmp_path):
     assert results[0]["ok"]
 
 
+def test_check_experiments_resolves_relative_file_against_records_base(con_populated, tmp_path):
+    """experiments.file is a bare filename; it must be resolved as
+    records_base/srv_subdir/housing/file (ASSEMBLY_01's housing is 'M10')."""
+    real_file = tmp_path / "srv-data-install" / "M10" / "2018.02.21 - 10:18:54.txt"
+    real_file.parent.mkdir(parents=True)
+    real_file.write_text("data")
+    insert_experiments(
+        con_populated, "ASSEMBLY_01",
+        [{"name": "exp1", "file": "2018.02.21 - 10:18:54.txt"}],
+        verbose=False,
+    )
+    results = check_experiments(con_populated, records_base=tmp_path)
+    assert results[0]["ok"]
+
+
+def test_check_experiments_relative_file_missing_reports_problem(con_populated, tmp_path):
+    insert_experiments(
+        con_populated, "ASSEMBLY_01",
+        [{"name": "exp1", "file": "2018.02.21 - 10:18:54.txt"}],
+        verbose=False,
+    )
+    results = check_experiments(con_populated, records_base=tmp_path)
+    assert not results[0]["ok"]
+    assert "does not exist on disk" in results[0]["problems"][0]
+
+
+def test_check_operationaldata_resolves_relative_file_against_records_base(con_populated, tmp_path):
+    """operationaldata.file is stored relative to records_base (e.g.
+    'pbsurv/<housing>/Fichiers_Spike/<file>.tdms')."""
+    relpath = "pbsurv/M10/Fichiers_Spike/M10_Spikes_260509-153823.tdms"
+    real_file = tmp_path / relpath
+    real_file.parent.mkdir(parents=True)
+    real_file.write_text("data")
+    con_populated.execute(
+        "INSERT INTO operationaldata (name, description, file, assembly_name) "
+        "VALUES ('od1', '', ?, 'ASSEMBLY_01')",
+        [relpath],
+    )
+    results = check_operationaldata(con_populated, records_base=tmp_path)
+    assert results[0]["ok"]
+
+
+def test_check_operationaldata_relative_file_missing_reports_problem(con_populated, tmp_path):
+    relpath = "pbsurv/M10/Fichiers_Spike/M10_Spikes_260509-153823.tdms"
+    con_populated.execute(
+        "INSERT INTO operationaldata (name, description, file, assembly_name) "
+        "VALUES ('od1', '', ?, 'ASSEMBLY_01')",
+        [relpath],
+    )
+    results = check_operationaldata(con_populated, records_base=tmp_path)
+    assert not results[0]["ok"]
+    assert "does not exist on disk" in results[0]["problems"][0]
+
+
 # ---------------------------------------------------------------------------
 # run_checks / print_check_report
 # ---------------------------------------------------------------------------
@@ -166,7 +305,7 @@ def test_run_checks_all_combines_every_entity(con_populated):
     )
     results = run_checks(con_populated, entity="all")
     entities = {r["entity"] for r in results}
-    assert entities == {"part", "magnet", "experiment", "operationaldata"}
+    assert entities == {"part", "magnet", "assembly", "experiment", "operationaldata"}
 
 
 def test_run_checks_name_with_all_entity_raises(con_populated):

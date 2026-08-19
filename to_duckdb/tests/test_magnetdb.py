@@ -237,6 +237,110 @@ def test_cli_assembly_update_magnet_missing_db_exits(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# assembly decommission
+# ---------------------------------------------------------------------------
+
+
+def test_cli_assembly_decommission_disassembles_and_cascades_magnet(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)  # ASSEMBLY_JSON_01 → MAG_JSON, commissioning cascades MAG_JSON in_operation
+
+    _run(monkeypatch, "assembly", "decommission", "ASSEMBLY_JSON_01", "--db", str(db),
+         "--decommissioned-at", "2025-06-01 00:00:00", "--description", "end of campaign")
+
+    row = _fetch_one(db, "SELECT status, decommissioned_at FROM assemblies WHERE name = 'ASSEMBLY_JSON_01'")
+    assert row[0] == "disassembled"
+    assert row[1] is not None
+    magnet_status = _fetch_one(db, "SELECT status FROM magnets WHERE name = 'MAG_JSON'")
+    assert magnet_status[0] == "in_stock"
+
+
+def test_cli_assembly_decommission_unknown_name_exits(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "assembly", "decommission", "NOPE", "--db", str(db))
+
+
+def test_cli_assembly_decommission_missing_db_exits(tmp_path, monkeypatch):
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "assembly", "decommission", "ASSEMBLY_JSON_01",
+             "--db", str(tmp_path / "nope.duckdb"))
+
+
+# ---------------------------------------------------------------------------
+# part view / update-status
+# ---------------------------------------------------------------------------
+
+
+def test_cli_part_view_list_all(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+    _run(monkeypatch, "part", "view", "--db", str(db))
+    assert "H_JSON_01" in capsys.readouterr().out
+
+
+def test_cli_part_view_one(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+    _run(monkeypatch, "part", "view", "H_JSON_01", "--db", str(db))
+    out = capsys.readouterr().out
+    assert "H_JSON_01" in out
+    assert "in_stock" in out
+
+
+def test_cli_part_update_status_changes_status(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    _run(monkeypatch, "part", "update-status", "H_JSON_01", "--status", "retired",
+         "--db", str(db), "--description", "worn out")
+    row = _fetch_one(db, "SELECT status FROM parts WHERE name = 'H_JSON_01'")
+    assert row[0] == "retired"
+
+
+def test_cli_part_update_status_invalid_status_exits(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "part", "update-status", "H_JSON_01", "--status", "bogus", "--db", str(db))
+
+
+def test_cli_part_update_status_missing_db_exits(tmp_path, monkeypatch):
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "part", "update-status", "H_JSON_01", "--status", "retired",
+             "--db", str(tmp_path / "nope.duckdb"))
+
+
+# ---------------------------------------------------------------------------
+# magnet update-status
+# ---------------------------------------------------------------------------
+
+
+def test_cli_magnet_update_status_changes_status(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    _run(monkeypatch, "magnet", "update-status", "MAG_JSON", "--status", "in_stock", "--db", str(db))
+    row = _fetch_one(db, "SELECT status FROM magnets WHERE name = 'MAG_JSON'")
+    assert row[0] == "in_stock"
+
+
+def test_cli_magnet_update_status_dead_requires_dead_part(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "magnet", "update-status", "MAG_JSON", "--status", "dead", "--db", str(db))
+
+
+def test_cli_magnet_update_status_dead_with_dead_part(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+    _run(monkeypatch, "magnet", "update-status", "MAG_JSON", "--status", "dead",
+         "--dead-part", "H_JSON_01", "--db", str(db))
+    row = _fetch_one(db, "SELECT status FROM magnets WHERE name = 'MAG_JSON'")
+    assert row[0] == "dead"
+    part_row = _fetch_one(db, "SELECT status FROM parts WHERE name = 'H_JSON_01'")
+    assert part_row[0] == "dead"
+    assert "WARNING" in capsys.readouterr().out
+
+
+def test_cli_magnet_update_status_missing_db_exits(tmp_path, monkeypatch):
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "magnet", "update-status", "MAG_JSON", "--status", "in_stock",
+             "--db", str(tmp_path / "nope.duckdb"))
+
+
+# ---------------------------------------------------------------------------
 # populate overview-records-from-json
 # ---------------------------------------------------------------------------
 

@@ -79,3 +79,21 @@ def test_foreign_key_columns_exist(con, table, fk_col, fk_table):
     """Spot-check that FK columns are present (via PRAGMA table_info)."""
     cols = {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
     assert fk_col in cols, f"{table}.{fk_col} missing"
+
+
+@pytest.mark.parametrize("table", ["assemblies", "parts", "magnets"])
+def test_status_history_column_exists(con, table):
+    cols = {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+    assert "status_history" in cols
+
+
+def test_decommisioned_typo_migrated_to_disassembled(con):
+    """A row seeded with the legacy 'decommisioned' (typo) status value must
+    be rewritten to 'disassembled' the next time ensure_schema() runs."""
+    con.execute(
+        "INSERT INTO assemblies (name, status, housing, commissioned_at, decommissioned_at) "
+        "VALUES ('A_LEGACY', 'decommisioned', NULL, '2020-01-01', '2020-06-01')"
+    )
+    ensure_schema(con)
+    row = con.execute("SELECT status FROM assemblies WHERE name = 'A_LEGACY'").fetchone()
+    assert row[0] == "disassembled"

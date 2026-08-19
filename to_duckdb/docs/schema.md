@@ -36,6 +36,116 @@ The authoritative DDL is in [`schema.py`](../schema.py).
 
 ---
 
+## Lifecycle
+
+`assemblies`, `magnets`, and `parts` each carry a rule-driven `status`, with
+cascades keeping the three in sync as assemblies get commissioned and
+disassembled. Solid arrows below are automatic cascades; dashed arrows are
+explicit `... update-status` calls.
+
+```{mermaid}
+flowchart TB
+    subgraph ASM["Assembly — status derived from decommissioned_at"]
+        direction LR
+        A_study(["in_study (opt-out)"])
+        A_op(["in_operation"])
+        A_dis(["disassembled"])
+        A_op -->|"decommission_assembly()<br/>or auto-close on add"| A_dis
+    end
+
+    subgraph MAG["Magnet"]
+        direction LR
+        M_study(["in_study"])
+        M_stock(["in_stock"])
+        M_op(["in_operation"])
+        M_ret(["retired"])
+        M_dead(["dead"])
+        M_stock -->|"linked to an active assembly"| M_op
+        M_op -->|"assembly disassembled"| M_stock
+        M_study -.->|"update-status"| M_stock
+        M_stock -.->|"update-status"| M_ret
+        M_stock -.->|"update-status"| M_dead
+        M_op -.->|"update-status"| M_ret
+        M_op -.->|"update-status"| M_dead
+    end
+
+    subgraph PRT["Part"]
+        direction LR
+        P_study(["in_study"])
+        P_stock(["in_stock"])
+        P_op(["in_operation"])
+        P_ret(["retired"])
+        P_dead(["dead"])
+        P_stock -->|"parent magnet commissioned"| P_op
+        P_op -->|"parent magnet → in_stock/retired/dead"| P_stock
+        P_study -.->|"update-status"| P_stock
+        P_stock -.->|"update-status"| P_ret
+        P_stock -.->|"update-status, or named as magnet's --dead-part"| P_dead
+        P_op -.->|"update-status"| P_ret
+        P_op -.->|"update-status"| P_dead
+    end
+```
+
+Invariants not shown above:
+
+- **Per-housing no-overlap**: two non-`in_study` assemblies on the same
+  housing can't have overlapping `[commissioned_at, decommissioned_at)`
+  windows. Adding a new assembly auto-closes a still-open predecessor on
+  that housing (via `decommission_assembly()`) when it started first;
+  otherwise the add is rejected.
+- **One active assembly per magnet**: a magnet can't be openly linked
+  (`assembly_magnets.decommissioned_at IS NULL`) to two assemblies at once.
+- **Dead-part requirement**: `magnet update-status <name> --status dead`
+  requires at least one `--dead-part PART` (repeatable) — each named part is
+  set (or confirmed) dead in the same call, before the magnet itself.
+- **`status_history`**: every entity has an append-only JSON log
+  (`status`, `date`, `description`, `attachments`) recording each status
+  change, viewable via `part view`/`magnet view`/`assembly view`.
+
+### Status vocabularies
+
+`assemblies.status` — `AssemblyStatus` (`to_duckdb/enums.py`), derived, not
+free text:
+
+| Value | Meaning |
+|---|---|
+| `in_study` | Explicit opt-out — assembly still being planned; skips the no-overlap/auto-close/derivation rules entirely. |
+| `in_operation` | Derived: `decommissioned_at IS NULL`. |
+| `disassembled` | Derived: `decommissioned_at` is set. |
+
+`magnets.status` / `parts.status` — `LifecycleStatus` (`to_duckdb/enums.py`),
+set directly (by insert, cascade, or `update-status`):
+
+| Value | Meaning |
+|---|---|
+| `in_study` | Still being designed; not yet in stock. |
+| `in_stock` | Available, not installed in an active assembly. Default for a newly-inserted part/magnet when no status is given. |
+| `in_operation` | Installed in a currently active (non-`in_study`, `decommissioned_at IS NULL`) assembly. |
+| `retired` | Taken out of service, not dead. |
+| `dead` | Failed. For a magnet, requires at least one linked part already/simultaneously `dead` (see above). |
+
+### `status_history` entry shape
+
+Each `status_history` column (`assemblies`, `parts`, `magnets`) holds a JSON
+array; every status change appends one entry:
+
+```json
+{
+    "status":      "dead",
+    "date":        "2026-08-14T10:32:05.123456",
+    "description": "Coil burst during ramp-up — see incident report.",
+    "attachments": [
+        {"kind": "report", "path": "/mnt/incidents/2026-08-14-M9-coil-burst.pdf"}
+    ]
+}
+```
+
+`date` defaults to the current time if not given explicitly (e.g. via
+`--changed-at`/`--decommissioned-at`); `attachments` defaults to `[]` and is
+populated from repeated `--attachment KIND=PATH` CLI flags.
+
+---
+
 ## site_magnets columns
 
 | Column | Type | Default | Description |

@@ -16,9 +16,14 @@ import copy
 import json
 from pathlib import Path
 
-from enums import MagnetType, PartType
+from enums import AssemblyStatus, LifecycleStatus, MagnetType, PartType
+from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE
+from populate import _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
+from populate import resolve_operationaldata_path
 
 _VALID_MAGNET_TYPES = {t.value for t in MagnetType}
+_VALID_LIFECYCLE_STATUSES = {s.value for s in LifecycleStatus}
+_VALID_ASSEMBLY_STATUSES = {s.value for s in AssemblyStatus}
 
 
 # ---------------------------------------------------------------------------
@@ -27,8 +32,8 @@ _VALID_MAGNET_TYPES = {t.value for t in MagnetType}
 
 
 def check_parts(con, name: str | None = None) -> list[dict]:
-    """Check that every part has both ``geometry`` and ``geometry_data`` set."""
-    query = "SELECT name, geometry, geometry_data FROM parts"
+    """Check that every part has ``geometry``/``geometry_data`` set and a valid status."""
+    query = "SELECT name, geometry, geometry_data, status FROM parts"
     params: list = []
     if name:
         query += " WHERE name = ?"
@@ -36,12 +41,16 @@ def check_parts(con, name: str | None = None) -> list[dict]:
     query += " ORDER BY name"
 
     results = []
-    for part_name, geometry, geometry_data in con.execute(query, params).fetchall():
+    for part_name, geometry, geometry_data, status in con.execute(query, params).fetchall():
         problems = []
         if geometry is None:
             problems.append("geometry is not set")
         if geometry_data is None:
             problems.append("geometry_data is not set")
+        if status is not None and status not in _VALID_LIFECYCLE_STATUSES:
+            problems.append(
+                f"status '{status}' is not a valid LifecycleStatus ({sorted(_VALID_LIFECYCLE_STATUSES)})"
+            )
         results.append(
             {"entity": "part", "name": part_name, "ok": not problems, "problems": problems}
         )
@@ -174,7 +183,7 @@ def check_magnets(con, name: str | None = None, fix: bool = False) -> list[dict]
     ordinary problem, since such a magnet should not exist under the current
     schema.
     """
-    query = "SELECT name, type, geometry_data FROM magnets"
+    query = "SELECT name, type, geometry_data, status FROM magnets"
     params: list = []
     if name:
         query += " WHERE name = ?"
@@ -182,7 +191,7 @@ def check_magnets(con, name: str | None = None, fix: bool = False) -> list[dict]
     query += " ORDER BY name"
 
     results = []
-    for magnet_name, magnet_type, geometry_data in con.execute(query, params).fetchall():
+    for magnet_name, magnet_type, geometry_data, status in con.execute(query, params).fetchall():
         problems = []
         type_is_valid = magnet_type in _VALID_MAGNET_TYPES
 
@@ -191,6 +200,22 @@ def check_magnets(con, name: str | None = None, fix: bool = False) -> list[dict]
                 f"type '{magnet_type}' is not a valid MagnetType "
                 f"({sorted(_VALID_MAGNET_TYPES)})"
             )
+
+        if status is not None and status not in _VALID_LIFECYCLE_STATUSES:
+            problems.append(
+                f"status '{status}' is not a valid LifecycleStatus ({sorted(_VALID_LIFECYCLE_STATUSES)})"
+            )
+        if status == LifecycleStatus.DEAD.value:
+            dead_part_count = con.execute(
+                "SELECT COUNT(*) FROM magnet_parts mp JOIN parts p ON p.name = mp.part_name "
+                "WHERE mp.magnet_name = ? AND p.status = ?",
+                [magnet_name, LifecycleStatus.DEAD.value],
+            ).fetchone()[0]
+            if dead_part_count == 0:
+                problems.append(
+                    "status is 'dead' but no linked part has status 'dead' "
+                    "(violates the dead-part invariant)"
+                )
 
         if geometry_data is None:
             if not type_is_valid:
@@ -242,24 +267,89 @@ def check_magnets(con, name: str | None = None, fix: bool = False) -> list[dict]
 
 
 # ---------------------------------------------------------------------------
-# experiment / operationaldata
+# assembly
 # ---------------------------------------------------------------------------
 
 
-def _check_file_table(con, table: str, entity: str, name: str | None) -> list[dict]:
-    query = f"SELECT id, name, file FROM {table}"
+def check_assemblies(con, name: str | None = None) -> list[dict]:
+    """Check assembly status/``decommissioned_at`` consistency and residual
+    per-housing window overlaps.
+
+    A non-``in_study`` assembly's ``status`` must match what's derived from
+    ``decommissioned_at`` (``in_operation`` if unset, else ``disassembled``);
+    overlaps are checked pairwise across all non-``in_study`` assemblies
+    sharing a housing. Both should be impossible to introduce via
+    ``insert_assembly``/``decommission_assembly`` — this audits for legacy or
+    manually-edited data that predates those invariants.
+    """
+    query = "SELECT name, status, housing, commissioned_at, decommissioned_at FROM assemblies"
     params: list = []
     if name:
         query += " WHERE name = ?"
         params.append(name)
-    query += " ORDER BY id"
+    query += " ORDER BY name"
 
     results = []
-    for row_id, row_name, file in con.execute(query, params).fetchall():
+    for aname, status, housing, commissioned_at, decommissioned_at in con.execute(query, params).fetchall():
+        problems = []
+        if status is not None and status not in _VALID_ASSEMBLY_STATUSES:
+            problems.append(
+                f"status '{status}' is not a valid AssemblyStatus ({sorted(_VALID_ASSEMBLY_STATUSES)})"
+            )
+        elif status is not None and status != AssemblyStatus.IN_STUDY.value:
+            expected = (
+                AssemblyStatus.IN_OPERATION.value
+                if decommissioned_at is None
+                else AssemblyStatus.DISASSEMBLED.value
+            )
+            if status != expected:
+                problems.append(
+                    f"status '{status}' is inconsistent with decommissioned_at "
+                    f"({decommissioned_at if decommissioned_at is not None else 'unset'}); "
+                    f"expected '{expected}'"
+                )
+        results.append({"entity": "assembly", "name": aname, "ok": not problems, "problems": problems})
+
+    overlap_query = """
+        SELECT a.name, b.name
+        FROM assemblies a
+        JOIN assemblies b
+          ON a.housing = b.housing AND a.name < b.name AND a.housing IS NOT NULL
+        WHERE a.status != ? AND b.status != ?
+          AND a.commissioned_at < COALESCE(b.decommissioned_at, TIMESTAMP '9999-12-31')
+          AND COALESCE(a.decommissioned_at, TIMESTAMP '9999-12-31') > b.commissioned_at
+    """
+    overlap_params = [AssemblyStatus.IN_STUDY.value, AssemblyStatus.IN_STUDY.value]
+    if name:
+        overlap_query += " AND (a.name = ? OR b.name = ?)"
+        overlap_params += [name, name]
+
+    overlap_by_name: dict[str, list[str]] = {}
+    for a_name, b_name in con.execute(overlap_query, overlap_params).fetchall():
+        overlap_by_name.setdefault(a_name, []).append(b_name)
+        overlap_by_name.setdefault(b_name, []).append(a_name)
+
+    for r in results:
+        others = overlap_by_name.get(r["name"])
+        if others:
+            r["problems"].append(f"window overlaps assembly(ies) {sorted(others)} on the same housing")
+            r["ok"] = False
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# experiment / operationaldata
+# ---------------------------------------------------------------------------
+
+
+def _check_file_table(con, query: str, params: list, entity: str, resolve) -> list[dict]:
+    results = []
+    for row_id, row_name, file, *extra in con.execute(query, params).fetchall():
         problems = []
         if not file:
             problems.append("file is not set")
-        elif not Path(file).exists():
+        elif not resolve(file, *extra).exists():
             problems.append(f"file '{file}' does not exist on disk")
         results.append(
             {
@@ -272,14 +362,58 @@ def _check_file_table(con, table: str, entity: str, name: str | None) -> list[di
     return results
 
 
-def check_experiments(con, name: str | None = None) -> list[dict]:
-    """Check that every experiment's ``file`` is set and exists on disk."""
-    return _check_file_table(con, "experiments", "experiment", name)
+def check_experiments(
+    con,
+    name: str | None = None,
+    records_base: Path = _DEFAULT_RECORDS_BASE,
+    srv_subdir: str = _DEFAULT_SRV_SUBDIR,
+) -> list[dict]:
+    """Check that every experiment's ``file`` is set and exists on disk.
+
+    ``experiments.file`` stores a bare pupitre-TXT filename, so it is
+    resolved as ``records_base / srv_subdir / housing / file`` (housing
+    comes from the linked assembly) before checking existence. Already-
+    absolute paths, and rows with no linked assembly, are checked as-is.
+    """
+    query = (
+        "SELECT e.id, e.name, e.file, s.housing "
+        "FROM experiments e LEFT JOIN assemblies s ON s.name = e.assembly_name"
+    )
+    params: list = []
+    if name:
+        query += " WHERE e.name = ?"
+        params.append(name)
+    query += " ORDER BY e.id"
+
+    def resolve(file: str, housing: str | None) -> Path:
+        p = Path(file)
+        if p.is_absolute() or not housing:
+            return p
+        return records_base / srv_subdir / housing / file
+
+    return _check_file_table(con, query, params, "experiment", resolve)
 
 
-def check_operationaldata(con, name: str | None = None) -> list[dict]:
-    """Check that every operationaldata row's ``file`` is set and exists on disk."""
-    return _check_file_table(con, "operationaldata", "operationaldata", name)
+def check_operationaldata(
+    con, name: str | None = None, records_base: Path = _DEFAULT_RECORDS_BASE
+) -> list[dict]:
+    """Check that every operationaldata row's ``file`` is set and exists on disk.
+
+    ``operationaldata.file`` stores a path relative to *records_base*
+    (see :func:`populate.resolve_operationaldata_path`); already-absolute
+    legacy paths are checked as-is.
+    """
+    query = "SELECT id, name, file FROM operationaldata"
+    params: list = []
+    if name:
+        query += " WHERE name = ?"
+        params.append(name)
+    query += " ORDER BY id"
+
+    def resolve(file: str) -> Path:
+        return resolve_operationaldata_path(file, records_base=records_base)
+
+    return _check_file_table(con, query, params, "operationaldata", resolve)
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +423,7 @@ def check_operationaldata(con, name: str | None = None) -> list[dict]:
 _ENTITY_CHECKS = {
     "part": lambda con, name, fix: check_parts(con, name),
     "magnet": lambda con, name, fix: check_magnets(con, name, fix=fix),
+    "assembly": lambda con, name, fix: check_assemblies(con, name),
     "experiment": lambda con, name, fix: check_experiments(con, name),
     "operationaldata": lambda con, name, fix: check_operationaldata(con, name),
 }

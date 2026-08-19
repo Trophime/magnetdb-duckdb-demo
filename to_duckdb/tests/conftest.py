@@ -82,7 +82,7 @@ MAGNET_JSON = {
         {
             "name": "H_JSON_01",
             "type": "helix",
-            "status": "in_operation",
+            "status": "in_stock",
             "design_office_reference": "",
             "geometry": None,
             "material": {**MATERIAL_COPPER, "name": "MAT_JSON_CU"},
@@ -90,7 +90,7 @@ MAGNET_JSON = {
         {
             "name": "R_JSON_01",
             "type": "ring",
-            "status": "in_operation",
+            "status": "in_stock",
             "design_office_reference": "",
             "geometry": None,
             "material": {**MATERIAL_STEEL, "name": "MAT_JSON_SS"},

@@ -49,3 +49,25 @@ COIL_PART_TO_MAGNET_TYPE: dict[str, MagnetType] = {
     PartType.BITTER.value: MagnetType.BITTERS,
     PartType.SUPRA.value: MagnetType.SUPRAS,
 }
+
+
+class AssemblyStatus(str, enum.Enum):
+    IN_STUDY = "in_study"
+    IN_OPERATION = "in_operation"
+    DISASSEMBLED = "disassembled"
+
+    @classmethod
+    def choices(cls):
+        return [(item.value, item.name) for item in cls]
+
+
+class LifecycleStatus(str, enum.Enum):
+    IN_OPERATION = "in_operation"
+    IN_STOCK = "in_stock"
+    IN_STUDY = "in_study"
+    RETIRED = "retired"
+    DEAD = "dead"
+
+    @classmethod
+    def choices(cls):
+        return [(item.value, item.name) for item in cls]

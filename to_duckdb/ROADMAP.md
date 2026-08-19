@@ -30,7 +30,8 @@ not yet sizeable).
   (`to_duckdb/schema.py:140,142`) — the two channels are already
   cross-referenced via the `aliases` mechanism in
   `pupitre-defs.json`/`pigbrother-defs.json` (the same mechanism
-  `FIELD_DEFS_MIGRATION_PLAN.md`, above, is generalizing). Storage target
+  `python_magnetrun/field_defs.py`'s `match_channels_across_formats()`,
+  above, generalizes). Storage target
   is also already reserved: `overview_records.plateaux JSON DEFAULT '{}'`
   exists in the schema, unpopulated. A near-identical prototype already
   exists to adapt: `get_plateaux_per_pupitre()` in
@@ -125,17 +126,24 @@ not yet sizeable).
   (`synchronization.py`'s `find_best_matching_regime`/`check_lag_reliability`
   and `lag_test_discovery.py`). See "Open Questions" below for what's left
   before `sync_info` actually carries real lag data.
-- Two new dashboard design docs, both **new (2026-08-17), untracked,
-  no plan approval recorded yet**: `stage/dashboard/FIELD_DEFS_MIGRATION_PLAN.md`
-  (moves cross-format channel-alias matching out of `magnetdb_analysis.py`
-  into a new `python_magnetrun.field_defs.match_channels_across_formats`,
-  dropping now-unused `MAGNETDB_PIGBROTHER_DEF`/`MAGNETDB_PUPITRE_DEF` env
-  overrides) and `stage/dashboard/PERFORMANCE_PLAN.md` (comparison-page
-  pair-graph callbacks take 19–192s per invocation because `load_data`/
-  `load_mrun_object` each independently re-parse the same file with
-  separate `lru_cache` keys; plan adds a shared on-disk Parquet cache,
-  expected warm-run time < 2s; includes a scoped-out future S3 migration
-  note). Neither is on this roadmap yet — both read as concrete and
+- `stage/dashboard/FIELD_DEFS_MIGRATION_PLAN.md` — **corrected 2026-08-19:
+  already implemented and committed** (`e345feb`, "up dashboard",
+  2026-07-28) — three weeks *before* this roadmap's 2026-08-17 snapshot
+  mis-tracked it as "new, no plan approval recorded yet." The plan file
+  itself no longer exists on disk. `python_magnetrun/field_defs.py` already
+  defines `match_channels_across_formats()`;
+  `stage/dashboard/src/magnetdb_analysis.py` already imports and delegates
+  to it directly (`get_comparable_pairs_for_group()`); the old inline
+  alias-matching logic it replaced is gone, and the
+  `MAGNETDB_PIGBROTHER_DEF`/`MAGNETDB_PUPITRE_DEF` env-var overrides it made
+  unused don't appear anywhere in the codebase anymore. Removed from the
+  `Next`-phase tables below — nothing left to schedule.
+- `stage/dashboard/PERFORMANCE_PLAN.md` — **new (2026-08-17), untracked, no
+  plan approval recorded yet**: comparison-page pair-graph callbacks take
+  19–192s per invocation because `load_data`/`load_mrun_object` each
+  independently re-parse the same file with separate `lru_cache` keys; plan
+  adds a shared on-disk Parquet cache, expected warm-run time < 2s;
+  includes a scoped-out future S3 migration note. Reads as concrete and
   independently implementable, not blocked on anything else here.
 - `stage/dashboard/src/pages/overview-record.py` — **new, untracked file**
   registering a `/overviews` "Overview Records" page. This appears to
@@ -196,16 +204,22 @@ not yet sizeable).
   not yet backed by a formal plan file.
 - `notebook_review_import_housing_summary.md` — review notes (not a formal
   plan) with 3 concrete next steps, feeding the `userdb` TODO item.
-- `PLAN_lifecycle_status.md` — **approved (2026-08-14), not yet
-  implemented**. Covers the `TODOs.md` "New features" line *"work on life
-  cycle of magnets and parts..."*. Scope grew during scoping to include
-  `sites` (derived status from `decommissioned_at`, per-housing no-overlap,
-  auto-close-on-add) since site disassembly is what triggers the
-  magnet→part status cascade; also touches `magnets`/`parts` status
-  validation, a `status_history` JSON log on all three tables, and a
-  dead-magnet-requires-a-dead-part invariant. Two small flagged assumptions
-  carried into implementation as current defaults (see the plan's own
-  "Assumptions & open questions" and the carried-forward opens below).
+- `PLAN_lifecycle_status.md` — **implemented, Phases A+B+C complete
+  (2026-08-19)**. Covers the `TODOs.md` "New features" line *"work on life
+  cycle of magnets and parts..."*. Assembly status is now derived from
+  `decommissioned_at` (per-housing no-overlap; auto-close-on-add now fully
+  cascades — closes the superseded assembly's `assembly_magnets` links and
+  pushes its magnets to `in_stock`, not just a status flip). Magnet/part
+  status defaults to `in_stock` on insert and is validated against
+  `LifecycleStatus`; linking a magnet to an active assembly commissions it
+  (and its parts) to `in_operation` — the one deliberate exception to "no
+  upward cascade," resolved during implementation. A dead magnet requires
+  naming at least one dead part in the same call; every entity carries an
+  append-only `status_history` JSON log. New `assembly decommission`,
+  `part view`/`update-status`, `magnet update-status` CLI subcommands, a
+  `check --entity assembly` audit, and full test coverage. Documented in
+  [to_duckdb/docs/schema.md](docs/schema.md#lifecycle) (with a mermaid
+  diagram) and checked off in `TODOs.md`.
 - `stage/dashboard/PLAN_dashboard_hierarchy_rework.md` — **new
   (2026-08-14), pending approval**. Covers the `TODOs.md` "New features"
   line *"rework dashboards to start with housing and then go down to
@@ -255,7 +269,7 @@ not yet sizeable).
 | Execute `PLAN_hoop_stress_history.md` Phases 4–5 | S–M | **Done — implemented, verified, and committed 2026-08-18** (`00f8636`), on top of Phases 1–3 (committed 2026-08-13). Phase 4: full-suite re-verification (34/34 `-k hoop`, `test_stress_map.py` 12/12) and a real-DB cross-check against `test-magnetdb.duckdb` (part `H21102801`, 71 experiments) — see `PLAN_hoop_stress_per_part_tests.md`. Phase 5 (fatigue-additivity question): checked against 3 real parts/71 experiments (`sum_range3` additive to float precision, `n_cycles` has a small ~0.003% boundary-residual discrepancy), 2 new tests, finding documented in `docs/hoop-stress.md` — see `PLAN_hoop_stress_fatigue_additivity.md`. Note: both of those per-phase plan files still say "uncommitted" in their own status lines — that wording is stale, `git log`/`git status` confirm the code and tests landed in `00f8636`. |
 | Housing-summary notebook fixes | S | Partially done, **uncommitted**: `h.site`→`h.housing` fix in cell `1387a3c9` and a full top-to-bottom re-run (large diff, `638 insertions(+), 380 deletions(-)`) are both present in the current working-tree edit of `stage/import_housing_summary.ipynb`, but not yet committed. Still open: deciding the fate of the `PROPOSALS` dead-end section (`Magnet Sites` column still entirely null) — that section is untouched by the re-run. |
 | Site→Assembly rename — `to_duckdb`/dashboard slice (`PLAN_site_to_assembly_rename.md` Phases 3–4) | M | **Done — implemented and committed 2026-08-18** (`78a288c`, `c111577`), landed in under a day. `PLAN_lifecycle_status.md` below has been updated to reference `Assembly`/`assemblies`/`assembly_magnets` directly, so it no longer needs to write `sites`/`site_magnets` code first. Rest of the original plan (`python_magnetgeo`/`python_magnetsetup`/`python_magnetrun`/`python_magnetcooling` — also all landed the same day, see `PLAN_site_to_assembly_rename.md` — plus the separate-repo `python_magnetdb`/`python_magnetapi` backport) was outside this roadmap's scope; Track B remains deferred. |
-| Execute `PLAN_lifecycle_status.md` | L | Approved 2026-08-14, updated 2026-08-18 to `Assembly` vocabulary (see `PLAN_lifecycle_status.md`). Phase A (assembly lifecycle) → Phase B (magnet/part status + cascades) → Phase C (docs/cleanup); no external unknowns, two small opens carried as defaults (see plan). **Sequencing note:** the rename above has landed, so this proceeds directly against `Assembly`/`assemblies`/`assembly_magnets` vocabulary — no further coordination needed. |
+| Execute `PLAN_lifecycle_status.md` | L | **Done — implemented, verified, and committed 2026-08-19.** All three phases landed in one pass: assembly status derivation/overlap/auto-close + cascades (Phase A), magnet/part status defaults/validation/commissioning-cascade/dead-invariant + CLI (Phase B), `docs/schema.md` lifecycle section + `TODOs.md` checkoff (Phase C). Full test suite green throughout. |
 
 ## Phase: Next — needs a short scoping pass, or has a design sketch with opens to close
 
@@ -275,7 +289,6 @@ not yet sizeable).
 | Scheduler (`PLAN_scheduled_populate.md`) | S–M | Design is concrete (systemd timer + `--settle-seconds` threaded through `scan_tdms_subdir`). Sequence after `PLAN_hoop_stress_history.md` lands, since it schedules exactly those scripts (dedup already landed). Opens carried from that plan (see below). |
 | EcoNRJ parameter inference (`PLAN_econrj_parameter_inference.md`) | M | Fitting recipe and implementation checklist already exist, wraps `piecewise_regression` on `python_magnetrun/examples/corr_Ih_Ib.py`. Independent of the duckdb/dashboard track — can run in parallel. Opens carried from that plan (see below). |
 | Dashboard comparison-page performance (`stage/dashboard/PERFORMANCE_PLAN.md`) | S | **New (2026-08-17), no plan approval recorded yet.** Concrete, self-contained design: shared on-disk Parquet cache fixes duplicate re-parsing (19–192s per pair-graph today) and cross-callback cache misses; expected warm-run time < 2s. No dependencies on other roadmap items. |
-| Dashboard field-defs migration (`stage/dashboard/FIELD_DEFS_MIGRATION_PLAN.md`) | S | **New (2026-08-17), no plan approval recorded yet.** Moves cross-format channel-alias matching out of the dashboard (`magnetdb_analysis.py`) into `python_magnetrun.field_defs.match_channels_across_formats`, dropping two now-unused env-var overrides. Self-contained, no dependencies on other roadmap items. |
 
 ## Phase: Later — larger scope, external dependencies, or currently underspecified
 
@@ -317,22 +330,21 @@ Effort → elapsed time at this pace:
 | Hoop-stress Phases 4–5 | **Done — landed 2026-08-18** | Landed same-day, ~3 weeks ahead of this window. |
 | Housing-summary notebook fixes | **Mostly done, uncommitted** | 2 of 3 items done in the working tree (2026-08-18); `PROPOSALS` section fate still open. |
 | Site→Assembly rename (`to_duckdb`/dashboard slice) | **Done — landed 2026-08-18** | Landed same-day, ~5 weeks ahead of this window. |
-| `PLAN_lifecycle_status.md` | Oct 20 – late Dec | Largest single item (L); dominates this phase. |
+| `PLAN_lifecycle_status.md` | **Done — landed 2026-08-19** | Landed same-pass, ~9 weeks ahead of this window. |
 
-### Next — unblocked items (late Dec 2026 – late Apr 2027)
+### Next — unblocked items (late Aug 2026 – late Feb 2027)
 
 | Item | Window |
 |---|---|
-| Dashboard hierarchy rework | late Dec – late Jan |
-| `overview-records-from-json` completion | late Jan – early Feb |
-| `populate all` composite | early Feb – late Feb |
-| userdb Phase 1 (pluggability refactor only) | late Feb – mid-Mar |
-| Scheduler | mid-Mar – late Mar |
-| EcoNRJ parameter inference | late Mar – late Apr |
-| Dashboard comparison-page performance | late Apr – mid-May |
-| Dashboard field-defs migration | mid-May – late May |
-| Processing-status flag (design decided 2026-08-17; needs its own plan file, then sequence after hoop-stress) | late May – late Jun |
-| overview-record: plateaux (direction decided 2026-08-17; a few small implementation details to close first, see Open Question 2) | late Jun – mid-Jul |
+| Dashboard hierarchy rework | late Aug – late Sep |
+| `overview-records-from-json` completion | late Sep – early Oct |
+| `populate all` composite | early Oct – mid-Oct |
+| userdb Phase 1 (pluggability refactor only) | mid-Oct – early Nov |
+| Scheduler | early Nov – late Nov |
+| EcoNRJ parameter inference | late Nov – late Dec |
+| Dashboard comparison-page performance | late Dec – early Jan |
+| Processing-status flag (design decided 2026-08-17; needs its own plan file, then sequence after hoop-stress) | early Jan – early Feb |
+| overview-record: plateaux (direction decided 2026-08-17; a few small implementation details to close first, see Open Question 2) | early Feb – late Feb |
 
 ### Next — blocked on an open question or external access (no calendar slot yet)
 
@@ -344,7 +356,7 @@ Effort → elapsed time at this pace:
 ### Later
 
 Still mostly `?` effort — not sizeable at this granularity. At this pace,
-realistically doesn't start before ~mid-2027, once the Next-phase backlog
+realistically doesn't start before ~early 2027, once the Next-phase backlog
 above clears. Revisit sizing once Now/Next close out.
 
 ## Open Questions (former finalization blockers — now scoped)
@@ -505,9 +517,3 @@ These are not duplicated in full here — see the referenced plan files:
   `-from-mysql`/`-from-api` swap only one side, or is a both-live mode
   needed), cutoff pushdown (server-side filter vs. client-side), and
   credential env-var naming.
-- **`PLAN_lifecycle_status.md`**: whether `site_magnets.decommissioned_at`
-  should auto-close alongside the site's own `decommissioned_at` during a
-  disassembly cascade (added during scoping, not explicitly requested), and
-  whether linking a magnet to a site (or a part to a magnet) should ever
-  auto-promote status upward — current design says no, only explicit
-  `update-status` calls move status up.

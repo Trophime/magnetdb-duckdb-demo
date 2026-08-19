@@ -26,9 +26,16 @@ print_geometry_check(results)
 
 parse_timestamp(value)
 insert_assembly(con, data, verbose, create_housing)
+decommission_assembly(con, name, decommissioned_at, description, attachments, verbose)
 insert_housing_config_from_magnetrun(con, housing_name, verbose)
 insert_assembly_magnets(con, assembly_name, magnet_entries, verbose)
 insert_experiments(con, assembly_name, records, verbose)
+
+update_part_status(con, name, status, description, changed_at, attachments, verbose)
+update_magnet_status(con, name, status, description, changed_at, attachments, dead_parts, verbose)
+
+view_parts(con, type_filter, status_filter)
+view_part(con, name)
 
 update_assembly_magnet(con, assembly_name, magnet_name, **kwargs)
 
@@ -46,7 +53,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from enums import COIL_PART_TO_MAGNET_TYPE
+from enums import COIL_PART_TO_MAGNET_TYPE, AssemblyStatus, LifecycleStatus
 from populate import FILE_TZ, as_aware
 from schema import COIL_TYPES
 
@@ -102,6 +109,40 @@ def load_json(path) -> dict:
 
 def exists(con, table: str, name: str) -> bool:
     return con.execute(f"SELECT 1 FROM {table} WHERE name = ?", [name]).fetchone() is not None
+
+
+def _valid_lifecycle_status(status: str) -> str:
+    """Validate *status* against :class:`~enums.LifecycleStatus`; returns it unchanged."""
+    valid = {s.value for s in LifecycleStatus}
+    if status not in valid:
+        raise ValueError(f"Invalid status '{status}'; must be one of {sorted(valid)}.")
+    return status
+
+
+def _append_status_history(
+    con,
+    table: str,
+    name: str,
+    status: str,
+    description: str = "",
+    changed_at=None,
+    attachments: list[dict] | None = None,
+) -> None:
+    """Append one event to *table*.status_history for the row named *name*.
+
+    *table* must be one of ``"parts"``, ``"magnets"``, ``"assemblies"`` (all
+    three carry a ``status_history JSON`` column with the same shape).
+    """
+    event = {
+        "status": status,
+        "date": parse_timestamp(changed_at) or datetime.now().isoformat(),
+        "description": description or "",
+        "attachments": attachments or [],
+    }
+    row = con.execute(f"SELECT status_history FROM {table} WHERE name = ?", [name]).fetchone()
+    history = json.loads(row[0]) if row and row[0] else []
+    history.append(event)
+    con.execute(f"UPDATE {table} SET status_history = ? WHERE name = ?", [json.dumps(history), name])
 
 
 def load_geometry_json(geometry_path) -> str | None:
@@ -262,6 +303,7 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
         return
     material_name = part.get("material_name") or (part.get("material") or {}).get("name")
     geometry_data = part.get("geometry_data") or load_geometry_json(part.get("geometry") or part.get("geometry_config"))
+    status = _valid_lifecycle_status(part.get("status") or LifecycleStatus.IN_STOCK.value)
     con.execute(
         """
         INSERT INTO parts
@@ -271,7 +313,7 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
         [
             name,
             part.get("type"),
-            part.get("status"),
+            status,
             material_name,
             part.get("geometry") or None,
             geometry_data,
@@ -280,7 +322,7 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
         ],
     )
     if verbose:
-        print(f"  + part      {name}  [{part.get('type', '?')}]")
+        print(f"  + part      {name}  [{part.get('type', '?')}]  {status}")
 
 
 # ---------------------------------------------------------------------------
@@ -296,6 +338,7 @@ def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> No
             print(f"  ~ magnet    {name}  (already exists, skipped)")
         return
     geometry_data = data.get("geometry_data") or load_geometry_json(data.get("geometry") or data.get("geometry_config"))
+    status = _valid_lifecycle_status(data.get("status") or LifecycleStatus.IN_STOCK.value)
     con.execute(
         """
         INSERT INTO magnets
@@ -305,14 +348,14 @@ def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> No
         [
             name,
             magnet_type,
-            data.get("status"),
+            status,
             data.get("geometry") or None,
             geometry_data,
             data.get("design_office_reference") or None,
         ],
     )
     if verbose:
-        print(f"  + magnet    {name}  [{magnet_type}]  {data.get('status', '')}")
+        print(f"  + magnet    {name}  [{magnet_type}]  {status}")
 
 
 def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool = True) -> None:
@@ -320,7 +363,36 @@ def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool 
 
     ``parts`` must be a list of part dicts, each with at least ``name`` and
     ``type`` keys (i.e. the raw parts list from the magnet JSON export).
+
+    Every part must currently have ``status == "in_stock"`` — validated up
+    front, before any row is inserted, so a rejected call leaves zero
+    ``magnet_parts`` rows rather than a partial set.
+
+    Raises
+    ------
+    ValueError
+        If a part is not found, or its status is not ``"in_stock"``.
     """
+    part_names = [p["name"] for p in parts]
+    if part_names:
+        placeholders = ", ".join("?" * len(part_names))
+        status_by_name = dict(
+            con.execute(
+                f"SELECT name, status FROM parts WHERE name IN ({placeholders})",
+                part_names,
+            ).fetchall()
+        )
+        for part_name in part_names:
+            if part_name not in status_by_name:
+                raise ValueError(f"Part '{part_name}' not found in database.")
+            status = status_by_name[part_name]
+            if status != LifecycleStatus.IN_STOCK.value:
+                raise ValueError(
+                    f"Part '{part_name}' has status '{status}', not 'in_stock' — "
+                    "cannot link it to a magnet. Use 'part update-status' to reset "
+                    "it first."
+                )
+
     coil_counter = 0
     inserted = 0
     skipped = 0
@@ -356,7 +428,13 @@ def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool 
 def insert_magnet_part_row(
     con, magnet_name: str, part_name: str, rank: int, coil_index: int | None
 ) -> None:
-    """Insert a single pre-computed magnet_parts row (used by seeds_to_duckdb)."""
+    """Insert a single pre-computed magnet_parts row.
+
+    Low-level and unvalidated — skips the in-stock-parts check
+    ``insert_magnet_parts`` enforces. Has no live production caller today
+    (``deprecated/seeds_to_duckdb.py`` is dead code); used by tests to seed
+    exact DB state directly.
+    """
     if con.execute(
         "SELECT 1 FROM magnet_parts WHERE magnet_name = ? AND part_name = ?",
         [magnet_name, part_name],
@@ -366,6 +444,73 @@ def insert_magnet_part_row(
         "INSERT INTO magnet_parts VALUES (?,?,?,?)",
         [magnet_name, part_name, rank, coil_index],
     )
+
+
+_DOWN_CASCADE_STATUSES = frozenset(
+    {LifecycleStatus.IN_STOCK.value, LifecycleStatus.RETIRED.value, LifecycleStatus.DEAD.value}
+)
+
+
+def _cascade_parts_status(
+    con,
+    magnet_name: str,
+    from_statuses: set,
+    to_status: str,
+    changed_at=None,
+    verbose: bool = True,
+) -> None:
+    """Move every part of *magnet_name* currently in *from_statuses* to *to_status*."""
+    rows = con.execute(
+        "SELECT p.name, p.status FROM magnet_parts mp JOIN parts p ON p.name = mp.part_name "
+        "WHERE mp.magnet_name = ?",
+        [magnet_name],
+    ).fetchall()
+    for part_name, status in rows:
+        if status in from_statuses:
+            con.execute("UPDATE parts SET status = ? WHERE name = ?", [to_status, part_name])
+            _append_status_history(
+                con, "parts", part_name, to_status,
+                description=f"Cascaded from magnet '{magnet_name}'.",
+                changed_at=changed_at,
+            )
+            if verbose:
+                print(f"  ~ part      {part_name}  status → {to_status}  (cascaded from magnet '{magnet_name}')")
+
+
+def _set_magnet_status(
+    con,
+    name: str,
+    status: str,
+    description: str = "",
+    changed_at=None,
+    attachments: list[dict] | None = None,
+    verbose: bool = True,
+    cascade: bool = True,
+) -> None:
+    """Set a magnet's status, log the change, and cascade to its parts.
+
+    Downward (``in_stock``/``retired``/``dead``) pulls ``NULL``/``in_operation``
+    parts to ``in_stock``; upward (``in_operation``, the commissioning
+    cascade) pushes ``NULL``/``in_stock`` parts to ``in_operation``. Either
+    cascade is a no-op once its target parts have already moved, so
+    re-calling with the same status is safe (logs an event, cascades nothing).
+    """
+    con.execute("UPDATE magnets SET status = ? WHERE name = ?", [status, name])
+    _append_status_history(con, "magnets", name, status, description, changed_at, attachments)
+    if verbose:
+        print(f"  ~ magnet    {name}  status → {status}")
+    if not cascade:
+        return
+    if status in _DOWN_CASCADE_STATUSES:
+        _cascade_parts_status(
+            con, name, {None, LifecycleStatus.IN_OPERATION.value},
+            LifecycleStatus.IN_STOCK.value, changed_at, verbose,
+        )
+    elif status == LifecycleStatus.IN_OPERATION.value:
+        _cascade_parts_status(
+            con, name, {None, LifecycleStatus.IN_STOCK.value},
+            LifecycleStatus.IN_OPERATION.value, changed_at, verbose,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -379,13 +524,85 @@ def parse_timestamp(value) -> str | None:
     return str(value)
 
 
+def _assembly_is_active(con, name: str) -> bool:
+    """True if *name* is a non-``in_study`` assembly with no ``decommissioned_at``."""
+    row = con.execute(
+        "SELECT status, decommissioned_at FROM assemblies WHERE name = ?", [name]
+    ).fetchone()
+    if row is None:
+        return False
+    status, decommissioned_at = row
+    return decommissioned_at is None and status != AssemblyStatus.IN_STUDY.value
+
+
+def _resolve_housing_overlap(
+    con, housing: str, name: str, commissioned_at, decommissioned_at, verbose: bool = True
+) -> None:
+    """Enforce the per-housing no-overlap invariant for a new non-``in_study``
+    assembly, auto-closing a still-open predecessor when it started first.
+
+    Raises
+    ------
+    ValueError
+        If *name*'s window would overlap another non-``in_study`` assembly on
+        *housing* in a way auto-close cannot resolve.
+    """
+    if commissioned_at is None:
+        return
+
+    still_open_but_later = con.execute(
+        "SELECT name FROM assemblies WHERE housing = ? AND status != ? "
+        "AND decommissioned_at IS NULL AND name != ? AND commissioned_at > CAST(? AS TIMESTAMP)",
+        [housing, AssemblyStatus.IN_STUDY.value, name, commissioned_at],
+    ).fetchone()
+    if still_open_but_later is not None:
+        raise ValueError(
+            f"Assembly '{name}' starts ({commissioned_at}) before still-open "
+            f"assembly '{still_open_but_later[0]}' on housing '{housing}'."
+        )
+
+    open_predecessor = con.execute(
+        "SELECT name FROM assemblies WHERE housing = ? AND status != ? "
+        "AND decommissioned_at IS NULL AND name != ?",
+        [housing, AssemblyStatus.IN_STUDY.value, name],
+    ).fetchone()
+    if open_predecessor is not None:
+        decommission_assembly(
+            con, open_predecessor[0], decommissioned_at=commissioned_at,
+            description=f"Auto-closed: superseded by assembly '{name}'.",
+            verbose=verbose,
+        )
+
+    overlap = con.execute(
+        """
+        SELECT name, commissioned_at, decommissioned_at FROM assemblies
+        WHERE housing = ? AND status != ? AND name != ?
+          AND commissioned_at < COALESCE(CAST(? AS TIMESTAMP), TIMESTAMP '9999-12-31')
+          AND COALESCE(decommissioned_at, TIMESTAMP '9999-12-31') > CAST(? AS TIMESTAMP)
+        LIMIT 1
+        """,
+        [housing, AssemblyStatus.IN_STUDY.value, name, decommissioned_at, commissioned_at],
+    ).fetchone()
+    if overlap is not None:
+        other_name, other_start, other_end = overlap
+        raise ValueError(
+            f"Assembly '{name}' [{commissioned_at}, {decommissioned_at or '...'}) overlaps "
+            f"assembly '{other_name}' [{other_start}, {other_end or '...'}) on housing '{housing}'."
+        )
+
+
 def insert_assembly(
     con, data: dict, verbose: bool = True, create_housing: bool = True
 ) -> None:
     """Insert an assembly row; skip silently if it already exists.
 
     The ``housing`` field in *data* is treated as a ``housing_config.name``
-    foreign key.
+    foreign key. Unless ``status == "in_study"`` (an explicit opt-out),
+    ``status`` is derived from ``decommissioned_at`` (``in_operation`` if
+    unset, else ``disassembled``) — a caller-supplied contradicting value is
+    overridden — and the per-housing no-overlap invariant is enforced,
+    auto-closing (via :func:`decommission_assembly`) a still-open assembly
+    already on this housing.
 
     Parameters
     ----------
@@ -401,6 +618,13 @@ def insert_assembly(
         auto-create it from the ``python_magnetrun`` bundled JSON files.  Set
         to ``False`` to raise :exc:`ValueError` instead when the config is
         missing.
+
+    Raises
+    ------
+    ValueError
+        If *housing* is missing and ``create_housing`` is ``False``, or the
+        new assembly's window overlaps another non-``in_study`` assembly on
+        the same housing.
     """
     name = data["name"]
     if exists(con, "assemblies", name):
@@ -421,19 +645,111 @@ def insert_assembly(
                     "Call insert_housing_config() first, or pass create_housing=True."
                 )
 
+    commissioned_at = parse_timestamp(data.get("commissioned_at"))
+    decommissioned_at = parse_timestamp(data.get("decommissioned_at"))
+    status = data.get("status")
+
+    if status == AssemblyStatus.IN_STUDY.value:
+        pass  # explicit opt-out: skip derivation/overlap/auto-close entirely
+    else:
+        status = (
+            AssemblyStatus.IN_OPERATION.value
+            if decommissioned_at is None
+            else AssemblyStatus.DISASSEMBLED.value
+        )
+        if housing is not None:
+            _resolve_housing_overlap(
+                con, housing, name, commissioned_at, decommissioned_at, verbose=verbose
+            )
+
     con.execute(
-        "INSERT INTO assemblies VALUES (?,?,?,?,?,?)",
-        [
-            name,
-            data.get("description") or None,
-            data.get("status", "in_study"),
-            housing,
-            parse_timestamp(data.get("commissioned_at")),
-            parse_timestamp(data.get("decommissioned_at")),
-        ],
+        """
+        INSERT INTO assemblies
+            (name, description, status, housing, commissioned_at, decommissioned_at)
+        VALUES (?,?,?,?,?,?)
+        """,
+        [name, data.get("description") or None, status, housing, commissioned_at, decommissioned_at],
     )
     if verbose:
-        print(f"  + assembly      {name}  [{housing or '?'}]  {data.get('status', '')}")
+        print(f"  + assembly      {name}  [{housing or '?'}]  {status or ''}")
+
+
+def _cascade_assembly_disassembly(con, assembly_name: str, decommissioned_at, verbose: bool = True) -> None:
+    """Close open ``assembly_magnets`` rows for *assembly_name* and cascade
+    its ``NULL``/``in_operation`` magnets (and, transitively, their parts)
+    to ``in_stock``. Naturally idempotent: a link already closed by a prior
+    call is skipped."""
+    magnet_rows = con.execute(
+        "SELECT magnet_name FROM assembly_magnets "
+        "WHERE assembly_name = ? AND decommissioned_at IS NULL",
+        [assembly_name],
+    ).fetchall()
+    con.execute(
+        "UPDATE assembly_magnets SET decommissioned_at = ? "
+        "WHERE assembly_name = ? AND decommissioned_at IS NULL",
+        [decommissioned_at, assembly_name],
+    )
+    for (magnet_name,) in magnet_rows:
+        row = con.execute("SELECT status FROM magnets WHERE name = ?", [magnet_name]).fetchone()
+        if row is None:
+            continue
+        status = row[0]
+        if status is None or status == LifecycleStatus.IN_OPERATION.value:
+            _set_magnet_status(
+                con, magnet_name, LifecycleStatus.IN_STOCK.value,
+                description=f"Assembly '{assembly_name}' disassembled.",
+                changed_at=decommissioned_at, verbose=verbose,
+            )
+
+
+def decommission_assembly(
+    con,
+    name: str,
+    decommissioned_at=None,
+    description: str = "",
+    attachments: list[dict] | None = None,
+    verbose: bool = True,
+) -> None:
+    """Disassemble an assembly: close it and cascade its magnets to ``in_stock``.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    name:
+        Assembly name.
+    decommissioned_at:
+        Timestamp; defaults to now. Only applied if not already set.
+    description:
+        Free-text note appended to ``status_history``.
+    attachments:
+        Attachment records (e.g. ``[{"kind": ..., "path": ...}]``) appended
+        to ``status_history``.
+    verbose:
+        Print status lines.
+
+    Raises
+    ------
+    ValueError
+        If the assembly does not exist.
+    """
+    if not exists(con, "assemblies", name):
+        raise ValueError(f"Assembly '{name}' not found.")
+
+    decommissioned_at = parse_timestamp(decommissioned_at) or datetime.now().isoformat()
+    con.execute(
+        "UPDATE assemblies SET status = ?, decommissioned_at = COALESCE(decommissioned_at, CAST(? AS TIMESTAMP)) "
+        "WHERE name = ?",
+        [AssemblyStatus.DISASSEMBLED.value, decommissioned_at, name],
+    )
+    _append_status_history(
+        con, "assemblies", name, AssemblyStatus.DISASSEMBLED.value,
+        description=description, changed_at=decommissioned_at, attachments=attachments,
+    )
+    if verbose:
+        print(f"  ~ assembly  {name}  status → disassembled")
+
+    _cascade_assembly_disassembly(con, name, decommissioned_at, verbose=verbose)
 
 
 def _magnet_entry_name(entry) -> str:
@@ -448,7 +764,19 @@ def insert_assembly_magnets(
     Each entry in *magnet_entries* is either a plain magnet name string or a
     dict with optional positional/temporal fields (z_offset, r_offset,
     parallax, commissioned_at, decommissioned_at, metadata).
+
+    For an entry with no ``decommissioned_at`` (i.e. an open link): rejects
+    if the magnet already has an open link to a *different* assembly, and —
+    if *assembly_name* is currently active (see :func:`_assembly_is_active`)
+    — cascades the magnet (and its parts) from ``in_stock`` to
+    ``in_operation`` (the commissioning cascade).
+
+    Raises
+    ------
+    ValueError
+        If the magnet already has an open link to a different assembly.
     """
+    assembly_active = _assembly_is_active(con, assembly_name)
     for entry in magnet_entries:
         magnet_name = _magnet_entry_name(entry)
         extra = entry if isinstance(entry, dict) else {}
@@ -460,6 +788,20 @@ def insert_assembly_magnets(
             if verbose:
                 print(f"  ~ magnet    {magnet_name}  (already linked, skipped)")
             continue
+
+        link_decommissioned_at = parse_timestamp(extra.get("decommissioned_at"))
+
+        if link_decommissioned_at is None:
+            other = con.execute(
+                "SELECT assembly_name FROM assembly_magnets "
+                "WHERE magnet_name = ? AND decommissioned_at IS NULL AND assembly_name != ?",
+                [magnet_name, assembly_name],
+            ).fetchone()
+            if other is not None:
+                raise ValueError(
+                    f"Magnet '{magnet_name}' is already actively linked to assembly "
+                    f"'{other[0]}'; decommission that link before linking it to '{assembly_name}'."
+                )
 
         con.execute(
             """
@@ -475,13 +817,25 @@ def insert_assembly_magnets(
                 extra.get("r_offset", 0.0),
                 extra.get("parallax", 0.0),
                 parse_timestamp(extra.get("commissioned_at")),
-                parse_timestamp(extra.get("decommissioned_at")),
+                link_decommissioned_at,
                 json.dumps(extra.get("metadata", {})),
             ],
         )
         if verbose:
             row = con.execute("SELECT type FROM magnets WHERE name = ?", [magnet_name]).fetchone()
             print(f"  + magnet    {magnet_name}  ({row[0] if row else '?'})")
+
+        if assembly_active and link_decommissioned_at is None:
+            status_row = con.execute(
+                "SELECT status FROM magnets WHERE name = ?", [magnet_name]
+            ).fetchone()
+            status = status_row[0] if status_row else None
+            if status is None or status == LifecycleStatus.IN_STOCK.value:
+                _set_magnet_status(
+                    con, magnet_name, LifecycleStatus.IN_OPERATION.value,
+                    description=f"Commissioned into assembly '{assembly_name}'.",
+                    verbose=verbose,
+                )
 
 
 def insert_experiments(
@@ -516,6 +870,135 @@ def insert_experiments(
 
     if verbose:
         print(f"  + records   {inserted} inserted,  {skipped} already present")
+
+
+# ---------------------------------------------------------------------------
+# Status updates (parts, magnets)
+# ---------------------------------------------------------------------------
+
+
+def update_part_status(
+    con,
+    name: str,
+    status: str,
+    description: str = "",
+    changed_at=None,
+    attachments: list[dict] | None = None,
+    verbose: bool = True,
+) -> None:
+    """Set a part's lifecycle status and append a ``status_history`` event.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    name:
+        Part name.
+    status:
+        One of :class:`~enums.LifecycleStatus`'s values.
+    description:
+        Free-text note appended to ``status_history``.
+    changed_at:
+        Timestamp; defaults to now.
+    attachments:
+        Attachment records appended to ``status_history``.
+    verbose:
+        Print status lines.
+
+    Raises
+    ------
+    ValueError
+        If the part does not exist, or *status* is not a valid
+        :class:`~enums.LifecycleStatus`.
+    """
+    if not exists(con, "parts", name):
+        raise ValueError(f"Part '{name}' not found.")
+    _valid_lifecycle_status(status)
+    con.execute("UPDATE parts SET status = ? WHERE name = ?", [status, name])
+    _append_status_history(con, "parts", name, status, description, changed_at, attachments)
+    if verbose:
+        print(f"  ~ part      {name}  status → {status}")
+
+
+def update_magnet_status(
+    con,
+    name: str,
+    status: str,
+    description: str = "",
+    changed_at=None,
+    attachments: list[dict] | None = None,
+    dead_parts: list[str] | None = None,
+    verbose: bool = True,
+) -> None:
+    """Set a magnet's lifecycle status, enforcing the dead-part invariant and
+    cascading to its parts.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    name:
+        Magnet name.
+    status:
+        One of :class:`~enums.LifecycleStatus`'s values.
+    description:
+        Free-text note appended to ``status_history``.
+    changed_at:
+        Timestamp; defaults to now.
+    attachments:
+        Attachment records appended to ``status_history``.
+    dead_parts:
+        Required (non-empty) when ``status == "dead"``; each name must
+        belong to this magnet (via ``magnet_parts``) and is itself set (or
+        confirmed, if already dead) to ``"dead"`` before the magnet's own
+        status is updated. Rejected when ``status != "dead"``.
+    verbose:
+        Print status lines.
+
+    Raises
+    ------
+    ValueError
+        If the magnet does not exist, *status* is invalid, ``dead_parts`` is
+        missing/empty for a ``"dead"`` call, a name in ``dead_parts`` doesn't
+        belong to this magnet, or ``dead_parts`` is given for a non-``dead``
+        status.
+    """
+    if not exists(con, "magnets", name):
+        raise ValueError(f"Magnet '{name}' not found.")
+    _valid_lifecycle_status(status)
+
+    if status == LifecycleStatus.DEAD.value:
+        if not dead_parts:
+            raise ValueError("Marking a magnet 'dead' requires at least one dead part.")
+        linked = {
+            r[0] for r in con.execute(
+                "SELECT part_name FROM magnet_parts WHERE magnet_name = ?", [name]
+            ).fetchall()
+        }
+        unknown = [p for p in dead_parts if p not in linked]
+        if unknown:
+            raise ValueError(f"Part(s) {unknown} do not belong to magnet '{name}'.")
+        for part_name in dead_parts:
+            update_part_status(
+                con, part_name, LifecycleStatus.DEAD.value,
+                description=description, changed_at=changed_at, verbose=verbose,
+            )
+    elif dead_parts:
+        raise ValueError("dead_parts is only valid with status='dead'.")
+
+    _set_magnet_status(
+        con, name, status, description=description, changed_at=changed_at,
+        attachments=attachments, verbose=verbose,
+    )
+
+    if status == LifecycleStatus.DEAD.value and not description and not attachments:
+        print(
+            "\n"
+            "  *** WARNING: magnet marked 'dead' with no description or attachment. ***\n"
+            "  *** Consider attaching an incident report, e.g.:                     ***\n"
+            "  ***   magnet update-status <name> --status dead --dead-part <part>   ***\n"
+            "  ***     --description \"...\" --attachment report=<path>              ***\n"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -610,6 +1093,71 @@ def print_geometry_check(results: list[dict]) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _print_status_history(raw) -> None:
+    """Print a ``status_history`` JSON column's entries, if any."""
+    if not raw:
+        return
+    history = json.loads(raw) if isinstance(raw, str) else raw
+    if not history:
+        return
+    print(f"  status_history ({len(history)}):")
+    for event in history:
+        attachments = event.get("attachments") or []
+        att = f"  attachments={attachments}" if attachments else ""
+        print(
+            f"    [{event.get('date', '?')}] {event.get('status', '?')}"
+            f"  {event.get('description', '')}{att}"
+        )
+
+
+def view_parts(
+    con,
+    type_filter: str | None = None,
+    status_filter: str | None = None,
+) -> None:
+    conditions, params = [], []
+    if type_filter:
+        conditions.append("type = ?")
+        params.append(type_filter)
+    if status_filter:
+        conditions.append("status = ?")
+        params.append(status_filter)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    rows = con.execute(
+        f"SELECT name, type, status FROM parts {where} ORDER BY name", params
+    ).fetchall()
+    if not rows:
+        parts = []
+        if type_filter:
+            parts.append(f"type '{type_filter}'")
+        if status_filter:
+            parts.append(f"status '{status_filter}'")
+        qualifier = " matching " + ", ".join(parts) if parts else ""
+        print(f"No parts{qualifier} in database.")
+        return
+    print(f"{'Name':<30} {'Type':<10} Status")
+    print("-" * 55)
+    for name, type_, status in rows:
+        print(f"{name:<30} {type_ or '?':<10} {status or ''}")
+
+
+def view_part(con, name: str) -> None:
+    row = con.execute(
+        "SELECT name, type, status, material_name, design_office_reference, status_history "
+        "FROM parts WHERE name = ?",
+        [name],
+    ).fetchone()
+    if not row:
+        print(f"Part '{name}' not found.")
+        return
+    print(f"Part  : {row[0]}")
+    print(f"  type    : {row[1] or '?'}")
+    print(f"  status  : {row[2] or ''}")
+    print(f"  material: {row[3] or ''}")
+    print(f"  ref     : {row[4] or ''}")
+    _print_status_history(row[5])
+
+
 def view_magnets(
     con,
     type_filter: str | None = None,
@@ -643,7 +1191,7 @@ def view_magnets(
 
 def view_magnet(con, name: str) -> None:
     row = con.execute(
-        "SELECT name, type, status, design_office_reference FROM magnets WHERE name = ?",
+        "SELECT name, type, status, design_office_reference, status_history FROM magnets WHERE name = ?",
         [name],
     ).fetchone()
     if not row:
@@ -664,6 +1212,7 @@ def view_magnet(con, name: str) -> None:
         for pname, ptype, rank, coil_index in parts:
             ci = f"  coil#{coil_index}" if coil_index else ""
             print(f"    [{rank}] {pname}  ({ptype or '?'}){ci}")
+    _print_status_history(row[4])
 
 
 def view_assemblies(
