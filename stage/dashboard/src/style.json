@@ -1,0 +1,38 @@
+{
+  "pupitre": {
+    "color": "#2ca02c",
+    "dash": "solid",
+    "width": 2,
+    "opacity": 1.0
+  },
+  "overview": {
+    "color": "#1f77b4",
+    "dash": "solid",
+    "width": 2,
+    "opacity": 1.0
+  },
+  "archive": {
+    "color": "#ff7f0e",
+    "dash": "solid",
+    "width": 2,
+    "opacity": 1.0
+  },
+  "default": {
+    "color": "#9467bd",
+    "dash": "dot",
+    "width": 1.5,
+    "opacity": 0.8
+  },
+  "spike": {
+    "color": "#d62728",
+    "dash": "dash",
+    "width": 1.5,
+    "opacity": 0.9
+  },
+  "trigger": {
+    "color": "#8c564b",
+    "dash": "dashdot",
+    "width": 1.5,
+    "opacity": 0.8
+  }
+}

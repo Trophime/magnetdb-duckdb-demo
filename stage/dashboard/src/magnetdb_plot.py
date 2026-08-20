@@ -74,16 +74,42 @@ def save_file_type_styles(styles: FileTypeStyles, path: str | Path) -> None:
         json.dump(styles.to_dict(), f, indent=2)
 
 
+_USER_STYLE_CONFIG = Path.home() / ".config" / "magnetdb" / "style.json"
+_BUNDLED_STYLE_PATH = Path(__file__).parent / "style.json"
+
+
 def _load_default_file_type_styles() -> FileTypeStyles:
-    """Return FileTypeStyles from $MAGNETDB_FILE_TYPE_STYLES, or package defaults."""
-    path = os.environ.get("MAGNETDB_FILE_TYPE_STYLES")
-    if path:
+    """Return FileTypeStyles, resolved in order: env var, user config dir, bundled default.
+
+    1. ``$MAGNETDB_FILE_TYPE_STYLES``, if set.
+    2. ``~/.config/magnetdb/style.json``, if it exists.
+    3. The bundled ``style.json`` shipped next to this module.
+    4. In-code :class:`FileTypeStyles` defaults, as a last resort if even the
+       bundled file is somehow missing or unreadable — startup never crashes.
+    """
+    env_path = os.environ.get("MAGNETDB_FILE_TYPE_STYLES")
+    if env_path:
         try:
-            return load_file_type_styles(path)
+            return load_file_type_styles(env_path)
         except (OSError, KeyError, TypeError, ValueError) as exc:
             logger.warning(
-                "Could not load $MAGNETDB_FILE_TYPE_STYLES=%s: %s — using defaults", path, exc
+                "Could not load $MAGNETDB_FILE_TYPE_STYLES=%s: %s — trying next source", env_path, exc
             )
+
+    if _USER_STYLE_CONFIG.exists():
+        try:
+            return load_file_type_styles(_USER_STYLE_CONFIG)
+        except (OSError, KeyError, TypeError, ValueError) as exc:
+            logger.warning(
+                "Could not load %s: %s — trying next source", _USER_STYLE_CONFIG, exc
+            )
+
+    try:
+        return load_file_type_styles(_BUNDLED_STYLE_PATH)
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        logger.warning(
+            "Could not load bundled %s: %s — using in-code defaults", _BUNDLED_STYLE_PATH, exc
+        )
     return FileTypeStyles()
 
 
@@ -94,8 +120,8 @@ def _resolve_file_style(filename: str) -> TraceStyle | None:
     """Return the FILE_TYPE_STYLES entry for *filename*, or None if unresolved.
 
     None (rather than a fallback style) lets callers keep Plotly's default
-    per-trace color cycling for filenames that don't map to a known type —
-    e.g. file_viewer.py passes a composite "file - group" string for the plot title.
+    per-trace color cycling for filenames that don't map to a known type,
+    e.g. an unrecognised extension or a synthetic/composite name.
     """
     if filename.endswith('.txt'):
         return FILE_TYPE_STYLES.get('pupitre')
@@ -199,8 +225,12 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
                 ))
 
     # 4. Layout
+    title = f"Visualization : {filename}"
+    if group_name:
+        title += f" - {group_name}"
+    title += f" (Algo: {method})"
     fig.update_layout(
-        title=f"Visualization : {filename} (Algo: {method})",
+        title=title,
         template="plotly_white",
         margin=dict(l=40, r=40, t=60, b=40),
         xaxis=dict(title=x_title),

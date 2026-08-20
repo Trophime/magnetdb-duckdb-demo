@@ -19,6 +19,7 @@ from plotly import graph_objects as go
 import magnetdb_analysis as db
 import magnetdb_plot as plot
 import pandas as pd
+import dash_selectors as selectors
 from natsort import natsorted
 
 dash.register_page(__name__, path="/file_viewer", name="File viewer", order=6)
@@ -41,13 +42,7 @@ def layout(assembly=None, file=None, **kwargs):
                         style={"marginTop": "0px", "marginBottom": "20px"},
                     ),
                     html.Hr(),
-                    html.Label("1. Choose Assembly :", style={"fontWeight": "bold"}),
-                    dcc.Dropdown(
-                        id="dd-assembly",
-                        options=[assembly] if assembly else [],
-                        value=assembly,
-                        placeholder="Choose an assembly...",
-                    ),
+                    selectors.cascading_selector("dd-assembly", "Assembly", 1, value=assembly),
                     html.Br(),
                     html.Label("2. Choose Table :", style={"fontWeight": "bold"}),
                     dcc.Dropdown(
@@ -406,7 +401,7 @@ def update_outputs(
             selected_x,
             sensors_in_this_group,
             selected_algo,
-            filename=f"{selected_file} - {group_name}",
+            filename=selected_file,
             mrun=mrun,
             group_name=group_name,
         )

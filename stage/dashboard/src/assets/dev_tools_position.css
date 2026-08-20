@@ -1,0 +1,12 @@
+.dash-debug-menu {
+    top: 35px !important;
+    bottom: auto !important;
+}
+.dash-debug-menu__outer {
+    top: 27px !important;
+    bottom: auto !important;
+}
+.dash-debug-menu__outer--closed {
+    top: 37px !important;
+    bottom: auto !important;
+}

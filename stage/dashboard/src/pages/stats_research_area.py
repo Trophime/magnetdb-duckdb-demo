@@ -4,6 +4,7 @@ from dash.dash_table import DataTable
 
 import plotly.express as px
 import magnetdb_analysis as db
+import dash_selectors as selectors
 
 dash.register_page(__name__, path="/research-area", name="Research areas", order=7)
 
@@ -13,28 +14,11 @@ layout = html.Div(
         html.Br(),
         html.Div(
             [
-                html.Div(
-                    [
-                        html.Label("Housing"),
-                        dcc.Dropdown(
-                            id="ra-housing",
-                            options=["All"] + db.get_housings(),
-                            value="All",
-                            clearable=False,
-                        ),
-                    ],
-                    style={"width": "250px"},
-                ),
-                html.Div(
-                    [
-                        html.Label("Year"),
-                        dcc.Dropdown(
-                            id="ra-year",
-                            options=["All", "2022", "2023", "2024", "2025", "2026"],
-                            value="All",
-                            clearable=False,
-                        ),
-                    ],
+                selectors.aggregate_filter("ra-housing", "Housing", options=db.get_housings(), style={"width": "250px"}),
+                selectors.aggregate_filter(
+                    "ra-year",
+                    "Year",
+                    options=["2022", "2023", "2024", "2025", "2026"],
                     style={"width": "250 px"},
                 ),
             ],

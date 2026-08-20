@@ -1,6 +1,17 @@
 # Plot style config: bundled default + overridable style.json
 
-**Status:** Awaiting approval — do not implement until explicitly approved (`approve`/`approved`/`go`/`proceed`/`LGTM`). Anything else (questions, edits, silence) is not approval; revise and re-present.
+**Status:** Approved and implemented 2026-08-19. All 5 approach steps landed and verified: bundled
+`stage/dashboard/src/style.json` generated from and round-trip-verified against the in-code
+defaults; `_load_default_file_type_styles()` rewritten with the 4-step resolution (env var →
+`~/.config/magnetdb/style.json` → bundled `style.json` → in-code defaults), each precedence level
+exercised live with an isolated `$HOME`; `create_plot()`'s title construction fixed to combine
+`filename`/`group_name` separately, verified both with and without `group_name`; `file_viewer.py`'s
+call site fixed to pass the raw filename, verified live against `test-magnetdb.duckdb` — a real
+pupitre `.txt` file now resolves to the `#2ca02c` pupitre color instead of Plotly's default color
+cycle, with the title still showing filename + group + algorithm; `PLOT_STYLE.md` updated to match
+(new resolution order documented, `file_viewer.py`'s typed-styling verdict flipped to "yes").
+`create_annotated_plot()` re-verified with no regression. The "Follow-up" section below (annotation
+marker/text customization) remains unscoped and not implemented.
 
 ## Goal
 
@@ -86,3 +97,24 @@ as a follow-on ("eventually"), needs its own `TraceStyle` schema extension, not 
   — say if you'd prefer a different directory name.
 - `pages_disabled/comparison.py` imports `create_plot` but never calls it, so the title-format
   change is safe with no other live callers affected.
+
+## Follow-up: customizing annotation markers/style/font text (not in this plan)
+
+Once the `style.json` resolution mechanism above lands, extend it to cover the event-marker
+annotations (`sources_default`/`sources_spike`/`sources_trigger`) that `create_comparison_plot()`
+and `create_annotated_plot()` draw — currently every property is hardcoded inline in both
+functions, not read from `FileTypeStyles`/`TraceStyle` at all:
+
+- **Marker:** `size=14`; `symbol='x' if file_type == 'default' else 'star'` (so `spike` and
+  `trigger` both currently render as a star — no per-type distinction); `line=dict(width=2,
+  color='DarkSlateGrey')`; fill `color=style.color if style else "red"` (the one property that
+  *is* already type-aware, reusing the existing line color).
+- **Text:** `textposition="top center"`; `textfont=dict(color=style.color if style else "red",
+  size=11, family="Arial Black")`.
+
+Needs its own `TraceStyle` schema extension (new fields — e.g. `marker_symbol`, `marker_size`,
+`marker_line_color`, `text_font_family`, `text_font_size`, `text_position` — or a parallel
+`MarkerStyle` dataclass keyed by the same type names) before `create_comparison_plot()`/
+`create_annotated_plot()` can be rewired to read from `FILE_TYPE_STYLES` instead of the current
+hardcoded values. Would reuse the same bundled/env-var/config-dir resolution built in this plan,
+not a separate mechanism. Not scoped in detail yet — flagged here so it isn't lost.

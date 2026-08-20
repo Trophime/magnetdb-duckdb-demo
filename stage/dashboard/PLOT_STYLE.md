@@ -15,9 +15,9 @@ traces:
    2nd underscore-part of the filename, e.g. `M9_Archive_251202-1430.tdms`
    → `"archive"` — normalized to one of `overview` / `archive` / `default`
    / `spike` / `trigger`.
-3. Anything else (unrecognised name, or a composite string like `file_viewer.py`'s
-   `f"{selected_file} - {group_name}"` plot title) → `None`, and the trace
-   falls back to Plotly's own default color cycling, unstyled.
+3. Anything else (unrecognised extension, or a synthetic/composite name) →
+   `None`, and the trace falls back to Plotly's own default color cycling,
+   unstyled.
 
 All sensors plotted from the same file share that file's style — color
 identifies the *file type*, not the individual sensor. To tell sensors from
@@ -40,19 +40,31 @@ exposed as the module-level `FILE_TYPE_STYLES`).
 
 ## Overriding without touching code
 
-```bash
-# 1. Dump the current defaults as a starting point
-python -c "from magnetdb_plot import FILE_TYPE_STYLES, save_file_type_styles; \
-           save_file_type_styles(FILE_TYPE_STYLES, 'my_styles.json')"
+`_load_default_file_type_styles()` resolves `FILE_TYPE_STYLES` in this order, first match wins:
 
-# 2. Edit my_styles.json, then point the app at it
-MAGNETDB_FILE_TYPE_STYLES=$(pwd)/my_styles.json python magnetdb_app.py
+1. `$MAGNETDB_FILE_TYPE_STYLES` — path to a JSON file, if the env var is set.
+2. `~/.config/magnetdb/style.json` — a fixed per-user override location, checked if it exists.
+3. `style.json` — the bundled default, shipped next to `magnetdb_plot.py`.
+4. In-code `FileTypeStyles()` dataclass defaults — last-resort fallback if even the bundled file
+   is somehow missing or unreadable; startup never crashes.
+
+`scripts/init_style_config.py` writes a starting-point file (`FileTypeStyles()`'s defaults) to
+edit from — defaults to `~/.config/magnetdb/style.json`, refuses to overwrite an existing file
+unless `--force` is given:
+
+```bash
+# Persist an override across runs, at the config-dir location:
+python scripts/init_style_config.py
+# edit ~/.config/magnetdb/style.json
+
+# Or write it elsewhere and use the env var instead:
+python scripts/init_style_config.py --output my_styles.json
+MAGNETDB_FILE_TYPE_STYLES=$(pwd)/my_styles.json python src/magnetdb_app.py
 ```
 
-Read once at import time by `_load_default_file_type_styles()`. Partial
-files are fine — `FileTypeStyles.from_dict()` only overrides the types you
-include, everything else keeps its default. A missing or unreadable path
-logs a warning and falls back to defaults; it never crashes startup.
+Partial files are fine at every level — `FileTypeStyles.from_dict()` only overrides the types you
+include, everything else keeps its default. A missing or unreadable file at any step logs a
+warning and falls through to the next source in the list.
 
 Example JSON overriding a single type:
 ```json
@@ -65,9 +77,11 @@ Example JSON overriding a single type:
 
 - `comparison.py` — yes, passes the raw filename straight through to
   `create_plot()`.
-- `file_viewer.py` — no. It passes a composite `"<file> - <group>"` string (used
-  for the plot title), which never matches `.txt`/`.tdms`, so it falls back
-  to Plotly's default coloring. Unaffected by design, not a bug.
+- `file_viewer.py` — yes, passes the raw filename straight through to
+  `create_plot()`. The plot title, previously built from a composite
+  `"<file> - <group>"` string passed as `filename` (which defeated typed
+  styling), is now built inside `create_plot()` from `filename` and
+  `group_name` as separate arguments.
 - `overview_records.py` — yes, calls `create_annotated_plot()` (not `create_plot()`),
   but resolves styling the same way, passing each file's raw filename through to
   `_resolve_file_style()`.

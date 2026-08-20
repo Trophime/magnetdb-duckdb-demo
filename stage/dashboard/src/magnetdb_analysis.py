@@ -12,6 +12,7 @@ import time
 from functools import wraps
 import pandas as pd
 import scipy.signal as sg
+from natsort import natsorted
 
 # Chemin absolu vers la base DuckDB (surchargable via variable d'environnement)
 DB_PATH = os.environ.get(
@@ -65,16 +66,92 @@ def _assembly_sort_key(assembly_name):
 
 
 def get_all_assemblies(db_path=None):
-    """Select the list of all assemblies for the first menu, sorted by ascending commissioning date."""
+    """Select the list of all assemblies, sorted by ascending commissioning date.
+
+    Parameters
+    ----------
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Assembly names (``assemblies.name``).
+    """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
-            SELECT DISTINCT e.assembly_name
-            FROM experiments AS e
-            JOIN assemblies AS s ON s.name = e.assembly_name
-            WHERE e.assembly_name IS NOT NULL
-            ORDER BY s.commissioned_at ASC
+            SELECT name
+            FROM assemblies
+            ORDER BY commissioned_at ASC
         """
-        return conn.execute(query).df()["assembly_name"].tolist()
+        return conn.execute(query).df()["name"].tolist()
+
+
+def get_all_parts(db_path=None):
+    """Select the list of all parts, sorted by ascending manufacturing date.
+
+    Parameters
+    ----------
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Part names (``parts.name``).
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT name
+            FROM parts
+            ORDER BY manufactured_at ASC
+        """
+        return conn.execute(query).df()["name"].tolist()
+
+
+def get_all_magnets(db_path=None):
+    """Select the list of all magnets, sorted by ascending assembly date.
+
+    Parameters
+    ----------
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Magnet names (``magnets.name``).
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT name
+            FROM magnets
+            ORDER BY assembled_at ASC
+        """
+        return conn.execute(query).df()["name"].tolist()
+
+
+def get_all_experiments(db_path=None):
+    """Select the list of all experiments, sorted by the timestamp in their attached filename.
+
+    ``experiments`` has no timestamp column of its own; the ordering is
+    derived from the datetime embedded in each row's ``file`` name via
+    :func:`parse_magnet_filename`.
+
+    Parameters
+    ----------
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Experiment names (``experiments.name``).
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        rows = conn.execute("SELECT name, file FROM experiments").df().to_dict("records")
+    rows.sort(key=lambda r: parse_magnet_filename(r["file"]) or datetime.min)
+    return [r["name"] for r in rows]
 
 
 def get_magnet_types_for_assembly(assembly_name, db_path=None):
@@ -89,6 +166,61 @@ def get_magnet_types_for_assembly(assembly_name, db_path=None):
         return conn.execute(query, [assembly_name]).df()["type"].tolist()
 
 
+def get_magnets_for_assembly(assembly_name, db_path=None):
+    """Return the magnets composing an assembly.
+
+    Parameters
+    ----------
+    assembly_name : str
+        ``assemblies.name`` to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of dict
+        One entry per magnet, with ``name``, ``type``, ``status``, and
+        ``assembled_at``, ordered by name.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT m.name, m.type, m.status, m.assembled_at
+            FROM assembly_magnets AS sm
+            JOIN magnets AS m ON m.name = sm.magnet_name
+            WHERE sm.assembly_name = ?
+            ORDER BY m.name
+        """
+        return conn.execute(query, [assembly_name]).df().to_dict("records")
+
+
+def get_parts_for_magnet(magnet_name, db_path=None):
+    """Return the parts composing a magnet, in physical stacking order.
+
+    Parameters
+    ----------
+    magnet_name : str
+        ``magnets.name`` to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of dict
+        One entry per part, with ``name``, ``type``, ``status``,
+        ``material_name``, and ``manufactured_at``, ordered by
+        ``magnet_parts.rank`` (the part's stacking position in the magnet).
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT p.name, p.type, p.status, p.material_name, p.manufactured_at
+            FROM magnet_parts AS mp
+            JOIN parts AS p ON p.name = mp.part_name
+            WHERE mp.magnet_name = ?
+            ORDER BY mp.rank NULLS LAST, mp.part_name
+        """
+        return conn.execute(query, [magnet_name]).df().to_dict("records")
+
+
 def get_files_for_assembly(assembly_name, table_name, db_path=None):
     """
     Interroge la table choisie pour sortir tous les fichiers du assembly.
@@ -98,6 +230,99 @@ def get_files_for_assembly(assembly_name, table_name, db_path=None):
         query = f"SELECT DISTINCT file FROM {table_name} WHERE assembly_name = ? AND file IS NOT NULL"
         df = conn.execute(query, [assembly_name]).df()
         return df["file"].tolist()
+
+
+def get_distinct_statuses(table_name, db_path=None):
+    """Return the distinct lifecycle statuses present in *table_name*.
+
+    Parameters
+    ----------
+    table_name : str
+        Either ``"magnets"`` or ``"parts"`` -- both share the same
+        lifecycle-status vocabulary (``in_operation``, ``in_stock``,
+        ``in_study``, ``retired``, ``dead``).
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Distinct non-null ``status`` values, sorted alphabetically.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = f"SELECT DISTINCT status FROM {table_name} WHERE status IS NOT NULL ORDER BY status"
+        return conn.execute(query).df()["status"].tolist()
+
+
+def get_names_with_status(table_name, status, db_path=None):
+    """Return the names of *table_name* rows matching *status*.
+
+    Parameters
+    ----------
+    table_name : str
+        Either ``"magnets"`` or ``"parts"``.
+    status : str
+        Lifecycle status to match.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        ``name`` values whose ``status`` equals *status*.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = f"SELECT name FROM {table_name} WHERE status = ?"
+        return conn.execute(query, [status]).df()["name"].tolist()
+
+
+def get_assembly_names_for_magnets(magnet_names, db_path=None):
+    """Return the assembly names linked to any of *magnet_names*.
+
+    Parameters
+    ----------
+    magnet_names : list of str
+        ``magnets.name`` values to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Distinct ``assembly_magnets.assembly_name`` values.
+    """
+    if not magnet_names:
+        return []
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = "SELECT DISTINCT assembly_name FROM assembly_magnets WHERE magnet_name = ANY(?)"
+        return conn.execute(query, [list(magnet_names)]).df()["assembly_name"].tolist()
+
+
+def get_assembly_names_for_parts(part_names, db_path=None):
+    """Return the assembly names linked to any of *part_names* via their magnets.
+
+    Parameters
+    ----------
+    part_names : list of str
+        ``parts.name`` values to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Distinct ``assembly_magnets.assembly_name`` values.
+    """
+    if not part_names:
+        return []
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT DISTINCT sm.assembly_name
+            FROM assembly_magnets AS sm
+            JOIN magnet_parts AS mp ON mp.magnet_name = sm.magnet_name
+            WHERE mp.part_name = ANY(?)
+        """
+        return conn.execute(query, [list(part_names)]).df()["assembly_name"].tolist()
 
 
 def get_overview_records_for_assembly(assembly_name, db_path=None):
@@ -115,77 +340,6 @@ def get_overview_records_for_assembly(assembly_name, db_path=None):
             ORDER BY t0 NULLS LAST, filename
         """
         return conn.execute(query, [assembly_name]).df().to_dict("records")
-
-
-def get_overview_records_for_magnet(magnet_name, db_path=None):
-    """Return overview_records rows for every assembly a magnet has ever been linked to.
-
-    ``assembly_magnets.commissioned_at``/``decommissioned_at`` are almost
-    entirely unpopulated today, so this deliberately doesn't try to narrow
-    each overview record to the magnet's exact tenure window — it returns
-    every record for every assembly the magnet has ever appeared on, same
-    "history of X" shape as :func:`get_assembly_history_for_magnet`.
-
-    Parameters
-    ----------
-    magnet_name : str
-        ``magnets.name`` to look up.
-    db_path : str, optional
-        Path to the DuckDB database. Defaults to `DB_PATH`.
-
-    Returns
-    -------
-    list of dict
-        One entry per overview_records row, ordered chronologically, with
-        ``filename``, ``assembly_name``, ``housing``, ``mode``, ``t0``.
-    """
-    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        query = """
-            SELECT filename, assembly_name, housing, mode, t0
-            FROM overview_records
-            WHERE merged_into IS NULL
-              AND assembly_name IN (
-                  SELECT assembly_name FROM assembly_magnets WHERE magnet_name = ?
-              )
-            ORDER BY t0 NULLS LAST, filename
-        """
-        return conn.execute(query, [magnet_name]).df().to_dict("records")
-
-
-def get_overview_records_for_part(part_name, db_path=None):
-    """Return overview_records rows for every assembly a part's magnet has ever been linked to.
-
-    Traverses part -> magnet (via ``magnet_parts``) -> assembly (via
-    ``assembly_magnets``), same tenure caveat as
-    :func:`get_overview_records_for_magnet`.
-
-    Parameters
-    ----------
-    part_name : str
-        ``parts.name`` to look up.
-    db_path : str, optional
-        Path to the DuckDB database. Defaults to `DB_PATH`.
-
-    Returns
-    -------
-    list of dict
-        One entry per overview_records row, ordered chronologically, with
-        ``filename``, ``assembly_name``, ``housing``, ``mode``, ``t0``.
-    """
-    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        query = """
-            SELECT o.filename, o.assembly_name, o.housing, o.mode, o.t0
-            FROM overview_records AS o
-            WHERE o.merged_into IS NULL
-              AND o.assembly_name IN (
-                  SELECT sm.assembly_name
-                  FROM assembly_magnets AS sm
-                  JOIN magnet_parts AS mp ON mp.magnet_name = sm.magnet_name
-                  WHERE mp.part_name = ?
-              )
-            ORDER BY o.t0 NULLS LAST, o.filename
-        """
-        return conn.execute(query, [part_name]).df().to_dict("records")
 
 
 def get_assembly_history_for_magnet(magnet_name, db_path=None):
@@ -242,6 +396,39 @@ def get_magnet_history_for_part(part_name, db_path=None):
             JOIN magnets AS m ON m.name = mp.magnet_name
             WHERE mp.part_name = ?
             ORDER BY m.assembled_at NULLS LAST
+        """
+        return conn.execute(query, [part_name]).df().to_dict("records")
+
+
+def get_assembly_history_for_part(part_name, db_path=None):
+    """Return every assembly a part's magnet has been linked to, ordered by commissioning date.
+
+    Traverses part -> magnet (via ``magnet_parts``) -> assembly (via
+    ``assembly_magnets``), same shape as :func:`get_assembly_history_for_magnet`.
+
+    Parameters
+    ----------
+    part_name : str
+        ``parts.name`` to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of dict
+        One entry per linked assembly, ascending by ``commissioned_at``
+        (NULLs last), with ``assembly_name``, ``housing``, ``status``,
+        ``commissioned_at``, ``decommissioned_at``.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT a.name AS assembly_name, a.housing, a.status,
+                   a.commissioned_at, a.decommissioned_at
+            FROM magnet_parts AS mp
+            JOIN assembly_magnets AS sm ON sm.magnet_name = mp.magnet_name
+            JOIN assemblies AS a ON a.name = sm.assembly_name
+            WHERE mp.part_name = ?
+            ORDER BY a.commissioned_at NULLS LAST
         """
         return conn.execute(query, [part_name]).df().to_dict("records")
 
@@ -462,7 +649,7 @@ def get_lag(df_pupitre, df_pb, column_current_pupitre='Idcct1', column_current_p
 
 
 def get_housings(db_path=None):
-    """Return the list of distinct housings defined in ``housing_config``.
+    """Return the list of distinct housings defined in ``housing_config``, naturally sorted.
 
     Parameters
     ----------
@@ -472,11 +659,90 @@ def get_housings(db_path=None):
     Returns
     -------
     list of str
-        Housing names (e.g. ``"M9"``, ``"M10"``).
+        Housing names (e.g. ``"M9"``, ``"M10"``), ordered with
+        :func:`natsort.natsorted` so ``"M10"`` follows ``"M9"`` instead of
+        preceding it lexicographically.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = "SELECT DISTINCT name FROM housing_config WHERE name IS NOT NULL"
-        return conn.execute(query).df()["name"].tolist()
+        names = conn.execute(query).df()["name"].tolist()
+    return natsorted(names)
+
+
+def load_assemblies_meta(db_path=None):
+    """Load every assembly's name, housing, and commissioning window.
+
+    Parameters
+    ----------
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per assembly (DB-wide, regardless of whether it has any
+        experiments), with ``Assembly``, ``Housing``, ``Commissioned``, and
+        ``Decommissioned`` columns. ``Decommissioned`` is ``NaT`` for
+        assemblies still in operation.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        return conn.execute("""
+            SELECT
+                name AS Assembly,
+                housing AS Housing,
+                commissioned_at AS Commissioned,
+                decommissioned_at AS Decommissioned
+            FROM assemblies
+        """).df()
+
+
+def assemblies_active_in_year(assemblies_meta, year):
+    """Return assembly names whose commissioning window overlaps *year*.
+
+    Parameters
+    ----------
+    assemblies_meta : :class:`~pandas.DataFrame`
+        Must have ``Assembly``, ``Commissioned``, ``Decommissioned``
+        columns, as returned by :func:`load_assemblies_meta`.
+    year : int
+        Calendar year to test for overlap.
+
+    Returns
+    -------
+    set of str
+        Assembly names commissioned on or before *year*, and either still
+        in operation (``Decommissioned`` is ``NaT``) or decommissioned on
+        or after *year*.
+    """
+    overlap = (assemblies_meta["Commissioned"].dt.year <= year) & (
+        assemblies_meta["Decommissioned"].isna() | (assemblies_meta["Decommissioned"].dt.year >= year)
+    )
+    return set(assemblies_meta.loc[overlap, "Assembly"])
+
+
+def assemblies_year_range(assemblies_meta):
+    """Return the inclusive calendar-year span covered by *assemblies_meta*.
+
+    Parameters
+    ----------
+    assemblies_meta : :class:`~pandas.DataFrame`
+        Must have ``Commissioned``, ``Decommissioned`` columns, as returned
+        by :func:`load_assemblies_meta`.
+
+    Returns
+    -------
+    tuple of int, optional
+        ``(min_year, max_year)`` spanning every assembly's commissioned
+        year through its decommissioned year (or the current year, for
+        assemblies still in operation). ``None`` if there are no assemblies
+        with a commissioning date.
+    """
+    span = pd.concat(
+        [assemblies_meta["Commissioned"], assemblies_meta["Decommissioned"].fillna(pd.Timestamp.now())]
+    ).dropna()
+    if span.empty:
+        return None
+    return int(span.dt.year.min()), int(span.dt.year.max())
 
 
 def get_pupitres_for_housing(housing, db_path=None):
@@ -592,7 +858,7 @@ def get_research_area_stats(housing=None, year=None, db_path=None):
         return conn.execute(query, params).df()
 
 
-def get_field_bin_history(housing, db_path=None):
+def get_field_bin_history(housing, db_path=None, assembly_names=None):
     """Return monthly magnet-on activity for a housing, for a commissioning-timeline strip.
 
     Granularity is monthly: a month is "on" if any of its experiments have
@@ -608,6 +874,9 @@ def get_field_bin_history(housing, db_path=None):
         Housing name (e.g. ``"M9"``).
     db_path : str, optional
         Path to the DuckDB database. Defaults to `DB_PATH`.
+    assembly_names : collection of str, optional
+        Restrict to experiments on these assemblies only. Defaults to all
+        assemblies in *housing*.
 
     Returns
     -------
@@ -629,9 +898,13 @@ def get_field_bin_history(housing, db_path=None):
             JOIN assemblies AS a ON a.name = e.assembly_name
             LEFT JOIN exp_run_scalars AS s ON s.experiment_id = e.id
             WHERE a.housing = ?
-            GROUP BY e.id, e.name
         """
-        df = conn.execute(query, [housing]).df()
+        params = [housing]
+        if assembly_names is not None:
+            query += " AND a.name = ANY(?)"
+            params.append(list(assembly_names))
+        query += " GROUP BY e.id, e.name"
+        df = conn.execute(query, params).df()
 
     if df.empty:
         return []

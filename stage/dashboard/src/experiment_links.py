@@ -53,3 +53,66 @@ def overview_record_link(row):
         f"&record={quote(str(label), safe='')}"
     )
     return f"[{label}]({href})"
+
+
+def assembly_link(row):
+    """Render an Assembly cell as a markdown link into ``/assembly_stats`` pre-filtered to it.
+
+    Parameters
+    ----------
+    row : :class:`~pandas.Series`
+        Row with an ``"Assembly"`` entry.
+
+    Returns
+    -------
+    str
+        Markdown link to ``/assembly_stats`` pre-loaded with the row's
+        assembly filter, or the plain label if the row has no assembly.
+    """
+    label = row["Assembly"]
+    if pd.isna(label) or not label:
+        return str(label)
+    href = f"/assembly_stats?assembly={quote(str(label), safe='')}"
+    return f"[{label}]({href})"
+
+
+def magnet_link(row):
+    """Render a Magnet cell as a markdown link into ``/magnet_stats`` pre-filtered to it.
+
+    Parameters
+    ----------
+    row : :class:`~pandas.Series`
+        Row with a ``"Magnet"`` entry.
+
+    Returns
+    -------
+    str
+        Markdown link to ``/magnet_stats`` pre-loaded with the row's
+        magnet filter, or the plain label if the row has no magnet.
+    """
+    label = row["Magnet"]
+    if pd.isna(label) or not label:
+        return str(label)
+    href = f"/magnet_stats?magnet={quote(str(label), safe='')}"
+    return f"[{label}]({href})"
+
+
+def part_link(row):
+    """Render a Part cell as a markdown link into ``/part_stats`` pre-filtered to it.
+
+    Parameters
+    ----------
+    row : :class:`~pandas.Series`
+        Row with a ``"Part"`` entry.
+
+    Returns
+    -------
+    str
+        Markdown link to ``/part_stats`` pre-loaded with the row's
+        part filter, or the plain label if the row has no part.
+    """
+    label = row["Part"]
+    if pd.isna(label) or not label:
+        return str(label)
+    href = f"/part_stats?part={quote(str(label), safe='')}"
+    return f"[{label}]({href})"

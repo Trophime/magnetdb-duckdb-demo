@@ -4,10 +4,14 @@ import pandas as pd
 
 from dash import html, dcc, Input, Output
 from dash.dash_table import DataTable
+from natsort import natsorted
 
 import plotly.express as px
 from plotly import graph_objects as go
+import dash_bootstrap_components as dbc
 import magnetdb_analysis as db
+import dash_selectors as selectors
+from experiment_links import assembly_link
 
 dash.register_page(__name__, path="/", name="Housing stats", order=1)
 
@@ -20,16 +24,21 @@ _MONTH_LABELS = [
     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ]
 
-COMMISSIONING_COLUMNS = [{"name": c, "id": c} for c in ("Assembly", "Status", "Commissioned", "Decommissioned")]
+COMMISSIONING_COLUMNS = [
+    {"name": c, "id": c, "presentation": "markdown"} if c == "Assembly" else {"name": c, "id": c}
+    for c in ("Assembly", "Status", "Commissioned", "Decommissioned")
+]
 
 
-def load_housing_summary(db_path=None):
+def load_housing_summary(db_path=None, assembly_names=None):
     """Aggregate total energy/field-on time and assembly counts per housing.
 
     Parameters
     ----------
     db_path : str, optional
         Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
+    assembly_names : collection of str, optional
+        Restrict to these assemblies only. Defaults to all assemblies.
 
     Returns
     -------
@@ -40,7 +49,7 @@ def load_housing_summary(db_path=None):
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
 
-    energy_df = con.execute(f"""
+    energy_query = f"""
         SELECT
             a.housing AS Housing,
             ROUND(SUM(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Energy (kWh)",
@@ -48,29 +57,72 @@ def load_housing_summary(db_path=None):
         FROM experiments AS e
         JOIN assemblies AS a ON a.name = e.assembly_name
         LEFT JOIN exp_run_scalars AS s ON s.experiment_id = e.id
-        GROUP BY a.housing
-    """).fetchdf()
-
-    counts_df = con.execute("""
+    """
+    counts_query = """
         SELECT
             housing AS Housing,
             COUNT(*) AS Assemblies,
             SUM(CASE WHEN status = 'in_operation' THEN 1 ELSE 0 END) AS "In operation"
         FROM assemblies
-        GROUP BY housing
-    """).fetchdf()
+    """
+    params = []
+    if assembly_names is not None:
+        energy_query += " WHERE a.name = ANY(?)"
+        counts_query += " WHERE name = ANY(?)"
+        params = [list(assembly_names)]
+    energy_query += " GROUP BY a.housing"
+    counts_query += " GROUP BY housing"
+
+    energy_df = con.execute(energy_query, params).fetchdf()
+    counts_df = con.execute(counts_query, params).fetchdf()
     con.close()
 
     return counts_df.merge(energy_df, on="Housing", how="left").fillna(0)
 
 
-def load_commissioning_history(db_path=None):
+def load_housing_summary_by_year(db_path=None):
+    """Aggregate total energy and field-on time per housing per year.
+
+    Parameters
+    ----------
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per (Housing, Year), with ``Energy (kWh)`` and
+        ``Field ON (h)``.
+    """
+    db_path = db_path or db.DB_PATH
+    con = duckdb.connect(db_path, read_only=True)
+
+    df = con.execute(f"""
+        SELECT
+            a.housing AS Housing,
+            CAST(regexp_extract(e.name, '^(\\d{{4}})', 1) AS INTEGER) AS Year,
+            ROUND(SUM(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Energy (kWh)",
+            ROUND(SUM(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END) / {S_TO_H}, 2) AS "Field ON (h)"
+        FROM experiments AS e
+        JOIN assemblies AS a ON a.name = e.assembly_name
+        LEFT JOIN exp_run_scalars AS s ON s.experiment_id = e.id
+        GROUP BY Housing, Year
+        ORDER BY Year
+    """).fetchdf()
+    con.close()
+
+    return df.fillna(0)
+
+
+def load_commissioning_history(db_path=None, assemblies_in_year=None):
     """Return assemblies grouped by housing, ordered by commissioning date.
 
     Parameters
     ----------
     db_path : str, optional
         Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
+    assemblies_in_year : set of str, optional
+        Restrict to these assembly names only. Defaults to all assemblies.
 
     Returns
     -------
@@ -95,10 +147,15 @@ def load_commissioning_history(db_path=None):
 
     if df.empty:
         return {}
+    if assemblies_in_year is not None:
+        df = df[df["Assembly"].isin(assemblies_in_year)]
+        if df.empty:
+            return {}
+    df["Assembly"] = df.apply(assembly_link, axis=1)
     return {housing: group.drop(columns=["Housing"]).to_dict("records") for housing, group in df.groupby("Housing")}
 
 
-def _field_activity_strip(housing, db_path=None):
+def _field_activity_strip(housing, db_path=None, assembly_names=None):
     """Build a small CSS strip of monthly magnet-on activity for one housing.
 
     One cell per month with at least one experiment: green = field was on
@@ -107,7 +164,7 @@ def _field_activity_strip(housing, db_path=None):
     not backfilled yet for that month's experiments (missing data, not a
     real "off").
     """
-    history = db.get_field_bin_history(housing, db_path)
+    history = db.get_field_bin_history(housing, db_path, assembly_names=assembly_names)
     if not history:
         return html.Div("No experiment history yet.", style={"color": "#888", "fontStyle": "italic"})
 
@@ -138,16 +195,15 @@ def _field_activity_strip(housing, db_path=None):
     )
 
 
-def _housing_section(housing, summary_row, commissioning_rows, db_path=None):
-    """Build one housing's summary card: energy/field-on/assembly counts, activity strip, commissioning table."""
+def _housing_section(housing, summary_row, commissioning_rows, db_path=None, assembly_names=None):
+    """Build one housing's summary card as a collapsible accordion item."""
     energy = summary_row["Energy (kWh)"] if summary_row is not None else 0
     field_on = summary_row["Field ON (h)"] if summary_row is not None else 0
     n_assemblies = int(summary_row["Assemblies"]) if summary_row is not None else 0
     n_in_operation = int(summary_row["In operation"]) if summary_row is not None else 0
 
-    return html.Div(
+    return dbc.AccordionItem(
         [
-            html.H3(housing, style={"marginBottom": "5px"}),
             html.Div(
                 [
                     html.Span(f"Energy: {energy:,.2f} kWh", style={"marginRight": "25px"}),
@@ -157,7 +213,7 @@ def _housing_section(housing, summary_row, commissioning_rows, db_path=None):
                 style={"marginBottom": "10px"},
             ),
             html.Label("Commissioning activity by month:", style={"fontSize": "13px", "color": "#555"}),
-            _field_activity_strip(housing, db_path),
+            _field_activity_strip(housing, db_path, assembly_names),
             html.Br(),
             DataTable(
                 columns=COMMISSIONING_COLUMNS,
@@ -171,13 +227,8 @@ def _housing_section(housing, summary_row, commissioning_rows, db_path=None):
             html.Br(),
             dcc.Link("View all assemblies →", href="/assembly_stats"),
         ],
-        style={
-            "border": "1px solid #ddd",
-            "borderRadius": "8px",
-            "padding": "15px",
-            "marginBottom": "20px",
-            "boxShadow": "0 2px 4px rgba(0,0,0,0.05)",
-        },
+        title=housing,
+        item_id=housing,
     )
 
 
@@ -185,8 +236,15 @@ def layout(**kwargs):
     return html.Div(
         [
             html.H1("MagnetDB Dashboard"),
+            selectors.aggregate_filter(
+                "housing-stats-year-filter", "Year", style={"width": "150px", "marginBottom": "15px"}
+            ),
             html.Div(id="housing-stats-summary"),
             dcc.Graph(id="housing-stats-energy-fig"),
+            html.Br(),
+            dcc.Graph(id="housing-stats-energy-year-fig"),
+            html.Br(),
+            dcc.Graph(id="housing-stats-field-on-year-fig"),
             html.Br(),
             html.Div(id="housing-stats-sections"),
         ],
@@ -197,16 +255,39 @@ def layout(**kwargs):
 @dash.callback(
     Output("housing-stats-summary", "children"),
     Output("housing-stats-energy-fig", "figure"),
+    Output("housing-stats-energy-year-fig", "figure"),
+    Output("housing-stats-field-on-year-fig", "figure"),
     Output("housing-stats-sections", "children"),
+    Output("housing-stats-year-filter", "options"),
     Input("dd-database", "value"),
+    Input("housing-stats-year-filter", "value"),
 )
-def update_housing_stats(selected_db):
+def update_housing_stats(selected_db, selected_year):
     if not selected_db:
-        return [], go.Figure(), []
+        return [], go.Figure(), go.Figure(), go.Figure(), [], [selectors.ALL]
 
     summary_df = load_housing_summary(selected_db)
-    commissioning = load_commissioning_history(selected_db)
+    summary_by_year_df = load_housing_summary_by_year(selected_db)
     counts = db.get_db_counts(selected_db)
+    housing_order = natsorted(summary_df["Housing"].dropna().unique())
+
+    assemblies_meta = db.load_assemblies_meta(selected_db)
+    assemblies_in_year = None
+    if selected_year and selected_year != selectors.ALL:
+        assemblies_in_year = db.assemblies_active_in_year(assemblies_meta, int(selected_year))
+
+    year_range = db.assemblies_year_range(assemblies_meta)
+    if year_range is not None:
+        year_options = [selectors.ALL] + [str(y) for y in range(year_range[0], year_range[1] + 1)]
+    else:
+        year_options = [selectors.ALL]
+
+    section_summary_df = (
+        load_housing_summary(selected_db, assembly_names=assemblies_in_year)
+        if assemblies_in_year is not None
+        else summary_df
+    )
+    commissioning = load_commissioning_history(selected_db, assemblies_in_year)
 
     top_summary = [
         html.B(f"Housings: {counts['housings']}"), html.Br(),
@@ -223,14 +304,40 @@ def update_housing_stats(selected_db):
         y="Energy (kWh)",
         color="Housing",
         color_discrete_map=HOUSING_COLORS,
+        category_orders={"Housing": housing_order},
         title="Total Energy per Housing",
     )
 
+    fig_energy_year = px.bar(
+        summary_by_year_df,
+        x="Year",
+        y="Energy (kWh)",
+        color="Housing",
+        color_discrete_map=HOUSING_COLORS,
+        category_orders={"Housing": housing_order},
+        barmode="group",
+        title="Energy per Housing per Year",
+    )
+    fig_energy_year.update_xaxes(dtick=1, title="Year")
+
+    fig_field_on_year = px.bar(
+        summary_by_year_df,
+        x="Year",
+        y="Field ON (h)",
+        color="Housing",
+        color_discrete_map=HOUSING_COLORS,
+        category_orders={"Housing": housing_order},
+        barmode="group",
+        title="Magnet Time per Housing per Year (h)",
+    )
+    fig_field_on_year.update_xaxes(dtick=1, title="Year")
+
     sections = []
-    for housing in sorted(summary_df["Housing"].dropna().unique()):
-        row = summary_df[summary_df["Housing"] == housing].iloc[0]
+    for housing in housing_order:
+        matching_rows = section_summary_df[section_summary_df["Housing"] == housing]
+        row = matching_rows.iloc[0] if not matching_rows.empty else None
         sections.append(
-            _housing_section(housing, row, commissioning.get(housing, []), selected_db)
+            _housing_section(housing, row, commissioning.get(housing, []), selected_db, assemblies_in_year)
         )
 
-    return top_summary, fig, sections
+    return top_summary, fig, fig_energy_year, fig_field_on_year, dbc.Accordion(sections), year_options

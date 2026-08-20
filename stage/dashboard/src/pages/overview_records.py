@@ -4,6 +4,7 @@ from plotly import graph_objects as go
 
 import magnetdb_analysis as db
 import magnetdb_plot as plot
+import dash_selectors as selectors
 
 dash.register_page(__name__, path="/overview-records", name="Overview records", order=5)
 
@@ -50,13 +51,7 @@ def layout(assembly=None, record=None, **kwargs):
         [
             html.H2("Overview Record Viewer", style={"marginTop": "0px", "marginBottom": "20px"}),
             html.Hr(),
-            html.Label("1. Choose Assembly :", style={"fontWeight": "bold"}),
-            dcc.Dropdown(
-                id="overview-records-assembly-filter",
-                options=[assembly] if assembly else [],
-                value=assembly,
-                placeholder="Choose an assembly...",
-            ),
+            selectors.cascading_selector("overview-records-assembly-filter", "Assembly", 1, value=assembly),
             html.Br(),
             html.Label("2. Choose Overview Record :", style={"fontWeight": "bold"}),
             dcc.Dropdown(

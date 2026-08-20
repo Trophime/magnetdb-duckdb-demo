@@ -8,7 +8,8 @@ from dash.dash_table import DataTable
 import plotly.express as px
 from plotly import graph_objects as go
 import magnetdb_analysis as db
-from experiment_links import experiment_link, overview_record_link
+from experiment_links import experiment_link, overview_record_link, part_link
+import dash_selectors as selectors
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
 dash.register_page(__name__, path="/magnet_stats", name="Magnet stats", order=3)
@@ -104,6 +105,40 @@ def load_data(db_path=None):
     return df
 
 
+def load_overview_records(db_path=None):
+    """Load all overview_records rows, joined with their assembly and housing.
+
+    Parameters
+    ----------
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per overview record, with ``Overview Record``, ``Assembly``,
+        ``Housing``, ``Mode``, and ``t0`` columns.
+    """
+    db_path = db_path or db.DB_PATH
+    con = duckdb.connect(db_path, read_only=True)
+
+    df = con.execute("""
+            SELECT
+                filename AS "Overview Record",
+                assembly_name AS Assembly,
+                housing AS Housing,
+                mode AS Mode,
+                t0
+            FROM overview_records
+            WHERE merged_into IS NULL
+            ORDER BY t0 NULLS LAST, filename
+        """).fetchdf()
+
+    con.close()
+
+    return df
+
+
 TABLE_COLUMNS = [
     (
         {"name": c, "id": c, "presentation": "markdown"}
@@ -115,39 +150,53 @@ TABLE_COLUMNS = [
 ]
 
 OVERVIEW_RECORD_COLUMNS = [
-    {"name": c, "id": c, "presentation": "markdown"} if c == "Overview Record" else {"name": c, "id": c}
-    for c in ("Overview Record", "Housing", "Mode", "t0")
+    (
+        {"name": c, "id": c, "presentation": "markdown"}
+        if c == "Overview Record"
+        else {"name": c, "id": c}
+    )
+    for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0")
 ]
 
 ASSEMBLY_HISTORY_COLUMNS = [
     {"name": c, "id": c}
-    for c in ("assembly_name", "housing", "status", "commissioned_at", "decommissioned_at")
+    for c in (
+        "assembly_name",
+        "housing",
+        "status",
+        "commissioned_at",
+        "decommissioned_at",
+    )
 ]
 
 
-def _overview_records_section(selected_magnet, db_path):
-    """Build the "Overview records" accordion for the selected magnet."""
-    if not selected_magnet:
+def _overview_records_section(overview_df):
+    """Build the "Overview records" accordion content for a pre-filtered dataframe.
+
+    Parameters
+    ----------
+    overview_df : :class:`~pandas.DataFrame`
+        Rows from :func:`load_overview_records`, already filtered to the
+        page's current magnet selection.
+
+    Returns
+    -------
+    :class:`~dash.html.Div` or :class:`dash.dash_table.DataTable`
+        A "no records" message if *overview_df* is empty, otherwise a
+        `DataTable` of its rows (linked into ``/overview-records``).
+    """
+    if overview_df.empty:
         return html.Div(
-            "Select a magnet above to see its overview records.",
+            "No overview records found for the current filters.",
             style={"color": "#888", "fontStyle": "italic"},
         )
 
-    records = db.get_overview_records_for_magnet(selected_magnet, db_path)
-    if not records:
-        return html.Div(
-            f"No overview records found for {selected_magnet}.",
-            style={"color": "#888", "fontStyle": "italic"},
-        )
-
-    table_df = pd.DataFrame(records).rename(
-        columns={"filename": "Overview Record", "assembly_name": "Assembly", "housing": "Housing", "mode": "Mode"}
-    )
+    table_df = overview_df.copy()
     table_df["Overview Record"] = table_df.apply(overview_record_link, axis=1)
 
     return DataTable(
         columns=OVERVIEW_RECORD_COLUMNS,
-        data=table_df[["Overview Record", "Housing", "Mode", "t0"]].to_dict("records"),
+        data=table_df.to_dict("records"),
         page_size=10,
         sort_action="native",
         style_table={"overflowX": "auto"},
@@ -156,15 +205,14 @@ def _overview_records_section(selected_magnet, db_path):
     )
 
 
-def _assembly_history_section(selected_magnet, db_path):
+def _assembly_history_section(selected_magnet, history):
     """Build the "Assembly history" accordion for the selected magnet, ascending by commissioning date."""
-    if not selected_magnet:
+    if not selected_magnet or selected_magnet == selectors.ALL:
         return html.Div(
             "Select a magnet above to see its assembly history.",
             style={"color": "#888", "fontStyle": "italic"},
         )
 
-    history = db.get_assembly_history_for_magnet(selected_magnet, db_path)
     if not history:
         return html.Div(
             f"No assembly history found for {selected_magnet}.",
@@ -182,15 +230,79 @@ def _assembly_history_section(selected_magnet, db_path):
     )
 
 
+PART_COLUMNS = [
+    (
+        {"name": c, "id": c, "presentation": "markdown"}
+        if c == "Part"
+        else {"name": c, "id": c}
+    )
+    for c in ("Part", "Type", "Status", "Material", "Manufactured")
+]
+
+
+def _parts_section(selected_magnet, db_path):
+    """Build the "Parts" accordion content for the selected magnet.
+
+    Parameters
+    ----------
+    selected_magnet : str or None
+        Magnet name from the page's filter dropdown.
+    db_path : str, optional
+        Path to the DuckDB database.
+
+    Returns
+    -------
+    :class:`~dash.html.Div` or :class:`dash.dash_table.DataTable`
+        Placeholder text if no magnet is selected, a "no parts" message if
+        the magnet has none, or a `DataTable` of its parts.
+    """
+    if not selected_magnet or selected_magnet == selectors.ALL:
+        return html.Div(
+            "Select a magnet above to see its parts.",
+            style={"color": "#888", "fontStyle": "italic"},
+        )
+
+    parts = db.get_parts_for_magnet(selected_magnet, db_path)
+    if not parts:
+        return html.Div(
+            f"No parts found for {selected_magnet}.",
+            style={"color": "#888", "fontStyle": "italic"},
+        )
+
+    table_df = pd.DataFrame(parts).rename(
+        columns={
+            "name": "Part",
+            "type": "Type",
+            "status": "Status",
+            "material_name": "Material",
+            "manufactured_at": "Manufactured",
+        }
+    )
+    table_df["Part"] = table_df.apply(part_link, axis=1)
+
+    return DataTable(
+        columns=PART_COLUMNS,
+        data=table_df.to_dict("records"),
+        page_size=10,
+        sort_action="native",
+        style_table={"overflowX": "auto"},
+        style_cell={"textAlign": "center", "padding": "6px"},
+        style_header={"fontWeight": "bold"},
+    )
+
+
 def _build_page_content(df, selected_magnet=None, db_path=None):
     """Build the figures, table rows, and summary text for a loaded (experiment, magnet) dataframe."""
     exp_df = df.drop_duplicates(subset="ID").copy()
 
     field_on_by_magnet = df.groupby(["Magnet", "Housing"], as_index=False).agg(
-        {"Field ON (s)": "sum", "Experiment": "min"}
+        {"Field ON (s)": "sum"}
     )
-    field_on_by_magnet = field_on_by_magnet.sort_values("Experiment")
     field_on_by_magnet["Field ON (h)"] = field_on_by_magnet["Field ON (s)"] / S_TO_H
+
+    magnet_order = [
+        m for m in db.get_all_magnets(db_path) if m in set(field_on_by_magnet["Magnet"])
+    ]
 
     fig_field_on = px.bar(
         field_on_by_magnet,
@@ -198,7 +310,7 @@ def _build_page_content(df, selected_magnet=None, db_path=None):
         y="Field ON (h)",
         color="Housing",
         color_discrete_map={"M9": "red", "M10": "blue"},
-        category_orders={"Magnet": field_on_by_magnet["Magnet"].tolist()},
+        category_orders={"Magnet": magnet_order},
         barmode="group",
         title="Field ON Time per Magnet (h)",
     )
@@ -208,7 +320,9 @@ def _build_page_content(df, selected_magnet=None, db_path=None):
 
     counts = db.get_db_counts(db_path)
     magnets_line = (
-        f"Magnets: 1 selected of {counts['magnets']}" if selected_magnet else f"Magnets: {counts['magnets']}"
+        f"Magnets: 1 selected of {counts['magnets']}"
+        if selected_magnet and selected_magnet != selectors.ALL
+        else f"Magnets: {counts['magnets']}"
     )
     summary = [
         html.B(magnets_line),
@@ -230,49 +344,109 @@ def _build_page_content(df, selected_magnet=None, db_path=None):
     )
 
 
-def layout(**kwargs):
+def layout(magnet=None, **kwargs):
     return html.Div(
         [
             html.H1("MagnetDB Dashboard"),
-            dcc.Dropdown(
-                id="magnet-stats-magnet-filter",
-                options=[],
-                value=None,
-                placeholder="Filter by magnet...",
-                clearable=True,
-                style={"width": "400px", "marginBottom": "15px"},
+            html.Div(
+                [
+                    selectors.aggregate_filter(
+                        "magnet-stats-status-filter",
+                        "Status",
+                        style={"width": "250px"},
+                    ),
+                    selectors.aggregate_filter(
+                        "magnet-stats-magnet-filter",
+                        "Magnet",
+                        style={"width": "400px"},
+                        value=magnet,
+                    ),
+                ],
+                style={"display": "flex", "gap": "30px", "marginBottom": "15px"},
             ),
-            html.Div(id="magnet-stats-missing-banner", style={"color": "#a94442", "fontWeight": "bold"}),
+            html.Div(
+                id="magnet-stats-missing-banner",
+                style={"color": "#a94442", "fontWeight": "bold"},
+            ),
             html.Div(id="magnet-stats-summary"),
-            html.Br(),
-            html.Details(
-                [
-                    html.Summary("📁 Overview records", style={"fontWeight": "bold", "cursor": "pointer"}),
-                    html.Div(id="magnet-stats-overview-records", style={"padding": "10px"}),
-                ],
-                open=False,
-                style={"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "10px"},
-            ),
-            html.Details(
-                [
-                    html.Summary("📁 Assembly history", style={"fontWeight": "bold", "cursor": "pointer"}),
-                    html.Div(id="magnet-stats-assembly-history", style={"padding": "10px"}),
-                ],
-                open=False,
-                style={"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "20px"},
-            ),
             html.Br(),
             dcc.Graph(id="magnet-stats-fig-field-on"),
             html.Br(),
-            DataTable(
-                id="magnet-stats-table",
-                columns=TABLE_COLUMNS,
-                data=[],
-                page_size=20,
-                sort_action="native",
-                style_table={"overflowX": "auto"},
-                style_cell={"textAlign": "center", "padding": "6px"},
-                style_header={"fontWeight": "auto"},
+            html.Details(
+                [
+                    html.Summary(
+                        "📁 Assembly history",
+                        style={"fontWeight": "bold", "cursor": "pointer"},
+                    ),
+                    html.Div(
+                        id="magnet-stats-assembly-history", style={"padding": "10px"}
+                    ),
+                ],
+                open=False,
+                style={
+                    "border": "1px solid #ddd",
+                    "borderRadius": "8px",
+                    "marginBottom": "10px",
+                },
+            ),
+            html.Details(
+                [
+                    html.Summary(
+                        "🔩 Parts", style={"fontWeight": "bold", "cursor": "pointer"}
+                    ),
+                    html.Div(id="magnet-stats-parts", style={"padding": "10px"}),
+                ],
+                open=False,
+                style={
+                    "border": "1px solid #ddd",
+                    "borderRadius": "8px",
+                    "marginBottom": "20px",
+                },
+            ),
+            html.Br(),
+            html.Details(
+                [
+                    html.Summary(
+                        "📁 Overview records",
+                        style={"fontWeight": "bold", "cursor": "pointer"},
+                    ),
+                    html.Div(
+                        id="magnet-stats-overview-records", style={"padding": "10px"}
+                    ),
+                ],
+                open=False,
+                style={
+                    "border": "1px solid #ddd",
+                    "borderRadius": "8px",
+                    "marginBottom": "10px",
+                },
+            ),
+            html.Details(
+                [
+                    html.Summary(
+                        "📊 Experiments table",
+                        style={"fontWeight": "bold", "cursor": "pointer"},
+                    ),
+                    html.Div(
+                        DataTable(
+                            id="magnet-stats-table",
+                            columns=TABLE_COLUMNS,
+                            data=[],
+                            page_size=20,
+                            sort_action="native",
+                            style_table={"overflowX": "auto"},
+                            style_cell={"textAlign": "center", "padding": "6px"},
+                            style_header={"fontWeight": "auto"},
+                        ),
+                        style={"padding": "10px"},
+                    ),
+                ],
+                open=True,
+                style={
+                    "border": "1px solid #ddd",
+                    "borderRadius": "8px",
+                    "marginBottom": "20px",
+                },
             ),
         ],
         style={"padding": "20px"},
@@ -285,13 +459,16 @@ def layout(**kwargs):
     Output("magnet-stats-table", "data"),
     Output("magnet-stats-summary", "children"),
     Output("magnet-stats-magnet-filter", "options"),
+    Output("magnet-stats-status-filter", "options"),
     Output("magnet-stats-missing-banner", "children"),
     Output("magnet-stats-overview-records", "children"),
     Output("magnet-stats-assembly-history", "children"),
+    Output("magnet-stats-parts", "children"),
     Input("dd-database", "value"),
     Input("magnet-stats-magnet-filter", "value"),
+    Input("magnet-stats-status-filter", "value"),
 )
-def update_magnet_stats(selected_db, selected_magnet):
+def update_magnet_stats(selected_db, selected_magnet, selected_status):
     if not selected_db:
         return (
             go.Figure(),
@@ -299,32 +476,77 @@ def update_magnet_stats(selected_db, selected_magnet):
             [],
             [],
             [],
+            [],
+            "",
             "",
             "",
             "",
         )
 
     df = load_data(selected_db)
-    magnet_options = sorted(df["Magnet"].unique())
-    missing_banner = "" if not df.empty else "No experiment data found for this database."
+    missing_banner = (
+        "" if not df.empty else "No experiment data found for this database."
+    )
 
-    plot_df = df[df["Magnet"] == selected_magnet] if selected_magnet else df
-    fig_field_on_style = {"display": "none"} if selected_magnet else {}
+    status_options = [selectors.ALL] + db.get_distinct_statuses("magnets", selected_db)
+    names_with_status = (
+        db.get_names_with_status("magnets", selected_status, selected_db)
+        if selected_status and selected_status != selectors.ALL
+        else None
+    )
+    magnet_options = [selectors.ALL] + [
+        m
+        for m in db.get_all_magnets(selected_db)
+        if names_with_status is None or m in names_with_status
+    ]
+
+    plot_df = (
+        df[df["Magnet"] == selected_magnet] if selected_magnet != selectors.ALL else df
+    )
+    if names_with_status is not None:
+        plot_df = plot_df[plot_df["Magnet"].isin(names_with_status)]
+    fig_field_on_style = {"display": "none"} if selected_magnet != selectors.ALL else {}
 
     (
         fig_field_on,
         table_records,
         summary,
     ) = _build_page_content(plot_df, selected_magnet, selected_db)
-    overview_records_section = _overview_records_section(selected_magnet, selected_db)
-    assembly_history_section = _assembly_history_section(selected_magnet, selected_db)
+
+    assembly_history = (
+        db.get_assembly_history_for_magnet(selected_magnet, selected_db)
+        if selected_magnet and selected_magnet != selectors.ALL
+        else []
+    )
+    assembly_history_section = _assembly_history_section(
+        selected_magnet, assembly_history
+    )
+
+    overview_plot_df = load_overview_records(selected_db)
+    if selected_magnet and selected_magnet != selectors.ALL:
+        assembly_names = [row["assembly_name"] for row in assembly_history]
+        overview_plot_df = overview_plot_df[
+            overview_plot_df["Assembly"].isin(assembly_names)
+        ]
+    if names_with_status is not None:
+        status_assembly_names = db.get_assembly_names_for_magnets(
+            names_with_status, selected_db
+        )
+        overview_plot_df = overview_plot_df[
+            overview_plot_df["Assembly"].isin(status_assembly_names)
+        ]
+    overview_records_section = _overview_records_section(overview_plot_df)
+
+    parts_section = _parts_section(selected_magnet, selected_db)
     return (
         fig_field_on,
         fig_field_on_style,
         table_records,
         summary,
         magnet_options,
+        status_options,
         missing_banner,
         overview_records_section,
         assembly_history_section,
+        parts_section,
     )
