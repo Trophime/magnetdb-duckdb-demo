@@ -8,6 +8,7 @@ from dash.dash_table import DataTable
 import plotly.express as px
 from plotly import graph_objects as go
 from natsort import natsorted
+from python_magnetrun.utils.downsampling import downsample_dataframe, DownsampleConfig
 import magnetdb_analysis as db
 from experiment_links import experiment_link, overview_record_link
 import dash_selectors as selectors
@@ -187,6 +188,19 @@ ASSEMBLY_HISTORY_COLUMNS = [
     )
 ]
 
+HOOP_STRESS_SUMMARY_COLUMNS = [
+    {"name": c, "id": c}
+    for c in (
+        "Experiments",
+        "Samples",
+        "Mean (MPa)",
+        "Std dev (MPa)",
+        "Peak (MPa)",
+        "Cycles",
+        "Fatigue proxy (MPa³)",
+    )
+]
+
 
 def _overview_records_section(overview_df):
     """Build the "Overview records" accordion content for a pre-filtered dataframe.
@@ -272,6 +286,109 @@ def _assembly_history_section(selected_part, history):
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
     )
+
+
+def _hoop_stress_banner(text):
+    return html.Div(
+        text, style={"color": "#888", "fontStyle": "italic", "whiteSpace": "pre-line"}
+    )
+
+
+def _hoop_stress_section(selected_part, db_path):
+    """Build the "Hoop stress history" accordion content for the selected part.
+
+    Returns
+    -------
+    tuple
+        ``(banner, table_data, bin_fig, history_fig)`` for the accordion's
+        four callback outputs.
+    """
+    empty_fig = go.Figure()
+
+    if not selected_part or selected_part == selectors.ALL:
+        return (
+            _hoop_stress_banner("Select a part above to see its hoop-stress history."),
+            [],
+            empty_fig,
+            empty_fig,
+        )
+
+    summary = db.get_hoop_stress_summary_for_part(selected_part, db_path)
+    if not summary["n_experiments"]:
+        return (
+            _hoop_stress_banner(
+                f"No hoop-stress data computed for {selected_part}. Run, for its assembly:\n"
+                "to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py "
+                f"hoop-stress compute <ASSEMBLY_NAME> --db {db_path}"
+            ),
+            [],
+            empty_fig,
+            empty_fig,
+        )
+
+    table_data = [
+        {
+            "Experiments": summary["n_experiments"],
+            "Samples": summary["n_samples"],
+            "Mean (MPa)": round(summary["mean_MPa"], 1)
+            if summary["mean_MPa"] is not None
+            else None,
+            "Std dev (MPa)": round(summary["stddev_MPa"], 1)
+            if summary["stddev_MPa"] is not None
+            else None,
+            "Peak (MPa)": round(summary["peak_MPa"], 1)
+            if summary["peak_MPa"] is not None
+            else None,
+            "Cycles": round(summary["n_cycles"], 1),
+            "Fatigue proxy (MPa³)": round(summary["sum_range3"], 1),
+        }
+    ]
+
+    bin_df = db.get_hoop_stress_bin_stats_for_part(selected_part, db_path)
+    bin_df["bin"] = [
+        f"{low:.0f}-{high:.0f}"
+        for low, high in zip(bin_df["stress_bin_low"], bin_df["stress_bin_high"])
+    ]
+    bin_fig = px.bar(
+        bin_df,
+        x="bin",
+        y="n_samples",
+        category_orders={"bin": bin_df["bin"].tolist()},
+        labels={"bin": "Hoop stress (MPa)", "n_samples": "Samples"},
+        title=f"Hoop Stress Distribution — {selected_part}",
+    )
+
+    history_df = db.load_hoop_stress_history_for_part(selected_part, db_path)
+    if history_df is None:
+        history_fig = empty_fig
+        banner = _hoop_stress_banner(
+            f"Raw hoop-stress history not built yet for {selected_part}. Run:\n"
+            "to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py "
+            f"hoop-stress part-history {selected_part} --db {db_path}"
+        )
+    else:
+        plot_df = downsample_dataframe(
+            history_df,
+            time_col="timestamp",
+            value_cols=["hoop_stress_MPa"],
+            config=DownsampleConfig(n_out=1000, method="lttb"),
+        )
+        history_fig = go.Figure(
+            go.Scattergl(
+                x=plot_df["timestamp"],
+                y=plot_df["hoop_stress_MPa"],
+                mode="lines",
+                line={"width": 1},
+            )
+        )
+        history_fig.update_layout(
+            title=f"Hoop Stress History — {selected_part}",
+            xaxis_title="Time",
+            yaxis_title="Hoop stress (MPa)",
+        )
+        banner = ""
+
+    return banner, table_data, bin_fig, history_fig
 
 
 def _build_page_content(df, selected_part=None, db_path=None):
@@ -379,17 +496,17 @@ def layout(part=None, **kwargs):
                     ),
                     html.Div(
                         [
-                            dcc.Graph(id="part-stats-hoop-stress-fig"),
+                            html.Div(id="part-stats-hoop-stress-banner"),
                             DataTable(
                                 id="part-stats-hoop-stress-table",
-                                columns=[],
+                                columns=HOOP_STRESS_SUMMARY_COLUMNS,
                                 data=[],
-                                page_size=10,
-                                sort_action="native",
                                 style_table={"overflowX": "auto"},
                                 style_cell={"textAlign": "center", "padding": "6px"},
                                 style_header={"fontWeight": "bold"},
                             ),
+                            dcc.Graph(id="part-stats-hoop-stress-fig"),
+                            dcc.Graph(id="part-stats-hoop-stress-history-fig"),
                         ],
                         style={"padding": "10px"},
                     ),
@@ -501,6 +618,10 @@ def layout(part=None, **kwargs):
     Output("part-stats-overview-records", "children"),
     Output("part-stats-magnet-history", "children"),
     Output("part-stats-assembly-history", "children"),
+    Output("part-stats-hoop-stress-banner", "children"),
+    Output("part-stats-hoop-stress-table", "data"),
+    Output("part-stats-hoop-stress-fig", "figure"),
+    Output("part-stats-hoop-stress-history-fig", "figure"),
     Input("dd-database", "value"),
     Input("part-stats-part-filter", "value"),
     Input("part-stats-status-filter", "value"),
@@ -520,6 +641,10 @@ def update_part_stats(selected_db, selected_part, selected_status):
             "",
             "",
             "",
+            "",
+            [],
+            go.Figure(),
+            go.Figure(),
         )
 
     df = load_data(selected_db)
@@ -579,6 +704,14 @@ def update_part_stats(selected_db, selected_part, selected_status):
             overview_plot_df["Assembly"].isin(status_assembly_names)
         ]
     overview_records_section = _overview_records_section(overview_plot_df)
+
+    (
+        hoop_stress_banner,
+        hoop_stress_table,
+        hoop_stress_fig,
+        hoop_stress_history_fig,
+    ) = _hoop_stress_section(selected_part, selected_db)
+
     return (
         fig_hours,
         fig_hours_style,
@@ -592,4 +725,8 @@ def update_part_stats(selected_db, selected_part, selected_status):
         overview_records_section,
         magnet_history_section,
         assembly_history_section,
+        hoop_stress_banner,
+        hoop_stress_table,
+        hoop_stress_fig,
+        hoop_stress_history_fig,
     )

@@ -2,6 +2,7 @@ import duckdb
 import os
 import glob
 import functools
+from pathlib import Path
 from python_magnetrun.MagnetRun import load_mrun
 from python_magnetrun.field_defs import match_channels_across_formats
 import re
@@ -431,6 +432,114 @@ def get_assembly_history_for_part(part_name, db_path=None):
             ORDER BY a.commissioned_at NULLS LAST
         """
         return conn.execute(query, [part_name]).df().to_dict("records")
+
+
+def get_hoop_stress_summary_for_part(part_name, db_path=None):
+    """Aggregate a part's hoop-stress bin-stats and fatigue proxy across every experiment.
+
+    Parameters
+    ----------
+    part_name : str
+        ``parts.name`` to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    dict
+        ``n_experiments``, ``n_samples``, ``mean_MPa`` (time-weighted),
+        ``stddev_MPa`` (time-weighted), ``peak_MPa``, ``n_cycles``,
+        ``sum_range3`` [MPa^3]. Zeroed/``None`` if the part has no recorded
+        hoop-stress data.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        n_experiments, n_samples, sum_dt, sum_x_dt, sum_x2_dt, peak_MPa = conn.execute(
+            """
+            SELECT COUNT(DISTINCT experiment_id) AS n_experiments,
+                   SUM(n_samples)  AS n_samples,
+                   SUM(sum_dt)     AS sum_dt,
+                   SUM(sum_x_dt)   AS sum_x_dt,
+                   SUM(sum_x2_dt)  AS sum_x2_dt,
+                   MAX(max_x)      AS peak_MPa
+            FROM hoop_stress_bin_stats
+            WHERE part_name = ?
+            """,
+            [part_name],
+        ).fetchone()
+        fatigue_row = conn.execute(
+            "SELECT SUM(n_cycles), SUM(sum_range3) FROM hoop_stress_fatigue WHERE part_name = ?",
+            [part_name],
+        ).fetchone()
+
+    mean_MPa = sum_x_dt / sum_dt if sum_dt else None
+    stddev_MPa = None
+    if sum_dt and mean_MPa is not None:
+        variance = sum_x2_dt / sum_dt - mean_MPa**2
+        stddev_MPa = variance**0.5 if variance > 0 else 0.0
+
+    return {
+        "n_experiments": n_experiments or 0,
+        "n_samples": int(n_samples) if n_samples is not None else 0,
+        "mean_MPa": mean_MPa,
+        "stddev_MPa": stddev_MPa,
+        "peak_MPa": peak_MPa,
+        "n_cycles": fatigue_row[0] if fatigue_row and fatigue_row[0] is not None else 0.0,
+        "sum_range3": fatigue_row[1] if fatigue_row and fatigue_row[1] is not None else 0.0,
+    }
+
+
+def get_hoop_stress_bin_stats_for_part(part_name, db_path=None):
+    """Per-bin hoop-stress sample counts for a part, summed across every experiment.
+
+    Parameters
+    ----------
+    part_name : str
+        ``parts.name`` to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per stress bin, with ``stress_bin_low``, ``stress_bin_high``
+        [MPa], and ``n_samples``, ascending by ``stress_bin_low``. Empty if
+        the part has no recorded hoop-stress data.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        return conn.execute(
+            """
+            SELECT stress_bin_low, stress_bin_high, SUM(n_samples) AS n_samples
+            FROM hoop_stress_bin_stats
+            WHERE part_name = ?
+            GROUP BY stress_bin_low, stress_bin_high
+            ORDER BY stress_bin_low
+            """,
+            [part_name],
+        ).df()
+
+
+def load_hoop_stress_history_for_part(part_name, db_path=None):
+    """Load a part's chronologically-concatenated raw hoop-stress series.
+
+    Reads the Parquet file written by ``magnetdb.py hoop-stress
+    part-history`` (``<db_path's directory>/hoop_parquet/parts/<part_name>.parquet``);
+    does not compute it if missing.
+
+    Parameters
+    ----------
+    part_name : str
+        ``parts.name`` to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame` or None
+        Columns ``timestamp``, ``hoop_stress_MPa``, ``experiment_id``,
+        ``assembly_name``, or ``None`` if the file doesn't exist yet.
+    """
+    path = Path(db_path or DB_PATH).parent / "hoop_parquet" / "parts" / f"{part_name}.parquet"
+    return pd.read_parquet(path) if path.exists() else None
 
 
 def get_overview_record_sources(filename, db_path=None):
