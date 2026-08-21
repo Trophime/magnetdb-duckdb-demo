@@ -349,12 +349,13 @@ def _hoop_stress_section(selected_part, db_path):
         f"{low:.0f}-{high:.0f}"
         for low, high in zip(bin_df["stress_bin_low"], bin_df["stress_bin_high"])
     ]
+    bin_df["hours"] = bin_df["sum_dt"] / 3600
     bin_fig = px.bar(
         bin_df,
         x="bin",
-        y="n_samples",
+        y="hours",
         category_orders={"bin": bin_df["bin"].tolist()},
-        labels={"bin": "Hoop stress (MPa)", "n_samples": "Samples"},
+        labels={"bin": "Hoop stress (MPa)", "hours": "Time at stress level (h)"},
         title=f"Hoop Stress Distribution — {selected_part}",
     )
 

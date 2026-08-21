@@ -502,13 +502,15 @@ def get_hoop_stress_bin_stats_for_part(part_name, db_path=None):
     -------
     :class:`~pandas.DataFrame`
         One row per stress bin, with ``stress_bin_low``, ``stress_bin_high``
-        [MPa], and ``n_samples``, ascending by ``stress_bin_low``. Empty if
-        the part has no recorded hoop-stress data.
+        [MPa], ``n_samples``, and ``sum_dt`` [s] (time spent at that stress
+        level; divide by 3600 for hours), ascending by ``stress_bin_low``.
+        Empty if the part has no recorded hoop-stress data.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         return conn.execute(
             """
-            SELECT stress_bin_low, stress_bin_high, SUM(n_samples) AS n_samples
+            SELECT stress_bin_low, stress_bin_high,
+                   SUM(n_samples) AS n_samples, SUM(sum_dt) AS sum_dt
             FROM hoop_stress_bin_stats
             WHERE part_name = ?
             GROUP BY stress_bin_low, stress_bin_high
