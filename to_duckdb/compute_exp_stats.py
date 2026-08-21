@@ -167,8 +167,8 @@ def mark_processed(con, exp_id: int, df: pd.DataFrame, bins: list[tuple]) -> Non
     con.execute(
         """
         INSERT OR REPLACE INTO exp_stats_processed
-            (experiment_id, n_rows, dt_median, bin_config)
-        VALUES (?, ?, ?, ?)
+            (experiment_id, processed_at, n_rows, dt_median, bin_config)
+        VALUES (?, now(), ?, ?, ?)
         """,
         [exp_id, len(df), dt_median, json.dumps(bins)],
     )

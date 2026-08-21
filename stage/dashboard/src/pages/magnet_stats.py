@@ -27,7 +27,7 @@ EXP_RUN_SCALARS_COLUMNS = [
     "Energy (kWh)",
     "Extracted heat (kWh)",
     "Duration (s)",
-    "Field ON (s)",
+    "Magnet Time (s)",
     "Status",
     "Housing",
 ]
@@ -88,7 +88,7 @@ def load_data(db_path=None):
                 ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 7) AS "Energy (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Extracted heat (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
-                ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Field ON (s)",
+                ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Magnet Time (s)",
             e.status AS Status
             FROM experiments AS e
             JOIN assembly_magnets AS sm ON e.assembly_name = sm.assembly_name
@@ -296,9 +296,9 @@ def _build_page_content(df, selected_magnet=None, db_path=None):
     exp_df = df.drop_duplicates(subset="ID").copy()
 
     field_on_by_magnet = df.groupby(["Magnet", "Housing"], as_index=False).agg(
-        {"Field ON (s)": "sum"}
+        {"Magnet Time (s)": "sum"}
     )
-    field_on_by_magnet["Field ON (h)"] = field_on_by_magnet["Field ON (s)"] / S_TO_H
+    field_on_by_magnet["Field ON (h)"] = field_on_by_magnet["Magnet Time (s)"] / S_TO_H
 
     magnet_order = [
         m for m in db.get_all_magnets(db_path) if m in set(field_on_by_magnet["Magnet"])

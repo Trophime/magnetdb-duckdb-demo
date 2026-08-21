@@ -26,7 +26,7 @@ EXP_RUN_SCALARS_COLUMNS = [
     "Energy (kWh)",
     "Extracted heat (kWh)",
     "Duration (s)",
-    "Field ON (s)",
+    "Magnet Time (s)",
     "Status",
     "Housing",
 ]
@@ -97,7 +97,7 @@ def load_data(db_path=None):
                 ROUND(MAX(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 7) AS "Energy (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Extracted heat (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
-                ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Field ON (s)",
+                ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Magnet Time (s)",
             e.status AS Status,
             st.commissioned_at AS Commissioned
             FROM experiments AS e
@@ -363,10 +363,10 @@ def _build_page_content(
     )
 
     field_on_by_assembly = df.groupby(["Assembly", "Housing"], as_index=False).agg(
-        {"Field ON (s)": "sum", "Commissioned": "min"}
+        {"Magnet Time (s)": "sum", "Commissioned": "min"}
     )
     field_on_by_assembly = field_on_by_assembly.sort_values("Commissioned")
-    field_on_by_assembly["Field ON (h)"] = field_on_by_assembly["Field ON (s)"] / S_TO_H
+    field_on_by_assembly["Field ON (h)"] = field_on_by_assembly["Magnet Time (s)"] / S_TO_H
 
     fig_field_on = px.bar(
         field_on_by_assembly,

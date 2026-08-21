@@ -354,8 +354,8 @@ def _mark_processed(
     con.execute(
         """
         INSERT OR REPLACE INTO hoop_stress_processed
-            (experiment_id, bin_config, magnet_type, parquet_path)
-        VALUES (?, ?, ?, ?)
+            (experiment_id, bin_config, processed_at, magnet_type, parquet_path)
+        VALUES (?, ?, now(), ?, ?)
         """,
         [exp_id, bin_key, magnet_type, parquet_path],
     )

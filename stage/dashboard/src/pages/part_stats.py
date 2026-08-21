@@ -27,6 +27,7 @@ EXP_PART_BIN_STATS_COLUMNS = [
     "Assembly",
     "File",
     "Operating time (h)",
+    "Field ON (h)",
     "Peak hoop stress proxy (A^2)",
     "Hoop Stress Status",
     "Status",
@@ -93,6 +94,7 @@ def load_data(db_path=None):
                 e.id AS ID, e.name AS Experiment, p.name AS Part, p.type AS Type,
                 mp.magnet_name AS Magnet, e.assembly_name AS Assembly, e.file AS File,
                 ROUND(SUM(CASE WHEN s.channel = 'Icoil' THEN s.sum_dt END) / 3600, 2) AS "Operating time (h)",
+                ROUND(MAX(fo.value) / 3600, 2) AS "Field ON (h)",
                 ROUND(MAX(CASE WHEN s.channel = 'hoop_stress_proxy' THEN s.max_x END), 1) AS "Peak hoop stress proxy (A^2)",
                 CASE WHEN hp.experiment_id IS NOT NULL THEN 'Computed' ELSE 'Not computed' END AS "Hoop Stress Status",
             e.status AS Status
@@ -101,6 +103,7 @@ def load_data(db_path=None):
             JOIN magnet_parts AS mp ON mp.magnet_name = sm.magnet_name
             JOIN parts AS p ON p.name = mp.part_name
             LEFT JOIN exp_part_bin_stats AS s ON s.experiment_id = e.id AND s.part_name = p.name
+            LEFT JOIN exp_run_scalars AS fo ON fo.experiment_id = e.id AND fo.channel = 'duration_field_on_s'
             LEFT JOIN (SELECT DISTINCT experiment_id FROM hoop_stress_processed) AS hp ON hp.experiment_id = e.id
             WHERE p.type IN ('bitter', 'helix', 'supra')
             GROUP BY e.id, e.name, p.name, p.type, mp.magnet_name, e.assembly_name, e.file, e.status, hp.experiment_id
@@ -294,19 +297,19 @@ def _build_page_content(df, selected_part=None, db_path=None):
         title="Operating Time per Part (h)",
     )
 
-    hours_by_part_magnet = df.groupby(["Part", "Magnet"], as_index=False).agg(
-        {"Operating time (h)": "sum"}
+    field_on_by_part_magnet = df.groupby(["Part", "Magnet"], as_index=False).agg(
+        {"Field ON (h)": "sum"}
     )
     magnet_order = [
         m
         for m in db.get_all_magnets(db_path)
-        if m in set(hours_by_part_magnet["Magnet"])
+        if m in set(field_on_by_part_magnet["Magnet"])
     ]
 
     fig_magnet_time = px.bar(
-        hours_by_part_magnet,
+        field_on_by_part_magnet,
         x="Part",
-        y="Operating time (h)",
+        y="Field ON (h)",
         color="Magnet",
         category_orders={"Part": part_order, "Magnet": magnet_order},
         title="Magnet Time per Part (h)",

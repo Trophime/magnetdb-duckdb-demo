@@ -155,30 +155,29 @@ def load_commissioning_history(db_path=None, assemblies_in_year=None):
     return {housing: group.drop(columns=["Housing"]).to_dict("records") for housing, group in df.groupby("Housing")}
 
 
-def _field_activity_strip(housing, db_path=None, assembly_names=None):
-    """Build a small CSS strip of monthly magnet-on activity for one housing.
+def _field_activity_strip(housing, db_path=None, assembly_names=None, year=None):
+    """Build a small CSS strip of per-period activity for one housing.
 
-    One cell per month with at least one experiment: green = field was on
-    that month (``duration_field_on_s > 0`` in ``exp_run_scalars``), light
-    gray = off (backed by real stats), mid gray hatch = ``exp_run_scalars``
-    not backfilled yet for that month's experiments (missing data, not a
-    real "off").
+    One cell per month (or, when *year* is given, per week within that
+    year): green = at least one experiment or overview record occurred that
+    period, blank = none. A red bar marks a period an assembly was
+    commissioned; a black bar marks a year boundary (month mode only).
     """
-    history = db.get_field_bin_history(housing, db_path, assembly_names=assembly_names)
+    history = db.get_field_bin_history(housing, db_path, assembly_names=assembly_names, year=year)
     if not history:
-        return html.Div("No experiment history yet.", style={"color": "#888", "fontStyle": "italic"})
+        return html.Div("No commissioning history yet.", style={"color": "#888", "fontStyle": "italic"})
 
     cells = []
     for row in history:
-        if not row["has_stats"]:
-            color, label = "#bbbbbb", "no stats yet"
-        elif row["field_on"]:
-            color, label = "#2ca02c", "field on"
+        start, end = row["period_start"], row["period_end"]
+        color, label = ("#2ca02c", "activity") if row["has_activity"] else ("#ffffff", "no activity")
+        if year is not None:
+            period_desc = f"{start:%b %d} – {end:%b %d} {start.year}"
         else:
-            color, label = "#f2f2f2", "field off"
+            period_desc = f"{_MONTH_LABELS[start.month - 1]} {start.year}"
         cells.append(
             html.Div(
-                title=f"{_MONTH_LABELS[row['month'] - 1]} {row['year']} — {label}",
+                title=f"{period_desc} — {label}",
                 style={
                     "width": "10px",
                     "height": "18px",
@@ -189,13 +188,38 @@ def _field_activity_strip(housing, db_path=None, assembly_names=None):
                 },
             )
         )
+        if row["commissioned"]:
+            cells.append(
+                html.Div(
+                    title=f"Commissioned: {', '.join(row['commissioned'])}",
+                    style={
+                        "width": "3px",
+                        "height": "18px",
+                        "backgroundColor": "#d62728",
+                        "display": "inline-block",
+                        "marginRight": "1px",
+                    },
+                )
+            )
+        if year is None and start.month == 12:
+            cells.append(
+                html.Div(
+                    style={
+                        "width": "3px",
+                        "height": "18px",
+                        "backgroundColor": "#000000",
+                        "display": "inline-block",
+                        "marginRight": "1px",
+                    },
+                )
+            )
     return html.Div(
         cells,
         style={"whiteSpace": "nowrap", "overflowX": "auto", "padding": "4px 0"},
     )
 
 
-def _housing_section(housing, summary_row, commissioning_rows, db_path=None, assembly_names=None):
+def _housing_section(housing, summary_row, commissioning_rows, db_path=None, assembly_names=None, year=None):
     """Build one housing's summary card as a collapsible accordion item."""
     energy = summary_row["Energy (kWh)"] if summary_row is not None else 0
     field_on = summary_row["Field ON (h)"] if summary_row is not None else 0
@@ -213,7 +237,7 @@ def _housing_section(housing, summary_row, commissioning_rows, db_path=None, ass
                 style={"marginBottom": "10px"},
             ),
             html.Label("Commissioning activity by month:", style={"fontSize": "13px", "color": "#555"}),
-            _field_activity_strip(housing, db_path, assembly_names),
+            _field_activity_strip(housing, db_path, assembly_names, year),
             html.Br(),
             DataTable(
                 columns=COMMISSIONING_COLUMNS,
@@ -273,8 +297,10 @@ def update_housing_stats(selected_db, selected_year):
 
     assemblies_meta = db.load_assemblies_meta(selected_db)
     assemblies_in_year = None
+    year_filter = None
     if selected_year and selected_year != selectors.ALL:
-        assemblies_in_year = db.assemblies_active_in_year(assemblies_meta, int(selected_year))
+        year_filter = int(selected_year)
+        assemblies_in_year = db.assemblies_active_in_year(assemblies_meta, year_filter)
 
     year_range = db.assemblies_year_range(assemblies_meta)
     if year_range is not None:
@@ -337,7 +363,9 @@ def update_housing_stats(selected_db, selected_year):
         matching_rows = section_summary_df[section_summary_df["Housing"] == housing]
         row = matching_rows.iloc[0] if not matching_rows.empty else None
         sections.append(
-            _housing_section(housing, row, commissioning.get(housing, []), selected_db, assemblies_in_year)
+            _housing_section(
+                housing, row, commissioning.get(housing, []), selected_db, assemblies_in_year, year_filter
+            )
         )
 
     return top_summary, fig, fig_energy_year, fig_field_on_year, dbc.Accordion(sections), year_options

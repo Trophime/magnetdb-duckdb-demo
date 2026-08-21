@@ -858,15 +858,17 @@ def get_research_area_stats(housing=None, year=None, db_path=None):
         return conn.execute(query, params).df()
 
 
-def get_field_bin_history(housing, db_path=None, assembly_names=None):
-    """Return monthly magnet-on activity for a housing, for a commissioning-timeline strip.
+def get_field_bin_history(housing, db_path=None, assembly_names=None, year=None):
+    """Return per-period activity for a housing, for a commissioning-timeline strip.
 
-    Granularity is monthly: a month is "on" if any of its experiments have
-    ``exp_run_scalars.value > 0`` for the ``duration_field_on_s`` channel.
-    Date parsing happens in pandas (like :func:`~pages.assembly_stats.load_data`
-    does for ``experiments.name``) since the stored format
-    (``"2018.02.21 - 10:18:54"``) isn't directly castable by DuckDB's
-    ``TIMESTAMP`` cast.
+    Granularity is monthly by default, spanning the housing's earliest
+    assembly commissioning date through today. When *year* is given,
+    granularity switches to weekly, spanning that full calendar year
+    (``year-01-01`` to ``year-12-31``). A period has activity if any
+    experiment (:pyattr:`experiments.name`, parsed in pandas since the
+    stored format like ``"2018.02.21 - 10:18:54"`` isn't directly castable
+    by DuckDB's ``TIMESTAMP`` cast) or any live ``overview_records`` row
+    (``t0``, ``merged_into IS NULL``) falls in it.
 
     Parameters
     ----------
@@ -875,50 +877,85 @@ def get_field_bin_history(housing, db_path=None, assembly_names=None):
     db_path : str, optional
         Path to the DuckDB database. Defaults to `DB_PATH`.
     assembly_names : collection of str, optional
-        Restrict to experiments on these assemblies only. Defaults to all
-        assemblies in *housing*.
+        Restrict to these assemblies only. Defaults to all assemblies in
+        *housing*.
+    year : int, optional
+        If given, switch to weekly granularity bounded to that calendar
+        year. Defaults to ``None`` (monthly, from earliest commissioning
+        through today).
 
     Returns
     -------
     list of dict
-        One entry per ``(year, month)`` that has at least one experiment,
-        ordered chronologically. Each entry has ``year``, ``month``,
-        ``field_on`` (bool) and ``has_stats`` (bool — False means no
-        ``exp_run_scalars`` rows exist yet for that month's experiments,
-        i.e. missing data, not a real "off" month).
+        One entry per period, ordered chronologically, with ``period_start``
+        and ``period_end`` (:class:`~datetime.date`), ``has_activity``
+        (bool) and ``commissioned`` (list of str — assembly names
+        commissioned during that period).
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        query = """
-            SELECT
-                e.id,
-                e.name AS experiment,
-                MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END) AS field_on_s,
-                BOOL_OR(s.experiment_id IS NOT NULL) AS has_stats
+        params = [housing]
+        assembly_filter = ""
+        if assembly_names is not None:
+            assembly_filter = " AND name = ANY(?)"
+            params.append(list(assembly_names))
+        commissioned_df = conn.execute(
+            f"""
+            SELECT name AS assembly_name, commissioned_at
+            FROM assemblies
+            WHERE housing = ? AND commissioned_at IS NOT NULL{assembly_filter}
+            """,
+            params,
+        ).df()
+
+        exp_params = [housing] + ([list(assembly_names)] if assembly_names is not None else [])
+        exp_filter = " AND a.name = ANY(?)" if assembly_names is not None else ""
+        experiments_df = conn.execute(
+            f"""
+            SELECT e.name AS experiment
             FROM experiments AS e
             JOIN assemblies AS a ON a.name = e.assembly_name
-            LEFT JOIN exp_run_scalars AS s ON s.experiment_id = e.id
-            WHERE a.housing = ?
-        """
-        params = [housing]
-        if assembly_names is not None:
-            query += " AND a.name = ANY(?)"
-            params.append(list(assembly_names))
-        query += " GROUP BY e.id, e.name"
-        df = conn.execute(query, params).df()
+            WHERE a.housing = ?{exp_filter}
+            """,
+            exp_params,
+        ).df()
 
-    if df.empty:
-        return []
+        ov_params = [housing] + ([list(assembly_names)] if assembly_names is not None else [])
+        ov_filter = " AND assembly_name = ANY(?)" if assembly_names is not None else ""
+        overview_df = conn.execute(
+            f"""
+            SELECT t0
+            FROM overview_records
+            WHERE housing = ? AND merged_into IS NULL{ov_filter}
+            """,
+            ov_params,
+        ).df()
 
-    df["experiment"] = pd.to_datetime(df["experiment"], errors="coerce")
-    df = df.dropna(subset=["experiment"])
-    df["year"] = df["experiment"].dt.year
-    df["month"] = df["experiment"].dt.month
+    freq = "W" if year is not None else "M"
 
-    grouped = df.groupby(["year", "month"], as_index=False).agg(
-        has_stats=("has_stats", "any"),
-        field_on=("field_on_s", lambda s: bool((s.fillna(0) > 0).any())),
-    )
-    return grouped.sort_values(["year", "month"]).to_dict("records")
+    activity_periods = set(pd.to_datetime(experiments_df["experiment"], errors="coerce").dropna().dt.to_period(freq))
+    activity_periods |= set(pd.to_datetime(overview_df["t0"], errors="coerce").dropna().dt.to_period(freq))
+
+    commissioned_df["commissioned_at"] = pd.to_datetime(commissioned_df["commissioned_at"])
+    commissioned_by_period = commissioned_df.groupby(commissioned_df["commissioned_at"].dt.to_period(freq))[
+        "assembly_name"
+    ].apply(list)
+
+    if year is not None:
+        periods = pd.period_range(start=f"{year}-01-01", end=f"{year}-12-31", freq=freq)
+    else:
+        if commissioned_df.empty:
+            return []
+        periods = pd.period_range(start=commissioned_df["commissioned_at"].min(), end=pd.Timestamp.now(), freq=freq)
+
+    return [
+        {
+            "period_start": p.start_time.date(),
+            "period_end": p.end_time.date(),
+            "has_activity": p in activity_periods,
+            "commissioned": commissioned_by_period.get(p, []),
+        }
+        for p in periods
+    ]
 
 
 def chrono_callback(func):
