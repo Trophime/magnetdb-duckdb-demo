@@ -6,12 +6,13 @@ committed, 2026-08-18** — `python_magnetgeo` `0ee0d80`; `python_magnetsetup`
 `python_magnetrun` `ce672ff`; `python_magnetcooling` `53f2ea0`; cleanup
 `c4b9054`. See each phase below for its landing commit.
 
-**Residual gap:** this workspace's submodule pointers for `python_magnetgeo`,
-`python_magnetrun`, and `python_magnetsetup` are not yet committed here —
-`git status` shows all three as locally modified (pointing past the commit
-pinned in the superproject). Only `python_magnetcooling`'s pointer landed,
-as part of `c4b9054`. Until the other three pointer bumps are committed, a
-fresh clone of this workspace still checks out pre-rename submodule code.
+**Residual gap: resolved 2026-08-18.** This workspace's submodule pointers
+for `python_magnetgeo`, `python_magnetrun`, and `python_magnetsetup` were
+committed in `1ab9a30` ("finish msite_to_assembly_rename and up dev plan"),
+alongside `python_magnetcooling`'s pointer from `c4b9054` — `git submodule
+status` now shows all four clean, matching the superproject's pinned
+commits. Track A has no outstanding gaps; a fresh clone of this workspace
+checks out post-rename submodule code.
 
 Track B (separate repos) scope corrected/expanded below (see Ecosystem map
 and Track B section); execution intentionally deferred to its own future

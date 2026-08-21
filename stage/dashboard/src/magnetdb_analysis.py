@@ -4,7 +4,8 @@ import glob
 import functools
 from pathlib import Path
 from python_magnetrun.MagnetRun import load_mrun
-from python_magnetrun.field_defs import match_channels_across_formats
+from python_magnetrun.field_defs import match_channels_across_formats, load_defs, resolve_defs_file
+from python_magnetrun.magnetdata_base import DataType
 import re
 from datetime import datetime, timedelta
 import numpy as np
@@ -520,6 +521,43 @@ def get_hoop_stress_bin_stats_for_part(part_name, db_path=None):
         ).df()
 
 
+def get_hoop_stress_fatigue_for_part(part_name, db_path=None):
+    """Per-experiment rainflow fatigue results for a part.
+
+    Parameters
+    ----------
+    part_name : str
+        ``parts.name`` to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per contributing experiment, with ``ID``, ``Experiment``
+        (:class:`~pandas.Timestamp`), ``Assembly``, ``File``, ``Cycles``
+        (``n_cycles``), and ``Fatigue proxy (MPa^3)`` (``sum_range3``),
+        ascending by ``Experiment``. Column names match the page's main
+        experiments table so :func:`experiment_links.experiment_link` can be
+        reused as-is. Empty if the part has no recorded fatigue data.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        df = conn.execute(
+            """
+            SELECT f.experiment_id AS ID, e.name AS Experiment,
+                   e.assembly_name AS Assembly, e.file AS File,
+                   f.n_cycles AS Cycles, f.sum_range3 AS "Fatigue proxy (MPa^3)"
+            FROM hoop_stress_fatigue AS f
+            JOIN experiments AS e ON e.id = f.experiment_id
+            WHERE f.part_name = ?
+            ORDER BY e.name
+            """,
+            [part_name],
+        ).df()
+    df["Experiment"] = pd.to_datetime(df["Experiment"])
+    return df
+
+
 def load_hoop_stress_history_for_part(part_name, db_path=None):
     """Load a part's chronologically-concatenated raw hoop-stress series.
 
@@ -544,6 +582,7 @@ def load_hoop_stress_history_for_part(part_name, db_path=None):
     return pd.read_parquet(path) if path.exists() else None
 
 
+@functools.lru_cache(maxsize=128)
 def get_overview_record_sources(filename, db_path=None):
     """Fetch one overview_records row's housing, assembly, and source-file lists.
 
@@ -602,7 +641,7 @@ def get_db_counts(db_path=None):
     return dict(zip(columns, row))
 
 
-@functools.lru_cache(maxsize=16)
+@functools.lru_cache(maxsize=64)
 def load_mrun_object(filename, housing):
     """Charge et retourne l'objet MagnetRun complet."""
     return load_mrun(filename=os.path.basename(filename), housing=housing)
@@ -675,20 +714,118 @@ def load_json_config(filepath):
     return {}
 
 
-def get_common_groups(selected_files, housing):
-    """Groups present (per list_groups()) in every selected file.
+_PUPITRE_DEFS = load_defs(resolve_defs_file("pupitre-defs.json"))
 
-    A group must exist in all selected files to be offered — files that fail
-    to load are skipped rather than collapsing the intersection to empty.
+_DEFS_FORMAT_BY_DATATYPE = {
+    DataType.PUPITRE: "pupitre",
+    DataType.ENSIGHT: "pupitre",
+    DataType.TDMS: "pigbrother",
+}
+
+# Channels with a defs.json alias to a tdms channel that isn't actually wired
+# for this housing/magnet type — kept in the schema for other magnets, but
+# not meaningful to display here.
+_GROUP_CHANNEL_EXCLUSIONS = {
+    "Tensions_Aimant": {"Ucoil2", "Ucoil3", "Ucoil4"},
+}
+
+
+def get_overview_group_entries(regular_files, housing):
+    """Build per-group checklist entries for the overview-records page.
+
+    Groups are keyed on pupitre's group vocabulary first. A pupitre channel
+    with a ``pigbrother`` alias whose target ``Group/Channel`` is actually
+    present among the tdms (overview/archive) files is folded into one
+    matched entry spanning both files' channel names — this is what pulls a
+    channel like ``Champ_magn`` into the ``Magnetic_Field`` block instead of
+    its native ``Courants_Alimentations`` tdms group, since the alias
+    target's own group is resolved explicitly rather than assumed equal to
+    the pupitre group. Channels with no match (no alias, or the aliased tdms
+    channel isn't present in this record) stay standalone. Leftover tdms
+    channels not consumed by any match are appended as their own entries,
+    under a block keyed by their tdms group name (merged into a same-named
+    pupitre block when one already exists).
+
+    Parameters
+    ----------
+    regular_files : list of str
+        Overview + archive + pupitre source filenames for one overview record.
+    housing : str
+        Housing identifier, forwarded to :func:`load_mrun_object`.
+
+    Returns
+    -------
+    dict
+        ``{group_name: [{"label": str, "value": str, "channels": {fmt:
+        name}}]}``, pupitre groups first (alphabetical), then leftover
+        tdms-only groups (alphabetical). Groups left empty by exclusions are
+        dropped.
     """
-    groups = None
-    for filename in selected_files or []:
+    pupitre_columns = {}
+    tdms_columns = {}
+
+    for filename in regular_files or []:
         mrun = load_mrun_object(filename, housing)
         if mrun is None:
             continue
-        file_groups = {g for g in mrun.MagnetData.list_groups() if g != "Infos"}
-        groups = file_groups if groups is None else groups & file_groups
-    return sorted(groups) if groups else []
+        fmt = _DEFS_FORMAT_BY_DATATYPE.get(mrun.MagnetData.Type)
+        if fmt is None:
+            continue
+        target = pupitre_columns if fmt == "pupitre" else tdms_columns
+        for group_name in mrun.MagnetData.list_groups():
+            if group_name == "Infos":
+                continue
+            columns = get_group_dataframe(filename, housing, group_name).columns
+            target.setdefault(group_name, set()).update(
+                c for c in columns if c not in ("t", "timestamp")
+            )
+
+    entries = {}
+    consumed_tdms = set()
+
+    for group_name in sorted(pupitre_columns):
+        excluded = _GROUP_CHANNEL_EXCLUSIONS.get(group_name, set())
+        group_entries = []
+        for channel in sorted(pupitre_columns[group_name]):
+            if channel in excluded:
+                continue
+            alias = _PUPITRE_DEFS.get(channel, {}).get("aliases", {}).get("pigbrother")
+            matched = None
+            if alias and "/" in alias:
+                tgroup, tchan = alias.split("/", 1)
+                if tchan in tdms_columns.get(tgroup, set()):
+                    matched = (tgroup, tchan)
+            if matched:
+                tgroup, tchan = matched
+                consumed_tdms.add(matched)
+                group_entries.append({
+                    "label": f"{channel} / {tchan}",
+                    "value": f"{group_name}::{channel}::pigbrother::{tchan}",
+                    "channels": {"pupitre": channel, "pigbrother": tchan},
+                })
+            else:
+                group_entries.append({
+                    "label": channel,
+                    "value": f"{group_name}::{channel}",
+                    "channels": {"pupitre": channel},
+                })
+        entries[group_name] = group_entries
+
+    for tgroup in sorted(tdms_columns):
+        leftover = sorted(
+            c for c in tdms_columns[tgroup] if (tgroup, c) not in consumed_tdms
+        )
+        if not leftover:
+            continue
+        group_entries = entries.setdefault(tgroup, [])
+        for channel in leftover:
+            group_entries.append({
+                "label": channel,
+                "value": f"{tgroup}::pigbrother::{channel}",
+                "channels": {"pigbrother": channel},
+            })
+
+    return {g: e for g, e in entries.items() if e}
 
 
 def get_comparable_pairs_for_group(group_name, selected_files, housing):

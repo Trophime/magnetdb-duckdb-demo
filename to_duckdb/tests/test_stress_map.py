@@ -8,7 +8,7 @@ import pytest
 
 import stress_map
 from python_magnetrun.magnetdata_base import _make_ureg
-from stress_map import _assert_current_units, _section_index_at_z, compute_stress_stats
+from stress_map import _assert_current_units, _section_index_at_z, compute_fatigue, compute_stress_stats
 
 
 def test_assert_current_units_passes_for_ampere():
@@ -102,6 +102,23 @@ def test_compute_stress_stats_empty_when_no_fast_columns():
     df = pd.DataFrame({"t": [0.0, 1.0], "IH": [100.0, 200.0]})
 
     assert compute_stress_stats(df).empty
+
+
+# ---------------------------------------------------------------------------
+# compute_fatigue() -- regression: it called rainflow.count_cycles() (which
+# yields 2-tuples: range, count) but built a DataFrame expecting 5 columns
+# (range, mean, count, i_start, i_end), raising ValueError on every call.
+# ---------------------------------------------------------------------------
+
+
+def test_compute_fatigue_returns_range_mean_count_columns():
+    df = pd.DataFrame({"H1_fast": [0.0, 100.0, -100.0, 100.0, -100.0, 0.0]})
+
+    cycles_df = compute_fatigue(df, "H1_fast")
+
+    assert list(cycles_df.columns) == ["range", "mean", "count", "i_start", "i_end"]
+    assert len(cycles_df) > 0
+    assert (cycles_df["range"] > 0).all()
 
 
 # ---------------------------------------------------------------------------

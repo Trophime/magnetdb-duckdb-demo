@@ -6,6 +6,16 @@ for reorganizing the repository around its three deliverable types
 (Jupyter/marimo notebooks, Voila apps, Dash dashboards) and for modernizing
 dependency management.
 
+**Follow-up (2026-08-21):** the `to_duckdb` + Dash-dashboard-consolidation
+portion of this plan's target tree (§2, and §3 steps 4–5) is being realized
+via [PLAN_magnetdb_duckdb_demo_extraction.md](PLAN_magnetdb_duckdb_demo_extraction.md)
+— a history-preserving extraction of `to_duckdb/` and `stage/dashboard/`
+into a new repo, `magnetdb-duckdb-demo` — rather than an in-place reorg
+here. The remaining items below (§3 steps 1, 2, 6 — the `project2`/
+`Project2` duplicate, `to_duckdb.old/`, stray root files) are not covered
+by that extraction and may be moot if this repo is being retired; that's a
+separate, still-open decision, not resolved by this note.
+
 ## 1. Current state
 
 The three deliverable types exist, but are scattered rather than organized

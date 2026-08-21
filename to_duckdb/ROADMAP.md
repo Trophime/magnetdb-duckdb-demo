@@ -19,7 +19,7 @@ produced `PLAN_overview_records_pupitre_dedup.md`, `PLAN_hoop_stress_history.md`
 calendar date; effort is relative (S = small, M = medium, L = large, ? =
 not yet sizeable).
 
-## Snapshot (2026-08-17)
+## Snapshot (2026-08-17, updated 2026-08-21)
 
 - Open Question 2 (plateaux) — **direction decided**: detect plateaux with
   `nplateaus()` (`python_magnetrun/processing/plateaux.py` — note the file
@@ -261,6 +261,73 @@ not yet sizeable).
     was already rewritten to `Assembly` vocabulary as part of the rename's
     Phase 4 commit (`c111577`) — it edits `assembly_stats.py` (the renamed
     `site_stats.py`), touched exactly once, under the new vocabulary.
+- **Dashboard hierarchy rework** (`stage/dashboard/PLAN_dashboard_hierarchy_rework.md`)
+  — **landed and verified, 2026-08-19** (`9ad3752`, `75fce67`). Upgraded from
+  "new, pending approval" in the previous snapshot — all 8 approach steps
+  landed: `magnets.assembled_at`/`parts.manufactured_at` schema+CRUD+
+  migrations (13/17 magnets, 160/166 parts backfilled in
+  `test-magnetdb.duckdb`), new `magnetdb_analysis.py` query functions,
+  `create_annotated_plot`, `overview_record_link`, `housing_stats.py`/
+  `overview_records.py` built, `assembly_stats.py`/`magnet_stats.py`/
+  `part_stats.py` retrofitted with accordions + DB-wide counts,
+  `comparison`/`metrics`/`summary` moved to `pages_disabled/`, final nav
+  order set. Verified against `test-magnetdb.duckdb` via live Dash
+  callbacks, not just unit tests. Moved from `Next` to `Now` below.
+- **Dashboard style homogenization** (`stage/dashboard/PLAN_plot_style_config.md`)
+  — **new (2026-08-19), approved and implemented same day** (`280a76b`):
+  bundled `style.json` generated from and round-trip-verified against the
+  in-code defaults, 4-step resolution order (env var →
+  `~/.config/magnetdb/style.json` → bundled file → in-code defaults),
+  `create_plot()` title-construction fix. Landed alongside a fix to the
+  energy/magnet-time computation shared by `assembly_stats.py`/
+  `housing_stats.py`/`magnet_stats.py`/`part_stats.py` (`f7b4063`).
+- **Hoop-stress data wired into the Part stats dashboard**
+  (`stage/dashboard/PLAN_part_stats_hoop_stress.md`) — **new (2026-08-21),
+  implemented and verified same day, still uncommitted** (`f193834` wires
+  the summary table/bin histogram/history plot from `hoop_stress_bin_stats`/
+  `hoop_stress_fatigue`; `7af47a5` changes the bin histogram to show "Time
+  at stress level (h)"). Part-stats slice only — deliberately doesn't touch
+  `exp_part_bin_stats` (the older Icoil/Ucoil/hoop-proxy table still backing
+  `part_stats.py`'s "Operating time (h)"/"Peak hoop stress proxy" columns;
+  dropping it is tracked as a deferred follow-up in that plan file, not
+  here) and lands ahead of — without needing — the processing-status flag
+  the `Later`-phase stress/fatigue-linking row below was written to be
+  blocked on. See that row's updated note.
+- **New, uncommitted, no plan file yet:** a rainflow (range × mean)
+  fatigue-bin matrix. `schema.py` gains `hoop_stress_fatigue_bins`
+  (composite PK `experiment_id, part_name, range_bin_low, mean_bin_low`);
+  `compute_hoop_stats.py`'s `_rainflow_stats()` switched from
+  `rainflow.count_cycles()` to `rainflow.extract_cycles()` to recover each
+  cycle's mean stress, binning it into the new table via a new
+  `_bin_rainflow_cycles()`; `docs/hoop-stress.md` documents the table.
+  Extends `PLAN_hoop_stress_fatigue_additivity.md`'s scope (enables a real
+  Goodman/FKM mean-stress-aware Palmgren-Miner damage sum later) but isn't
+  tracked by any plan file — worth writing one before it's committed, given
+  it's a schema change.
+- `stage/dashboard/PLAN_magnet_stats_year_filter.md` — **tabled, not
+  approved** (discussed 2026-08-20): Housing/Year selectors for
+  `magnet_stats.py` matching the existing Housing/Year pattern elsewhere.
+- **Possible draft/impl divergence, worth reconciling:**
+  `stage/dashboard/PLAN_overview_records_event_click.md` (draft, never
+  approved — click a default/spike marker to lazily load just that event
+  file) vs. the current uncommitted `overview_records.py`/`magnetdb_plot.py`/
+  `magnetdb_analysis.py` diff, which instead adds an eager "include archive
+  & event files (slower)" checkbox toggle to `_record_sources()` — related
+  problem (event-file load cost on the overview-records page), different
+  mechanism (opt-in eager toggle vs. click-triggered lazy load). Same
+  pattern this roadmap already flags elsewhere when a draft plan and
+  in-progress code drift apart — check before either moves further.
+- `to_duckdb/demos/list_users_unlinked.py` (`7272ddf`) — new helper finding
+  users without experiments or overview-records; prep work feeding
+  `PLAN_users_multi_source.md`, same category as the acronym-matching
+  scratch work already noted above.
+- `PLAN_site_to_assembly_rename.md`'s previously-open **residual gap**
+  (submodule pointers for `python_magnetgeo`/`python_magnetrun`/
+  `python_magnetsetup` not yet committed) — **resolved**: landed in
+  `1ab9a30` (2026-08-18, the same commit that updated this roadmap and that
+  plan file), confirmed via `git submodule status` showing all four
+  pointers clean. The plan file's own "Residual gap" text hadn't been
+  updated to say so; fixed now. No outstanding gap on Track A.
 
 ## Phase: Now — scoped, ready to execute
 
@@ -270,15 +337,13 @@ not yet sizeable).
 | Housing-summary notebook fixes | S | Partially done, **uncommitted**: `h.site`→`h.housing` fix in cell `1387a3c9` and a full top-to-bottom re-run (large diff, `638 insertions(+), 380 deletions(-)`) are both present in the current working-tree edit of `stage/import_housing_summary.ipynb`, but not yet committed. Still open: deciding the fate of the `PROPOSALS` dead-end section (`Magnet Sites` column still entirely null) — that section is untouched by the re-run. |
 | Site→Assembly rename — `to_duckdb`/dashboard slice (`PLAN_site_to_assembly_rename.md` Phases 3–4) | M | **Done — implemented and committed 2026-08-18** (`78a288c`, `c111577`), landed in under a day. `PLAN_lifecycle_status.md` below has been updated to reference `Assembly`/`assemblies`/`assembly_magnets` directly, so it no longer needs to write `sites`/`site_magnets` code first. Rest of the original plan (`python_magnetgeo`/`python_magnetsetup`/`python_magnetrun`/`python_magnetcooling` — also all landed the same day, see `PLAN_site_to_assembly_rename.md` — plus the separate-repo `python_magnetdb`/`python_magnetapi` backport) was outside this roadmap's scope; Track B remains deferred. |
 | Execute `PLAN_lifecycle_status.md` | L | **Done — implemented, verified, and committed 2026-08-19.** All three phases landed in one pass: assembly status derivation/overlap/auto-close + cascades (Phase A), magnet/part status defaults/validation/commissioning-cascade/dead-invariant + CLI (Phase B), `docs/schema.md` lifecycle section + `TODOs.md` checkoff (Phase C). Full test suite green throughout. |
+| Dashboard hierarchy rework (`stage/dashboard/PLAN_dashboard_hierarchy_rework.md`) | M | **Done — implemented and verified 2026-08-19** (`9ad3752`, `75fce67`). All 8 approach steps landed, verified live against `test-magnetdb.duckdb`. Moved up from `Next` (previous snapshot had it "pending approval"). |
 
 ## Phase: Next — needs a short scoping pass, or has a design sketch with opens to close
 
 | Item | Effort | Notes |
 |---|---|---|
-| Dashboard hierarchy rework (`stage/dashboard/PLAN_dashboard_hierarchy_rework.md`) | M | Pending approval, but not blocked on anything else in this roadmap — scoped independently of the processing-status flag/hoop-stress dependency that gates the stress/fatigue-linking remainder in `Later`. Touches `to_duckdb/schema.py` (`magnets.created_at`) — sequence with `PLAN_lifecycle_status.md`'s magnet/part schema work to avoid duplicate migrations. Also edits `assembly_stats.py` (the renamed `site_stats.py`) — the
-  `Now`-phase Site→Assembly rename has already landed (2026-08-18) and this
-  plan was updated to the new vocabulary as part of that commit, so no
-  further sequencing is needed here. **New:** an untracked draft `/overviews` page (`stage/dashboard/src/pages/overview-record.py`) already exists and overlaps this plan's overview-record viewer item — reconcile before formal approval/implementation so the draft isn't duplicated or lost. |
+| Hoop-stress fatigue-bins matrix — needs a plan file (`schema.py`'s new `hoop_stress_fatigue_bins`, `compute_hoop_stats.py`'s reworked `_rainflow_stats()`) | S | **New (2026-08-21), implemented but uncommitted, no plan approval recorded.** Enables mean-stress-aware fatigue analysis later; write a short plan before committing, given it's a schema change. |
 | overview-record: signature (Field for classification, Ref currents for ODE, A1–A2/Iddct1–4 for lag) | M | Builds on the now-committed dedup schema. Signature and lag are related — worth scoping together. |
 | overview-record: lag | M | Blocked on open question 1 below — sharpened 2026-08-17: two working lag implementations already exist (`python_magnetrun/analysis/synchronization.py`'s `compute_lag`/`compute_lag_interpolated`, already wired to `overview_records.sync_info` but switched off by default; Wolali's FFT-cross-correlation `get_lag()` in `stage/dashboard/tests/lag_test*.py`, validated but not wired in). Needs a head-to-head comparison (tooling for it already exists), not a design discussion. |
 | overview-record: plateaux | S–M | **Direction decided 2026-08-17** — `nplateaus()` over `sources_pupitre`/`sources_overview` into the already-reserved `overview_records.plateaux` column, adapting the existing `get_plateaux_per_pupitre()` prototype (see Open Question 2). Downgraded from `M` since the algorithm, storage column, and a near-complete prototype already exist; kept at S–M rather than S because per-source threshold tuning and the one-file-vs-row-list decision (see Open Question 2) still need closing first. |
@@ -294,7 +359,7 @@ not yet sizeable).
 
 | Item | Effort | Why it's later |
 |---|---|---|
-| Dashboard rework: stress/fatigue linking (remaining piece — hierarchy/navigation and the overview-records viewer moved to `Next`, see `PLAN_dashboard_hierarchy_rework.md`) | M | Blocked on the processing-status flag landing (design decided 2026-08-17 — per-stage timestamp columns, see Open Question 3 — but not yet implemented) and `PLAN_hoop_stress_history.md` Phases 4–5. |
+| Dashboard rework: stress/fatigue linking (remaining piece — hierarchy/navigation landed, see `Now` above; the Part-stats slice also landed via `PLAN_part_stats_hoop_stress.md`, 2026-08-21, uncommitted) | S–M | **Narrowed 2026-08-21** — both blockers named in the previous snapshot are now satisfied (`PLAN_hoop_stress_history.md` Phases 4–5 landed 2026-08-18; the Part-stats page turned out not to need the processing-status flag either). Remaining scope: `assembly_stats.py`/`magnet_stats.py` stress/fatigue linking (Part-stats was done first), dropping the deferred `exp_part_bin_stats` table once its three consumer columns/chart in `part_stats.py` are retired (tracked in `PLAN_part_stats_hoop_stress.md`'s follow-up section), and displaying the processing-status flag once that lands (still below, unimplemented). |
 | Commissioning data structure (site/assembly → propagate to magnets) in duckdb | L | New schema domain; touches the same site/housing concepts as the userdb work, sequence after userdb reduces rework. |
 | Cooling models (M1 student's primary heat-exchanger work) | M | External dependency — availability/completeness of that student's models isn't in your control. |
 | Fix/update `python_magnetrun/examples/bilan.py` | ? | Needs a look at current state before it can be sized. |
@@ -331,12 +396,15 @@ Effort → elapsed time at this pace:
 | Housing-summary notebook fixes | **Mostly done, uncommitted** | 2 of 3 items done in the working tree (2026-08-18); `PROPOSALS` section fate still open. |
 | Site→Assembly rename (`to_duckdb`/dashboard slice) | **Done — landed 2026-08-18** | Landed same-day, ~5 weeks ahead of this window. |
 | `PLAN_lifecycle_status.md` | **Done — landed 2026-08-19** | Landed same-pass, ~9 weeks ahead of this window. |
+| Dashboard hierarchy rework | **Done — landed 2026-08-19** | Landed same-day it was scoped. |
+| Dashboard style homogenization | **Done — landed 2026-08-19** | `PLAN_plot_style_config.md`, approved and landed same day. |
+| Hoop-stress data in Part-stats dashboard | **Done — implemented 2026-08-21, uncommitted** | `PLAN_part_stats_hoop_stress.md`. |
 
 ### Next — unblocked items (late Aug 2026 – late Feb 2027)
 
 | Item | Window |
 |---|---|
-| Dashboard hierarchy rework | late Aug – late Sep |
+| Hoop-stress fatigue-bins matrix (needs a plan file first) | late Aug – early Sep |
 | `overview-records-from-json` completion | late Sep – early Oct |
 | `populate all` composite | early Oct – mid-Oct |
 | userdb Phase 1 (pluggability refactor only) | mid-Oct – early Nov |

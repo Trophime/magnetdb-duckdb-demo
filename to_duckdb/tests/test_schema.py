@@ -27,6 +27,7 @@ EXPECTED_TABLES = {
     "hoop_stress_processed",
     "hoop_stress_bin_stats",
     "hoop_stress_fatigue",
+    "hoop_stress_fatigue_bins",
     "users",
 }
 

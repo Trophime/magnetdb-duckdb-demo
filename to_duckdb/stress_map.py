@@ -1396,7 +1396,7 @@ def compute_fatigue(df: pd.DataFrame, col: str) -> pd.DataFrame:
     import rainflow
 
     sigma = df[col].to_numpy()
-    cycles = list(rainflow.count_cycles(sigma))
+    cycles = list(rainflow.extract_cycles(sigma))
     return pd.DataFrame(cycles, columns=["range", "mean", "count", "i_start", "i_end"])
 
 

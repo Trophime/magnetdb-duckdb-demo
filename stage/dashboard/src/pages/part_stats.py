@@ -201,6 +201,15 @@ HOOP_STRESS_SUMMARY_COLUMNS = [
     )
 ]
 
+FATIGUE_TABLE_COLUMNS = [
+    (
+        {"name": c, "id": c, "presentation": "markdown"}
+        if c == "Experiment"
+        else {"name": c, "id": c}
+    )
+    for c in ("ID", "Experiment", "Assembly", "Cycles", "Fatigue proxy (MPa^3)")
+]
+
 
 def _overview_records_section(overview_df):
     """Build the "Overview records" accordion content for a pre-filtered dataframe.
@@ -392,6 +401,72 @@ def _hoop_stress_section(selected_part, db_path):
     return banner, table_data, bin_fig, history_fig
 
 
+def _fatigue_section(selected_part, db_path):
+    """Build the "Fatigue results" accordion content for the selected part.
+
+    Returns
+    -------
+    tuple
+        ``(banner, table_data, cycles_fig, range3_fig)`` for the accordion's
+        four callback outputs.
+    """
+    empty_fig = go.Figure()
+
+    if not selected_part or selected_part == selectors.ALL:
+        return (
+            _hoop_stress_banner("Select a part above to see its fatigue results."),
+            [],
+            empty_fig,
+            empty_fig,
+        )
+
+    fatigue_df = db.get_hoop_stress_fatigue_for_part(selected_part, db_path)
+    if fatigue_df.empty:
+        return (
+            _hoop_stress_banner(
+                f"No fatigue data computed for {selected_part}. Run, for its assembly:\n"
+                "to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py "
+                f"hoop-stress compute <ASSEMBLY_NAME> --db {db_path}"
+            ),
+            [],
+            empty_fig,
+            empty_fig,
+        )
+
+    table_df = fatigue_df.drop(columns=["File"]).copy()
+    table_df["Experiment"] = fatigue_df.apply(experiment_link, axis=1)
+
+    # Categorical x-axis: with a raw datetime x, Plotly infers bar width from
+    # the smallest gap between experiments, which can collapse to near-zero
+    # when some are minutes apart but the overall range spans months.
+    plot_df = fatigue_df.copy()
+    plot_df["Experiment label"] = plot_df["Experiment"].dt.strftime("%Y-%m-%d %H:%M")
+    experiment_order = plot_df["Experiment label"].tolist()
+
+    cycles_fig = px.bar(
+        plot_df,
+        x="Experiment label",
+        y="Cycles",
+        category_orders={"Experiment label": experiment_order},
+        title=f"Rainflow Cycles per Experiment — {selected_part}",
+        labels={"Experiment label": "Experiment", "Cycles": "Cycles"},
+    )
+    range3_fig = px.bar(
+        plot_df,
+        x="Experiment label",
+        y="Fatigue proxy (MPa^3)",
+        category_orders={"Experiment label": experiment_order},
+        title=f"Fatigue Proxy per Experiment — {selected_part}",
+        labels={"Experiment label": "Experiment", "Fatigue proxy (MPa^3)": "Fatigue proxy (MPa³)"},
+    )
+    # Plotly auto-detects date-like x labels and reverts to a date axis
+    # (silently ignoring category_orders) unless the type is forced.
+    cycles_fig.update_xaxes(type="category")
+    range3_fig.update_xaxes(type="category")
+
+    return "", table_df.to_dict("records"), cycles_fig, range3_fig
+
+
 def _build_page_content(df, selected_part=None, db_path=None):
     """Build the figures, table rows, and summary text for a loaded (experiment, part) dataframe."""
     exp_df = df.drop_duplicates(subset="ID").copy()
@@ -520,6 +595,39 @@ def layout(part=None, **kwargs):
                 },
             ),
             html.Br(),
+            html.Details(
+                [
+                    html.Summary(
+                        "🔧 Fatigue results",
+                        style={"fontWeight": "bold", "cursor": "pointer"},
+                    ),
+                    html.Div(
+                        [
+                            html.Div(id="part-stats-fatigue-banner"),
+                            DataTable(
+                                id="part-stats-fatigue-table",
+                                columns=FATIGUE_TABLE_COLUMNS,
+                                data=[],
+                                page_size=20,
+                                sort_action="native",
+                                style_table={"overflowX": "auto"},
+                                style_cell={"textAlign": "center", "padding": "6px"},
+                                style_header={"fontWeight": "bold"},
+                            ),
+                            dcc.Graph(id="part-stats-fatigue-cycles-fig"),
+                            dcc.Graph(id="part-stats-fatigue-range3-fig"),
+                        ],
+                        style={"padding": "10px"},
+                    ),
+                ],
+                open=False,
+                style={
+                    "border": "1px solid #ddd",
+                    "borderRadius": "8px",
+                    "marginBottom": "20px",
+                },
+            ),
+            html.Br(),
             dcc.Graph(id="part-stats-fig-hours"),
             html.Br(),
             dcc.Graph(id="part-stats-fig-magnet-time"),
@@ -623,6 +731,10 @@ def layout(part=None, **kwargs):
     Output("part-stats-hoop-stress-table", "data"),
     Output("part-stats-hoop-stress-fig", "figure"),
     Output("part-stats-hoop-stress-history-fig", "figure"),
+    Output("part-stats-fatigue-banner", "children"),
+    Output("part-stats-fatigue-table", "data"),
+    Output("part-stats-fatigue-cycles-fig", "figure"),
+    Output("part-stats-fatigue-range3-fig", "figure"),
     Input("dd-database", "value"),
     Input("part-stats-part-filter", "value"),
     Input("part-stats-status-filter", "value"),
@@ -642,6 +754,10 @@ def update_part_stats(selected_db, selected_part, selected_status):
             "",
             "",
             "",
+            "",
+            [],
+            go.Figure(),
+            go.Figure(),
             "",
             [],
             go.Figure(),
@@ -713,6 +829,13 @@ def update_part_stats(selected_db, selected_part, selected_status):
         hoop_stress_history_fig,
     ) = _hoop_stress_section(selected_part, selected_db)
 
+    (
+        fatigue_banner,
+        fatigue_table,
+        fatigue_cycles_fig,
+        fatigue_range3_fig,
+    ) = _fatigue_section(selected_part, selected_db)
+
     return (
         fig_hours,
         fig_hours_style,
@@ -730,4 +853,8 @@ def update_part_stats(selected_db, selected_part, selected_status):
         hoop_stress_table,
         hoop_stress_fig,
         hoop_stress_history_fig,
+        fatigue_banner,
+        fatigue_table,
+        fatigue_cycles_fig,
+        fatigue_range3_fig,
     )

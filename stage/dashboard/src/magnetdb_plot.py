@@ -555,22 +555,38 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
 
             if is_event:
                 max_idx = sub_df[target_col].abs().values.argmax()
+                event_x = x_data.iloc[max_idx]
+                event_y = sub_df[target_col].iloc[max_idx]
+                event_color = style.color if style else "red"
                 fig.add_trace(go.Scatter(
-                    x=[x_data.iloc[max_idx]],
-                    y=[sub_df[target_col].iloc[max_idx]],
-                    mode='markers+text',
-                    text=[event_label],
-                    textposition="top center",
-                    textfont=dict(color=style.color if style else "red", size=11, family="Arial Black"),
+                    x=[event_x],
+                    y=[event_y],
+                    mode='markers',
                     marker=dict(
                         size=14,
                         symbol='x' if file_type == 'default' else 'star',
-                        color=style.color if style else "red",
+                        color=event_color,
                         line=dict(width=2, color='DarkSlateGrey'),
                     ),
                     name=f"{file} - {sensor}",
-                    legendgroup=file,
+                    showlegend=False,
+                    hovertext=f"{event_label}<br>{file}<br>{sensor}: {event_y:.3g}",
+                    hovertemplate="%{hovertext}<extra></extra>",
                 ))
+                fig.add_annotation(
+                    x=event_x,
+                    y=event_y,
+                    text=event_label,
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowcolor=event_color,
+                    ax=20,
+                    ay=-30,
+                    bgcolor="white",
+                    bordercolor=event_color,
+                    borderwidth=1,
+                    font=dict(color=event_color, size=11, family="Arial Black"),
+                )
             else:
                 fig.add_trace(go.Scatter(
                     x=x_data,

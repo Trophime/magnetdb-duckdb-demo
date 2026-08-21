@@ -27,8 +27,14 @@ _EMPTY_FIG.update_layout(
 )
 
 
-def _record_sources(record_filename, db_path):
+def _record_sources(record_filename, db_path, include_extra=False):
     """Fetch one record's housing and its regular/event source-file lists.
+
+    Parameters
+    ----------
+    include_extra : bool, optional
+        When True, also include archive and event (default/spike) files —
+        excluded by default since a record can have dozens of them.
 
     Returns
     -------
@@ -39,10 +45,11 @@ def _record_sources(record_filename, db_path):
     info = db.get_overview_record_sources(record_filename, db_path)
     if info is None:
         return None, [], []
-    regular_files = (
-        list(info["sources_overview"]) + list(info["sources_archive"]) + list(info["sources_pupitre"])
-    )
-    event_files = list(info["sources_default"]) + list(info["sources_spike"])
+    regular_files = list(info["sources_overview"]) + list(info["sources_pupitre"])
+    event_files = []
+    if include_extra:
+        regular_files += list(info["sources_archive"])
+        event_files = list(info["sources_default"]) + list(info["sources_spike"])
     return info["housing"], regular_files, event_files
 
 
@@ -80,6 +87,15 @@ def layout(assembly=None, record=None, **kwargs):
                 clearable=False,
             ),
             html.Br(),
+            html.Label("5. Data scope:", style={"fontWeight": "bold"}),
+            dcc.Checklist(
+                id="overview-records-include-extra",
+                options=[{"label": " Include archive & event files (slower)", "value": "extra"}],
+                value=[],
+                style={"marginTop": "4px"},
+            ),
+            html.Br(),
+            dcc.Store(id="overview-records-group-entries"),
             html.Div(id="overview-records-missing-banner", style={"color": "#a94442", "fontWeight": "bold"}),
             html.Div(id="overview-records-groups-container", children=[], style={"marginTop": "10px"}),
         ],
@@ -125,41 +141,29 @@ def update_record_options(selected_assembly, selected_db, current_record):
 @dash.callback(
     Output("overview-records-groups-container", "children"),
     Output("overview-records-missing-banner", "children"),
+    Output("overview-records-group-entries", "data"),
     Input("overview-records-record-filter", "value"),
     Input("dd-database", "value"),
+    Input("overview-records-include-extra", "value"),
 )
-def update_groups(selected_record, selected_db):
+def update_groups(selected_record, selected_db, include_extra_value):
     if not selected_record:
-        return [], ""
+        return [], "", {}
 
-    housing, regular_files, event_files = _record_sources(selected_record, selected_db)
+    include_extra = bool(include_extra_value)
+    housing, regular_files, _event_files = _record_sources(selected_record, selected_db, include_extra)
     if housing is None:
-        return [], "This overview record was not found."
+        return [], "This overview record was not found.", {}
     if not regular_files:
-        return [], "No overview/archive/pupitre files are attached to this record."
+        return [], "No overview/archive/pupitre files are attached to this record.", {}
 
-    groups = db.get_common_groups(regular_files, housing)
-    if not groups:
-        return [], "No data group is common to every source file for this record."
-
-    # Load every file's MagnetRun once, up front — looping per-group over
-    # load_mrun_object() directly would re-request the same files once per
-    # group and thrash its small (maxsize=16) LRU cache across event-heavy
-    # records (sources_default/sources_spike commonly run into the dozens).
-    all_files = regular_files + event_files
-    mruns = {filename: db.load_mrun_object(filename, housing) for filename in all_files}
+    group_entries = db.get_overview_group_entries(regular_files, housing)
+    if not group_entries:
+        return [], "No data group found for this record's source files.", {}
 
     blocks = []
-    for group_name in groups:
-        sensors_seen = []
-        for filename, mrun in mruns.items():
-            if mrun is None or group_name not in mrun.MagnetData.list_groups():
-                continue
-            for c in db.get_group_dataframe(filename, housing, group_name).columns:
-                if c not in ("t", "timestamp") and c not in sensors_seen:
-                    sensors_seen.append(c)
-
-        options = [{"label": s, "value": s} for s in sensors_seen]
+    for group_name, entries in group_entries.items():
+        options = [{"label": e["label"], "value": e["value"]} for e in entries]
 
         blocks.append(
             html.Details(
@@ -221,7 +225,7 @@ def update_groups(selected_record, selected_db):
             )
         )
 
-    return blocks, ""
+    return blocks, "", group_entries
 
 
 @dash.callback(
@@ -232,25 +236,45 @@ def update_groups(selected_record, selected_db):
     Input({"type": "ov-group-sensors-checklist", "index": ALL}, "id"),
     Input("overview-records-downsampling", "value"),
     Input("dd-database", "value"),
+    Input("overview-records-include-extra", "value"),
+    State("overview-records-group-entries", "data"),
 )
-def update_graphs(selected_record, selected_x, all_sensor_values, all_sensor_ids, selected_algo, selected_db):
+def update_graphs(
+    selected_record,
+    selected_x,
+    all_sensor_values,
+    all_sensor_ids,
+    selected_algo,
+    selected_db,
+    include_extra_value,
+    group_entries,
+):
     if not selected_record or not all_sensor_ids:
         return [_EMPTY_FIG for _ in all_sensor_ids]
 
-    housing, regular_files, event_files = _record_sources(selected_record, selected_db)
+    include_extra = bool(include_extra_value)
+    housing, regular_files, event_files = _record_sources(selected_record, selected_db, include_extra)
     if housing is None:
         return [_EMPTY_FIG for _ in all_sensor_ids]
 
     all_files = regular_files + event_files
     mruns = {filename: db.load_mrun_object(filename, housing) for filename in all_files}
+    group_entries = group_entries or {}
     figures = []
 
     for sensor_id, sensor_values in zip(all_sensor_ids, all_sensor_values):
         group_name = sensor_id["index"]
-        sensors = sensor_values or []
-        if not sensors:
+        selected_values = sensor_values or []
+        if not selected_values:
             figures.append(_EMPTY_FIG)
             continue
+
+        channels_by_value = {e["value"]: e["channels"] for e in group_entries.get(group_name, [])}
+        sensors = [
+            name
+            for value in selected_values
+            for name in channels_by_value.get(value, {}).values()
+        ]
 
         files_data = []
         for filename, mrun in mruns.items():

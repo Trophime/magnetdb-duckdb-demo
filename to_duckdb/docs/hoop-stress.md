@@ -204,4 +204,20 @@ python compute_hoop_stats.py --site M9_M19061901 --bins 0,150,300,450,600 \
 | `magnet_type` | VARCHAR | `H`, `B`, `S`, or `all` |
 | `parquet_path` | VARCHAR | Path to the Parquet time-series file (if saved) |
 
+---
+
+## `hoop_stress_fatigue_bins` — rainflow matrix
+
+`hoop_stress_fatigue.n_cycles`/`sum_range3` are scalar totals per (experiment, part) — enough to gauge relative fatigue activity, but they discard each cycle's *mean* stress, which mean-stress-aware analysis (Goodman/FKM correction, a real S-N-curve-based Palmgren-Miner damage sum) needs. `hoop_stress_fatigue_bins` persists a small rainflow matrix instead: cycle counts binned jointly by range and mean, so that analysis can be done later directly from the database without re-deriving cycles from the raw per-experiment Parquet.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `experiment_id` | INTEGER | FK → experiments(id) |
+| `part_name` | VARCHAR | FK → parts(name) |
+| `range_bin_low` / `range_bin_high` | DOUBLE | Cycle range bin edges [MPa] — part of composite PK |
+| `mean_bin_low` / `mean_bin_high` | DOUBLE | Cycle mean-stress bin edges [MPa] — part of composite PK |
+| `count` | DOUBLE | Summed cycle count in this cell; may be fractional (rainflow half-cycles are 0.5) |
+
+Both axes reuse the same `--bins` edges as `hoop_stress_bin_stats` (range and mean are stress magnitudes in the same MPa domain) — there is no separate bin configuration for the fatigue matrix. With the default 6 bins, at most 36 rows are written per (experiment, part). Cycles whose range or mean falls outside every bin are silently dropped, the same convention `hoop_stress_bin_stats` already uses for the stress-value histogram.
+
 Primary key: `(experiment_id, bin_config)`.

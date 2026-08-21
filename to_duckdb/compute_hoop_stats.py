@@ -303,20 +303,59 @@ def _bin_series(
 # ---------------------------------------------------------------------------
 
 
-def _rainflow_stats(sigma: pd.Series) -> dict[str, float]:
-    """Return {n_cycles, sum_range3} from a rainflow count of *sigma*."""
+def _bin_rainflow_cycles(
+    cycles_df: pd.DataFrame,
+    bins: list[tuple[float, float]],
+) -> list[dict]:
+    """Bin rainflow cycles into a (range, mean) matrix for hoop_stress_fatigue_bins.
+
+    *cycles_df* has ``range``/``mean``/``count`` columns (from
+    ``rainflow.extract_cycles()``). Both axes reuse the same *bins* edges
+    (range and mean are stress magnitudes in the same MPa domain). Mirrors
+    ``_bin_series``'s ``low <= x < high`` convention: cycles whose range or
+    mean falls outside every bin are silently dropped.
+    """
+    rows = []
+    for range_low, range_high in bins:
+        range_mask = (cycles_df["range"] >= range_low) & (cycles_df["range"] < range_high)
+        for mean_low, mean_high in bins:
+            mean_mask = (cycles_df["mean"] >= mean_low) & (cycles_df["mean"] < mean_high)
+            count = cycles_df.loc[range_mask & mean_mask, "count"].sum()
+            if count > 0:
+                rows.append({
+                    "range_bin_low":  range_low,  "range_bin_high": range_high,
+                    "mean_bin_low":   mean_low,   "mean_bin_high":  mean_high,
+                    "count":          float(count),
+                })
+    return rows
+
+
+def _rainflow_stats(
+    sigma: pd.Series,
+    bins: list[tuple[float, float]] = DEFAULT_STRESS_BINS,
+) -> dict:
+    """Return {n_cycles, sum_range3, matrix} from a rainflow count of *sigma*.
+
+    Uses ``rainflow.extract_cycles()`` (range, mean, count, i_start, i_end
+    per cycle) rather than the coarser ``count_cycles()`` so cycle *mean* is
+    available for ``matrix`` -- ``n_cycles``/``sum_range3`` come out
+    numerically identical either way, since ``count_cycles()`` is just
+    ``extract_cycles()`` pre-aggregated by unique range value.
+    """
     try:
         import rainflow
     except ImportError:
-        return {"n_cycles": 0.0, "sum_range3": 0.0}
+        return {"n_cycles": 0.0, "sum_range3": 0.0, "matrix": []}
 
-    cycles = rainflow.count_cycles(sigma.to_numpy().astype(float))
-    n_cycles = 0.0
-    sum_range3 = 0.0
-    for rng, count in cycles:
-        n_cycles += count
-        sum_range3 += count * float(rng) ** 3
-    return {"n_cycles": n_cycles, "sum_range3": sum_range3}
+    cycles = list(rainflow.extract_cycles(sigma.to_numpy().astype(float)))
+    if not cycles:
+        return {"n_cycles": 0.0, "sum_range3": 0.0, "matrix": []}
+
+    cycles_df = pd.DataFrame(cycles, columns=["range", "mean", "count", "i_start", "i_end"])
+    n_cycles = float(cycles_df["count"].sum())
+    sum_range3 = float((cycles_df["count"] * cycles_df["range"] ** 3).sum())
+    matrix = _bin_rainflow_cycles(cycles_df, bins)
+    return {"n_cycles": n_cycles, "sum_range3": sum_range3, "matrix": matrix}
 
 
 # ---------------------------------------------------------------------------
@@ -386,6 +425,18 @@ def _insert_fatigue(con, exp_id: int, part_name: str, stats: dict) -> None:
         """,
         [exp_id, part_name, stats["n_cycles"], stats["sum_range3"]],
     )
+    for row in stats.get("matrix", []):
+        con.execute(
+            """
+            INSERT OR REPLACE INTO hoop_stress_fatigue_bins
+                (experiment_id, part_name, range_bin_low, range_bin_high,
+                 mean_bin_low, mean_bin_high, count)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [exp_id, part_name,
+             row["range_bin_low"], row["range_bin_high"],
+             row["mean_bin_low"], row["mean_bin_high"], row["count"]],
+        )
 
 
 _HOOP_STATUS_TOKEN = "HOOP STRESS DONE"
@@ -824,7 +875,7 @@ def compute_hoop_stress_history(
                 bin_rows = _bin_series(sigma, dt, bins)
                 _insert_bin_stats(con, exp_id, part_name, bin_rows)
 
-                fatigue = _rainflow_stats(sigma)
+                fatigue = _rainflow_stats(sigma, bins)
                 _insert_fatigue(con, exp_id, part_name, fatigue)
 
             _mark_processed(

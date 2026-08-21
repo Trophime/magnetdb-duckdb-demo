@@ -8,6 +8,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from compute_hoop_stats import (
+    _bin_rainflow_cycles,
     _bin_series,
     _check_processed,
     _column_meta,
@@ -283,6 +284,55 @@ def test_rainflow_stats_matches_manual_aggregation():
     assert stats["sum_range3"] == pytest.approx(expected_sum_range3)
 
 
+def test_rainflow_stats_matrix_counts_sum_to_n_cycles():
+    sigma = pd.Series([0.0, 10.0, 0.0, 15.0, 0.0, 10.0, 0.0])
+    bins = [(0.0, 5.0), (5.0, 10.0), (10.0, 15.0), (15.0, 20.0)]
+
+    stats = _rainflow_stats(sigma, bins)
+
+    matrix_total = sum(row["count"] for row in stats["matrix"])
+    assert matrix_total == pytest.approx(stats["n_cycles"])
+
+
+def test_rainflow_stats_matrix_empty_for_constant_series():
+    # The one zero-range residual half-cycle from a flat series still lands
+    # in the (0, bin_size) x (value, value+bin_size) cell -- matrix is not
+    # empty, but every row's range is the bottom bin.
+    stats = _rainflow_stats(pd.Series([5.0] * 10), bins=[(0.0, 100.0)])
+    assert all(row["range_bin_low"] == 0.0 for row in stats["matrix"])
+
+
+# ---------------------------------------------------------------------------
+# _bin_rainflow_cycles
+# ---------------------------------------------------------------------------
+
+
+def test_bin_rainflow_cycles_buckets_by_range_and_mean():
+    cycles_df = pd.DataFrame({
+        "range": [5.0, 5.0, 25.0],
+        "mean":  [2.0, 2.0, 12.0],
+        "count": [1.0, 0.5, 1.0],
+    })
+    bins = [(0.0, 10.0), (10.0, 20.0), (20.0, 30.0)]
+
+    rows = _bin_rainflow_cycles(cycles_df, bins)
+
+    assert len(rows) == 2
+    small = next(r for r in rows if r["range_bin_low"] == 0.0)
+    assert small["mean_bin_low"] == 0.0
+    assert small["count"] == pytest.approx(1.5)
+    big = next(r for r in rows if r["range_bin_low"] == 20.0)
+    assert big["mean_bin_low"] == 10.0
+    assert big["count"] == pytest.approx(1.0)
+
+
+def test_bin_rainflow_cycles_drops_out_of_range_cycles():
+    cycles_df = pd.DataFrame({"range": [500.0], "mean": [5.0], "count": [1.0]})
+    bins = [(0.0, 10.0)]
+
+    assert _bin_rainflow_cycles(cycles_df, bins) == []
+
+
 # ---------------------------------------------------------------------------
 # _compute_dt
 # ---------------------------------------------------------------------------
@@ -376,6 +426,32 @@ def test_insert_bin_stats_and_fatigue_round_trip(hoop_assembly_with_experiments)
         [exp_id, "H_NEW"],
     ).fetchone()
     assert fatigue == (4.0, 123.0)
+
+
+def test_insert_fatigue_writes_matrix_rows(hoop_assembly_with_experiments):
+    con = hoop_assembly_with_experiments
+    exp_id = int(_get_experiments(con, "HOOP_ASSEMBLY").iloc[0]["id"])
+
+    matrix = [
+        {"range_bin_low": 0.0, "range_bin_high": 100.0,
+         "mean_bin_low": 0.0, "mean_bin_high": 100.0, "count": 2.0},
+    ]
+    _insert_fatigue(con, exp_id, "H_NEW", {"n_cycles": 2.0, "sum_range3": 1.0, "matrix": matrix})
+    stored = con.execute(
+        "SELECT range_bin_low, mean_bin_low, count FROM hoop_stress_fatigue_bins "
+        "WHERE experiment_id = ? AND part_name = ?",
+        [exp_id, "H_NEW"],
+    ).fetchall()
+    assert stored == [(0.0, 0.0, 2.0)]
+
+    # INSERT OR REPLACE on the same key overwrites rather than duplicates.
+    matrix[0]["count"] = 5.0
+    _insert_fatigue(con, exp_id, "H_NEW", {"n_cycles": 5.0, "sum_range3": 1.0, "matrix": matrix})
+    stored = con.execute(
+        "SELECT count FROM hoop_stress_fatigue_bins WHERE experiment_id = ? AND part_name = ?",
+        [exp_id, "H_NEW"],
+    ).fetchall()
+    assert stored == [(5.0,)]
 
 
 # ---------------------------------------------------------------------------

@@ -361,6 +361,23 @@ CREATE TABLE IF NOT EXISTS hoop_stress_fatigue (
     PRIMARY KEY (experiment_id, part_name)
 );
 
+-- Rainflow matrix: per-part cycle counts binned by (range, mean), both in
+-- MPa and both using the same edges as hoop_stress_bin_stats' --bins (range
+-- and mean are stress magnitudes in the same domain). Lets mean-stress-aware
+-- analysis (Goodman/FKM correction, a real S-N-curve damage sum) be done
+-- later directly from the DB, without re-deriving cycles from raw Parquet.
+-- count may be fractional: rainflow half-cycles contribute 0.5.
+CREATE TABLE IF NOT EXISTS hoop_stress_fatigue_bins (
+    experiment_id   INTEGER  REFERENCES experiments(id),
+    part_name       VARCHAR  REFERENCES parts(name),
+    range_bin_low   DOUBLE   NOT NULL,
+    range_bin_high  DOUBLE   NOT NULL,
+    mean_bin_low    DOUBLE   NOT NULL,
+    mean_bin_high   DOUBLE   NOT NULL,
+    count           DOUBLE   NOT NULL,
+    PRIMARY KEY (experiment_id, part_name, range_bin_low, mean_bin_low)
+);
+
 -- ── Users ─────────────────────────────────────────────────────────────────
 
 -- One row per EXPERIENCES_LOG session: a distinct UserCode (= proposal Acronym,
