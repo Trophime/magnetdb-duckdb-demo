@@ -12,7 +12,7 @@ python magnetdb.py db create --db $DB
 # load assembly by data and check data
 for file in $(../scripts/list_site_configs.sh); do
     echo $file
-    python magnetdb.py site add "$f" --db $DB
+    python magnetdb.py assembly add "$file" --db $DB
 done
 
 python magnetdb.py check --db $DB   # flags missing geometry_data, bad file paths, etc.
