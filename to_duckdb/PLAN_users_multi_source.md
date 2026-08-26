@@ -1,4 +1,4 @@
-# Plan — pluggable data sources for users_table_demo.py (CSV / SUPERVISION MySQL / userdb API)
+M# Plan — pluggable data sources for users_table_demo.py (CSV / SUPERVISION MySQL / userdb API)
 
 Status: pending approval (not yet implemented) — blocked on open questions below
 

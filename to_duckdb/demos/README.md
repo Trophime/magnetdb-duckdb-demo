@@ -7,8 +7,9 @@ Standalone demo scripts for the student MagnetDB DuckDB.
 ## users_table_demo.py
 
 Builds and populates the `users` table from `Data/EXPERIENCES_LOG.csv`,
-fuzzy-matched against a proposals CSV (`Data/proposals_2026-07-22.csv` by
-default) to fill in `research_area`, `call_number`, and `access_mode`. By
+fuzzy-matched against a proposals CSV (`Data/proposals.csv` by
+default) to fill in `research_area`, `call_number`, `access_mode`, `country`,
+and `local_contact`. By
 default the table's contents are fully replaced; pass `--sync` to instead
 add only new rows and correct mismatched existing ones in place (leaving
 `experiments_ids`/`overview_records_ids` untouched). After (re)populating,
@@ -36,7 +37,7 @@ python to_duckdb/demos/users_table_demo.py --link-only
 |---|---|---|
 | `--db` | `to_duckdb/test-magnetdb.duckdb` | Target DuckDB file |
 | `--log` | `Data/EXPERIENCES_LOG.csv` | Input EXPERIENCES_LOG CSV |
-| `--proposals` | `Data/proposals_2026-07-22.csv` | Input proposals CSV |
+| `--proposals` | `Data/proposals.csv` | Input proposals CSV |
 | `--from` | none (no filtering) | Discard entries before this date (Europe/Paris local time), e.g. `2020-01-01` |
 | `--fuzzy-cutoff` | `0.8` | `difflib` similarity cutoff for fuzzy acronym matching |
 | `--sample` | `20` | Number of resulting `users` rows to print |
@@ -165,7 +166,7 @@ proposal acronym:
 import csv
 import difflib
 
-with open("Data/proposals_2026-07-22.csv", newline="", encoding="utf-8-sig") as f:
+with open("Data/proposals.csv", newline="", encoding="utf-8-sig") as f:
     candidates = sorted({row["Acronym"].strip() for row in csv.DictReader(f) if row["Acronym"].strip()})
 
 with open("Data/unmatched_users.csv", newline="", encoding="utf-8") as f:

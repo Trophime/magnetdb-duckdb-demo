@@ -160,14 +160,15 @@ def load_log(
 
 def load_proposals(
     proposals_path: Path, cutoff: datetime | None
-) -> tuple[dict[str, list[dict[str, str]]], int, int, int]:
+) -> tuple[dict[str, list[dict[str, str]]], int, int, int, int]:
     """Index proposal rows by acronym.
 
     Parameters
     ----------
     proposals_path : :class:`~pathlib.Path`
         Path to the proposals CSV (``Acronym``, ``Research Area``,
-        ``Call Number``, ``Access Mode``, ``Experiment Start/End Date``, ...).
+        ``Call Number``, ``Access Mode``, ``Country``, ``Local Contacts``,
+        ``Experiment Start/End Date``, ...).
     cutoff : datetime or None
         Naive Europe/Paris datetime. Rows whose ``Experiment Start Date`` is
         present and strictly before `cutoff` are discarded; rows with a
@@ -183,11 +184,15 @@ def load_proposals(
         Rows dropped by `cutoff`.
     n_ignored : int
         Rows with empty acronym or invalid start date.
+    n_supra_excluded : int
+        Rows dropped for having both ``Type`` and ``Access Mode`` equal to
+        ``"Supra"`` (placeholder/internal entries, never a match candidate).
     """
     acronym_rows: dict[str, list[dict[str, str]]] = defaultdict(list)
     n_total = 0
     n_discarded = 0
     n_ignored = 0
+    n_supra_excluded = 0
     with open(proposals_path, newline="", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -195,6 +200,11 @@ def load_proposals(
             acronym = row["Acronym"].strip()
             if not acronym:
                 n_ignored += 1
+                continue
+            if row["Type"].strip() == "Supra" and row["Access Mode"].strip() == "Supra":
+                # These are placeholder/internal Supra proposals, not real
+                # experiment proposals; never let them match a session.
+                n_supra_excluded += 1
                 continue
             if cutoff is not None:
                 date_str = row["Experiment Start Date"].strip()
@@ -217,7 +227,7 @@ def load_proposals(
                     # print(f"DEBUG: {acronym} has no start date, keeping it")
                                         
             acronym_rows[acronym].append(row)
-    return acronym_rows, n_total, n_discarded, n_ignored
+    return acronym_rows, n_total, n_discarded, n_ignored, n_supra_excluded
 
 
 def find_proposal_rows(
@@ -363,9 +373,13 @@ def build_users(
         ``duplicates_removed``, for reporting.
     """
     sessions, timestamps, log_total, log_discarded = load_log(log_path, cutoff)
-    acronym_rows, proposals_total, proposals_discarded, proposals_ignored = load_proposals(
-        proposals_path, cutoff
-    )
+    (
+        acronym_rows,
+        proposals_total,
+        proposals_discarded,
+        proposals_ignored,
+        proposals_supra_excluded,
+    ) = load_proposals(proposals_path, cutoff)
     acronym_rows_lower = {a.lower(): a for a in acronym_rows}
 
     users = []
@@ -376,7 +390,7 @@ def build_users(
         )
         if rows is None:
             match_counts["unmatched"] += 1
-            research_area = call_number = access_mode = type_ = None
+            research_area = call_number = access_mode = type_ = country = local_contact = None
         else:
             match_counts[match_type] += 1
             if match_type == "fuzzy":
@@ -389,6 +403,10 @@ def build_users(
             call_number = row["Call Number"].strip() or None
             access_mode = row["Access Mode"].strip() or None
             type_ = row["Type"].strip() or None
+            country = row["Country"].strip() or None
+            local_contact = [
+                c.strip() for c in row["Local Contacts"].split(",") if c.strip()
+            ] or None
 
         ordered_sessions = sorted(
             sessions[acronym],
@@ -439,7 +457,8 @@ def build_users(
                 "acronym": acronym,
                 "research_area": research_area,
                 "type": type_,
-                "country": None,
+                "country": country,
+                "local_contact": local_contact,
                 "call_number": call_number,
                 "access_mode": access_mode,
                 "housing": magnet,
@@ -468,6 +487,7 @@ def build_users(
     stats = {
         "duplicates_removed": n_duplicates,
         "proposals_ignored": proposals_ignored,
+        "proposals_supra_excluded": proposals_supra_excluded,
         "log_total": log_total,
         "log_discarded": log_discarded,
         "proposals_total": proposals_total,
@@ -476,7 +496,14 @@ def build_users(
     return users, match_counts, stats
 
 
-_USER_COMPARE_FIELDS = ("research_area", "type", "country", "call_number", "access_mode")
+_USER_COMPARE_FIELDS = (
+    "research_area",
+    "type",
+    "country",
+    "local_contact",
+    "call_number",
+    "access_mode",
+)
 
 
 def create_users_table(con, verbose: bool = True) -> None:
@@ -531,7 +558,7 @@ def fetch_existing_user(con, key: tuple) -> dict | None:
     """
     acronym, housing, hstart, hstop = key
     row = con.execute(
-        "SELECT research_area, type, country, call_number, access_mode "
+        "SELECT research_area, type, country, local_contact, call_number, access_mode "
         "FROM users WHERE acronym = ? AND housing = ? AND hstart = ? "
         "AND hstop IS NOT DISTINCT FROM ?",
         [acronym, housing, hstart, hstop],
@@ -555,15 +582,16 @@ def insert_users(con, users: list[dict], verbose: bool = True) -> None:
     """
     con.executemany(
         "INSERT INTO users "
-        "(acronym, research_area, type, country, call_number, access_mode, housing, "
-        "hstart, hstop) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "(acronym, research_area, type, country, local_contact, call_number, access_mode, "
+        "housing, hstart, hstop) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             [
                 u["acronym"],
                 u["research_area"],
                 u["type"],
                 u["country"],
+                u["local_contact"],
                 u["call_number"],
                 u["access_mode"],
                 u["housing"],
@@ -657,7 +685,7 @@ def sync_users(con, users: list[dict], verbose: bool = True) -> dict:
 def update_experiments_ids(con, verbose: bool = True) -> dict:
     """Link each ``users`` row to its ``experiments`` via housing + time range.
 
-    Matches each row's housing (via experiments.site_name's "<housing>_..."
+    Matches each row's housing (via experiments.assembly_name's "<housing>_..."
     prefix) and [hstart, hstop] range against experiments' file-embedded
     timestamp. Rows with no hstop have no closed range to contain anything,
     so they're left with experiments_ids = NULL.
@@ -677,7 +705,7 @@ def update_experiments_ids(con, verbose: bool = True) -> dict:
     con.execute(
         f"UPDATE users SET experiments_ids = ("
         f"SELECT LIST(e.id) FROM experiments e "
-        f"WHERE split_part(e.site_name, '_', 1) = users.housing "
+        f"WHERE split_part(e.assembly_name, '_', 1) = users.housing "
         f"AND {_EXP_FILE_TS} BETWEEN users.hstart AND users.hstop"
         f") WHERE users.hstop IS NOT NULL"
     )
@@ -738,7 +766,8 @@ def report_source_stats(users: list[dict], stats: dict, match_counts: Counter) -
           f"({stats['log_discarded']} discarded by --from)")
     print(f"Read {stats['proposals_total']} proposals rows "
           f"({stats['proposals_discarded']} discarded by --from)"
-          f"({stats['proposals_ignored']} ignored for empty acronym or invalid start date)")
+          f"({stats['proposals_ignored']} ignored for empty acronym or invalid start date)"
+          f"({stats['proposals_supra_excluded']} excluded for Type == Access Mode == 'Supra')")
     print(f"Built {len(users)} users rows, "
           f"{stats['duplicates_removed']} duplicate rows removed")
     print(
@@ -860,7 +889,7 @@ def view_users(con) -> None:
 def view_user(con, acronym: str) -> None:
     """Print metadata and each housing session for a single acronym."""
     row = con.execute(
-        "SELECT research_area, type, country, call_number, access_mode "
+        "SELECT research_area, type, country, local_contact, call_number, access_mode "
         "FROM users WHERE acronym = ? LIMIT 1",
         [acronym],
     ).fetchone()
@@ -871,8 +900,9 @@ def view_user(con, acronym: str) -> None:
     print(f"  research_area: {row[0] or '?'}")
     print(f"  type         : {row[1] or '?'}")
     print(f"  country      : {row[2] or '?'}")
-    print(f"  call_number  : {row[3] or '?'}")
-    print(f"  access_mode  : {row[4] or '?'}")
+    print(f"  local_contact: {', '.join(row[3]) if row[3] else '?'}")
+    print(f"  call_number  : {row[4] or '?'}")
+    print(f"  access_mode  : {row[5] or '?'}")
     sessions = con.execute(
         "SELECT housing, hstart, hstop, experiments_ids "
         "FROM users WHERE acronym = ? ORDER BY housing, hstart",
@@ -925,7 +955,7 @@ def main() -> None:
     parser.add_argument(
         "--proposals",
         type=Path,
-        default=Path("Data/proposals_2026-07-22.csv"),
+        default=Path("Data/proposals.csv"),
         help="Input proposals CSV.",
     )
     parser.add_argument(

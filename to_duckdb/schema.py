@@ -393,12 +393,12 @@ CREATE TABLE IF NOT EXISTS hoop_stress_fatigue_bins (
 -- not an integer) whose t0 falls within [hstart, hstop] on this row's housing;
 -- populated the same way and under the same NULL rules as experiments_ids.
 -- No primary key: EXPERIENCES_LOG itself contains exact-duplicate session rows.
--- country is not populated yet.
 CREATE TABLE IF NOT EXISTS users (
     acronym               VARCHAR,
     research_area         VARCHAR,
     type                  VARCHAR,
     country               VARCHAR,
+    local_contact         VARCHAR[],
     call_number           VARCHAR,
     access_mode           VARCHAR,
     housing               VARCHAR,
@@ -423,6 +423,16 @@ def ensure_schema(con) -> None:
     ).fetchone()
     if hstart_type is not None and hstart_type[0] != "TIMESTAMP":
         con.execute("DROP TABLE users")
+    # users.local_contact changed from a scalar VARCHAR to a VARCHAR[] list
+    # (a proposal can have several local contacts); DuckDB can't ALTER COLUMN
+    # across incompatible types, and the table is fully rebuilt by its
+    # populating script, so drop the column and let CREATE TABLE recreate it.
+    local_contact_type = con.execute(
+        "SELECT data_type FROM information_schema.columns "
+        "WHERE table_name = 'users' AND column_name = 'local_contact'"
+    ).fetchone()
+    if local_contact_type is not None and local_contact_type[0] != "VARCHAR[]":
+        con.execute("ALTER TABLE users DROP COLUMN local_contact")
     con.execute(SCHEMA_SQL)
     # idempotent migration: experiment_ids was renamed to experiments_ids
     has_old_name = con.execute(
@@ -437,3 +447,5 @@ def ensure_schema(con) -> None:
     con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS type VARCHAR")
     # idempotent migration for databases that predate overview_records_ids
     con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS overview_records_ids VARCHAR[]")
+    # idempotent migration for databases that predate the local_contact column
+    con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS local_contact VARCHAR[]")
