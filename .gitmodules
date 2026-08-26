@@ -1,12 +1,14 @@
 [submodule "python_magnetrun"]
 	path = python_magnetrun
 	url = https://github.com/MagnetDB/python_magnetrun.git
+	branch = msite_to_assembly
 [submodule "python_magnetgeo"]
 	path = python_magnetgeo
 	url = https://github.com/MagnetDB/python_magnetgeo.git
-[submodule "python_magnetcooling"]
-	path = python_magnetcooling
-	url = https://github.com/MagnetDB/python_magnetgeo.git
+	branch = msite_to_assembly
 [submodule "python_magnetsetup"]
 	path = python_magnetsetup
-	url = https://github.com/MagnetDB/python_magnetgeo.git
+	url = https://github.com/MagnetDB/python_magnetsetup.git
+[submodule "python_magnetcooling"]
+	path = python_magnetcooling
+	url = https://github.com/MagnetDB/python_magnetcooling.git
