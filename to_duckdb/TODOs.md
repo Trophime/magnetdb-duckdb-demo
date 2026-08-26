@@ -51,7 +51,7 @@ See: [to_duckdb/PLAN_scheduled_populate.md](PLAN_scheduled_populate.md)
 - [ ] how to flag experiments/overview-records to know what processing has been done on them (stress, fatigue, etc.) and what is still to be done 
 - [ ] how to include cooling models by M1 student for better simulations especially for primary heat exchanger
 - [ ] rework dashboards to start with housing and then go "down" to magnet, with a link to the overview-records and the stress/fatigue results
-  See: [stage/dashboard/PLAN_dashboard_hierarchy_rework.md](../stage/dashboard/PLAN_dashboard_hierarchy_rework.md) (awaiting approval)
+  See: [apps/dashboards/magnetdb/PLAN_dashboard_hierarchy_rework.md](../apps/dashboards/magnetdb/PLAN_dashboard_hierarchy_rework.md) (awaiting approval)
   - create a dashboard for housings
     - display stats for energy, magnet time per housing per year
     - make the table display site with housing, commissionning date, decomissionning date, status, energy, magnet time, binary field history -- like great tables

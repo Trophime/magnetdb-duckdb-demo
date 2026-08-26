@@ -7,11 +7,11 @@ with everything else.
 
 ## Files affected
 
-- `stage/dashboard/src/magnetdb_plot.py` — edit `create_annotated_plot()`:
+- `apps/dashboards/magnetdb/src/magnetdb_plot.py` — edit `create_annotated_plot()`:
   add `customdata=[filename]` to each event marker's
   `go.Scatter(mode='markers+text', ...)` trace, so a click event carries the
   source filename without needing to parse `name`/`legendgroup`.
-- `stage/dashboard/src/pages/overview_records.py` — edit:
+- `apps/dashboards/magnetdb/src/pages/overview_records.py` — edit:
   - `update_groups()`: stop scanning `event_files` when building each
     group's sensor checklist — derive options from `regular_files` only
     (event files carry the same channel names, so nothing is lost),

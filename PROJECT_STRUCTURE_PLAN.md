@@ -1,20 +1,22 @@
 # Project structure improvement plan
 
-Status: proposal only — nothing in this document has been executed yet.
-This plan captures the current-state analysis and a proposed migration path
-for reorganizing the repository around its three deliverable types
-(Jupyter/marimo notebooks, Voila apps, Dash dashboards) and for modernizing
-dependency management.
+Status: this document is a copy carried over from `2026-m1-hifimagnet` by
+the extraction (see `PLAN_magnetdb_duckdb_demo_extraction.md`'s "What
+actually happened" note) — it was a proposal-only analysis of that repo,
+not of this one. §3 steps 4–5 below have since been executed here, in
+`magnetdb-duckdb-demo`; the rest describes issues specific to
+`2026-m1-hifimagnet` that don't exist in this repo.
 
-**Follow-up (2026-08-21):** the `to_duckdb` + Dash-dashboard-consolidation
-portion of this plan's target tree (§2, and §3 steps 4–5) is being realized
-via [PLAN_magnetdb_duckdb_demo_extraction.md](PLAN_magnetdb_duckdb_demo_extraction.md)
-— a history-preserving extraction of `to_duckdb/` and `stage/dashboard/`
-into a new repo, `magnetdb-duckdb-demo` — rather than an in-place reorg
-here. The remaining items below (§3 steps 1, 2, 6 — the `project2`/
-`Project2` duplicate, `to_duckdb.old/`, stray root files) are not covered
-by that extraction and may be moot if this repo is being retired; that's a
-separate, still-open decision, not resolved by this note.
+**Follow-up (2026-08-26):** §3 steps 4 and 5 are now **done**, in this repo
+rather than `2026-m1-hifimagnet` — see
+[PLAN_magnetdb_duckdb_demo_extraction.md](PLAN_magnetdb_duckdb_demo_extraction.md)'s
+"What actually happened" section for how. The `to_duckdb/dashboard` vs
+`stage/dashboard` duplication (§1, §2) was resolved by deleting
+`to_duckdb/dashboard` outright, not just consolidating it — so it no longer
+exists here to consolidate. The remaining items (§3 steps 1, 2, 6 — the
+`project2`/`Project2` duplicate, `to_duckdb.old/`, stray root files) are
+`2026-m1-hifimagnet`-specific and don't apply to this repo, which never
+carried that baggage in.
 
 ## 1. Current state
 
@@ -106,10 +108,17 @@ risks are resolved first, then cleanup, then the directory reshuffle.
    each app's own `src/`, `tests/`, `Dockerfile`.
    → verify: each dashboard still starts (`python app.py` /
    `docker build`) from its new location.
+   **Done (2026-08-26, in this repo)** — `stage/dashboard` moved to
+   `apps/dashboards/magnetdb/`; the duplicate `to_duckdb/dashboard` was
+   deleted rather than consolidated.
 5. **Move notebooks** into `apps/notebooks/`, marimo app into
    `apps/marimo/`, updating any relative imports/paths to `to_duckdb/`.
    → verify: each notebook runs top-to-bottom (`jupyter nbconvert
    --execute` or manual run) after the move.
+   **Done (2026-08-26, in this repo)** — `to_duckdb/marimo` moved to
+   `apps/marimo/`; `apps/notebooks/` populated (from outside this repo's
+   history, not a move); `to_duckdb/tutorials` also moved to
+   `apps/tutorials/`, extending this step beyond its original scope.
 6. **Clean stray root files** (`-m`, `*~` backups, ad-hoc `*.png`/`log`
    test outputs) — remove or relocate under an explicit `scratch/`
    directory that is gitignored.
@@ -143,3 +152,5 @@ in `apps/` stabilize.
   for each dashboard subdirectory.
 - Timing: execute this migration now, or defer until the dashboards in
   `to_duckdb/dashboard/` and `stage/dashboard/` stop actively changing?
+  **Resolved** — executed 2026-08-26 in `magnetdb-duckdb-demo`, not
+  deferred.

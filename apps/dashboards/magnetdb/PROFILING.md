@@ -21,12 +21,12 @@ callback is slow and how often it fires, not *why*.
 var, so it's zero-cost unless explicitly enabled:
 
 ```bash
-cd stage/dashboard/src
+cd apps/dashboards/magnetdb/src
 MAGNETDB_PROFILE=1 python magnetdb_app.py
 ```
 
 Reproduce the slow interaction in the browser, then check
-`stage/dashboard/src/profiles/` — one `.prof` file per Dash callback POST
+`apps/dashboards/magnetdb/src/profiles/` — one `.prof` file per Dash callback POST
 (`/_dash-update-component`), timestamped. Match the slow one against the
 `chrono_callback` prints in stdout, then inspect it:
 
@@ -49,7 +49,7 @@ For a one-off look without touching any file:
 
 ```bash
 pip install py-spy
-python stage/dashboard/src/magnetdb_app.py    # leave running
+python apps/dashboards/magnetdb/src/magnetdb_app.py    # leave running
 ps aux | grep magnetdb_app                    # debug=True forks a reloader —
                                                # two processes show up, profile
                                                # the one actually serving requests

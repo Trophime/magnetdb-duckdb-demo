@@ -10,7 +10,7 @@ files being compared**.
 Run with the project venv:
 
 ```bash
-cd stage/dashboard/tests
+cd apps/dashboards/magnetdb/tests
 ../../../to_duckdb/venv-systempackages/bin/python3 <script>.py [options]
 ```
 
@@ -51,7 +51,7 @@ python3 lag_test.py --fichier-overview "M9_Overview_251202-1430.tdms"
 - `--housing` (default: the `housing` column from the matched DB row)
 
 Database path defaults to the same convention as
-`stage/dashboard/src/magnetdb_analysis.py`; override with:
+`apps/dashboards/magnetdb/src/magnetdb_analysis.py`; override with:
 
 ```bash
 export MAGNETDB_DB_PATH=/path/to/magnetdb.duckdb

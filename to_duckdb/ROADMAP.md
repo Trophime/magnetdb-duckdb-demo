@@ -14,7 +14,7 @@ produced `PLAN_overview_records_pupitre_dedup.md`, `PLAN_hoop_stress_history.md`
 `PLAN_hoop_stress_fatigue_additivity.md`), `PLAN_scheduled_populate.md`,
 `PLAN_econrj_parameter_inference.md`, `PLAN_users_multi_source.md`,
 `PLAN_populate_all.md`, `PLAN_lifecycle_status.md`,
-`stage/dashboard/PLAN_dashboard_hierarchy_rework.md`, and (repo root)
+`apps/dashboards/magnetdb/PLAN_dashboard_hierarchy_rework.md`, and (repo root)
 `PLAN_site_to_assembly_rename.md`. Phases are ordered by dependency, not
 calendar date; effort is relative (S = small, M = medium, L = large, ? =
 not yet sizeable).
@@ -35,7 +35,7 @@ not yet sizeable).
   is also already reserved: `overview_records.plateaux JSON DEFAULT '{}'`
   exists in the schema, unpopulated. A near-identical prototype already
   exists to adapt: `get_plateaux_per_pupitre()` in
-  `stage/dashboard/tests/lag_test_discovery.py:185` iterates
+  `apps/dashboards/magnetdb/tests/lag_test_discovery.py:185` iterates
   `record.sources.pupitre`, loads each file, and calls `nplateaus()` per
   file — same shape as what this item needs, just for pupitre only and
   living in a dashboard test script rather than the `to_duckdb` pipeline.
@@ -56,7 +56,7 @@ not yet sizeable).
   landed the same day: `python_magnetgeo`'s `Assembly` class (with a
   deprecated `MSite` alias), `python_magnetsetup`'s `assembly_setup`,
   `to_duckdb`'s `assemblies`/`assembly_magnets` schema + CRUD + migration
-  script, `stage/dashboard`'s `assembly_stats.py` and friends,
+  script, `apps/dashboards/magnetdb`'s `assembly_stats.py` and friends,
   `python_magnetrun`'s `getAssembly`/`setAssembly`, `python_magnetcooling`'s
   `--assembly` flag, and Phase 7 cleanup (`stage/dash_site_stats.py`
   deleted, `select_site.py`→`select_assembly.py`, etc.). One residual gap:
@@ -66,7 +66,7 @@ not yet sizeable).
   `python_magnetcooling`'s pointer landed, in `c4b9054`. Track B (separate
   repos) execution remains intentionally deferred, unaffected by Track A's
   completion. `PLAN_lifecycle_status.md` and
-  `stage/dashboard/PLAN_dashboard_hierarchy_rework.md` (both referenced in
+  `apps/dashboards/magnetdb/PLAN_dashboard_hierarchy_rework.md` (both referenced in
   the `Now`/`Next`-phase rows below) have been updated to `Assembly`
   vocabulary to match — see their own status lines.
 - `PLAN_hoop_stress_history.md` — Phase 4 (per-part stats/history tests,
@@ -115,37 +115,37 @@ not yet sizeable).
   `sync_info["lag_<key>"]` values, since that half is switched off.
   Wolali's FFT-cross-correlation-on-normalized-derivatives approach lives
   in a shared `get_lag()`, reimplemented identically across three
-  decision-support scripts added to `stage/dashboard/tests/`
+  decision-support scripts added to `apps/dashboards/magnetdb/tests/`
   (`lag_test_file.py` — explicit file args; `lag_test.py` — reads a real
   row's `sources_pupitre`/`sources_overview`/`sources_archive` straight
   from the `overview_records` DuckDB table; `lag_test_discovery.py` — disk
   auto-discovery via `FileDiscovery`, mirroring the analysis submodule's
   own discovery path) — built specifically to run this comparison against
-  real data. Scope home is `stage/dashboard/PLAN_signature_regime_robustness.md`,
+  real data. Scope home is `apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md`,
   whose "Existing tooling to build on" section already cites both sides
   (`synchronization.py`'s `find_best_matching_regime`/`check_lag_reliability`
   and `lag_test_discovery.py`). See "Open Questions" below for what's left
   before `sync_info` actually carries real lag data.
-- `stage/dashboard/FIELD_DEFS_MIGRATION_PLAN.md` — **corrected 2026-08-19:
+- `apps/dashboards/magnetdb/FIELD_DEFS_MIGRATION_PLAN.md` — **corrected 2026-08-19:
   already implemented and committed** (`e345feb`, "up dashboard",
   2026-07-28) — three weeks *before* this roadmap's 2026-08-17 snapshot
   mis-tracked it as "new, no plan approval recorded yet." The plan file
   itself no longer exists on disk. `python_magnetrun/field_defs.py` already
   defines `match_channels_across_formats()`;
-  `stage/dashboard/src/magnetdb_analysis.py` already imports and delegates
+  `apps/dashboards/magnetdb/src/magnetdb_analysis.py` already imports and delegates
   to it directly (`get_comparable_pairs_for_group()`); the old inline
   alias-matching logic it replaced is gone, and the
   `MAGNETDB_PIGBROTHER_DEF`/`MAGNETDB_PUPITRE_DEF` env-var overrides it made
   unused don't appear anywhere in the codebase anymore. Removed from the
   `Next`-phase tables below — nothing left to schedule.
-- `stage/dashboard/PERFORMANCE_PLAN.md` — **new (2026-08-17), untracked, no
+- `apps/dashboards/magnetdb/PERFORMANCE_PLAN.md` — **new (2026-08-17), untracked, no
   plan approval recorded yet**: comparison-page pair-graph callbacks take
   19–192s per invocation because `load_data`/`load_mrun_object` each
   independently re-parse the same file with separate `lru_cache` keys; plan
   adds a shared on-disk Parquet cache, expected warm-run time < 2s;
   includes a scoped-out future S3 migration note. Reads as concrete and
   independently implementable, not blocked on anything else here.
-- `stage/dashboard/src/pages/overview-record.py` — **new, untracked file**
+- `apps/dashboards/magnetdb/src/pages/overview-record.py` — **new, untracked file**
   registering a `/overviews` "Overview Records" page. This appears to
   overlap with `PLAN_dashboard_hierarchy_rework.md`'s still-**unapproved**
   "overview-record file-viewer page" item (that plan's status line
@@ -220,7 +220,7 @@ not yet sizeable).
   `check --entity assembly` audit, and full test coverage. Documented in
   [to_duckdb/docs/schema.md](docs/schema.md#lifecycle) (with a mermaid
   diagram) and checked off in `TODOs.md`.
-- `stage/dashboard/PLAN_dashboard_hierarchy_rework.md` — **new
+- `apps/dashboards/magnetdb/PLAN_dashboard_hierarchy_rework.md` — **new
   (2026-08-14), pending approval**. Covers the `TODOs.md` "New features"
   line *"rework dashboards to start with housing and then go down to
   magnet..."* — but only the hierarchy/navigation piece: `housing_stats`
@@ -245,7 +245,7 @@ not yet sizeable).
   because "site" collided with unrelated meanings in sibling packages
   (`housing`, a lab/geographic location, and the word "site" as in
   "website"). Full multi-repo plan lives in that file; **only the
-  `to_duckdb`/`stage/dashboard` slice (its Phases 3–4) belongs on this
+  `to_duckdb`/`apps/dashboards/magnetdb` slice (its Phases 3–4) belongs on this
   roadmap**, and both have landed — Phases 1/2/5/6/7 touch
   `python_magnetgeo`, `python_magnetsetup`, `python_magnetrun`,
   `python_magnetcooling` (also all landed), and a "Track B" in
@@ -261,7 +261,7 @@ not yet sizeable).
     was already rewritten to `Assembly` vocabulary as part of the rename's
     Phase 4 commit (`c111577`) — it edits `assembly_stats.py` (the renamed
     `site_stats.py`), touched exactly once, under the new vocabulary.
-- **Dashboard hierarchy rework** (`stage/dashboard/PLAN_dashboard_hierarchy_rework.md`)
+- **Dashboard hierarchy rework** (`apps/dashboards/magnetdb/PLAN_dashboard_hierarchy_rework.md`)
   — **landed and verified, 2026-08-19** (`9ad3752`, `75fce67`). Upgraded from
   "new, pending approval" in the previous snapshot — all 8 approach steps
   landed: `magnets.assembled_at`/`parts.manufactured_at` schema+CRUD+
@@ -273,7 +273,7 @@ not yet sizeable).
   `comparison`/`metrics`/`summary` moved to `pages_disabled/`, final nav
   order set. Verified against `test-magnetdb.duckdb` via live Dash
   callbacks, not just unit tests. Moved from `Next` to `Now` below.
-- **Dashboard style homogenization** (`stage/dashboard/PLAN_plot_style_config.md`)
+- **Dashboard style homogenization** (`apps/dashboards/magnetdb/PLAN_plot_style_config.md`)
   — **new (2026-08-19), approved and implemented same day** (`280a76b`):
   bundled `style.json` generated from and round-trip-verified against the
   in-code defaults, 4-step resolution order (env var →
@@ -282,7 +282,7 @@ not yet sizeable).
   energy/magnet-time computation shared by `assembly_stats.py`/
   `housing_stats.py`/`magnet_stats.py`/`part_stats.py` (`f7b4063`).
 - **Hoop-stress data wired into the Part stats dashboard**
-  (`stage/dashboard/PLAN_part_stats_hoop_stress.md`) — **new (2026-08-21),
+  (`apps/dashboards/magnetdb/PLAN_part_stats_hoop_stress.md`) — **new (2026-08-21),
   implemented and verified same day, still uncommitted** (`f193834` wires
   the summary table/bin histogram/history plot from `hoop_stress_bin_stats`/
   `hoop_stress_fatigue`; `7af47a5` changes the bin histogram to show "Time
@@ -304,11 +304,11 @@ not yet sizeable).
   Goodman/FKM mean-stress-aware Palmgren-Miner damage sum later) but isn't
   tracked by any plan file — worth writing one before it's committed, given
   it's a schema change.
-- `stage/dashboard/PLAN_magnet_stats_year_filter.md` — **tabled, not
+- `apps/dashboards/magnetdb/PLAN_magnet_stats_year_filter.md` — **tabled, not
   approved** (discussed 2026-08-20): Housing/Year selectors for
   `magnet_stats.py` matching the existing Housing/Year pattern elsewhere.
 - **Possible draft/impl divergence, worth reconciling:**
-  `stage/dashboard/PLAN_overview_records_event_click.md` (draft, never
+  `apps/dashboards/magnetdb/PLAN_overview_records_event_click.md` (draft, never
   approved — click a default/spike marker to lazily load just that event
   file) vs. the current uncommitted `overview_records.py`/`magnetdb_plot.py`/
   `magnetdb_analysis.py` diff, which instead adds an eager "include archive
@@ -337,7 +337,7 @@ not yet sizeable).
 | Housing-summary notebook fixes | S | Partially done, **uncommitted**: `h.site`→`h.housing` fix in cell `1387a3c9` and a full top-to-bottom re-run (large diff, `638 insertions(+), 380 deletions(-)`) are both present in the current working-tree edit of `stage/import_housing_summary.ipynb`, but not yet committed. Still open: deciding the fate of the `PROPOSALS` dead-end section (`Magnet Sites` column still entirely null) — that section is untouched by the re-run. |
 | Site→Assembly rename — `to_duckdb`/dashboard slice (`PLAN_site_to_assembly_rename.md` Phases 3–4) | M | **Done — implemented and committed 2026-08-18** (`78a288c`, `c111577`), landed in under a day. `PLAN_lifecycle_status.md` below has been updated to reference `Assembly`/`assemblies`/`assembly_magnets` directly, so it no longer needs to write `sites`/`site_magnets` code first. Rest of the original plan (`python_magnetgeo`/`python_magnetsetup`/`python_magnetrun`/`python_magnetcooling` — also all landed the same day, see `PLAN_site_to_assembly_rename.md` — plus the separate-repo `python_magnetdb`/`python_magnetapi` backport) was outside this roadmap's scope; Track B remains deferred. |
 | Execute `PLAN_lifecycle_status.md` | L | **Done — implemented, verified, and committed 2026-08-19.** All three phases landed in one pass: assembly status derivation/overlap/auto-close + cascades (Phase A), magnet/part status defaults/validation/commissioning-cascade/dead-invariant + CLI (Phase B), `docs/schema.md` lifecycle section + `TODOs.md` checkoff (Phase C). Full test suite green throughout. |
-| Dashboard hierarchy rework (`stage/dashboard/PLAN_dashboard_hierarchy_rework.md`) | M | **Done — implemented and verified 2026-08-19** (`9ad3752`, `75fce67`). All 8 approach steps landed, verified live against `test-magnetdb.duckdb`. Moved up from `Next` (previous snapshot had it "pending approval"). |
+| Dashboard hierarchy rework (`apps/dashboards/magnetdb/PLAN_dashboard_hierarchy_rework.md`) | M | **Done — implemented and verified 2026-08-19** (`9ad3752`, `75fce67`). All 8 approach steps landed, verified live against `test-magnetdb.duckdb`. Moved up from `Next` (previous snapshot had it "pending approval"). |
 
 ## Phase: Next — needs a short scoping pass, or has a design sketch with opens to close
 
@@ -345,7 +345,7 @@ not yet sizeable).
 |---|---|---|
 | Hoop-stress fatigue-bins matrix — needs a plan file (`schema.py`'s new `hoop_stress_fatigue_bins`, `compute_hoop_stats.py`'s reworked `_rainflow_stats()`) | S | **New (2026-08-21), implemented but uncommitted, no plan approval recorded.** Enables mean-stress-aware fatigue analysis later; write a short plan before committing, given it's a schema change. |
 | overview-record: signature (Field for classification, Ref currents for ODE, A1–A2/Iddct1–4 for lag) | M | Builds on the now-committed dedup schema. Signature and lag are related — worth scoping together. |
-| overview-record: lag | M | Blocked on open question 1 below — sharpened 2026-08-17: two working lag implementations already exist (`python_magnetrun/analysis/synchronization.py`'s `compute_lag`/`compute_lag_interpolated`, already wired to `overview_records.sync_info` but switched off by default; Wolali's FFT-cross-correlation `get_lag()` in `stage/dashboard/tests/lag_test*.py`, validated but not wired in). Needs a head-to-head comparison (tooling for it already exists), not a design discussion. |
+| overview-record: lag | M | Blocked on open question 1 below — sharpened 2026-08-17: two working lag implementations already exist (`python_magnetrun/analysis/synchronization.py`'s `compute_lag`/`compute_lag_interpolated`, already wired to `overview_records.sync_info` but switched off by default; Wolali's FFT-cross-correlation `get_lag()` in `apps/dashboards/magnetdb/tests/lag_test*.py`, validated but not wired in). Needs a head-to-head comparison (tooling for it already exists), not a design discussion. |
 | overview-record: plateaux | S–M | **Direction decided 2026-08-17** — `nplateaus()` over `sources_pupitre`/`sources_overview` into the already-reserved `overview_records.plateaux` column, adapting the existing `get_plateaux_per_pupitre()` prototype (see Open Question 2). Downgraded from `M` since the algorithm, storage column, and a near-complete prototype already exist; kept at S–M rather than S because per-source threshold tuning and the one-file-vs-row-list decision (see Open Question 2) still need closing first. |
 | `overview-records-from-json` completion | S | In progress since 2026-08-11 (`c5cfd7c`); finish and land the accompanying `test_magnetdb.py` coverage already started. |
 | `populate all` composite (`PLAN_populate_all.md`) | S | Design is concrete (wraps `experiments`→`overview-records`→`overview-records-infer` in one process invocation). Sequence after the items above and `PLAN_hoop_stress_history.md` land, since it wraps those exact commands. Two small opens carried from that plan (see below). |
@@ -353,7 +353,7 @@ not yet sizeable).
 | Processing-status flag on experiments/overview-records | M | **Design decided 2026-08-17** — per-stage timestamp columns (e.g. `stress_processed_at`, `fatigue_processed_at`), not a single tombstone-style column (see Open Question 3). No longer blocked on the design choice, just sequencing: land after `PLAN_hoop_stress_history.md` so the columns' naming matches the finished pipeline's actual stages. Still needs its own plan file (exact column set, which tables, who sets each timestamp). |
 | Scheduler (`PLAN_scheduled_populate.md`) | S–M | Design is concrete (systemd timer + `--settle-seconds` threaded through `scan_tdms_subdir`). Sequence after `PLAN_hoop_stress_history.md` lands, since it schedules exactly those scripts (dedup already landed). Opens carried from that plan (see below). |
 | EcoNRJ parameter inference (`PLAN_econrj_parameter_inference.md`) | M | Fitting recipe and implementation checklist already exist, wraps `piecewise_regression` on `python_magnetrun/examples/corr_Ih_Ib.py`. Independent of the duckdb/dashboard track — can run in parallel. Opens carried from that plan (see below). |
-| Dashboard comparison-page performance (`stage/dashboard/PERFORMANCE_PLAN.md`) | S | **New (2026-08-17), no plan approval recorded yet.** Concrete, self-contained design: shared on-disk Parquet cache fixes duplicate re-parsing (19–192s per pair-graph today) and cross-callback cache misses; expected warm-run time < 2s. No dependencies on other roadmap items. |
+| Dashboard comparison-page performance (`apps/dashboards/magnetdb/PERFORMANCE_PLAN.md`) | S | **New (2026-08-17), no plan approval recorded yet.** Concrete, self-contained design: shared on-disk Parquet cache fixes duplicate re-parsing (19–192s per pair-graph today) and cross-callback cache misses; expected warm-run time < 2s. No dependencies on other roadmap items. |
 
 ## Phase: Later — larger scope, external dependencies, or currently underspecified
 
@@ -461,7 +461,7 @@ rows today — but not the per-channel cross-correlation lag.
 **Side B — Wolali's approach, validated but not wired to the DB.** A
 shared `get_lag()` (FFT cross-correlation on normalized derivatives),
 implemented identically across three new decision-support scripts in
-`stage/dashboard/tests/`: `lag_test_file.py` (explicit file args),
+`apps/dashboards/magnetdb/tests/`: `lag_test_file.py` (explicit file args),
 `lag_test.py` (reads a real `overview_records` row's
 `sources_pupitre`/`sources_overview`/`sources_archive` straight from the
 DuckDB table — both merged-across-files and per-file-pair variants), and
@@ -471,7 +471,7 @@ This is the same approach her thesis (`Koffi-Wolali.tex`, filled in as of
 specifically to run Side A vs. Side B against real data — that comparison
 hasn't been run yet, as far as anything in this repo shows.
 
-**Scope home:** `stage/dashboard/PLAN_signature_regime_robustness.md`
+**Scope home:** `apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md`
 (methodology approved 2026-08-11, revised 2026-08-12) — its "Existing
 tooling to build on" section already cites both `synchronization.py`'s
 `find_best_matching_regime`/`check_lag_reliability` (Side A's neighborhood)
@@ -507,7 +507,7 @@ format's `aliases` entry. Output goes into the existing (currently unused)
 `overview_records.plateaux` JSON column. `nplateaus()` already returns a
 list of `{"start", "end", "value"}` dicts per file, and a working prototype
 already does almost exactly this shape of iteration —
-`get_plateaux_per_pupitre()` in `stage/dashboard/tests/lag_test_discovery.py`
+`get_plateaux_per_pupitre()` in `apps/dashboards/magnetdb/tests/lag_test_discovery.py`
 — just for pupitre only, and living in a dashboard test script rather than
 `to_duckdb`.
 

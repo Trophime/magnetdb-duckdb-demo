@@ -5,8 +5,8 @@ Status: **tabled, not approved, not implemented** (discussed 2026-08-20).
 ## Original ask
 
 Add Housing and Year selectors to the Magnet stats page
-(`stage/dashboard/src/pages/magnet_stats.py`), matching the Housing/Year
-filters already on Assembly stats (`stage/dashboard/src/pages/assembly_stats.py`).
+(`apps/dashboards/magnetdb/src/pages/magnet_stats.py`), matching the Housing/Year
+filters already on Assembly stats (`apps/dashboards/magnetdb/src/pages/assembly_stats.py`).
 
 ## Decisions made during discussion
 
@@ -31,7 +31,7 @@ filters already on Assembly stats (`stage/dashboard/src/pages/assembly_stats.py`
 
 ## Sketched design (not implemented)
 
-1. **New helper** in `stage/dashboard/src/magnetdb_analysis.py`, near
+1. **New helper** in `apps/dashboards/magnetdb/src/magnetdb_analysis.py`, near
    `get_magnets_for_assembly`:
 
    ```python

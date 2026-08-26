@@ -1,7 +1,7 @@
 # Plot style config: bundled default + overridable style.json
 
 **Status:** Approved and implemented 2026-08-19. All 5 approach steps landed and verified: bundled
-`stage/dashboard/src/style.json` generated from and round-trip-verified against the in-code
+`apps/dashboards/magnetdb/src/style.json` generated from and round-trip-verified against the in-code
 defaults; `_load_default_file_type_styles()` rewritten with the 4-step resolution (env var →
 `~/.config/magnetdb/style.json` → bundled `style.json` → in-code defaults), each precedence level
 exercised live with an isolated `$HOME`; `create_plot()`'s title construction fixed to combine
@@ -49,12 +49,12 @@ as a follow-on ("eventually"), needs its own `TraceStyle` schema extension, not 
 ## Files affected
 
 **Create**
-- `stage/dashboard/src/style.json` — bundled default, values taken from today's
+- `apps/dashboards/magnetdb/src/style.json` — bundled default, values taken from today's
   `FileTypeStyles()` dataclass defaults (the table already in `PLOT_STYLE.md`: pupitre / overview
   / archive / default / spike / trigger).
 
 **Edit**
-- `stage/dashboard/src/magnetdb_plot.py`
+- `apps/dashboards/magnetdb/src/magnetdb_plot.py`
   - Add `_USER_STYLE_CONFIG = Path.home() / ".config" / "magnetdb" / "style.json"` (matches the
     `MAGNETDB_*` env-var prefix already used throughout the dashboard, e.g. `MAGNETDB_DB_PATH`)
     and `_BUNDLED_STYLE_PATH = Path(__file__).parent / "style.json"`.
@@ -67,11 +67,11 @@ as a follow-on ("eventually"), needs its own `TraceStyle` schema extension, not 
     non-empty) + `f" (Algo: {method})"`. Confirmed via grep: `create_plot()` has exactly one live
     caller (`file_viewer.py`); `pages_disabled/comparison.py` imports it but never calls it (only
     `create_comparison_plot()`), so this is safe.
-- `stage/dashboard/src/pages/file_viewer.py` — the one live caller of `create_plot()`: change
+- `apps/dashboards/magnetdb/src/pages/file_viewer.py` — the one live caller of `create_plot()`: change
   `filename=f"{selected_file} - {group_name}"` → `filename=selected_file` (the composite string
   was the only thing defeating `_resolve_file_style()`; `group_name` is already passed
   separately and now feeds the title directly).
-- `stage/dashboard/PLOT_STYLE.md` — document the new 3-step resolution order (replacing the
+- `apps/dashboards/magnetdb/PLOT_STYLE.md` — document the new 3-step resolution order (replacing the
   current "env var or code defaults" description), and flip `file_viewer.py`'s "Which pages
   actually get typed styling" verdict from "no" to "yes."
 

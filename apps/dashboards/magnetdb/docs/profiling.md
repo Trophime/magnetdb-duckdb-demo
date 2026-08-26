@@ -24,7 +24,7 @@ as a `POST /_dash-update-component`), not the process lifetime as a whole.
 opt-in with zero overhead when off:
 
 ```bash
-cd stage/dashboard/src
+cd apps/dashboards/magnetdb/src
 export MAGNETDB_DB_PATH=... MAGNETDB_DB_DIR=...   # or `source ../.envrc`
 PROFILE=1 ../../../to_duckdb/venv/bin/python magnetdb_app.py
 ```
@@ -59,7 +59,7 @@ def update_single_pair_graph(...):
 Run the server under `kernprof` instead of `python`:
 
 ```bash
-cd stage/dashboard/src
+cd apps/dashboards/magnetdb/src
 ../../../to_duckdb/venv/bin/kernprof -l magnetdb_app.py
 # exercise the slow page in the browser, then Ctrl+C
 ../../../to_duckdb/venv/bin/python -m line_profiler magnetdb_app.py.lprof
@@ -75,7 +75,7 @@ the *entire* server session, so concurrent parses show up as overlapping spikes 
 isolated per-request numbers:
 
 ```bash
-cd stage/dashboard/src
+cd apps/dashboards/magnetdb/src
 ../../../to_duckdb/venv/bin/mprof run magnetdb_app.py
 # exercise the comparison page, then Ctrl+C
 ../../../to_duckdb/venv/bin/mprof plot

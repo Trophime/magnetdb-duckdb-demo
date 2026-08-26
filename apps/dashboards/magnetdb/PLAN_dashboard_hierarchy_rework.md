@@ -86,8 +86,8 @@ is safe. Note `src/metrics.py` (shared module, used by `comparison.py` for
   where `manufactured_at IS NULL`, issues per-row `UPDATE parts SET manufactured_at = ? WHERE
   name = ?` for names that parse. Leaves `bitter`-type / non-conforming names NULL. Expected
   match counts: 160/166 in `test-magnetdb.duckdb`, 87/92 in `magnetdb.duckdb`.
-- `stage/dashboard/src/pages/housing_stats.py` — landing page, `path="/"`, `order=1`.
-- `stage/dashboard/src/pages/overview_records.py` — new page, `path="/overview-records"`,
+- `apps/dashboards/magnetdb/src/pages/housing_stats.py` — landing page, `path="/"`, `order=1`.
+- `apps/dashboards/magnetdb/src/pages/overview_records.py` — new page, `path="/overview-records"`,
   `order=5`. Assembly dropdown → overview_record dropdown (chronological, reuses
   `get_overview_records_for_assembly`) → X-axis + downsampling selectors → per-group accordion
   (mirrors `home.py`'s `html.Details`/checklist/graph pattern, group list via existing
@@ -96,9 +96,9 @@ is safe. Note `src/metrics.py` (shared module, used by `comparison.py` for
   annotations. Missing-data banner if the record has no loadable sources.
 
 **Move (deactivate as pages, keep the code)**
-- `stage/dashboard/src/pages/comparison.py` → `stage/dashboard/src/pages_disabled/comparison.py`
-- `stage/dashboard/src/pages/metrics.py` → `stage/dashboard/src/pages_disabled/metrics.py`
-- `stage/dashboard/src/pages/summary.py` → `stage/dashboard/src/pages_disabled/summary.py`
+- `apps/dashboards/magnetdb/src/pages/comparison.py` → `apps/dashboards/magnetdb/src/pages_disabled/comparison.py`
+- `apps/dashboards/magnetdb/src/pages/metrics.py` → `apps/dashboards/magnetdb/src/pages_disabled/metrics.py`
+- `apps/dashboards/magnetdb/src/pages/summary.py` → `apps/dashboards/magnetdb/src/pages_disabled/summary.py`
 
 **Edit**
 - `to_duckdb/schema.py` — add `magnets.assembled_at TIMESTAMP` and `parts.manufactured_at
@@ -115,26 +115,26 @@ is safe. Note `src/metrics.py` (shared module, used by `comparison.py` for
   `assembled_at` to the INSERT column list, value `assembled_at_from_name(name)`. Update
   `insert_part()`: add `manufactured_at` to the INSERT column list, value
   `manufactured_at_from_name(name)`.
-- `stage/dashboard/src/magnetdb_analysis.py` — add `get_db_counts`,
+- `apps/dashboards/magnetdb/src/magnetdb_analysis.py` — add `get_db_counts`,
   `get_overview_records_for_magnet`, `get_overview_records_for_part`,
   `get_assembly_history_for_magnet`, `get_magnet_history_for_part`, `get_field_bin_history`, and
   `get_overview_record_sources(filename, db_path=None)` (fetches `housing`, `assembly_name`, and
   the five `sources_*` arrays for one record).
-- `stage/dashboard/src/magnetdb_plot.py` — add
+- `apps/dashboards/magnetdb/src/magnetdb_plot.py` — add
   `create_annotated_plot(files_data, x_col, method, group_name)`: single-subplot version of
   the event-vs-line logic from `create_comparison_plot`, no lag/sync/two-row layout.
-- `stage/dashboard/src/experiment_links.py` — add `overview_record_link(row)` (same shape as
+- `apps/dashboards/magnetdb/src/experiment_links.py` — add `overview_record_link(row)` (same shape as
   the existing `experiment_link`), producing links into `/overview-records`.
-- `stage/dashboard/src/pages/assembly_stats.py` — `path` "/" → `/assembly_stats`, `order`→2; add
+- `apps/dashboards/magnetdb/src/pages/assembly_stats.py` — `path` "/" → `/assembly_stats`, `order`→2; add
   "Overview records" accordion (linked via `overview_record_link`); DB-wide summary counts +
   filter-aware text; missing-data banner.
-- `stage/dashboard/src/pages/magnet_stats.py` — `order`→3; add "Overview records" accordion;
+- `apps/dashboards/magnetdb/src/pages/magnet_stats.py` — `order`→3; add "Overview records" accordion;
   add "Assembly history" accordion (`get_assembly_history_for_magnet`, ordered by
   `assemblies.commissioned_at`); summary counts + filter-aware text; missing-data banner.
-- `stage/dashboard/src/pages/part_stats.py` — `order`→4; add "Overview records" accordion; add
+- `apps/dashboards/magnetdb/src/pages/part_stats.py` — `order`→4; add "Overview records" accordion; add
   "Magnet history" accordion (`get_magnet_history_for_part`, ordered by `magnets.assembled_at`);
   summary counts + filter-aware text; missing-data banner.
-- `stage/dashboard/src/pages/home.py` — `order` only (4→6) at the time this plan landed; rename
+- `apps/dashboards/magnetdb/src/pages/home.py` — `order` only (4→6) at the time this plan landed; rename
   deferred ("eventually", per user). **Follow-up, 2026-08-19: renamed to
   `file_viewer.py`, route `/home`→`/file_viewer`, deprecated `site=` alias dropped** (nothing
   generated `?site=...` links anymore since the old `site_stats.py` page was deleted in the
@@ -145,8 +145,8 @@ is safe. Note `src/metrics.py` (shared module, used by `comparison.py` for
   `"<file> - <group>"` string as `create_plot()`'s `filename`, which never matches `.txt`/`.tdms`.
   Fixing that, plus making the dashboard's plot-style config a real bundled+overridable
   `style.json` (rather than in-code-only defaults), is scoped separately in
-  `stage/dashboard/PLAN_plot_style_config.md`.
-- `stage/dashboard/src/pages/stats_research_area.py` — `order` only (7→7, confirmed after the
+  `apps/dashboards/magnetdb/PLAN_plot_style_config.md`.
+- `apps/dashboards/magnetdb/src/pages/stats_research_area.py` — `order` only (7→7, confirmed after the
   others move). No content changes — tabled for later discussion per user.
 
 ## Approach
@@ -189,7 +189,7 @@ is safe. Note `src/metrics.py` (shared module, used by `comparison.py` for
 
 ## Assumptions & open questions
 
-- Deactivated pages move to a new `stage/dashboard/src/pages_disabled/` directory (outside
+- Deactivated pages move to a new `apps/dashboards/magnetdb/src/pages_disabled/` directory (outside
   Dash's auto-discovered `pages/` folder) — say if you'd rather just comment out their
   `register_page()` calls in place instead of relocating the files.
 - `overview_records.py` does **no** cross-file time alignment/lag correction — it just

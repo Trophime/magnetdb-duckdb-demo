@@ -1,6 +1,8 @@
 # Plan — extract `to_duckdb` + `stage/dashboard` into `magnetdb-duckdb-demo`
 
-Status: proposed, not yet approved or executed.
+Status: executed (2026-08-26) on the local `magnetdb-duckdb-demo` clone;
+not yet pushed to GitHub. See "What actually happened" below for how the
+execution diverged from the Approach as originally proposed.
 
 ## Goal
 
@@ -77,10 +79,50 @@ is up.
   this repo today.
 - `git log -- python_magnetgeo` (etc.) in the new repo shows the real
   pointer-bump history, not a single flattened commit.
-- `git log --all -- to_duckdb/dashboard` in the new repo is empty.
+- `git log --all -- to_duckdb/dashboard` in the new repo is empty. **Not
+  met** — see "What actually happened" below; this was dropped via a
+  forward commit instead, so its prior history is still present.
 - Fresh clone + submodule init succeeds; `to_duckdb` and the dashboard
   import cleanly against the vendored submodules.
 - This repo's own `git log`/`git status` unchanged before and after.
+
+## What actually happened (2026-08-26)
+
+Executed directly in the working clone at `~/github/magnetdb-duckdb-demo`
+(not a disposable scratch clone) — this repo is now the intended ongoing
+home for the work, so there was no separate "clone → filter → push" scratch
+step.
+
+Deviations from the Approach above:
+
+- **`stage/dashboard` → `apps/dashboards/magnetdb` was a plain `git mv`**,
+  committed after the initial `git filter-repo --path to_duckdb --path
+  stage/dashboard --path python_magnetgeo --path python_magnetrun --path
+  python_magnetsetup` cut, not a `--path-rename` inside that same
+  filter-repo pass. Per-file history still follows through the rename
+  (`git log --follow` on `apps/dashboards/magnetdb/src/magnetdb_app.py`
+  walks back through the pre-move `stage/dashboard` commits) — a plain
+  `git log -- apps/dashboards` without `--follow` just doesn't show it,
+  since `--follow` only works on a single file, not a directory pathspec.
+- **`to_duckdb/dashboard` was dropped via a forward `git rm -r` commit**,
+  not the planned second `git filter-repo --invert-paths --path
+  to_duckdb/dashboard` pass. Since nothing has been pushed anywhere yet and
+  this repo is now the active working copy, a full history rewrite to erase
+  its history wasn't worth disrupting the commits already layered on top of
+  it. The directory is gone from the working tree and untracked at HEAD,
+  but its prior history is still reachable.
+- **`python_magnetcooling` was kept**, not excluded — confirmed fine to
+  carry even though unused by `to_duckdb`/`stage/dashboard` today.
+- **Scope grew beyond `to_duckdb` + `stage/dashboard`**: `to_duckdb/marimo`
+  and `to_duckdb/tutorials` moved to `apps/marimo` and `apps/tutorials`, and
+  a new `apps/notebooks/` was populated (added fresh — those files aren't
+  moves out of this repo's own history). This folds in
+  `PROJECT_STRUCTURE_PLAN.md` §3 steps 4–5 wholesale rather than just the
+  dashboard-consolidation slice originally scoped here.
+- Not yet done: pushing to `Trophime/magnetdb-duckdb-demo` on GitHub
+  (Approach steps 6–7), and a separate root-level/`stage/*.py` bleed-through
+  (files pulled in by git's rename-following across the path filter
+  boundary) — tracked separately, left alone for now.
 
 ## Follow-up
 

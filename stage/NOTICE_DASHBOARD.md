@@ -12,7 +12,7 @@ Ensure the required database (`magnetdb.duckdb`) is located in the `to_duckdb/` 
 **Startup:**
 1. Open a terminal and navigate to the dashboard folder:
    ```bash
-   cd stage/dashboard/src
+   cd apps/dashboards/magnetdb/src
    ```
 
 2. Run the Dash server:

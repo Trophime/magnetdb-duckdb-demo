@@ -16,7 +16,7 @@ section — see [Context](#context) below.
 ## Context
 
 - The accordion layout stub already exists
-  (`stage/dashboard/src/pages/part_stats.py:374-403`, ids
+  (`apps/dashboards/magnetdb/src/pages/part_stats.py:374-403`, ids
   `part-stats-hoop-stress-fig` / `part-stats-hoop-stress-table`) but has no
   loader function and isn't wired into the page's callback.
 - Backing data already exists in `test-magnetdb.duckdb`: 2409
@@ -37,9 +37,9 @@ section — see [Context](#context) below.
 
 ## Files affected
 
-- `stage/dashboard/src/magnetdb_analysis.py` — edit: add 3 read-only
+- `apps/dashboards/magnetdb/src/magnetdb_analysis.py` — edit: add 3 read-only
   data-access functions.
-- `stage/dashboard/src/pages/part_stats.py` — edit: extend the accordion
+- `apps/dashboards/magnetdb/src/pages/part_stats.py` — edit: extend the accordion
   layout, add a `_hoop_stress_section()` helper, wire 4 new callback
   outputs.
 
@@ -95,7 +95,7 @@ section — see [Context](#context) below.
 ## Verification
 
 1. Launch the dashboard (`MAGNETDB_DB_PATH=.../to_duckdb/test-magnetdb.duckdb
-   stage/dashboard/venv/bin/python3 stage/dashboard/src/magnetdb_app.py`),
+   apps/dashboards/magnetdb/venv/bin/python3 apps/dashboards/magnetdb/src/magnetdb_app.py`),
    open `/part_stats` in a browser:
    - No part selected → prompt banner, no errors.
    - Select `H21102801` (165 bin-stat rows + prebuilt `H21102801.parquet`,
@@ -155,13 +155,13 @@ dropped too.
   block from `ensure_schema()`. A real `DROP TABLE` still needs to run
   against each live `.duckdb` file separately (schema.py only governs
   future `ensure_schema()` calls).
-- `stage/dashboard/src/pages/part_stats.py` — remove the
+- `apps/dashboards/magnetdb/src/pages/part_stats.py` — remove the
   `exp_part_bin_stats` LEFT JOIN, `_warn_exp_part_bin_stats`, the
   "Operating time (h)" / "Peak hoop stress proxy (A²)" columns, and the
   "Operating Time per Part" chart (or repoint `fig_hours` at something
   else).
 - Docs/tests referencing the table: `to_duckdb/docs/statistics.md`,
-  `to_duckdb/docs/query_cumstats.md`, `to_duckdb/tutorials/query_cumstats.py`
+  `to_duckdb/docs/query_cumstats.md`, `apps/tutorials/query_cumstats.py`
   (has live queries against it), `to_duckdb/tests/test_schema.py` (asserts
   it exists), `to_duckdb/schema_diagram.py`, `stage/NOTICE_DASHBOARD.md`.
 - Out of scope for this follow-up: `exp_run_scalars` and
