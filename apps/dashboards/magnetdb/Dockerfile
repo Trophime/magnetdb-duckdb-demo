@@ -52,7 +52,7 @@ COPY --chown=${USERNAME}:${USERNAME} python_magnetcooling/ ./python_magnetcoolin
 RUN pip install --no-cache-dir "./python_magnetcooling[fitting]"
 
 COPY --chown=${USERNAME}:${USERNAME} python_magnetrun/ ./python_magnetrun/
-RUN pip install --no-cache-dir ./python_magnetrun
+RUN pip install --no-cache-dir "./python_magnetrun[hybrid]"
 
 # Now copy the actual app code
 COPY --chown=${USERNAME}:${USERNAME} apps/dashboards/magnetdb/src/ ./src/

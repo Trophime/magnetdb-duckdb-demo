@@ -73,7 +73,7 @@ uv pip install ipyfilechooser ipywidgets voila pandas
 echo "🛠️  Linking development submodules..."
 uv pip install -e "./python_magnetgeo"
 uv pip install -e "./python_magnetcooling[fitting]"
-uv pip install -e "./python_magnetrun[signal]"
+uv pip install -e "./python_magnetrun[signal,hybrid]"
 uv pip install -e "./python_magnetsetup"
 
 echo "✅ UV Setup Complete! Your environment is isolated but has access to system site packages."
