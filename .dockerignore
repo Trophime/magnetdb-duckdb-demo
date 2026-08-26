@@ -1,0 +1,42 @@
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.so
+**/*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Tests / coverage
+.tox/
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Docs
+docs/_build/
+
+# Misc
+*.md
+!README.md
+stage/
+to_duckdb/
