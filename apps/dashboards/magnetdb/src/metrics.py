@@ -5,7 +5,7 @@ from datetime import datetime
 import pandas as pd
 
 
-OUTPUT_DIR = "/workspaces/2026-m1-hifimagnet/stage/dashboard/metrics_reports"  
+OUTPUT_DIR = "/workspaces/magnetdb-duckdb-demo/apps/dashboards/magnetdb/metrics_reports"
 
 def get_mean(signal):
     return np.nanmean(signal)

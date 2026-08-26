@@ -14,7 +14,7 @@ app = Dash(
 )
 server = app.server
 
-if os.environ.get("PROFILE"):
+if os.environ.get("MAGNETDB_PROFILE"):
     # cProfile per request, gated by env var so it's opt-in.
     # Dumps one .prof per HTTP request (assets, page loads, and every callback
     # invocation via POST /_dash-update-component) into profile_dir.

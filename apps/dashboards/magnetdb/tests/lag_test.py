@@ -11,7 +11,7 @@ from python_magnetrun.analysis.loaders import load_files_data
 from python_magnetrun.log_utils import LogConfig, setup_logging
 
 DB_PATH = os.environ.get(
-    "MAGNETDB_DB_PATH", "/workspaces/2026-m1-hifimagnet/to_duckdb/magnetdb.duckdb"
+    "MAGNETDB_DB_PATH", "/workspaces/magnetdb-duckdb-demo/to_duckdb/magnetdb.duckdb"
 )
 
 

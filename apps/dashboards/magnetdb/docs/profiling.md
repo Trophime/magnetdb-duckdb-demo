@@ -26,7 +26,7 @@ opt-in with zero overhead when off:
 ```bash
 cd apps/dashboards/magnetdb/src
 export MAGNETDB_DB_PATH=... MAGNETDB_DB_DIR=...   # or `source ../.envrc`
-PROFILE=1 ../../../to_duckdb/venv/bin/python magnetdb_app.py
+MAGNETDB_PROFILE=1 ../../../to_duckdb/venv/bin/python magnetdb_app.py
 ```
 
 Click through the app as usual (e.g. the comparison page). Every request drops a `.prof`
@@ -130,7 +130,7 @@ per-line detail but doesn't require refactoring code into a module first.
 
 ## Typical workflow
 
-1. **Dashboard**: `PROFILE=1` + cProfile/snakeviz (or `py-spy record` if it's already
+1. **Dashboard**: `MAGNETDB_PROFILE=1` + cProfile/snakeviz (or `py-spy record` if it's already
    running) to find which request/callback is slow.
 2. **Notebook**: `%timeit`/`%time` first to confirm there's actually a problem worth
    chasing.

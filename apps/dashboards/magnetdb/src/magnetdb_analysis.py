@@ -18,7 +18,7 @@ from natsort import natsorted
 
 # Chemin absolu vers la base DuckDB (surchargable via variable d'environnement)
 DB_PATH = os.environ.get(
-    "MAGNETDB_DB_PATH", "/workspaces/2026-m1-hifimagnet/to_duckdb/test-magnetdb.duckdb"
+    "MAGNETDB_DB_PATH", "/workspaces/magnetdb-duckdb-demo/to_duckdb/test-magnetdb.duckdb"
 )
 # Répertoire scanné pour lister les bases sélectionnables dans le dropdown
 DB_DIR = os.environ.get("MAGNETDB_DB_DIR", os.path.dirname(DB_PATH))

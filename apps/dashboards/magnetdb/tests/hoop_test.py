@@ -1,6 +1,6 @@
 import duckdb
 
-db_path = "/workspaces/2026-m1-hifimagnet/to_duckdb/test-magnetdb.duckdb"
+db_path = "/workspaces/magnetdb-duckdb-demo/to_duckdb/test-magnetdb.duckdb"
 conn = duckdb.connect(db_path, read_only=True)
 
 df_exp = conn.execute(

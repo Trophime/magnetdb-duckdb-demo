@@ -5,7 +5,7 @@ import duckdb
 import pandas as pd
 import numpy as np
 
-DB_PATH = "/workspaces/2026-m1-hifimagnet/to_duckdb/magnetdb.duckdb"
+DB_PATH = "/workspaces/magnetdb-duckdb-demo/to_duckdb/magnetdb.duckdb"
 
 # Initialisation de l'application avec un thème sympa
 app = dash.Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
