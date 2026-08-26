@@ -1,0 +1,30 @@
+{
+    "Vp0": {
+        "value": 1799.71026263577,
+        "unit": "rpm"
+    },
+    "Vpmax": {
+        "value": 999.8206661988215,
+        "unit": "rpm"
+    },
+    "F0": {
+        "value": 0,
+        "unit": "l/s"
+    },
+    "Fmax": {
+        "value": 61.71612272405876,
+        "unit": "l/s"
+    },
+    "Pmax": {
+        "value": 22,
+        "unit": "bar"
+    },
+    "Pmin": {
+        "value": 4,
+        "unit": "bar"
+    },
+    "Imax": {
+        "value": 28000,
+        "unit": "A"
+    }
+}

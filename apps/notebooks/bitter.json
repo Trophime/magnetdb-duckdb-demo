@@ -1,0 +1,327 @@
+args: Namespace(server='api.magnetdb-dev.local', port=8000, debug=False, https=True, command='view', mtype='part', name='M8Bi')
+server: https://api.magnetdb-dev.local, verify=/etc/ssl/certs
+view: ids={'HL-34_H1': 1, 'HL-34_H2': 2, 'Ring-H1H2': 3, 'tore': 4, 'tore1': 5, 'tore2': 6, 'M9Bi': 7, 'M9Be': 8, 'M10Bi': 9, 'M10Be': 10, 'M8Bi': 11, 'M8Be': 12, 'H15101601': 13, 'H15061703': 14, 'H15061801': 15, 'H15100501': 16, 'H15101501': 17, 'H18060101': 18, 'H18012501': 19, 'H18051801': 20, 'H19060601': 21, 'H19060602': 22, 'H19061201': 23, 'H19060603': 24, 'H10061702': 25, 'H10061703': 26, 'M19061901_R1': 27, 'M19061901_R2': 28, 'M19061901_R3': 29, 'M19061901_R4': 30, 'M19061901_R5': 31, 'M19061901_R6': 32, 'M19061901_R7': 33, 'M19061901_R8': 34, 'M19061901_R9': 35, 'M19061901_R10': 36, 'M19061901_R11': 37, 'M19061901_R12': 38, 'M19061901_R13': 39, 'M19061901_iL1': 40, 'M19061901_oL2': 41, 'H18040901': 42, 'H17062101': 43, 'H15013001': 44, 'H08070801': 45, 'H10011201': 46, 'H08070810': 47, 'H08070811': 48, 'H08060606': 49, 'H08060607': 50, 'H08060608': 51, 'H08060609': 52, 'H10011501': 53}
+M8Bi:
+{
+    "id": 11,
+    "name": "M8Bi",
+    "description": null,
+    "type": "bitter",
+    "status": "in_study",
+    "material": {
+        "id": 6,
+        "name": "B_CuAg008",
+        "nuance": "CuAg008",
+        "description": null,
+        "t_ref": 293.0,
+        "volumic_mass": 9000.0,
+        "alpha": 0.0036,
+        "specific_heat": 380.0,
+        "electrical_conductivity": 50100000.0,
+        "thermal_conductivity": 360.0,
+        "magnet_permeability": 1.0,
+        "young": 127000000000.0,
+        "poisson": 0.335,
+        "expansion_coefficient": 1.8e-05,
+        "rpe": 481000000.0,
+        "metadata": {},
+        "created_at": "2026-03-12T09:46:18.250374+00:00",
+        "updated_at": "2026-03-12T09:46:18.250398+00:00"
+    },
+    "created_at": "2026-03-12T09:46:18.276870+00:00",
+    "updated_at": "2026-03-12T09:46:18.276890+00:00",
+    "design_office_reference": "BI-03-002-A",
+    "geometry_config": {
+        "r": [
+            200,
+            300
+        ],
+        "z": [
+            -244.3,
+            244.3
+        ],
+        "odd": true,
+        "name": "M8_Bi",
+        "tierod": {
+            "n": 36,
+            "r": 265.65,
+            "dh": 2.74928,
+            "sh": 10.485583,
+            "name": "tierod",
+            "contour2d": {
+                "name": "circle-diam-10mm",
+                "points": [
+                    [
+                        10,
+                        0
+                    ],
+                    [
+                        0,
+                        10
+                    ],
+                    [
+                        -10,
+                        0
+                    ],
+                    [
+                        0,
+                        -10
+                    ]
+                ],
+                "__classname__": "Contour2D"
+            },
+            "__classname__": "Tierod"
+        },
+        "modelaxi": {
+            "h": 242.3,
+            "name": "hybride-cea.d",
+            "pitch": [
+                4.445871559633
+            ],
+            "turns": [
+                109
+            ],
+            "__classname__": "ModelAxi"
+        },
+        "innerbore": 199.705,
+        "outerbore": 300.25,
+        "coolingslits": [
+            {
+                "n": 144,
+                "r": 208.3,
+                "dh": 2.74928,
+                "sh": 10.485583,
+                "name": "",
+                "angle": 1.25,
+                "contour2d": {
+                    "name": "oblong-diam-1.1mm",
+                    "points": [
+                        [
+                            0.55,
+                            2.95
+                        ],
+                        [
+                            0,
+                            3.5
+                        ],
+                        [
+                            -0.55,
+                            2.95
+                        ],
+                        [
+                            -0.55,
+                            -2.95
+                        ],
+                        [
+                            0,
+                            -3.5
+                        ],
+                        [
+                            0.55,
+                            -2.95
+                        ]
+                    ],
+                    "__classname__": "Contour2D"
+                },
+                "__classname__": "CoolingSlit"
+            },
+            {
+                "n": 144,
+                "r": 225.85,
+                "dh": 2.74928,
+                "sh": 10.485583,
+                "name": "",
+                "angle": 0,
+                "contour2d": {
+                    "name": "oblong-diam-1.1mm",
+                    "points": [
+                        [
+                            0.55,
+                            2.95
+                        ],
+                        [
+                            0,
+                            3.5
+                        ],
+                        [
+                            -0.55,
+                            2.95
+                        ],
+                        [
+                            -0.55,
+                            -2.95
+                        ],
+                        [
+                            0,
+                            -3.5
+                        ],
+                        [
+                            0.55,
+                            -2.95
+                        ]
+                    ],
+                    "__classname__": "Contour2D"
+                },
+                "__classname__": "CoolingSlit"
+            },
+            {
+                "n": 144,
+                "r": 244.95,
+                "dh": 2.74928,
+                "sh": 10.485583,
+                "name": "",
+                "angle": 1.25,
+                "contour2d": {
+                    "name": "oblong-diam-1.1mm",
+                    "points": [
+                        [
+                            0.55,
+                            2.95
+                        ],
+                        [
+                            0,
+                            3.5
+                        ],
+                        [
+                            -0.55,
+                            2.95
+                        ],
+                        [
+                            -0.55,
+                            -2.95
+                        ],
+                        [
+                            0,
+                            -3.5
+                        ],
+                        [
+                            0.55,
+                            -2.95
+                        ]
+                    ],
+                    "__classname__": "Contour2D"
+                },
+                "__classname__": "CoolingSlit"
+            },
+            {
+                "n": 108,
+                "r": 265.65,
+                "dh": 2.74928,
+                "sh": 10.485583,
+                "name": "",
+                "angle": 0,
+                "contour2d": {
+                    "name": "oblong-diam-1.1mm",
+                    "points": [
+                        [
+                            0.55,
+                            2.95
+                        ],
+                        [
+                            0,
+                            3.5
+                        ],
+                        [
+                            -0.55,
+                            2.95
+                        ],
+                        [
+                            -0.55,
+                            -2.95
+                        ],
+                        [
+                            0,
+                            -3.5
+                        ],
+                        [
+                            0.55,
+                            -2.95
+                        ]
+                    ],
+                    "__classname__": "Contour2D"
+                },
+                "__classname__": "CoolingSlit"
+            },
+            {
+                "n": 144,
+                "r": 288.1,
+                "dh": 2.74928,
+                "sh": 10.485583,
+                "name": "",
+                "angle": 1.25,
+                "contour2d": {
+                    "name": "oblong-diam-1.1mm",
+                    "points": [
+                        [
+                            0.55,
+                            2.95
+                        ],
+                        [
+                            0,
+                            3.5
+                        ],
+                        [
+                            -0.55,
+                            2.95
+                        ],
+                        [
+                            -0.55,
+                            -2.95
+                        ],
+                        [
+                            0,
+                            -3.5
+                        ],
+                        [
+                            0.55,
+                            -2.95
+                        ]
+                    ],
+                    "__classname__": "Contour2D"
+                },
+                "__classname__": "CoolingSlit"
+            }
+        ],
+        "__classname__": "Bitter"
+    },
+    "metadata": {},
+    "magnet_parts": [
+        {
+            "id": 8,
+            "magnet": {
+                "id": 5,
+                "type": "bitters",
+                "name": "M8Bitters",
+                "description": null,
+                "inner_bore": 199.1,
+                "outer_bore": 401.9,
+                "status": "in_study",
+                "created_at": "2026-03-12T09:51:16.238728+00:00",
+                "updated_at": "2026-03-12T09:51:16.238757+00:00",
+                "design_office_reference": "M8Bitters",
+                "metadata": {},
+                "flow_params": null,
+                "supported_part_types": [
+                    "bitter",
+                    "screen",
+                    "lead"
+                ],
+                "commissioned_at": null,
+                "decommissioned_at": null
+            },
+            "part": null,
+            "commissioned_at": "2026-03-12T09:51:16.244259+00:00",
+            "decommissioned_at": null,
+            "angle": null,
+            "metadata": {},
+            "created_at": "2026-03-12T09:51:16.245691+00:00",
+            "updated_at": "2026-03-12T09:51:16.245712+00:00"
+        }
+    ],
+    "hts": null,
+    "shape": null,
+    "modelaxi": null,
+    "allow_hts_file": false,
+    "allow_shape_file": false,
+    "allow_modelaxi_file": true
+}

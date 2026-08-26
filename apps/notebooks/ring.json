@@ -1,0 +1,158 @@
+args: Namespace(server='api.magnetdb-dev.local', port=8000, debug=False, https=True, command='view', mtype='part', name='M19061901_R13')
+server: https://api.magnetdb-dev.local, verify=/etc/ssl/certs
+view: ids={'HL-34_H1': 1, 'HL-34_H2': 2, 'Ring-H1H2': 3, 'tore': 4, 'tore1': 5, 'tore2': 6, 'M9Bi': 7, 'M9Be': 8, 'M10Bi': 9, 'M10Be': 10, 'M8Bi': 11, 'M8Be': 12, 'H15101601': 13, 'H15061703': 14, 'H15061801': 15, 'H15100501': 16, 'H15101501': 17, 'H18060101': 18, 'H18012501': 19, 'H18051801': 20, 'H19060601': 21, 'H19060602': 22, 'H19061201': 23, 'H19060603': 24, 'H10061702': 25, 'H10061703': 26, 'M19061901_R1': 27, 'M19061901_R2': 28, 'M19061901_R3': 29, 'M19061901_R4': 30, 'M19061901_R5': 31, 'M19061901_R6': 32, 'M19061901_R7': 33, 'M19061901_R8': 34, 'M19061901_R9': 35, 'M19061901_R10': 36, 'M19061901_R11': 37, 'M19061901_R12': 38, 'M19061901_R13': 39, 'M19061901_iL1': 40, 'M19061901_oL2': 41, 'H18040901': 42, 'H17062101': 43, 'H15013001': 44, 'H08070801': 45, 'H10011201': 46, 'H08070810': 47, 'H08070811': 48, 'H08060606': 49, 'H08060607': 50, 'H08060608': 51, 'H08060609': 52, 'H10011501': 53}
+M19061901_R13:
+{
+    "id": 39,
+    "name": "M19061901_R13",
+    "description": null,
+    "type": "ring",
+    "status": "in_study",
+    "material": {
+        "id": 22,
+        "name": "MAT2_RING",
+        "nuance": "unknow",
+        "description": "R3, R4, R5, R6, R7, R8, R9, R10, R11, R12, R13",
+        "t_ref": 293.0,
+        "volumic_mass": 9000.0,
+        "alpha": 0.0034,
+        "specific_heat": 380.0,
+        "electrical_conductivity": 50000000.0,
+        "thermal_conductivity": 320.0,
+        "magnet_permeability": 1.0,
+        "young": 131000000000.0,
+        "poisson": 0.3,
+        "expansion_coefficient": 1.7e-05,
+        "rpe": 0.0,
+        "metadata": {},
+        "created_at": "2026-03-12T10:14:22.793205+00:00",
+        "updated_at": "2026-03-12T10:14:22.793228+00:00"
+    },
+    "created_at": "2026-03-12T10:14:38.689390+00:00",
+    "updated_at": "2026-03-12T10:14:38.689414+00:00",
+    "design_office_reference": null,
+    "geometry_config": {
+        "n": 24,
+        "r": [
+            153.1,
+            169.5,
+            170.4,
+            186
+        ],
+        "z": [
+            0,
+            20
+        ],
+        "cad": "",
+        "name": "Ring-H13H14",
+        "angle": 12,
+        "bpside": true,
+        "fillets": false,
+        "__classname__": "Ring"
+    },
+    "metadata": {},
+    "magnet_parts": [
+        {
+            "id": 36,
+            "magnet": {
+                "id": 6,
+                "type": "insert",
+                "name": "M19061901",
+                "description": null,
+                "inner_bore": 18.54,
+                "outer_bore": 186.25,
+                "status": "in_study",
+                "created_at": "2026-03-12T10:14:40.008450+00:00",
+                "updated_at": "2026-03-12T10:14:40.008474+00:00",
+                "design_office_reference": null,
+                "metadata": {},
+                "flow_params": null,
+                "supported_part_types": [
+                    "helix",
+                    "ring",
+                    "screen",
+                    "lead"
+                ],
+                "commissioned_at": null,
+                "decommissioned_at": null
+            },
+            "part": null,
+            "commissioned_at": "2026-03-12T10:14:40.241269+00:00",
+            "decommissioned_at": null,
+            "angle": null,
+            "metadata": {},
+            "created_at": "2026-03-12T10:14:40.241880+00:00",
+            "updated_at": "2026-03-12T10:14:40.241895+00:00"
+        },
+        {
+            "id": 61,
+            "magnet": {
+                "id": 7,
+                "type": "insert",
+                "name": "M19071101",
+                "description": null,
+                "inner_bore": 18.54,
+                "outer_bore": 186.25,
+                "status": "in_study",
+                "created_at": "2026-03-12T10:18:11.819655+00:00",
+                "updated_at": "2026-03-12T10:18:11.819679+00:00",
+                "design_office_reference": null,
+                "metadata": {},
+                "flow_params": null,
+                "supported_part_types": [
+                    "helix",
+                    "ring",
+                    "screen",
+                    "lead"
+                ],
+                "commissioned_at": null,
+                "decommissioned_at": null
+            },
+            "part": null,
+            "commissioned_at": "2026-03-12T10:18:12.019356+00:00",
+            "decommissioned_at": null,
+            "angle": null,
+            "metadata": {},
+            "created_at": "2026-03-12T10:18:12.019954+00:00",
+            "updated_at": "2026-03-12T10:18:12.019971+00:00"
+        }
+    ],
+    "cad": [
+        {
+            "id": 59,
+            "type": "3d",
+            "attachment": {
+                "id": 62,
+                "filename": "Ring-H13H14.xao",
+                "content_type": "text/tsv",
+                "key": "b7ed70a65f5a0f954915fb55d21c67d53c5cacd3795f42784deabd2568391eb6",
+                "created_at": "2026-03-12T10:14:38.745421+00:00",
+                "updated_at": "2026-03-12T10:14:38.745452+00:00"
+            },
+            "part": null,
+            "created_at": "2026-03-12T10:14:38.758765+00:00",
+            "updated_at": "2026-03-12T10:14:38.758796+00:00"
+        },
+        {
+            "id": 60,
+            "type": "3d",
+            "attachment": {
+                "id": 63,
+                "filename": "Ring-H13H14.brep",
+                "content_type": "text/tsv",
+                "key": "d6c55d13be30ea9b93c7ed1f77e30dc81eb5c3f59f3d93fcb2ee1b6d93ed626d",
+                "created_at": "2026-03-12T10:14:39.029552+00:00",
+                "updated_at": "2026-03-12T10:14:39.029581+00:00"
+            },
+            "part": null,
+            "created_at": "2026-03-12T10:14:39.042188+00:00",
+            "updated_at": "2026-03-12T10:14:39.042216+00:00"
+        }
+    ],
+    "hts": null,
+    "shape": null,
+    "modelaxi": null,
+    "allow_hts_file": false,
+    "allow_shape_file": false,
+    "allow_modelaxi_file": false
+}

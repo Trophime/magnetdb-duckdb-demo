@@ -1,0 +1,293 @@
+HL-test:
+{
+    "id": 1,
+    "type": "insert",
+    "name": "HL-test",
+    "description": null,
+    "inner_bore": 18.8,
+    "outer_bore": 31.2,
+    "status": "in_study",
+    "created_at": "2026-02-05T08:14:41.107243+00:00",
+    "updated_at": "2026-02-05T08:14:41.107266+00:00",
+    "design_office_reference": null,
+    "metadata": {},
+    "flow_params": null,
+    "site_magnets": [
+        {
+            "id": 1,
+            "magnet": null,
+            "site": {
+                "id": 1,
+                "name": "MTest",
+                "description": null,
+                "status": "in_study",
+                "metadata": {},
+                "created_at": "2026-02-05T08:14:41.090809+00:00",
+                "updated_at": "2026-02-05T08:14:41.090833+00:00",
+                "commissioned_at": "2026-02-05T08:14:41.112799+00:00",
+                "decommissioned_at": null
+            },
+            "z_offset": null,
+            "r_offset": null,
+            "parallax": null,
+            "commissioned_at": "2026-02-05T08:14:41.112799+00:00",
+            "decommissioned_at": null,
+            "metadata": {},
+            "created_at": "2026-02-05T08:14:41.113746+00:00",
+            "updated_at": "2026-02-05T08:14:41.113762+00:00"
+        }
+    ],
+    "supported_part_types": [
+        "helix",
+        "ring",
+        "screen",
+        "lead"
+    ],
+    "commissioned_at": "2026-02-05T08:14:41.112799+00:00",
+    "decommissioned_at": null,
+    "magnet_parts": [
+        {
+            "id": 1,
+            "magnet": null,
+            "part": {
+                "id": 1,
+                "name": "HL-34_H1",
+                "description": null,
+                "type": "helix",
+                "status": "in_operation",
+                "created_at": "2026-02-05T08:14:39.401523+00:00",
+                "updated_at": "2026-02-05T08:14:39.401542+00:00",
+                "design_office_reference": "HL-34-001-A",
+                "geometry_config": {
+                    "r": [
+                        19.3,
+                        24.2
+                    ],
+                    "z": [
+                        -226,
+                        108
+                    ],
+                    "odd": true,
+                    "dble": true,
+                    "name": "HL-31_H1",
+                    "shape": null,
+                    "grooves": null,
+                    "model3d": {
+                        "cad": "HL-31-202MC",
+                        "name": "wo",
+                        "with_shapes": false,
+                        "__classname__": "Model3D",
+                        "with_channels": false
+                    },
+                    "chamfers": [],
+                    "cutwidth": 0.22,
+                    "modelaxi": {
+                        "h": 86.51,
+                        "name": "HL-31.d",
+                        "pitch": [
+                            29.59376923780156,
+                            30.10296793286569,
+                            24.21026483910371,
+                            19.88137937762543,
+                            18.03646917296749,
+                            18.03646917296749,
+                            18.03646917296748,
+                            18.03646917296748,
+                            18.03646917296748,
+                            18.03646917296748,
+                            18.03646917296748,
+                            18.03646917296748,
+                            18.03646917296748,
+                            18.03646917296748,
+                            18.03646917296749,
+                            18.03646917296749,
+                            19.88137937735433,
+                            24.21026483960672,
+                            30.10296793316911,
+                            29.5937650859709
+                        ],
+                        "turns": [
+                            0.2923250475627028,
+                            0.2873803014803414,
+                            0.3573277722277188,
+                            0.4351307741622732,
+                            0.479639330571743,
+                            0.479639330571743,
+                            0.479639330571743,
+                            0.479639330571743,
+                            0.479639330571743,
+                            0.479639330571743,
+                            0.479639330571743,
+                            0.479639330571743,
+                            0.479639330571743,
+                            0.479639330571743,
+                            0.479639330571743,
+                            0.479639330571743,
+                            0.4351307741682066,
+                            0.3573277722202946,
+                            0.2873803014774448,
+                            0.2923250885741825
+                        ],
+                        "__classname__": "ModelAxi"
+                    },
+                    "__classname__": "Helix",
+                    "start_diameter_hole": 0.0,
+                    "start_hole_diameter": 0.0
+                },
+                "metadata": {},
+                "allow_hts_file": false,
+                "allow_shape_file": true,
+                "allow_modelaxi_file": true
+            },
+            "commissioned_at": "2026-02-05T08:14:41.121205+00:00",
+            "decommissioned_at": null,
+            "angle": null,
+            "metadata": {},
+            "created_at": "2026-02-05T08:14:41.122440+00:00",
+            "updated_at": "2026-02-05T08:14:41.122456+00:00"
+        },
+        {
+            "id": 2,
+            "magnet": null,
+            "part": {
+                "id": 2,
+                "name": "HL-34_H2",
+                "description": null,
+                "type": "helix",
+                "status": "in_operation",
+                "created_at": "2026-02-05T08:14:40.095398+00:00",
+                "updated_at": "2026-02-05T08:14:40.095417+00:00",
+                "design_office_reference": "HL-34-001-A",
+                "geometry_config": {
+                    "r": [
+                        25.1,
+                        30.7
+                    ],
+                    "z": [
+                        -108,
+                        108
+                    ],
+                    "odd": false,
+                    "dble": true,
+                    "name": "HL-31_H2",
+                    "shape": null,
+                    "grooves": null,
+                    "model3d": {
+                        "cad": "HL-31-204MC",
+                        "name": "",
+                        "with_shapes": false,
+                        "__classname__": "Model3D",
+                        "with_channels": false
+                    },
+                    "chamfers": [],
+                    "cutwidth": 0.22,
+                    "modelaxi": {
+                        "h": 91.7,
+                        "name": "HL-31.d",
+                        "pitch": [
+                            32.4770174475745,
+                            26.72459076820135,
+                            21.91485281086349,
+                            18.34136915933754,
+                            17.16094904376726,
+                            17.16094904376726,
+                            17.16094904376726,
+                            17.16094904376727,
+                            17.16094904376726,
+                            17.16094904376726,
+                            17.16094904376726,
+                            17.16094904376727,
+                            17.16094904376726,
+                            17.16094904376726,
+                            17.16094904376726,
+                            17.16094904376726,
+                            18.34136915798934,
+                            21.91485281113673,
+                            26.7245907675812,
+                            32.47701336799938
+                        ],
+                        "turns": [
+                            0.2823535139826967,
+                            0.3431296695817349,
+                            0.4184376723467803,
+                            0.4999626756507206,
+                            0.5343527316940831,
+                            0.5343527316940831,
+                            0.5343527316940831,
+                            0.5343527316940831,
+                            0.5343527316940831,
+                            0.5343527316940831,
+                            0.5343527316940831,
+                            0.5343527316940831,
+                            0.5343527316940831,
+                            0.5343527316940831,
+                            0.5343527316940831,
+                            0.5343527316940831,
+                            0.4999626756874709,
+                            0.418437672341563,
+                            0.3431296695896973,
+                            0.2823535494503169
+                        ],
+                        "__classname__": "ModelAxi"
+                    },
+                    "__classname__": "Helix",
+                    "start_diameter_hole": 0.0,
+                    "start_hole_diameter": 0.0
+                },
+                "metadata": {},
+                "allow_hts_file": false,
+                "allow_shape_file": true,
+                "allow_modelaxi_file": true
+            },
+            "commissioned_at": "2026-02-05T08:14:41.129304+00:00",
+            "decommissioned_at": null,
+            "angle": null,
+            "metadata": {},
+            "created_at": "2026-02-05T08:14:41.129916+00:00",
+            "updated_at": "2026-02-05T08:14:41.129930+00:00"
+        },
+        {
+            "id": 3,
+            "magnet": null,
+            "part": {
+                "id": 3,
+                "name": "Ring-H1H2",
+                "description": null,
+                "type": "ring",
+                "status": "in_operation",
+                "created_at": "2026-02-05T08:14:40.776511+00:00",
+                "updated_at": "2026-02-05T08:14:40.776533+00:00",
+                "design_office_reference": "HL-34-001-A",
+                "geometry_config": {
+                    "n": 6,
+                    "r": [
+                        19.3,
+                        24.2,
+                        25.1,
+                        30.7
+                    ],
+                    "z": [
+                        0,
+                        20
+                    ],
+                    "cad": "",
+                    "name": "Ring-H1H2",
+                    "angle": 46,
+                    "bpside": true,
+                    "fillets": false,
+                    "__classname__": "Ring"
+                },
+                "metadata": {},
+                "allow_hts_file": false,
+                "allow_shape_file": false,
+                "allow_modelaxi_file": false
+            },
+            "commissioned_at": "2026-02-05T08:14:41.137610+00:00",
+            "decommissioned_at": null,
+            "angle": null,
+            "metadata": {},
+            "created_at": "2026-02-05T08:14:41.138225+00:00",
+            "updated_at": "2026-02-05T08:14:41.138239+00:00"
+        }
+    ]
+}

@@ -1,0 +1,49 @@
+MTest:
+{
+    "id": 1,
+    "name": "MTest",
+    "description": null,
+    "status": "in_study",
+    "metadata": {},
+    "created_at": "2026-02-05T08:14:41.090809+00:00",
+    "updated_at": "2026-02-05T08:14:41.090833+00:00",
+    "commissioned_at": "2026-02-05T08:14:41.112799+00:00",
+    "decommissioned_at": null,
+    "site_magnets": [
+        {
+            "id": 1,
+            "magnet": {
+                "id": 1,
+                "type": "insert",
+                "name": "HL-test",
+                "description": null,
+                "inner_bore": 18.8,
+                "outer_bore": 31.2,
+                "status": "in_study",
+                "created_at": "2026-02-05T08:14:41.107243+00:00",
+                "updated_at": "2026-02-05T08:14:41.107266+00:00",
+                "design_office_reference": null,
+                "metadata": {},
+                "flow_params": null,
+                "supported_part_types": [
+                    "helix",
+                    "ring",
+                    "screen",
+                    "lead"
+                ],
+                "commissioned_at": null,
+                "decommissioned_at": null
+            },
+            "site": null,
+            "z_offset": null,
+            "r_offset": null,
+            "parallax": null,
+            "commissioned_at": "2026-02-05T08:14:41.112799+00:00",
+            "decommissioned_at": null,
+            "metadata": {},
+            "created_at": "2026-02-05T08:14:41.113746+00:00",
+            "updated_at": "2026-02-05T08:14:41.113762+00:00"
+        }
+    ],
+    "config": null
+}

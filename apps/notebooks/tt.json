@@ -1,0 +1,390 @@
+{
+    "Name": "ThermoElectric Axi Stationnary model",
+    "ShortName":"AxiThermoElectricStat",
+    "Models":
+    {
+	   "cfpdes":{
+		   "equations":"heat"
+	   },
+	   "heat":{
+		   "common":{
+			   "setup":{
+				   "unknown":{
+					   "basis":"Pch1",
+					   "name":"temperature",
+					   "symbol":"T"
+				   }
+			   }
+		   },
+		   "models":[
+			   
+		   ]
+	   }
+    },
+    "Parameters":
+    {
+			   "Tinit": "293",
+			   "hw_M10_Be_Slit0": "58222.1",
+			   "Tw_M10_Be_Slit0": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Be_Slit0.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Be_Slit0": "0.002151990967709008",
+			   "Dh_M10_Be_Slit0": "0.002",
+			   "Zmin_M10_Be_Slit0": "-0.30177",
+			   "Zmax_M10_Be_Slit0": "0.30177",
+			   "Zh_M10_Be_Slit0": "[-0.30177, -0.29617000000000004, -0.20506000000000002, 0.20506000000000002, 0.29617000000000004, 0.30177]",
+			   "hw_M10_Be_Slit1": "58222.1",
+			   "Tw_M10_Be_Slit1": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Be_Slit1.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Be_Slit1": "0.0004021238596594935",
+			   "Dh_M10_Be_Slit1": "0.00033799841563242675",
+			   "Zmin_M10_Be_Slit1": "-0.30177",
+			   "Zmax_M10_Be_Slit1": "0.30177",
+			   "Zh_M10_Be_Slit1": "[-0.30177, -0.29617000000000004, -0.20506000000000002, 0.20506000000000002, 0.29617000000000004, 0.30177]",
+			   "hw_M10_Be_Slit2": "58222.1",
+			   "Tw_M10_Be_Slit2": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Be_Slit2.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Be_Slit2": "0.0004021238596594935",
+			   "Dh_M10_Be_Slit2": "0.00031647134450872767",
+			   "Zmin_M10_Be_Slit2": "-0.30177",
+			   "Zmax_M10_Be_Slit2": "0.30177",
+			   "Zh_M10_Be_Slit2": "[-0.30177, -0.29617000000000004, -0.20506000000000002, 0.20506000000000002, 0.29617000000000004, 0.30177]",
+			   "hw_M10_Be_Slit3": "58222.1",
+			   "Tw_M10_Be_Slit3": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Be_Slit3.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Be_Slit3": "0.00030159289474462013",
+			   "Dh_M10_Be_Slit3": "0.00022228396776882467",
+			   "Zmin_M10_Be_Slit3": "-0.30177",
+			   "Zmax_M10_Be_Slit3": "0.30177",
+			   "Zh_M10_Be_Slit3": "[-0.30177, -0.29617000000000004, -0.20506000000000002, 0.20506000000000002, 0.29617000000000004, 0.30177]",
+			   "hw_M10_Be_Slit4": "58222.1",
+			   "Tw_M10_Be_Slit4": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Be_Slit4.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Be_Slit4": "0.0004021238596594935",
+			   "Dh_M10_Be_Slit4": "0.00027757899074013837",
+			   "Zmin_M10_Be_Slit4": "-0.30177",
+			   "Zmax_M10_Be_Slit4": "0.30177",
+			   "Zh_M10_Be_Slit4": "[-0.30177, -0.29617000000000004, -0.20506000000000002, 0.20506000000000002, 0.29617000000000004, 0.30177]",
+			   "hw_M10_Be_Slit5": "58222.1",
+			   "Tw_M10_Be_Slit5": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Be_Slit5.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Be_Slit5": "0.003144734246243383",
+			   "Dh_M10_Be_Slit5": "0.002",
+			   "Zmin_M10_Be_Slit5": "-0.30177",
+			   "Zmax_M10_Be_Slit5": "0.30177",
+			   "Zh_M10_Be_Slit5": "[-0.30177, -0.29617000000000004, -0.20506000000000002, 0.20506000000000002, 0.29617000000000004, 0.30177]",
+			   "U_M10_Be_B1": "0.7925660132813809",
+			   "N_M10_Be_B1": "7",
+			   "U_M10_Be_B2": "1.5594957389280244",
+			   "N_M10_Be_B2": "62",
+			   "U_M10_Be_B3": "0.7925660132813809",
+			   "N_M10_Be_B3": "7",
+			   "hw_M10_Bi_Slit0": "58222.1",
+			   "Tw_M10_Bi_Slit0": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit0.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit0": "0.0012534954687823273",
+			   "Dh_M10_Bi_Slit0": "0.002",
+			   "Zmin_M10_Bi_Slit0": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit0": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit0": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit1": "58222.1",
+			   "Tw_M10_Bi_Slit1": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit1.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit1": "0.0004021238596594935",
+			   "Dh_M10_Bi_Slit1": "0.0006125867432400096",
+			   "Zmin_M10_Bi_Slit1": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit1": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit1": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit2": "58222.1",
+			   "Tw_M10_Bi_Slit2": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit2.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit2": "0.0004021238596594935",
+			   "Dh_M10_Bi_Slit2": "0.000587641171609586",
+			   "Zmin_M10_Bi_Slit2": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit2": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit2": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit3": "58222.1",
+			   "Tw_M10_Bi_Slit3": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit3.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit3": "0.0004021238596594935",
+			   "Dh_M10_Bi_Slit3": "0.0005638269755968637",
+			   "Zmin_M10_Bi_Slit3": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit3": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit3": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit4": "58222.1",
+			   "Tw_M10_Bi_Slit4": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit4.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit4": "0.0004021238596594935",
+			   "Dh_M10_Bi_Slit4": "0.0005410889414947582",
+			   "Zmin_M10_Bi_Slit4": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit4": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit4": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit5": "58222.1",
+			   "Tw_M10_Bi_Slit5": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit5.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit5": "0.0004021238596594935",
+			   "Dh_M10_Bi_Slit5": "0.0005193751268005681",
+			   "Zmin_M10_Bi_Slit5": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit5": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit5": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit6": "58222.1",
+			   "Tw_M10_Bi_Slit6": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit6.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit6": "0.0004021238596594935",
+			   "Dh_M10_Bi_Slit6": "0.0004947624753585097",
+			   "Zmin_M10_Bi_Slit6": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit6": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit6": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit7": "58222.1",
+			   "Tw_M10_Bi_Slit7": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit7.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit7": "0.0004021238596594935",
+			   "Dh_M10_Bi_Slit7": "0.0004787194255366894",
+			   "Zmin_M10_Bi_Slit7": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit7": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit7": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit8": "58222.1",
+			   "Tw_M10_Bi_Slit8": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit8.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit8": "0.0004021238596594935",
+			   "Dh_M10_Bi_Slit8": "0.0004597866302668918",
+			   "Zmin_M10_Bi_Slit8": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit8": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit8": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit9": "58222.1",
+			   "Tw_M10_Bi_Slit9": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit9.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit9": "0.0004021238596594935",
+			   "Dh_M10_Bi_Slit9": "0.0004416229643941485",
+			   "Zmin_M10_Bi_Slit9": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit9": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit9": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit10": "58222.1",
+			   "Tw_M10_Bi_Slit10": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit10.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit10": "0.00030159289474462013",
+			   "Dh_M10_Bi_Slit10": "0.00031817579212514913",
+			   "Zmin_M10_Bi_Slit10": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit10": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit10": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit11": "58222.1",
+			   "Tw_M10_Bi_Slit11": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit11.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit11": "0.0004021238596594935",
+			   "Dh_M10_Bi_Slit11": "0.00040756543335668347",
+			   "Zmin_M10_Bi_Slit11": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit11": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit11": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit12": "58222.1",
+			   "Tw_M10_Bi_Slit12": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit12.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit12": "0.0004021238596594935",
+			   "Dh_M10_Bi_Slit12": "0.0003916049684880377",
+			   "Zmin_M10_Bi_Slit12": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit12": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit12": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "hw_M10_Bi_Slit13": "58222.1",
+			   "Tw_M10_Bi_Slit13": "{"type": "fit", "filename": "$cfgdir/Tw_M10_Bi_Slit13.csv", "abscissa": "Z", "ordinate": "Tw", "interpolation": "P1", "expr": "y:y"}",
+			   "Sh_M10_Bi_Slit13": "0.002139424597094649",
+			   "Dh_M10_Bi_Slit13": "0.002",
+			   "Zmin_M10_Bi_Slit13": "-0.30299000000000004",
+			   "Zmax_M10_Bi_Slit13": "0.30299000000000004",
+			   "Zh_M10_Bi_Slit13": "[-0.30299000000000004, -0.29899000000000003, -0.14685000000000006, 0.14684999999999995, 0.2989899999999999, 0.30299000000000004]",
+			   "U_M10_Bi_B1": "1.1076381153092418",
+			   "N_M10_Bi_B1": "23",
+			   "U_M10_Bi_B2": "2.145398499834307",
+			   "N_M10_Bi_B2": "86",
+			   "U_M10_Bi_B3": "1.1076381153092418",
+			   "N_M10_Bi_B3": "23",
+			   
+	   "T0":"293."
+    },
+   "Meshes": {
+	"cfpdes": {
+	    "Fields": {
+		"U": {
+		    "filename": "$cfgdir/U.h5",
+		    "basis": "Pdh0"
+		}
+	    }
+	}
+    },
+    "Materials":
+    {
+	   
+    },
+    "BoundaryConditions":
+    {
+	   "heat":
+	   {
+	   "Robin":
+	   {
+							   "M10_Be_Slit0":
+			   {
+				   "expr1": "x*hw_M10_Be_Slit0:hw_M10_Be_Slit0:x",
+				   "expr2": "x*hw_M10_Be_Slit0*(Tw_M10_Be_Slit0:x:y:hw_M10_Be_Slit0:Tw_M10_Be_Slit0:dTw_M10_Be_Slit0:Zmin_M10_Be_Slit0:Zmax_M10_Be_Slit0"
+			   },
+							   "M10_Be_Slit1":
+			   {
+				   "expr1": "x*hw_M10_Be_Slit1:hw_M10_Be_Slit1:x",
+				   "expr2": "x*hw_M10_Be_Slit1*(Tw_M10_Be_Slit1:x:y:hw_M10_Be_Slit1:Tw_M10_Be_Slit1:dTw_M10_Be_Slit1:Zmin_M10_Be_Slit1:Zmax_M10_Be_Slit1"
+			   },
+							   "M10_Be_Slit2":
+			   {
+				   "expr1": "x*hw_M10_Be_Slit2:hw_M10_Be_Slit2:x",
+				   "expr2": "x*hw_M10_Be_Slit2*(Tw_M10_Be_Slit2:x:y:hw_M10_Be_Slit2:Tw_M10_Be_Slit2:dTw_M10_Be_Slit2:Zmin_M10_Be_Slit2:Zmax_M10_Be_Slit2"
+			   },
+							   "M10_Be_Slit3":
+			   {
+				   "expr1": "x*hw_M10_Be_Slit3:hw_M10_Be_Slit3:x",
+				   "expr2": "x*hw_M10_Be_Slit3*(Tw_M10_Be_Slit3:x:y:hw_M10_Be_Slit3:Tw_M10_Be_Slit3:dTw_M10_Be_Slit3:Zmin_M10_Be_Slit3:Zmax_M10_Be_Slit3"
+			   },
+							   "M10_Be_Slit4":
+			   {
+				   "expr1": "x*hw_M10_Be_Slit4:hw_M10_Be_Slit4:x",
+				   "expr2": "x*hw_M10_Be_Slit4*(Tw_M10_Be_Slit4:x:y:hw_M10_Be_Slit4:Tw_M10_Be_Slit4:dTw_M10_Be_Slit4:Zmin_M10_Be_Slit4:Zmax_M10_Be_Slit4"
+			   },
+							   "M10_Be_Slit5":
+			   {
+				   "expr1": "x*hw_M10_Be_Slit5:hw_M10_Be_Slit5:x",
+				   "expr2": "x*hw_M10_Be_Slit5*(Tw_M10_Be_Slit5:x:y:hw_M10_Be_Slit5:Tw_M10_Be_Slit5:dTw_M10_Be_Slit5:Zmin_M10_Be_Slit5:Zmax_M10_Be_Slit5"
+			   },
+							   "M10_Bi_Slit0":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit0:hw_M10_Bi_Slit0:x",
+				   "expr2": "x*hw_M10_Bi_Slit0*(Tw_M10_Bi_Slit0:x:y:hw_M10_Bi_Slit0:Tw_M10_Bi_Slit0:dTw_M10_Bi_Slit0:Zmin_M10_Bi_Slit0:Zmax_M10_Bi_Slit0"
+			   },
+							   "M10_Bi_Slit1":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit1:hw_M10_Bi_Slit1:x",
+				   "expr2": "x*hw_M10_Bi_Slit1*(Tw_M10_Bi_Slit1:x:y:hw_M10_Bi_Slit1:Tw_M10_Bi_Slit1:dTw_M10_Bi_Slit1:Zmin_M10_Bi_Slit1:Zmax_M10_Bi_Slit1"
+			   },
+							   "M10_Bi_Slit2":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit2:hw_M10_Bi_Slit2:x",
+				   "expr2": "x*hw_M10_Bi_Slit2*(Tw_M10_Bi_Slit2:x:y:hw_M10_Bi_Slit2:Tw_M10_Bi_Slit2:dTw_M10_Bi_Slit2:Zmin_M10_Bi_Slit2:Zmax_M10_Bi_Slit2"
+			   },
+							   "M10_Bi_Slit3":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit3:hw_M10_Bi_Slit3:x",
+				   "expr2": "x*hw_M10_Bi_Slit3*(Tw_M10_Bi_Slit3:x:y:hw_M10_Bi_Slit3:Tw_M10_Bi_Slit3:dTw_M10_Bi_Slit3:Zmin_M10_Bi_Slit3:Zmax_M10_Bi_Slit3"
+			   },
+							   "M10_Bi_Slit4":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit4:hw_M10_Bi_Slit4:x",
+				   "expr2": "x*hw_M10_Bi_Slit4*(Tw_M10_Bi_Slit4:x:y:hw_M10_Bi_Slit4:Tw_M10_Bi_Slit4:dTw_M10_Bi_Slit4:Zmin_M10_Bi_Slit4:Zmax_M10_Bi_Slit4"
+			   },
+							   "M10_Bi_Slit5":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit5:hw_M10_Bi_Slit5:x",
+				   "expr2": "x*hw_M10_Bi_Slit5*(Tw_M10_Bi_Slit5:x:y:hw_M10_Bi_Slit5:Tw_M10_Bi_Slit5:dTw_M10_Bi_Slit5:Zmin_M10_Bi_Slit5:Zmax_M10_Bi_Slit5"
+			   },
+							   "M10_Bi_Slit6":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit6:hw_M10_Bi_Slit6:x",
+				   "expr2": "x*hw_M10_Bi_Slit6*(Tw_M10_Bi_Slit6:x:y:hw_M10_Bi_Slit6:Tw_M10_Bi_Slit6:dTw_M10_Bi_Slit6:Zmin_M10_Bi_Slit6:Zmax_M10_Bi_Slit6"
+			   },
+							   "M10_Bi_Slit7":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit7:hw_M10_Bi_Slit7:x",
+				   "expr2": "x*hw_M10_Bi_Slit7*(Tw_M10_Bi_Slit7:x:y:hw_M10_Bi_Slit7:Tw_M10_Bi_Slit7:dTw_M10_Bi_Slit7:Zmin_M10_Bi_Slit7:Zmax_M10_Bi_Slit7"
+			   },
+							   "M10_Bi_Slit8":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit8:hw_M10_Bi_Slit8:x",
+				   "expr2": "x*hw_M10_Bi_Slit8*(Tw_M10_Bi_Slit8:x:y:hw_M10_Bi_Slit8:Tw_M10_Bi_Slit8:dTw_M10_Bi_Slit8:Zmin_M10_Bi_Slit8:Zmax_M10_Bi_Slit8"
+			   },
+							   "M10_Bi_Slit9":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit9:hw_M10_Bi_Slit9:x",
+				   "expr2": "x*hw_M10_Bi_Slit9*(Tw_M10_Bi_Slit9:x:y:hw_M10_Bi_Slit9:Tw_M10_Bi_Slit9:dTw_M10_Bi_Slit9:Zmin_M10_Bi_Slit9:Zmax_M10_Bi_Slit9"
+			   },
+							   "M10_Bi_Slit10":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit10:hw_M10_Bi_Slit10:x",
+				   "expr2": "x*hw_M10_Bi_Slit10*(Tw_M10_Bi_Slit10:x:y:hw_M10_Bi_Slit10:Tw_M10_Bi_Slit10:dTw_M10_Bi_Slit10:Zmin_M10_Bi_Slit10:Zmax_M10_Bi_Slit10"
+			   },
+							   "M10_Bi_Slit11":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit11:hw_M10_Bi_Slit11:x",
+				   "expr2": "x*hw_M10_Bi_Slit11*(Tw_M10_Bi_Slit11:x:y:hw_M10_Bi_Slit11:Tw_M10_Bi_Slit11:dTw_M10_Bi_Slit11:Zmin_M10_Bi_Slit11:Zmax_M10_Bi_Slit11"
+			   },
+							   "M10_Bi_Slit12":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit12:hw_M10_Bi_Slit12:x",
+				   "expr2": "x*hw_M10_Bi_Slit12*(Tw_M10_Bi_Slit12:x:y:hw_M10_Bi_Slit12:Tw_M10_Bi_Slit12:dTw_M10_Bi_Slit12:Zmin_M10_Bi_Slit12:Zmax_M10_Bi_Slit12"
+			   },
+							   "M10_Bi_Slit13":
+			   {
+				   "expr1": "x*hw_M10_Bi_Slit13:hw_M10_Bi_Slit13:x",
+				   "expr2": "x*hw_M10_Bi_Slit13*(Tw_M10_Bi_Slit13:x:y:hw_M10_Bi_Slit13:Tw_M10_Bi_Slit13:dTw_M10_Bi_Slit13:Zmin_M10_Bi_Slit13:Zmax_M10_Bi_Slit13"
+			   }
+}
+	   }
+    },
+    "InitialConditions":
+    {
+	   "heat":{
+		   "temperature":
+		   {
+			   "Expression":
+			   {
+									   "":
+				   {
+					   "markers": ["M10_Be_B2", "M10_Bi_B3", "M10_Be_B4", "M10_Be_B1", "M10_Bi_B4", "M10_Bi_B2", "M10_Be_B0", "M10_Be_B3", "M10_Bi_B1", "M10_Bi_B0"],
+					   "expr":"Tinit:Tinit"
+				   }
+}
+		   }
+	   }
+    },
+    "PostProcess":
+    {
+	   "use-model-name":1,
+	   "cfpdes":
+	   {
+	   "Exports":
+	   {
+			   "fields":["heat.temperature"],
+			   "expr":
+			   {
+			   "U":
+			   {
+					   "expr":"materials_U:materials_U",
+					   "markers": ["M10_Be_B1", "M10_Be_B2", "M10_Be_B3", "M10_Bi_B1", "M10_Bi_B2", "M10_Bi_B3"]
+			   },
+			   "Jth":
+			   {
+					   "expr":"-materials_sigma*materials_U/(2*pi*x):materials_sigma:materials_U:x",
+					   "markers": ["M10_Be_B1", "M10_Be_B2", "M10_Be_B3", "M10_Bi_B1", "M10_Bi_B2", "M10_Bi_B3"]
+			   },
+			   "Qth":
+			   {
+					   "expr":"materials_sigma*(materials_U/(2*pi*x))*(materials_U/(2*pi*x)):materials_sigma:materials_U:x",
+					   "markers": ["M10_Be_B1", "M10_Be_B2", "M10_Be_B3", "M10_Bi_B1", "M10_Bi_B2", "M10_Bi_B3"]
+				   }
+			   }
+	   }
+	   },
+	   "heat":
+	   {
+	   "Save":
+	   {
+			   "Fields":
+			   {
+			   "names":["temperature"]
+			   }
+	   },
+	   "Measures":
+	   {
+			   "Statistics":
+			   {
+									   "PowerM_":
+				   {
+				   "type": "integrate",
+				   "expr": "2*pi*materials_sigma*(materials_U/2/pi)*(materials_U/2/pi)/x:materials_sigma:materials_U:x",
+				   "markers": ["M10_Be_B2", "M10_Bi_B3", "M10_Be_B1", "M10_Bi_B2", "M10_Be_B3", "M10_Bi_B1"]
+				   },
+								   "Power":
+			       {
+				   "type": "integrate",
+				   "expr": "2*pi*materials_sigma*(materials_U/2/pi)*(materials_U/2/pi)/x:materials_sigma:materials_U:x",
+				   "markers": ["M10_Be_B1", "M10_Be_B2", "M10_Be_B3", "M10_Bi_B1", "M10_Bi_B2", "M10_Bi_B3"]
+				   },
+									   "Stat_T_":
+				   {
+				   "type":["min","max","mean"], 
+					   "field":"temperature",
+				   "markers": ["M10_Be_B2", "M10_Bi_B3", "M10_Be_B4", "M10_Be_B1", "M10_Bi_B4", "M10_Bi_B2", "M10_Be_B0", "M10_Be_B3", "M10_Bi_B1", "M10_Bi_B0"]
+				   },
+									   "Stat_T": 
+			   {
+					   "type":["min","max","mean"], 
+					   "field":"temperature" 
+			   }
+			   }
+	   }
+	   }
+    }
+}
+

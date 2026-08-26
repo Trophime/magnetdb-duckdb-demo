@@ -1,0 +1,183 @@
+args: Namespace(server='api.magnetdb-dev.local', port=8000, debug=False, https=True, command='view', mtype='part', name='H10011501')
+server: https://api.magnetdb-dev.local, verify=/etc/ssl/certs
+view: ids={'HL-34_H1': 1, 'HL-34_H2': 2, 'Ring-H1H2': 3, 'tore': 4, 'tore1': 5, 'tore2': 6, 'M9Bi': 7, 'M9Be': 8, 'M10Bi': 9, 'M10Be': 10, 'M8Bi': 11, 'M8Be': 12, 'H15101601': 13, 'H15061703': 14, 'H15061801': 15, 'H15100501': 16, 'H15101501': 17, 'H18060101': 18, 'H18012501': 19, 'H18051801': 20, 'H19060601': 21, 'H19060602': 22, 'H19061201': 23, 'H19060603': 24, 'H10061702': 25, 'H10061703': 26, 'M19061901_R1': 27, 'M19061901_R2': 28, 'M19061901_R3': 29, 'M19061901_R4': 30, 'M19061901_R5': 31, 'M19061901_R6': 32, 'M19061901_R7': 33, 'M19061901_R8': 34, 'M19061901_R9': 35, 'M19061901_R10': 36, 'M19061901_R11': 37, 'M19061901_R12': 38, 'M19061901_R13': 39, 'M19061901_iL1': 40, 'M19061901_oL2': 41, 'H18040901': 42, 'H17062101': 43, 'H15013001': 44, 'H08070801': 45, 'H10011201': 46, 'H08070810': 47, 'H08070811': 48, 'H08060606': 49, 'H08060607': 50, 'H08060608': 51, 'H08060609': 52, 'H10011501': 53}
+H10011501:
+{
+    "id": 53,
+    "name": "H10011501",
+    "description": null,
+    "type": "helix",
+    "status": "in_study",
+    "material": {
+        "id": 35,
+        "name": "MA10011501",
+        "nuance": "CuCrZr",
+        "description": "",
+        "t_ref": 293.0,
+        "volumic_mass": 9000.0,
+        "alpha": 0.0036,
+        "specific_heat": 380.0,
+        "electrical_conductivity": 50250000.0,
+        "thermal_conductivity": 380.0,
+        "magnet_permeability": 1.0,
+        "young": 117000000000.0,
+        "poisson": 0.33,
+        "expansion_coefficient": 1.8e-05,
+        "rpe": 373.0,
+        "metadata": {},
+        "created_at": "2026-03-12T10:18:09.771184+00:00",
+        "updated_at": "2026-03-12T10:18:09.771207+00:00"
+    },
+    "created_at": "2026-03-12T10:18:11.067825+00:00",
+    "updated_at": "2026-03-12T10:18:11.067838+00:00",
+    "design_office_reference": null,
+    "geometry_config": {
+        "r": [
+            170.4,
+            186
+        ],
+        "z": [
+            -190.0,
+            190.0
+        ],
+        "odd": false,
+        "dble": true,
+        "name": "HL-31_H14",
+        "shape": null,
+        "grooves": null,
+        "model3d": {
+            "cad": "HL-31-028MC",
+            "name": "",
+            "with_shapes": false,
+            "__classname__": "Model3D",
+            "with_channels": false
+        },
+        "chamfers": [],
+        "cutwidth": 0.26,
+        "modelaxi": {
+            "h": 157.7944,
+            "name": "HL-31.d",
+            "pitch": [
+                27.51728484458655,
+                26.4957231461391,
+                24.08768640632096,
+                22.10350167763659,
+                20.49687298168567,
+                19.22624811359644,
+                18.25472884839242,
+                17.5526349186934,
+                17.0972465985312,
+                16.87334397707229,
+                16.8733442442437,
+                17.09724716711437,
+                17.55263507390048,
+                18.25472886743067,
+                19.22624810266316,
+                20.49687300966409,
+                22.10350154757691,
+                24.08768656395584,
+                26.49572741562234,
+                27.51728173152646
+            ],
+            "turns": [
+                0.5734373899576162,
+                0.5955466817405707,
+                0.6550832543161652,
+                0.7138886964668132,
+                0.7698462108878376,
+                0.8207238306074435,
+                0.8644028695824529,
+                0.8989784196556749,
+                0.9229228758597647,
+                0.935169698516269,
+                0.9351696837088546,
+                0.9229228451671975,
+                0.8989784117065648,
+                0.8644028686809493,
+                0.8207238310741597,
+                0.7698462098369904,
+                0.7138887006674209,
+                0.6550832500291629,
+                0.5955465857750388,
+                0.5734374548312133
+            ],
+            "__classname__": "ModelAxi"
+        },
+        "__classname__": "Helix",
+        "start_diameter_hole": 0.0,
+        "start_hole_diameter": 0.0
+    },
+    "metadata": {},
+    "magnet_parts": [
+        {
+            "id": 50,
+            "magnet": {
+                "id": 7,
+                "type": "insert",
+                "name": "M19071101",
+                "description": null,
+                "inner_bore": 18.54,
+                "outer_bore": 186.25,
+                "status": "in_study",
+                "created_at": "2026-03-12T10:18:11.819655+00:00",
+                "updated_at": "2026-03-12T10:18:11.819679+00:00",
+                "design_office_reference": null,
+                "metadata": {},
+                "flow_params": null,
+                "supported_part_types": [
+                    "helix",
+                    "ring",
+                    "screen",
+                    "lead"
+                ],
+                "commissioned_at": null,
+                "decommissioned_at": null
+            },
+            "part": null,
+            "commissioned_at": "2026-03-12T10:18:11.927616+00:00",
+            "decommissioned_at": null,
+            "angle": null,
+            "metadata": {},
+            "created_at": "2026-03-12T10:18:11.928218+00:00",
+            "updated_at": "2026-03-12T10:18:11.928233+00:00"
+        }
+    ],
+    "cad": [
+        {
+            "id": 87,
+            "type": "3d",
+            "attachment": {
+                "id": 91,
+                "filename": "HL-31_H14.xao",
+                "content_type": "text/tsv",
+                "key": "c5c539346427bf3198793bb4cd50edfc7ab8cb83587dbead4e9ae9a822bb4e38",
+                "created_at": "2026-03-12T10:18:11.084724+00:00",
+                "updated_at": "2026-03-12T10:18:11.084742+00:00"
+            },
+            "part": null,
+            "created_at": "2026-03-12T10:18:11.094755+00:00",
+            "updated_at": "2026-03-12T10:18:11.094777+00:00"
+        },
+        {
+            "id": 88,
+            "type": "3d",
+            "attachment": {
+                "id": 92,
+                "filename": "HL-31_H14.brep",
+                "content_type": "text/tsv",
+                "key": "09556f4f706eec0ee0684c93335ae6e278aca54dfa30c08ab0581a9659c17121",
+                "created_at": "2026-03-12T10:18:11.161394+00:00",
+                "updated_at": "2026-03-12T10:18:11.161404+00:00"
+            },
+            "part": null,
+            "created_at": "2026-03-12T10:18:11.169634+00:00",
+            "updated_at": "2026-03-12T10:18:11.169648+00:00"
+        }
+    ],
+    "hts": null,
+    "shape": null,
+    "modelaxi": null,
+    "allow_hts_file": false,
+    "allow_shape_file": true,
+    "allow_modelaxi_file": true
+}
