@@ -8,7 +8,13 @@ from dash.dash_table import DataTable
 import plotly.express as px
 from plotly import graph_objects as go
 import magnetdb_analysis as db
-from experiment_links import experiment_link, overview_record_link, part_link
+from experiment_links import (
+    experiment_link,
+    overview_record_link,
+    part_link,
+    magnet_link,
+    assembly_link,
+)
 import dash_selectors as selectors
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
@@ -139,10 +145,12 @@ def load_overview_records(db_path=None):
     return df
 
 
+_TABLE_MARKDOWN_COLUMNS = {"Experiment", "Magnet", "Assembly"}
+
 TABLE_COLUMNS = [
     (
         {"name": c, "id": c, "presentation": "markdown"}
-        if c == "Experiment"
+        if c in _TABLE_MARKDOWN_COLUMNS
         else {"name": c, "id": c}
     )
     for c in EXP_RUN_SCALARS_COLUMNS
@@ -152,14 +160,18 @@ TABLE_COLUMNS = [
 OVERVIEW_RECORD_COLUMNS = [
     (
         {"name": c, "id": c, "presentation": "markdown"}
-        if c == "Overview Record"
+        if c in ("Overview Record", "Assembly")
         else {"name": c, "id": c}
     )
     for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0")
 ]
 
 ASSEMBLY_HISTORY_COLUMNS = [
-    {"name": c, "id": c}
+    (
+        {"name": c, "id": c, "presentation": "markdown"}
+        if c == "assembly_name"
+        else {"name": c, "id": c}
+    )
     for c in (
         "assembly_name",
         "housing",
@@ -193,6 +205,7 @@ def _overview_records_section(overview_df):
 
     table_df = overview_df.copy()
     table_df["Overview Record"] = table_df.apply(overview_record_link, axis=1)
+    table_df["Assembly"] = table_df.apply(assembly_link, axis=1)
 
     return DataTable(
         columns=OVERVIEW_RECORD_COLUMNS,
@@ -218,6 +231,11 @@ def _assembly_history_section(selected_magnet, history):
             f"No assembly history found for {selected_magnet}.",
             style={"color": "#888", "fontStyle": "italic"},
         )
+
+    history = [
+        {**h, "assembly_name": assembly_link({"Assembly": h["assembly_name"]})}
+        for h in history
+    ]
 
     return DataTable(
         columns=ASSEMBLY_HISTORY_COLUMNS,
@@ -298,7 +316,7 @@ def _build_page_content(df, selected_magnet=None, db_path=None):
     field_on_by_magnet = df.groupby(["Magnet", "Housing"], as_index=False).agg(
         {"Magnet Time (s)": "sum"}
     )
-    field_on_by_magnet["Field ON (h)"] = field_on_by_magnet["Magnet Time (s)"] / S_TO_H
+    field_on_by_magnet["Time (h)"] = field_on_by_magnet["Magnet Time (s)"] / S_TO_H
 
     magnet_order = [
         m for m in db.get_all_magnets(db_path) if m in set(field_on_by_magnet["Magnet"])
@@ -307,16 +325,18 @@ def _build_page_content(df, selected_magnet=None, db_path=None):
     fig_field_on = px.bar(
         field_on_by_magnet,
         x="Magnet",
-        y="Field ON (h)",
+        y="Time (h)",
         color="Housing",
         color_discrete_map={"M9": "red", "M10": "blue"},
         category_orders={"Magnet": magnet_order},
         barmode="group",
-        title="Field ON Time per Magnet (h)",
+        title="Magnet Time (h)",
     )
 
     table_df = df.drop(columns=["File"])
     table_df["Experiment"] = df.apply(experiment_link, axis=1)
+    table_df["Magnet"] = df.apply(magnet_link, axis=1)
+    table_df["Assembly"] = df.apply(assembly_link, axis=1)
 
     counts = db.get_db_counts(db_path)
     magnets_line = (

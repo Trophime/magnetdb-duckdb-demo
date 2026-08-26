@@ -3,6 +3,8 @@ import logging
 import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
+import numpy as np
+import pint
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 import pandas as pd
@@ -18,6 +20,104 @@ _METHOD_MAP = {
     'naive': 'stride', 'stride': 'stride',
 }
 _DEFAULT_N_OUT = 1000
+
+# Forces every field in a group onto one display/plot unit, so fields that are
+# recorded in different (but dimensionally compatible) native units - e.g.
+# "debitbrut" in m3/h vs. "FlowH"/"FlowB" in l/s, both in "Hydraulics" - don't
+# show up side by side in mismatched units. Sensors whose native unit isn't
+# dimensionally compatible with the override (e.g. a group mixing var and W)
+# are left in their own unit rather than converted; see group_display_unit().
+GROUP_UNIT_OVERRIDES: dict[str, str] = {
+    "Hydraulics": "liter / second",
+}
+
+
+def resolve_sensor_unit(mrun, sensor: str, group_name: str = ""):
+    """Return the (symbol, pint.Unit) for *sensor*, trying the plain and 'Group/Sensor' keys.
+
+    Parameters
+    ----------
+    mrun : MagnetRun
+        Loaded run object to query for units.
+    sensor : str
+        Sensor/column name.
+    group_name : str, optional
+        Group name, used to retry as ``f"{group_name}/{sensor}"`` (TDMS-style
+        keys) if the plain name isn't recognised.
+
+    Returns
+    -------
+    tuple
+        ``(symbol, unit)``, or ``(None, None)`` if neither key resolves.
+    """
+    try:
+        return mrun.getUnit(sensor)
+    except RuntimeError:
+        try:
+            return mrun.getUnit(f"{group_name}/{sensor}")
+        except RuntimeError:
+            return None, None
+
+
+def group_display_unit(mrun, group_name: str, sensor: str):
+    """Return the (symbol, pint.Unit) to display for *sensor*, honoring :data:`GROUP_UNIT_OVERRIDES`.
+
+    Parameters
+    ----------
+    mrun : MagnetRun
+        Loaded run object to query for units.
+    group_name : str
+        Group *sensor* belongs to.
+    sensor : str
+        Sensor/column name.
+
+    Returns
+    -------
+    tuple
+        ``(symbol, unit)``. If ``group_name`` has an override and *sensor*'s
+        own unit is dimensionally compatible with it, ``unit`` is the
+        overridden unit; otherwise it's the sensor's own native unit
+        (or ``(None, None)`` if unresolvable).
+    """
+    symbol, unit = resolve_sensor_unit(mrun, sensor, group_name)
+    if unit is None:
+        return symbol, unit
+    target = GROUP_UNIT_OVERRIDES.get(group_name)
+    if target is not None:
+        try:
+            unit = (1 * unit).to(target).units
+        except pint.errors.DimensionalityError:
+            pass
+    return symbol, unit
+
+
+def convert_values_to_unit(values, unit, target_unit):
+    """Convert a numeric array from *unit* to *target_unit*.
+
+    Parameters
+    ----------
+    values : :class:`~numpy.ndarray` or :class:`~pandas.Series`
+        Values expressed in *unit*.
+    unit : pint.Unit or None
+        *values*' current unit.
+    target_unit : pint.Unit or None
+        Unit to convert to.
+
+    Returns
+    -------
+    :class:`~numpy.ndarray` or :class:`~pandas.Series`
+        Converted values, or *values* unchanged if either unit is ``None``,
+        they're already equal, or they're not dimensionally compatible.
+    """
+    if unit is None or target_unit is None or unit == target_unit:
+        return values
+    try:
+        # Coerce to a plain ndarray first: multiplying a pandas Series by a
+        # pint.Unit silently strips the unit (UnitStrippedWarning) instead of
+        # producing a Quantity, so .to() would fail below.
+        return (np.asarray(values) * unit).to(target_unit).magnitude
+    except pint.errors.DimensionalityError:
+        return values
 
 
 @dataclass
@@ -135,24 +235,21 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
     if df is None or df.empty:
         return go.Figure()
 
-    # 1. Récupération dynamique du symbole et de l'unité
+    # 1. Récupération dynamique du symbole et de l'unité (forcée sur tout le
+    #    groupe pour les groupes listés dans GROUP_UNIT_OVERRIDES)
     ylabel = "Value"
+    target_unit = None
     if mrun and len(y_cols) > 0:
         sensor = y_cols[0]
-        symbol, unit_str = None, None
-        try:
-            symbol, unit_str = mrun.getUnit(sensor)
-        except RuntimeError:
-            try:
-                symbol, unit_str = mrun.getUnit(f"{group_name}/{sensor}")
-            except RuntimeError:
-                logger.debug(
-                    "No unit found for sensor %r (group %r) in either Pupitre or PigBrother key format",
-                    sensor, group_name,
-                )
+        symbol, target_unit = group_display_unit(mrun, group_name, sensor)
+        if target_unit is None:
+            logger.debug(
+                "No unit found for sensor %r (group %r) in either Pupitre or PigBrother key format",
+                sensor, group_name,
+            )
 
-        if symbol and unit_str is not None:
-            ylabel = f"{symbol} [{unit_str:~P}]"
+        if symbol and target_unit is not None:
+            ylabel = f"{symbol} [{target_unit:~P}]"
         elif symbol:
             ylabel = symbol
 
@@ -183,6 +280,12 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
     for sensor in y_cols:
         target_col = None
 
+        # Convertit les valeurs de ce capteur vers l'unité de l'axe (target_unit)
+        # si le groupe force une unité commune (GROUP_UNIT_OVERRIDES).
+        sensor_unit = None
+        if mrun and target_unit is not None:
+            _, sensor_unit = resolve_sensor_unit(mrun, sensor, group_name)
+
         # CAS A : Dictionnaire LTTB
         if isinstance(df_plot, dict):
             if sensor in df_plot:
@@ -195,9 +298,10 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
                     target_col = short_name
 
                 if target_col and x_col in sub_df.columns:
+                    y_values = convert_values_to_unit(sub_df[target_col], sensor_unit, target_unit)
                     fig.add_trace(go.Scattergl(
                         x=sub_df[x_col],
-                        y=sub_df[target_col],
+                        y=y_values,
                         mode='lines',
                         name=sensor,
                         line=dict(line_kwargs),
@@ -215,9 +319,10 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
                 target_col = short_name
 
             if target_col and x_col in df_plot.columns:
+                y_values = convert_values_to_unit(df_plot[target_col], sensor_unit, target_unit)
                 fig.add_trace(go.Scattergl(
                     x=df_plot[x_col],
-                    y=df_plot[target_col],
+                    y=y_values,
                     mode='lines',
                     name=sensor,
                     line=dict(line_kwargs),

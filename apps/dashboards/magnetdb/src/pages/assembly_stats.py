@@ -8,7 +8,12 @@ from dash.dash_table import DataTable
 import plotly.express as px
 from plotly import graph_objects as go
 import magnetdb_analysis as db
-from experiment_links import experiment_link, overview_record_link, magnet_link
+from experiment_links import (
+    experiment_link,
+    overview_record_link,
+    magnet_link,
+    assembly_link,
+)
 import dash_selectors as selectors
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
@@ -176,10 +181,12 @@ def load_assembly_summary(db_path=None):
     return total_assemblies, assemblies_in_operation or 0
 
 
+_TABLE_MARKDOWN_COLUMNS = {"Experiment", "Assembly"}
+
 TABLE_COLUMNS = [
     (
         {"name": c, "id": c, "presentation": "markdown"}
-        if c == "Experiment"
+        if c in _TABLE_MARKDOWN_COLUMNS
         else {"name": c, "id": c}
     )
     for c in EXP_RUN_SCALARS_COLUMNS
@@ -189,7 +196,7 @@ TABLE_COLUMNS = [
 OVERVIEW_RECORD_COLUMNS = [
     (
         {"name": c, "id": c, "presentation": "markdown"}
-        if c == "Overview Record"
+        if c in ("Overview Record", "Assembly")
         else {"name": c, "id": c}
     )
     for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0")
@@ -219,6 +226,7 @@ def _overview_records_section(overview_df):
 
     table_df = overview_df.copy()
     table_df["Overview Record"] = table_df.apply(overview_record_link, axis=1)
+    table_df["Assembly"] = table_df.apply(assembly_link, axis=1)
 
     return DataTable(
         columns=OVERVIEW_RECORD_COLUMNS,
@@ -327,8 +335,8 @@ def _build_page_content(
     ):
         match = assemblies_meta.loc[assemblies_meta["Assembly"] == selected_assembly]
         if not match.empty:
-            range_start = match["Commissioned"].iloc[0]
-            range_end = match["Decommissioned"].iloc[0]
+            range_start = db.to_display_tz(match["Commissioned"].iloc[0])
+            range_end = db.to_display_tz(match["Decommissioned"].iloc[0])
             if pd.isna(range_end):
                 range_end = pd.Timestamp.now()
             if selected_year and selected_year != selectors.ALL:
@@ -366,12 +374,12 @@ def _build_page_content(
         {"Magnet Time (s)": "sum", "Commissioned": "min"}
     )
     field_on_by_assembly = field_on_by_assembly.sort_values("Commissioned")
-    field_on_by_assembly["Field ON (h)"] = field_on_by_assembly["Magnet Time (s)"] / S_TO_H
+    field_on_by_assembly["Time (h)"] = field_on_by_assembly["Magnet Time (s)"] / S_TO_H
 
     fig_field_on = px.bar(
         field_on_by_assembly,
         x="Assembly",
-        y="Field ON (h)",
+        y="Time (h)",
         color="Housing",
         color_discrete_map={"M9": "red", "M10": "blue"},
         category_orders={
@@ -383,6 +391,7 @@ def _build_page_content(
 
     table_df = df.drop(columns=["File"])
     table_df["Experiment"] = df.apply(experiment_link, axis=1)
+    table_df["Assembly"] = df.apply(assembly_link, axis=1)
 
     if selected_assembly and selected_assembly != selectors.ALL:
         assemblies_line = f"Assemblies: 1 selected of {total_assemblies}"

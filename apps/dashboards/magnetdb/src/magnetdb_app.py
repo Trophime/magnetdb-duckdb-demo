@@ -82,7 +82,7 @@ app.layout = html.Div(
             style={"display": "flex", "gap": "15px", "marginBottom": "20px"},
         ),
         # C'est ici que le contenu des pages sera affiché, selon la page sélectionnée
-        dash.page_container,
+        dcc.Loading(dash.page_container, type="circle"),
     ]
 )
 

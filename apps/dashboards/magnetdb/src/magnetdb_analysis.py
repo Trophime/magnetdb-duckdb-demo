@@ -16,6 +16,11 @@ import pandas as pd
 import scipy.signal as sg
 from natsort import natsorted
 
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:
+    from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
+
 # Chemin absolu vers la base DuckDB (surchargable via variable d'environnement)
 DB_PATH = os.environ.get(
     "MAGNETDB_DB_PATH", "/workspaces/magnetdb-duckdb-demo/to_duckdb/test-magnetdb.duckdb"
@@ -23,7 +28,37 @@ DB_PATH = os.environ.get(
 # Répertoire scanné pour lister les bases sélectionnables dans le dropdown
 DB_DIR = os.environ.get("MAGNETDB_DB_DIR", os.path.dirname(DB_PATH))
 
+# Timestamps are stored in the database as naive UTC (see to_duckdb/populate.py's
+# --db-tz, defaulting to UTC). DISPLAY_TZ is the timezone they are converted to
+# for display in the dashboard; override via MAGNETDB_DISPLAY_TZ for deployments
+# outside France.
+UTC_TZ = ZoneInfo("UTC")
+DISPLAY_TZ = ZoneInfo(os.environ.get("MAGNETDB_DISPLAY_TZ", "Europe/Paris"))
+
 print(f"Using DuckDB database: {DB_PATH}")
+
+
+def to_display_tz(value):
+    """Convert a naive UTC timestamp (as stored in the database) to naive `DISPLAY_TZ` local time.
+
+    Parameters
+    ----------
+    value : datetime, :class:`~pandas.Timestamp`, or :class:`~pandas.Series`
+        Naive UTC timestamp(s). ``None``/``NaT`` values pass through
+        unchanged.
+
+    Returns
+    -------
+    same type as *value*
+        Naive `DISPLAY_TZ` local time (tzinfo stripped after conversion, so
+        it renders the same way as other timestamps in the dashboard).
+    """
+    if isinstance(value, pd.Series):
+        return value.dt.tz_localize(UTC_TZ).dt.tz_convert(DISPLAY_TZ).dt.tz_localize(None)
+    if value is None or pd.isna(value):
+        return value
+    return pd.Timestamp(value).tz_localize(UTC_TZ).tz_convert(DISPLAY_TZ).tz_localize(None)
+
 
 def get_available_databases(db_dir=None):
     """List the DuckDB database files selectable in the database dropdown.
@@ -192,7 +227,9 @@ def get_magnets_for_assembly(assembly_name, db_path=None):
             WHERE sm.assembly_name = ?
             ORDER BY m.name
         """
-        return conn.execute(query, [assembly_name]).df().to_dict("records")
+        df = conn.execute(query, [assembly_name]).df()
+    df["assembled_at"] = to_display_tz(df["assembled_at"])
+    return df.to_dict("records")
 
 
 def get_parts_for_magnet(magnet_name, db_path=None):
@@ -220,7 +257,9 @@ def get_parts_for_magnet(magnet_name, db_path=None):
             WHERE mp.magnet_name = ?
             ORDER BY mp.rank NULLS LAST, mp.part_name
         """
-        return conn.execute(query, [magnet_name]).df().to_dict("records")
+        df = conn.execute(query, [magnet_name]).df()
+    df["manufactured_at"] = to_display_tz(df["manufactured_at"])
+    return df.to_dict("records")
 
 
 def get_files_for_assembly(assembly_name, table_name, db_path=None):
@@ -341,7 +380,9 @@ def get_overview_records_for_assembly(assembly_name, db_path=None):
             WHERE assembly_name = ? AND merged_into IS NULL
             ORDER BY t0 NULLS LAST, filename
         """
-        return conn.execute(query, [assembly_name]).df().to_dict("records")
+        df = conn.execute(query, [assembly_name]).df()
+    df["t0"] = to_display_tz(df["t0"])
+    return df.to_dict("records")
 
 
 def get_assembly_history_for_magnet(magnet_name, db_path=None):
@@ -370,7 +411,10 @@ def get_assembly_history_for_magnet(magnet_name, db_path=None):
             WHERE sm.magnet_name = ?
             ORDER BY a.commissioned_at NULLS LAST
         """
-        return conn.execute(query, [magnet_name]).df().to_dict("records")
+        df = conn.execute(query, [magnet_name]).df()
+    df["commissioned_at"] = to_display_tz(df["commissioned_at"])
+    df["decommissioned_at"] = to_display_tz(df["decommissioned_at"])
+    return df.to_dict("records")
 
 
 def get_magnet_history_for_part(part_name, db_path=None):
@@ -399,7 +443,9 @@ def get_magnet_history_for_part(part_name, db_path=None):
             WHERE mp.part_name = ?
             ORDER BY m.assembled_at NULLS LAST
         """
-        return conn.execute(query, [part_name]).df().to_dict("records")
+        df = conn.execute(query, [part_name]).df()
+    df["assembled_at"] = to_display_tz(df["assembled_at"])
+    return df.to_dict("records")
 
 
 def get_assembly_history_for_part(part_name, db_path=None):
@@ -432,7 +478,10 @@ def get_assembly_history_for_part(part_name, db_path=None):
             WHERE mp.part_name = ?
             ORDER BY a.commissioned_at NULLS LAST
         """
-        return conn.execute(query, [part_name]).df().to_dict("records")
+        df = conn.execute(query, [part_name]).df()
+    df["commissioned_at"] = to_display_tz(df["commissioned_at"])
+    df["decommissioned_at"] = to_display_tz(df["decommissioned_at"])
+    return df.to_dict("records")
 
 
 def get_hoop_stress_summary_for_part(part_name, db_path=None):
@@ -1116,7 +1165,10 @@ def get_field_bin_history(housing, db_path=None, assembly_names=None, year=None)
     experiment (:pyattr:`experiments.name`, parsed in pandas since the
     stored format like ``"2018.02.21 - 10:18:54"`` isn't directly castable
     by DuckDB's ``TIMESTAMP`` cast) or any live ``overview_records`` row
-    (``t0``, ``merged_into IS NULL``) falls in it.
+    (``t0``, ``merged_into IS NULL``) falls in it. ``t0`` and
+    ``commissioned_at`` are stored in UTC and converted to `DISPLAY_TZ`
+    before binning, so periods align with local calendar boundaries;
+    ``experiments.name`` is already local and is binned as-is.
 
     Parameters
     ----------
@@ -1181,9 +1233,10 @@ def get_field_bin_history(housing, db_path=None, assembly_names=None, year=None)
     freq = "W" if year is not None else "M"
 
     activity_periods = set(pd.to_datetime(experiments_df["experiment"], errors="coerce").dropna().dt.to_period(freq))
-    activity_periods |= set(pd.to_datetime(overview_df["t0"], errors="coerce").dropna().dt.to_period(freq))
+    overview_t0_local = to_display_tz(pd.to_datetime(overview_df["t0"], errors="coerce"))
+    activity_periods |= set(overview_t0_local.dropna().dt.to_period(freq))
 
-    commissioned_df["commissioned_at"] = pd.to_datetime(commissioned_df["commissioned_at"])
+    commissioned_df["commissioned_at"] = to_display_tz(pd.to_datetime(commissioned_df["commissioned_at"]))
     commissioned_by_period = commissioned_df.groupby(commissioned_df["commissioned_at"].dt.to_period(freq))[
         "assembly_name"
     ].apply(list)

@@ -7,10 +7,15 @@ from dash.dash_table import DataTable
 
 import plotly.express as px
 from plotly import graph_objects as go
-from natsort import natsorted
 from python_magnetrun.utils.downsampling import downsample_dataframe, DownsampleConfig
 import magnetdb_analysis as db
-from experiment_links import experiment_link, overview_record_link
+from experiment_links import (
+    experiment_link,
+    overview_record_link,
+    part_link,
+    magnet_link,
+    assembly_link,
+)
 import dash_selectors as selectors
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
@@ -27,8 +32,7 @@ EXP_PART_BIN_STATS_COLUMNS = [
     "Magnet",
     "Assembly",
     "File",
-    "Operating time (h)",
-    "Field ON (h)",
+    "Time (h)",
     "Peak hoop stress proxy (A^2)",
     "Hoop Stress Status",
     "Status",
@@ -94,8 +98,7 @@ def load_data(db_path=None):
             SELECT
                 e.id AS ID, e.name AS Experiment, p.name AS Part, p.type AS Type,
                 mp.magnet_name AS Magnet, e.assembly_name AS Assembly, e.file AS File,
-                ROUND(SUM(CASE WHEN s.channel = 'Icoil' THEN s.sum_dt END) / 3600, 2) AS "Operating time (h)",
-                ROUND(MAX(fo.value) / 3600, 2) AS "Field ON (h)",
+                ROUND(MAX(fo.value) / 3600, 2) AS "Time (h)",
                 ROUND(MAX(CASE WHEN s.channel = 'hoop_stress_proxy' THEN s.max_x END), 1) AS "Peak hoop stress proxy (A^2)",
                 CASE WHEN hp.experiment_id IS NOT NULL THEN 'Computed' ELSE 'Not computed' END AS "Hoop Stress Status",
             e.status AS Status
@@ -153,32 +156,44 @@ def load_overview_records(db_path=None):
     return df
 
 
+_TABLE_MARKDOWN_COLUMNS = {"Experiment", "Part", "Magnet", "Assembly"}
+
 TABLE_COLUMNS = [
     (
         {"name": c, "id": c, "presentation": "markdown"}
-        if c == "Experiment"
+        if c in _TABLE_MARKDOWN_COLUMNS
+        else {"name": "Magnet Time (h)", "id": c}
+        if c == "Time (h)"
         else {"name": c, "id": c}
     )
     for c in EXP_PART_BIN_STATS_COLUMNS
-    if c != "File"
+    if c not in ("File", "Peak hoop stress proxy (A^2)")
 ]
 
 OVERVIEW_RECORD_COLUMNS = [
     (
         {"name": c, "id": c, "presentation": "markdown"}
-        if c == "Overview Record"
+        if c in ("Overview Record", "Assembly")
         else {"name": c, "id": c}
     )
     for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0")
 ]
 
 MAGNET_HISTORY_COLUMNS = [
-    {"name": c, "id": c}
+    (
+        {"name": c, "id": c, "presentation": "markdown"}
+        if c == "magnet_name"
+        else {"name": c, "id": c}
+    )
     for c in ("magnet_name", "type", "status", "assembled_at", "rank", "coil_index")
 ]
 
 ASSEMBLY_HISTORY_COLUMNS = [
-    {"name": c, "id": c}
+    (
+        {"name": c, "id": c, "presentation": "markdown"}
+        if c == "assembly_name"
+        else {"name": c, "id": c}
+    )
     for c in (
         "assembly_name",
         "housing",
@@ -204,7 +219,7 @@ HOOP_STRESS_SUMMARY_COLUMNS = [
 FATIGUE_TABLE_COLUMNS = [
     (
         {"name": c, "id": c, "presentation": "markdown"}
-        if c == "Experiment"
+        if c in ("Experiment", "Assembly")
         else {"name": c, "id": c}
     )
     for c in ("ID", "Experiment", "Assembly", "Cycles", "Fatigue proxy (MPa^3)")
@@ -234,6 +249,7 @@ def _overview_records_section(overview_df):
 
     table_df = overview_df.copy()
     table_df["Overview Record"] = table_df.apply(overview_record_link, axis=1)
+    table_df["Assembly"] = table_df.apply(assembly_link, axis=1)
 
     return DataTable(
         columns=OVERVIEW_RECORD_COLUMNS,
@@ -261,6 +277,10 @@ def _magnet_history_section(selected_part, db_path):
             style={"color": "#888", "fontStyle": "italic"},
         )
 
+    history = [
+        {**h, "magnet_name": magnet_link({"Magnet": h["magnet_name"]})} for h in history
+    ]
+
     return DataTable(
         columns=MAGNET_HISTORY_COLUMNS,
         data=history,
@@ -285,6 +305,11 @@ def _assembly_history_section(selected_part, history):
             f"No assembly history found for {selected_part}.",
             style={"color": "#888", "fontStyle": "italic"},
         )
+
+    history = [
+        {**h, "assembly_name": assembly_link({"Assembly": h["assembly_name"]})}
+        for h in history
+    ]
 
     return DataTable(
         columns=ASSEMBLY_HISTORY_COLUMNS,
@@ -339,15 +364,21 @@ def _hoop_stress_section(selected_part, db_path):
         {
             "Experiments": summary["n_experiments"],
             "Samples": summary["n_samples"],
-            "Mean (MPa)": round(summary["mean_MPa"], 1)
-            if summary["mean_MPa"] is not None
-            else None,
-            "Std dev (MPa)": round(summary["stddev_MPa"], 1)
-            if summary["stddev_MPa"] is not None
-            else None,
-            "Peak (MPa)": round(summary["peak_MPa"], 1)
-            if summary["peak_MPa"] is not None
-            else None,
+            "Mean (MPa)": (
+                round(summary["mean_MPa"], 1)
+                if summary["mean_MPa"] is not None
+                else None
+            ),
+            "Std dev (MPa)": (
+                round(summary["stddev_MPa"], 1)
+                if summary["stddev_MPa"] is not None
+                else None
+            ),
+            "Peak (MPa)": (
+                round(summary["peak_MPa"], 1)
+                if summary["peak_MPa"] is not None
+                else None
+            ),
             "Cycles": round(summary["n_cycles"], 1),
             "Fatigue proxy (MPa³)": round(summary["sum_range3"], 1),
         }
@@ -435,6 +466,7 @@ def _fatigue_section(selected_part, db_path):
 
     table_df = fatigue_df.drop(columns=["File"]).copy()
     table_df["Experiment"] = fatigue_df.apply(experiment_link, axis=1)
+    table_df["Assembly"] = fatigue_df.apply(assembly_link, axis=1)
 
     # Categorical x-axis: with a raw datetime x, Plotly infers bar width from
     # the smallest gap between experiments, which can collapse to near-zero
@@ -457,7 +489,10 @@ def _fatigue_section(selected_part, db_path):
         y="Fatigue proxy (MPa^3)",
         category_orders={"Experiment label": experiment_order},
         title=f"Fatigue Proxy per Experiment — {selected_part}",
-        labels={"Experiment label": "Experiment", "Fatigue proxy (MPa^3)": "Fatigue proxy (MPa³)"},
+        labels={
+            "Experiment label": "Experiment",
+            "Fatigue proxy (MPa^3)": "Fatigue proxy (MPa³)",
+        },
     )
     # Plotly auto-detects date-like x labels and reverts to a date axis
     # (silently ignoring category_orders) unless the type is forced.
@@ -471,27 +506,10 @@ def _build_page_content(df, selected_part=None, db_path=None):
     """Build the figures, table rows, and summary text for a loaded (experiment, part) dataframe."""
     exp_df = df.drop_duplicates(subset="ID").copy()
 
-    hours_by_part = df.groupby(["Part", "Housing"], as_index=False).agg(
-        {"Operating time (h)": "sum"}
-    )
-    part_order = [
-        p for p in db.get_all_parts(db_path) if p in set(hours_by_part["Part"])
-    ]
-    housing_order = natsorted(hours_by_part["Housing"].dropna().unique())
-
-    fig_hours = px.bar(
-        hours_by_part,
-        x="Part",
-        y="Operating time (h)",
-        color="Housing",
-        color_discrete_map={"M9": "red", "M10": "blue"},
-        category_orders={"Part": part_order, "Housing": housing_order},
-        barmode="group",
-        title="Operating Time per Part (h)",
-    )
+    part_order = [p for p in db.get_all_parts(db_path) if p in set(df["Part"])]
 
     field_on_by_part_magnet = df.groupby(["Part", "Magnet"], as_index=False).agg(
-        {"Field ON (h)": "sum"}
+        {"Time (h)": "sum"}
     )
     magnet_order = [
         m
@@ -502,7 +520,7 @@ def _build_page_content(df, selected_part=None, db_path=None):
     fig_magnet_time = px.bar(
         field_on_by_part_magnet,
         x="Part",
-        y="Field ON (h)",
+        y="Time (h)",
         color="Magnet",
         category_orders={"Part": part_order, "Magnet": magnet_order},
         title="Magnet Time per Part (h)",
@@ -510,6 +528,9 @@ def _build_page_content(df, selected_part=None, db_path=None):
 
     table_df = df.drop(columns=["File"])
     table_df["Experiment"] = df.apply(experiment_link, axis=1)
+    table_df["Part"] = df.apply(part_link, axis=1)
+    table_df["Magnet"] = df.apply(magnet_link, axis=1)
+    table_df["Assembly"] = df.apply(assembly_link, axis=1)
 
     counts = db.get_db_counts(db_path)
     parts_line = (
@@ -531,7 +552,6 @@ def _build_page_content(df, selected_part=None, db_path=None):
     ]
 
     return (
-        fig_hours,
         fig_magnet_time,
         table_df.to_dict("records"),
         summary,
@@ -628,8 +648,6 @@ def layout(part=None, **kwargs):
                 },
             ),
             html.Br(),
-            dcc.Graph(id="part-stats-fig-hours"),
-            html.Br(),
             dcc.Graph(id="part-stats-fig-magnet-time"),
             html.Br(),
             html.Details(
@@ -715,8 +733,6 @@ def layout(part=None, **kwargs):
 
 
 @dash.callback(
-    Output("part-stats-fig-hours", "figure"),
-    Output("part-stats-fig-hours", "style"),
     Output("part-stats-fig-magnet-time", "figure"),
     Output("part-stats-fig-magnet-time", "style"),
     Output("part-stats-table", "data"),
@@ -742,8 +758,6 @@ def layout(part=None, **kwargs):
 def update_part_stats(selected_db, selected_part, selected_status):
     if not selected_db:
         return (
-            go.Figure(),
-            {},
             go.Figure(),
             {},
             [],
@@ -784,13 +798,11 @@ def update_part_stats(selected_db, selected_part, selected_status):
     plot_df = df[df["Part"] == selected_part] if selected_part != selectors.ALL else df
     if names_with_status is not None:
         plot_df = plot_df[plot_df["Part"].isin(names_with_status)]
-    fig_hours_style = {"display": "none"} if selected_part != selectors.ALL else {}
     fig_magnet_time_style = (
         {"display": "none"} if selected_part != selectors.ALL else {}
     )
 
     (
-        fig_hours,
         fig_magnet_time,
         table_records,
         summary,
@@ -837,8 +849,6 @@ def update_part_stats(selected_db, selected_part, selected_status):
     ) = _fatigue_section(selected_part, selected_db)
 
     return (
-        fig_hours,
-        fig_hours_style,
         fig_magnet_time,
         fig_magnet_time_style,
         table_records,

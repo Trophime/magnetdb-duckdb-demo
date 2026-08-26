@@ -44,7 +44,7 @@ def load_housing_summary(db_path=None, assembly_names=None):
     -------
     :class:`~pandas.DataFrame`
         One row per housing, with ``Housing``, ``Energy (kWh)``,
-        ``Field ON (h)``, ``Assemblies``, ``In operation``.
+        ``Time (h)``, ``Assemblies``, ``In operation``.
     """
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
@@ -53,7 +53,7 @@ def load_housing_summary(db_path=None, assembly_names=None):
         SELECT
             a.housing AS Housing,
             ROUND(SUM(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Energy (kWh)",
-            ROUND(SUM(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END) / {S_TO_H}, 2) AS "Field ON (h)"
+            ROUND(SUM(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END) / {S_TO_H}, 2) AS "Time (h)"
         FROM experiments AS e
         JOIN assemblies AS a ON a.name = e.assembly_name
         LEFT JOIN exp_run_scalars AS s ON s.experiment_id = e.id
@@ -92,7 +92,7 @@ def load_housing_summary_by_year(db_path=None):
     -------
     :class:`~pandas.DataFrame`
         One row per (Housing, Year), with ``Energy (kWh)`` and
-        ``Field ON (h)``.
+        ``Time (h)``.
     """
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
@@ -102,13 +102,50 @@ def load_housing_summary_by_year(db_path=None):
             a.housing AS Housing,
             CAST(regexp_extract(e.name, '^(\\d{{4}})', 1) AS INTEGER) AS Year,
             ROUND(SUM(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Energy (kWh)",
-            ROUND(SUM(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END) / {S_TO_H}, 2) AS "Field ON (h)"
+            ROUND(SUM(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END) / {S_TO_H}, 2) AS "Time (h)"
         FROM experiments AS e
         JOIN assemblies AS a ON a.name = e.assembly_name
         LEFT JOIN exp_run_scalars AS s ON s.experiment_id = e.id
         GROUP BY Housing, Year
         ORDER BY Year
     """).fetchdf()
+    con.close()
+
+    return df.fillna(0)
+
+
+def load_housing_summary_by_month(year, db_path=None):
+    """Aggregate total energy and field-on time per housing per month, for one year.
+
+    Parameters
+    ----------
+    year : int
+        Restrict to experiments starting in this year.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per (Housing, Month), with ``Energy (kWh)`` and
+        ``Time (h)``. ``Month`` is an integer 1-12.
+    """
+    db_path = db_path or db.DB_PATH
+    con = duckdb.connect(db_path, read_only=True)
+
+    df = con.execute(f"""
+        SELECT
+            a.housing AS Housing,
+            CAST(regexp_extract(e.name, '^\\d{{4}}\\.(\\d{{2}})', 1) AS INTEGER) AS Month,
+            ROUND(SUM(CASE WHEN s.channel = 'energy_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Energy (kWh)",
+            ROUND(SUM(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END) / {S_TO_H}, 2) AS "Time (h)"
+        FROM experiments AS e
+        JOIN assemblies AS a ON a.name = e.assembly_name
+        LEFT JOIN exp_run_scalars AS s ON s.experiment_id = e.id
+        WHERE regexp_extract(e.name, '^(\\d{{4}})', 1) = ?
+        GROUP BY Housing, Month
+        ORDER BY Month
+    """, [str(year)]).fetchdf()
     con.close()
 
     return df.fillna(0)
@@ -129,6 +166,8 @@ def load_commissioning_history(db_path=None, assemblies_in_year=None):
     dict of str -> list of dict
         Housing name -> list of ``{"Assembly", "Status", "Commissioned",
         "Decommissioned"}`` dicts, ascending by ``Commissioned`` (NULLs last).
+        ``Commissioned``/``Decommissioned`` are converted to
+        :data:`db.DISPLAY_TZ` for display.
     """
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
@@ -151,6 +190,8 @@ def load_commissioning_history(db_path=None, assemblies_in_year=None):
         df = df[df["Assembly"].isin(assemblies_in_year)]
         if df.empty:
             return {}
+    df["Commissioned"] = db.to_display_tz(df["Commissioned"])
+    df["Decommissioned"] = db.to_display_tz(df["Decommissioned"])
     df["Assembly"] = df.apply(assembly_link, axis=1)
     return {housing: group.drop(columns=["Housing"]).to_dict("records") for housing, group in df.groupby("Housing")}
 
@@ -222,7 +263,7 @@ def _field_activity_strip(housing, db_path=None, assembly_names=None, year=None)
 def _housing_section(housing, summary_row, commissioning_rows, db_path=None, assembly_names=None, year=None):
     """Build one housing's summary card as a collapsible accordion item."""
     energy = summary_row["Energy (kWh)"] if summary_row is not None else 0
-    field_on = summary_row["Field ON (h)"] if summary_row is not None else 0
+    field_on = summary_row["Time (h)"] if summary_row is not None else 0
     n_assemblies = int(summary_row["Assemblies"]) if summary_row is not None else 0
     n_in_operation = int(summary_row["In operation"]) if summary_row is not None else 0
 
@@ -324,39 +365,72 @@ def update_housing_stats(selected_db, selected_year):
         html.B(f"Overview records: {counts['overview_records']}"),
     ]
 
+    year_suffix = f" ({year_filter})" if year_filter is not None else ""
+
     fig = px.bar(
-        summary_df,
+        section_summary_df,
         x="Housing",
         y="Energy (kWh)",
         color="Housing",
         color_discrete_map=HOUSING_COLORS,
         category_orders={"Housing": housing_order},
-        title="Total Energy per Housing",
+        title=f"Total Energy per Housing{year_suffix}",
     )
 
-    fig_energy_year = px.bar(
-        summary_by_year_df,
-        x="Year",
-        y="Energy (kWh)",
-        color="Housing",
-        color_discrete_map=HOUSING_COLORS,
-        category_orders={"Housing": housing_order},
-        barmode="group",
-        title="Energy per Housing per Year",
-    )
-    fig_energy_year.update_xaxes(dtick=1, title="Year")
+    if year_filter is not None:
+        summary_by_month_df = load_housing_summary_by_month(year_filter, selected_db)
 
-    fig_field_on_year = px.bar(
-        summary_by_year_df,
-        x="Year",
-        y="Field ON (h)",
-        color="Housing",
-        color_discrete_map=HOUSING_COLORS,
-        category_orders={"Housing": housing_order},
-        barmode="group",
-        title="Magnet Time per Housing per Year (h)",
-    )
-    fig_field_on_year.update_xaxes(dtick=1, title="Year")
+        fig_energy_year = px.bar(
+            summary_by_month_df,
+            x="Month",
+            y="Energy (kWh)",
+            color="Housing",
+            color_discrete_map=HOUSING_COLORS,
+            category_orders={"Housing": housing_order},
+            barmode="group",
+            title=f"Energy per Housing per Month{year_suffix}",
+        )
+        fig_energy_year.update_xaxes(
+            dtick=1, tickvals=list(range(1, 13)), ticktext=_MONTH_LABELS, title="Month"
+        )
+
+        fig_field_on_year = px.bar(
+            summary_by_month_df,
+            x="Month",
+            y="Time (h)",
+            color="Housing",
+            color_discrete_map=HOUSING_COLORS,
+            category_orders={"Housing": housing_order},
+            barmode="group",
+            title=f"Magnet Time per Housing per Month (h){year_suffix}",
+        )
+        fig_field_on_year.update_xaxes(
+            dtick=1, tickvals=list(range(1, 13)), ticktext=_MONTH_LABELS, title="Month"
+        )
+    else:
+        fig_energy_year = px.bar(
+            summary_by_year_df,
+            x="Year",
+            y="Energy (kWh)",
+            color="Housing",
+            color_discrete_map=HOUSING_COLORS,
+            category_orders={"Housing": housing_order},
+            barmode="group",
+            title="Energy per Housing per Year",
+        )
+        fig_energy_year.update_xaxes(dtick=1, title="Year")
+
+        fig_field_on_year = px.bar(
+            summary_by_year_df,
+            x="Year",
+            y="Time (h)",
+            color="Housing",
+            color_discrete_map=HOUSING_COLORS,
+            category_orders={"Housing": housing_order},
+            barmode="group",
+            title="Magnet Time per Housing per Year (h)",
+        )
+        fig_field_on_year.update_xaxes(dtick=1, title="Year")
 
     sections = []
     for housing in housing_order:

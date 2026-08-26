@@ -182,13 +182,7 @@ def update_sensors_menus(
 
         options = []
         for s in sensors:
-            try:
-                symbol, unit = mrun.getUnit(s)
-            except RuntimeError:
-                try:
-                    symbol, unit = mrun.getUnit(f"{group_name}/{s}")
-                except RuntimeError:
-                    symbol, unit = None, None
+            symbol, unit = plot.group_display_unit(mrun, group_name, s)
 
             if symbol and unit is not None:
                 label = f"{s} ({symbol} [{unit:~P}])"
