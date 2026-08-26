@@ -1,0 +1,64 @@
+# magnetdb dashboard — Python dependencies
+#
+# This is a dependency manifest, not an importable package: the app is run
+# by cd-ing into src/ and executing magnetdb_app.py directly (or via
+# `gunicorn magnetdb_app:server`), not by importing this project as a
+# library. `packages = []` below tells setuptools not to try to discover it.
+#
+# Install with:  pip install .[test]
+#
+# ── magnettools ────────────────────────────────────────────────────────────
+# magnettools is a pybind11 C++ extension. Two installation paths are
+# supported:
+#
+# Option A — Debian package (no build required, recommended for most users):
+#   The Debian package python3-magnettools is already installed at system
+#   level. Create the venv WITH --system-site-packages so Python picks it up:
+#     python3 -m venv --system-site-packages venv
+#     pip install .[test]
+#
+# Option B — Local source build from ../../../my-magnettools/Python:
+#   Requires the C++ dev headers first (one-time, needs sudo):
+#     sudo apt install libmagnettools-dev
+#   Then install it separately into any venv:
+#     pip install -e ../../../my-magnettools/Python
+#
+# ── Local packages (editable installs from sibling directories) ─────────────
+#   python_magnetgeo, python_magnetcooling, python_magnetrun,
+#   python_magnetsetup are installed separately (see
+#   .devcontainer/setup-basic.sh) rather than declared here, so their extras
+#   (e.g. python_magnetrun[signal,dash]) stay defined in one place.
+#
+# werkzeug ships as a Flask/Dash dependency already, but is pinned explicitly
+# below because magnetdb_app.py imports werkzeug.middleware.profiler directly
+# (MAGNETDB_PROFILE=1 opt-in profiling — see PROFILING.md).
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "magnetdb-dashboard"
+version = "0.1.0"
+description = "Dash dashboard for browsing MagnetDB duckdb data"
+requires-python = ">=3.11"
+authors = [
+    {name = "Christophe Trophime", email = "christophe.trophime@lncmi.cnrs.fr"}
+]
+dependencies = [
+    "dash>=2.16,<3.0",
+    "dash-bootstrap-components>=1.6,<2.0",
+    "plotly>=5.0,<7.0",
+    "werkzeug>=3.0,<4.0",
+    "duckdb>=1.1.0,<2.0.0",
+    "numpy>=1.26.0,<3.0.0",
+    "pandas>=2.1.0,<4.0.0",
+    "pyarrow>=14.0.0,<25.0.0",
+    "pyyaml>=6.0.1,<7.0.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0.0,<10.0.0"]
+
+[tool.setuptools]
+packages = []

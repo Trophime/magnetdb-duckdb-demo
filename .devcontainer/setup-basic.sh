@@ -76,8 +76,13 @@ pip install ipyfilechooser ipywidgets voila pandas
 echo "🛠️  Linking development submodules..."
 pip install -e "./python_magnetgeo"
 pip install -e "./python_magnetcooling[fitting]"
-pip install -e "./python_magnetrun[signal]"
+pip install -e "./python_magnetrun[signal,dash]"
 pip install -e "./python_magnetsetup"
+
+# --- Step 5: Install to_duckdb library and dashboard app dependencies ---
+echo "📊 Installing to_duckdb and the magnetdb dashboard..."
+pip install "./to_duckdb[test,notebook,cli]"
+pip install "./apps/dashboards/magnetdb[test]"
 
 echo "✅ Setup Complete! Your environment is isolated but has access to system site packages."
 

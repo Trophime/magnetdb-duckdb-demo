@@ -1,0 +1,66 @@
+# to_duckdb — Python dependencies
+#
+# This is a dependency manifest, not an importable package: to_duckdb's
+# modules (schema.py, crud.py, ...) are imported flatly (`from schema import
+# ...`), via `pythonpath = .` in pytest.ini, not as `to_duckdb.schema`.
+# `packages = []` below tells setuptools not to try to discover/package them.
+#
+# Install with:  pip install .[test,notebook,cli]
+#
+# ── magnettools ────────────────────────────────────────────────────────────
+# magnettools is a pybind11 C++ extension. Two installation paths are
+# supported:
+#
+# Option A — Debian package (no build required, recommended for most users):
+#   The Debian package python3-magnettools is already installed at system
+#   level. Create the venv WITH --system-site-packages so Python picks it up:
+#     python3 -m venv --system-site-packages venv
+#     pip install .[test,notebook,cli]
+#
+# Option B — Local source build from ../my-magnettools/Python:
+#   Requires the C++ dev headers first (one-time, needs sudo):
+#     sudo apt install libmagnettools-dev
+#   Then install it separately into any venv:
+#     pip install -e ../my-magnettools/Python
+#
+# ── duckdb CLI ───────────────────────────────────────────────────────────────
+#   duckdb-cli (the `cli` extra) ships the standalone duckdb binary as a
+#   wheel. Alternatively install the system package: sudo apt install duckdb
+#
+# ── Local packages (editable installs from sibling directories) ─────────────
+#   python_magnetgeo, python_magnetcooling, python_magnetrun,
+#   python_magnetsetup are installed separately (see
+#   .devcontainer/setup-basic.sh) rather than declared here, so their extras
+#   (e.g. python_magnetrun[signal,dash]) stay defined in one place.
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "to_duckdb"
+version = "0.1.0"
+description = "MagnetDB duckdb schema, CRUD, and stats computation library"
+requires-python = ">=3.11"
+readme = "README.md"
+authors = [
+    {name = "Christophe Trophime", email = "christophe.trophime@lncmi.cnrs.fr"}
+]
+dependencies = [
+    "duckdb>=1.1.0,<2.0.0",
+    "numpy>=1.26.0,<3.0.0",
+    "pandas>=2.1.0,<4.0.0",
+    "pyyaml>=6.0.1,<7.0.0",
+    "matplotlib>=3.8.0,<4.0.0",
+    "rainflow>=3.1.0,<4.0.0",
+    "pyarrow>=14.0.0,<25.0.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8.0.0,<10.0.0"]
+# marimo: interactive UI (apps/marimo); rich: used inside .ipynb cells
+notebook = ["marimo>=0.9.0,<1.0.0", "rich"]
+cli = ["duckdb-cli>=1.1.0,<2.0.0"]
+
+[tool.setuptools]
+packages = []
