@@ -2,13 +2,21 @@
 # NOTE: build context must be the repo root, since this image needs the
 # python_magnetrun / python_magnetcooling git submodules alongside it:
 #   docker build -f apps/dashboards/magnetdb/Dockerfile -t magnetdb-dashboard .
-FROM python:3.13-slim
+ARG BASE_IMAGE=trophime/magnettools:trixie
+FROM ${BASE_IMAGE}
+
+# get the default from BASE_IMAGE (trophime/magnetdb)
+ARG USERNAME=jovyan
+ARG USER_UID=1000
+ARG USER_GID=100
+
+# The base image may already default to a non-root user; regain root for
+# package installs and user/group administration below.
+USER root
 
 # Keep Python from writing .pyc files / buffering stdout (cleaner logs)
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
-
-WORKDIR /app
 
 # System deps only if needed (e.g. for pandas/numpy wheels on slim images)
 # Uncomment if you hit build errors on numpy/pandas:
@@ -16,27 +24,39 @@ WORKDIR /app
 #     build-essential \
 #     && rm -rf /var/lib/apt/lists/*
 
+# Create group/user first so the venv and all installs are owned by the app user
+RUN if ! getent group "${USERNAME}" > /dev/null 2>&1; then \
+        groupadd --non-unique --gid "${USER_GID}" "${USERNAME}"; \
+    fi && \
+    if ! id "${USERNAME}" > /dev/null 2>&1; then \
+        useradd --non-unique --uid "${USER_UID}" --gid "${USER_GID}" --create-home "${USERNAME}"; \
+    fi && \
+    mkdir -p /app && chown "${USER_UID}:${USER_GID}" /app
+
+USER ${USERNAME}
+WORKDIR /app
+
+# venv owned by the app user; pip and egg_info writes succeed without privilege issues
+RUN python3 -m venv /app/venv
+ENV PATH="/app/venv/bin:$PATH"
+
 # Install deps first so Docker caches this layer when only app code changes
-COPY apps/dashboards/magnetdb/pyproject.toml .
+COPY --chown=${USERNAME}:${USERNAME} apps/dashboards/magnetdb/pyproject.toml .
 RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir . gunicorn
 
 # python_magnetrun depends on python_magnetcooling[fitting]; install it first
 # from the local submodule so python_magnetrun's install doesn't try (and fail)
 # to fetch it from PyPI.
-COPY python_magnetcooling/ ./python_magnetcooling/
+COPY --chown=${USERNAME}:${USERNAME} python_magnetcooling/ ./python_magnetcooling/
 RUN pip install --no-cache-dir "./python_magnetcooling[fitting]"
 
-COPY python_magnetrun/ ./python_magnetrun/
+COPY --chown=${USERNAME}:${USERNAME} python_magnetrun/ ./python_magnetrun/
 RUN pip install --no-cache-dir ./python_magnetrun
 
 # Now copy the actual app code
-COPY apps/dashboards/magnetdb/src/ ./src/
+COPY --chown=${USERNAME}:${USERNAME} apps/dashboards/magnetdb/src/ ./src/
 WORKDIR /app/src
-
-# Run as non-root for basic hardening
-RUN useradd --create-home appuser && chown -R appuser /app
-USER appuser
 
 EXPOSE 8050
 
@@ -47,6 +67,6 @@ EXPOSE 8050
 # magnetdb_app:server assumes magnetdb_app.py exposes `server = app.server`
 CMD ["gunicorn", "magnetdb_app:server", \
      "--bind", "0.0.0.0:8050", \
-     "--workers", "2", \
+     "--workers", "1", \
      "--threads", "4", \
      "--timeout", "120"]
