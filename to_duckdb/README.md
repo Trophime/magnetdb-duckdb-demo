@@ -60,7 +60,7 @@ to_duckdb/
 cd to_duckdb/
 python3 -m venv venv
 source venv/bin/activate   # Windows: venv\Scripts\activate
-pip install -r requirements.txt
+pip install .[test,notebook,cli]
 ```
 
 ---

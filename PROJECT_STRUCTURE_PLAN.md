@@ -126,6 +126,17 @@ risks are resolved first, then cleanup, then the directory reshuffle.
 
 ## 4. Packaging: `requirements.txt` vs `pyproject.toml`
 
+**Partially done (2026-08-26, in this repo):** `to_duckdb/` and
+`apps/dashboards/magnetdb/` each now have a dependency-only
+`pyproject.toml` (`packages = []` — neither is imported as a library by
+anything else), replacing their `requirements.txt`, and
+`.devcontainer/setup-basic.sh` installs from them. Still on plain `pip`,
+not `uv` (`setup-basic.sh` is plain-pip; `setup-uv.sh` exists but isn't
+wired into `devcontainer.json` at all, so switching to `uv` was left for
+later). `apps/marimo/`, `apps/tutorials/`, and `apps/notebooks/` don't have
+a `pyproject.toml` yet — none of them had a `requirements.txt` to replace
+in the first place.
+
 **Recommendation:** move to one `pyproject.toml` per component (each
 `apps/dashboards/<name>/`, `apps/marimo/`, and `to_duckdb/`), run via
 `uv` — consistent with `.devcontainer/setup-uv.sh` already standardizing

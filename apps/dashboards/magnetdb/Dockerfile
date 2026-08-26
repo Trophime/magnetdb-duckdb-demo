@@ -1,7 +1,7 @@
 # ---- Dockerfile ----
 # NOTE: build context must be the repo root, since this image needs the
 # python_magnetrun / python_magnetcooling git submodules alongside it:
-#   docker build -f stage/dashboard/Dockerfile -t magnetdb-dashboard .
+#   docker build -f apps/dashboards/magnetdb/Dockerfile -t magnetdb-dashboard .
 FROM python:3.13-slim
 
 # Keep Python from writing .pyc files / buffering stdout (cleaner logs)
@@ -17,9 +17,9 @@ WORKDIR /app
 #     && rm -rf /var/lib/apt/lists/*
 
 # Install deps first so Docker caches this layer when only app code changes
-COPY stage/dashboard/requirements.txt .
+COPY apps/dashboards/magnetdb/pyproject.toml .
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt gunicorn
+    pip install --no-cache-dir . gunicorn
 
 # python_magnetrun depends on python_magnetcooling[fitting]; install it first
 # from the local submodule so python_magnetrun's install doesn't try (and fail)
@@ -31,7 +31,7 @@ COPY python_magnetrun/ ./python_magnetrun/
 RUN pip install --no-cache-dir ./python_magnetrun
 
 # Now copy the actual app code
-COPY stage/dashboard/src/ ./src/
+COPY apps/dashboards/magnetdb/src/ ./src/
 WORKDIR /app/src
 
 # Run as non-root for basic hardening

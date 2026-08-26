@@ -41,7 +41,7 @@ This is the tool for "where inside `load_mrun`/`getTdmsData`/downsampling is
 the time actually going" — the level `chrono_callback` can't see.
 
 Requires `werkzeug` (already a transitive Dash/Flask dependency, pinned
-explicitly in `requirements.txt` since it's now imported directly).
+explicitly in `pyproject.toml` since it's now imported directly).
 
 ## 3. Zero-code-change alternative: py-spy
 

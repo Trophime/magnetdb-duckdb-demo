@@ -15,7 +15,7 @@
 cd to_duckdb/
 source venv/bin/activate
 pip install marimo          # if not already present
-pip install duckdb pandas   # already in requirements.txt
+pip install duckdb pandas   # already in to_duckdb's pyproject.toml
 ```
 
 ---
