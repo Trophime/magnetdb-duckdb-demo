@@ -156,6 +156,8 @@ class TraceStyle:
     dash: str = "solid"
     width: float = 2
     opacity: float = 1.0
+    marker_symbol: str | None = None
+    marker_every: int | None = None
 
 
 @dataclass
@@ -202,46 +204,148 @@ def save_file_type_styles(styles: FileTypeStyles, path: str | Path) -> None:
         json.dump(styles.to_dict(), f, indent=2)
 
 
-_USER_STYLE_CONFIG = Path.home() / ".config" / "magnetdb" / "style.json"
+@dataclass
+class FieldStyleOverride:
+    """Optional per-(group, sensor) override of color/dash/width/marker properties.
+
+    Any property left as ``None`` falls back to the resolved source-type
+    :class:`TraceStyle`. Opacity is deliberately not included — it stays a
+    pure per-source-type property, not overridable per field.
+    """
+
+    color: str | None = None
+    dash: str | None = None
+    width: float | None = None
+    marker_symbol: str | None = None
+    marker_every: int | None = None
+
+    def to_dict(self) -> dict:
+        """Return only the properties actually set (skips ``None`` values)."""
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "FieldStyleOverride":
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
+
+
+@dataclass
+class StyleConfig:
+    """Top-level style config: per-source-type styles plus per-(group, field) overrides."""
+
+    file_type_styles: FileTypeStyles = field(default_factory=FileTypeStyles)
+    field_overrides: dict[str, dict[str, FieldStyleOverride]] = field(default_factory=dict)
+
+    def to_dict(self) -> dict:
+        data = self.file_type_styles.to_dict()
+        data["field_overrides"] = {
+            group_name: {
+                sensor: override.to_dict() for sensor, override in sensors.items()
+            }
+            for group_name, sensors in self.field_overrides.items()
+        }
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "StyleConfig":
+        field_overrides = {
+            group_name: {
+                sensor: FieldStyleOverride.from_dict(override)
+                for sensor, override in sensors.items()
+            }
+            for group_name, sensors in data.get("field_overrides", {}).items()
+        }
+        return cls(file_type_styles=FileTypeStyles.from_dict(data), field_overrides=field_overrides)
+
+
+def load_style_config(path: str | Path) -> StyleConfig:
+    """Load a :class:`StyleConfig` (source-type styles + field overrides) from a JSON file."""
+    with open(path) as f:
+        data = json.load(f)
+    return StyleConfig.from_dict(data)
+
+
+def save_style_config(config: StyleConfig, path: str | Path) -> None:
+    """Save a :class:`StyleConfig` (source-type styles + field overrides) to a JSON file."""
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w") as f:
+        json.dump(config.to_dict(), f, indent=2)
+
+
+USER_STYLE_CONFIG_PATH = Path.home() / ".config" / "magnetdb" / "style.json"
 _BUNDLED_STYLE_PATH = Path(__file__).parent / "style.json"
 
 
-def _load_default_file_type_styles() -> FileTypeStyles:
-    """Return FileTypeStyles, resolved in order: env var, user config dir, bundled default.
+def _load_default_style_config() -> StyleConfig:
+    """Return StyleConfig, resolved in order: env var, user config dir, bundled default.
 
     1. ``$MAGNETDB_FILE_TYPE_STYLES``, if set.
     2. ``~/.config/magnetdb/style.json``, if it exists.
     3. The bundled ``style.json`` shipped next to this module.
-    4. In-code :class:`FileTypeStyles` defaults, as a last resort if even the
+    4. In-code :class:`StyleConfig` defaults, as a last resort if even the
        bundled file is somehow missing or unreadable — startup never crashes.
     """
     env_path = os.environ.get("MAGNETDB_FILE_TYPE_STYLES")
     if env_path:
         try:
-            return load_file_type_styles(env_path)
+            return load_style_config(env_path)
         except (OSError, KeyError, TypeError, ValueError) as exc:
             logger.warning(
                 "Could not load $MAGNETDB_FILE_TYPE_STYLES=%s: %s — trying next source", env_path, exc
             )
 
-    if _USER_STYLE_CONFIG.exists():
+    if USER_STYLE_CONFIG_PATH.exists():
         try:
-            return load_file_type_styles(_USER_STYLE_CONFIG)
+            return load_style_config(USER_STYLE_CONFIG_PATH)
         except (OSError, KeyError, TypeError, ValueError) as exc:
             logger.warning(
-                "Could not load %s: %s — trying next source", _USER_STYLE_CONFIG, exc
+                "Could not load %s: %s — trying next source", USER_STYLE_CONFIG_PATH, exc
             )
 
     try:
-        return load_file_type_styles(_BUNDLED_STYLE_PATH)
+        return load_style_config(_BUNDLED_STYLE_PATH)
     except (OSError, KeyError, TypeError, ValueError) as exc:
         logger.warning(
             "Could not load bundled %s: %s — using in-code defaults", _BUNDLED_STYLE_PATH, exc
         )
-    return FileTypeStyles()
+    return StyleConfig()
 
 
-FILE_TYPE_STYLES = _load_default_file_type_styles()
+_STYLE_CONFIG = _load_default_style_config()
+FILE_TYPE_STYLES = _STYLE_CONFIG.file_type_styles
+FIELD_STYLE_OVERRIDES = _STYLE_CONFIG.field_overrides
+
+
+def reload_style_config() -> None:
+    """Re-resolve the style config from disk and refresh the module-level globals.
+
+    Called by the style-editor modal's Save action so the running app picks up
+    changes immediately, without a restart.
+    """
+    global _STYLE_CONFIG, FILE_TYPE_STYLES, FIELD_STYLE_OVERRIDES
+    _STYLE_CONFIG = _load_default_style_config()
+    FILE_TYPE_STYLES = _STYLE_CONFIG.file_type_styles
+    FIELD_STYLE_OVERRIDES = _STYLE_CONFIG.field_overrides
+
+
+def resolve_file_type_key(filename: str) -> str | None:
+    """Return the FILE_TYPE_STYLES key for *filename* ('pupitre' or a pigbrother mode).
+
+    Parameters
+    ----------
+    filename : str
+        Source data filename.
+
+    Returns
+    -------
+    str or None
+        ``'pupitre'`` for a ``.txt`` file, the normalized
+        :func:`~python_magnetrun.utils.files.classify_pigbrother_file` mode
+        for a ``.tdms`` file, or ``None`` if unresolved.
+    """
+    if filename.endswith('.txt'):
+        return 'pupitre'
+    return classify_pigbrother_file(filename)
 
 
 def _resolve_file_style(filename: str) -> TraceStyle | None:
@@ -251,10 +355,72 @@ def _resolve_file_style(filename: str) -> TraceStyle | None:
     per-trace color cycling for filenames that don't map to a known type,
     e.g. an unrecognised extension or a synthetic/composite name.
     """
-    if filename.endswith('.txt'):
-        return FILE_TYPE_STYLES.get('pupitre')
-    file_type = classify_pigbrother_file(filename)
-    return FILE_TYPE_STYLES.get(file_type)
+    return FILE_TYPE_STYLES.get(resolve_file_type_key(filename))
+
+
+def _resolve_field_override(group_name: str, sensor: str) -> FieldStyleOverride | None:
+    """Return the FIELD_STYLE_OVERRIDES entry for (*group_name*, *sensor*), or None if unset."""
+    return FIELD_STYLE_OVERRIDES.get(group_name, {}).get(sensor)
+
+
+def _apply_style(
+    style: TraceStyle | None,
+    override: FieldStyleOverride | None,
+    n_points: int,
+) -> dict:
+    """Merge a base source-type style with an optional field override into trace kwargs.
+
+    Parameters
+    ----------
+    style : TraceStyle, optional
+        Base per-source-type style, or ``None`` if the source file type is
+        unresolved (falls back to Plotly's default color cycling, as today).
+    override : FieldStyleOverride, optional
+        Per-(group, sensor) override; properties left ``None`` fall back to
+        *style*. Opacity is never taken from *override* — see
+        :class:`FieldStyleOverride`.
+    n_points : int
+        Number of points in the trace, used to size the ``marker_every`` mask.
+
+    Returns
+    -------
+    dict
+        ``mode``, ``line``, ``opacity``, and (only when markers are enabled)
+        ``marker`` — ready to splat into a
+        :class:`~plotly.graph_objects.Scatter`/``Scattergl`` call.
+    """
+    color = (override.color if override else None) or (style.color if style else None)
+    dash = (override.dash if override else None) or (style.dash if style else None)
+    width = (override.width if override and override.width is not None else None)
+    if width is None:
+        width = style.width if style else 2
+    marker_symbol = (override.marker_symbol if override else None) or (
+        style.marker_symbol if style else None
+    )
+    marker_every = (override.marker_every if override else None) or (
+        style.marker_every if style else None
+    )
+    opacity = style.opacity if style else 1.0
+
+    line_kwargs = dict(width=width)
+    if color is not None:
+        line_kwargs["color"] = color
+    if dash is not None:
+        line_kwargs["dash"] = dash
+
+    kwargs = dict(mode="lines", line=line_kwargs, opacity=opacity)
+
+    if marker_symbol:
+        kwargs["mode"] = "lines+markers"
+        if marker_every and marker_every > 1 and n_points > 0:
+            kwargs["marker"] = dict(
+                symbol=marker_symbol,
+                size=[8 if i % marker_every == 0 else 0 for i in range(n_points)],
+            )
+        else:
+            kwargs["marker"] = dict(symbol=marker_symbol)
+
+    return kwargs
 
 def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", mrun=None, group_name: str = "") -> go.Figure:
     """
@@ -301,12 +467,11 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
 
     # 2b. Style (color/dash/width/alpha) selon le type de fichier
     style = _resolve_file_style(filename)
-    line_kwargs = dict(width=style.width, color=style.color, dash=style.dash) if style else dict(width=2)
-    trace_opacity = style.opacity if style else 1.0
 
     # 3. Traitement robuste des colonnes (Gère 'Groupe/Capteur' ET 'Capteur')
     for sensor in y_cols:
         target_col = None
+        override = _resolve_field_override(group_name, sensor)
 
         # Convertit les valeurs de ce capteur vers l'unité de l'axe (target_unit)
         # si le groupe force une unité commune (GROUP_UNIT_OVERRIDES).
@@ -330,10 +495,8 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
                     fig.add_trace(go.Scattergl(
                         x=sub_df[x_col],
                         y=y_values,
-                        mode='lines',
                         name=sensor,
-                        line=dict(line_kwargs),
-                        opacity=trace_opacity
+                        **_apply_style(style, override, len(y_values)),
                     ))
 
         # CAS B : DataFrame classique (M4, MinMax, Naive, Raw)
@@ -351,10 +514,8 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
                 fig.add_trace(go.Scattergl(
                     x=df_plot[x_col],
                     y=y_values,
-                    mode='lines',
                     name=sensor,
-                    line=dict(line_kwargs),
-                    opacity=trace_opacity
+                    **_apply_style(style, override, len(y_values)),
                 ))
 
     # 4. Layout
@@ -445,9 +606,8 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
         df_raw = item['df']
         sensors = item['sensors']
         lag_val = item['lag']
+        group_name = item.get('group_name', "")
         style = _resolve_file_style(file)
-        line_kwargs = dict(width=style.width, color=style.color, dash=style.dash) if style else dict(width=2)
-        trace_opacity = style.opacity if style else 1.0
 
         if df_raw is None or df_raw.empty or not sensors:
             continue
@@ -543,15 +703,14 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
 
                     # TRACER UNE COURBE NORMALE
                     else:
+                        override = _resolve_field_override(group_name, sensor)
                         fig.add_trace(go.Scatter(
-                            x=x_data, 
-                            y=sub_df[target_col], 
-                            mode='lines',
+                            x=x_data,
+                            y=sub_df[target_col],
                             name=f"{file} - {sensor}" if row == 1 else f"{file} - {sensor} (Aligned)",
                             legendgroup=file,
-                            line=line_kwargs, 
-                            opacity=trace_opacity, 
-                            showlegend=(row == 1)
+                            showlegend=(row == 1),
+                            **_apply_style(style, override, len(x_data)),
                         ), row=row, col=1)
 
     # 6. GLOBAL LAYOUT AND STYLING
@@ -644,8 +803,6 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
             continue
 
         style = _resolve_file_style(file)
-        line_kwargs = dict(width=style.width, color=style.color, dash=style.dash) if style else dict(width=2)
-        trace_opacity = style.opacity if style else 1.0
 
         file_type = classify_pigbrother_file(file)
         is_event = file_type in ('default', 'spike', 'trigger')
@@ -719,14 +876,13 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
                     font=dict(color=event_color, size=11, family="Arial Black"),
                 )
             else:
+                override = _resolve_field_override(group_name, sensor)
                 fig.add_trace(go.Scatter(
                     x=x_data,
                     y=y_data,
-                    mode='lines',
                     name=f"{file} - {sensor}",
                     legendgroup=file,
-                    line=line_kwargs,
-                    opacity=trace_opacity,
+                    **_apply_style(style, override, len(y_data)),
                 ))
 
     x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time'}

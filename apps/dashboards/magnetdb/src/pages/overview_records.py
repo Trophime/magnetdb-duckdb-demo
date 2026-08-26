@@ -6,6 +6,7 @@ from plotly import graph_objects as go
 import magnetdb_analysis as db
 import magnetdb_plot as plot
 import dash_selectors as selectors
+import style_editor
 
 dash.register_page(__name__, path="/overview-records", name="Overview records", order=5)
 
@@ -97,6 +98,7 @@ def layout(assembly=None, record=None, **kwargs):
             ),
             html.Br(),
             dcc.Store(id="overview-records-group-entries"),
+            style_editor.modal_component("ov"),
             html.Div(id="overview-records-missing-banner", style={"color": "#a94442", "fontWeight": "bold"}),
             html.Div(id="overview-records-groups-container", children=[], style={"marginTop": "10px"}),
         ],
@@ -112,6 +114,29 @@ def update_assembly_options(selected_db):
     if not selected_db:
         return []
     return db.get_all_assemblies(selected_db)
+
+
+@dash.callback(
+    Output("overview-records-include-extra", "options"),
+    Input("overview-records-record-filter", "value"),
+    Input("dd-database", "value"),
+)
+def update_include_extra_label(selected_record, selected_db):
+    default_label = " Include archive & event files (slower)"
+    if not selected_record or not selected_db:
+        return [{"label": default_label, "value": "extra"}]
+
+    info = db.get_overview_record_sources(selected_record, selected_db)
+    if info is None:
+        return [{"label": default_label, "value": "extra"}]
+
+    n_archive = len(info["sources_archive"])
+    n_incident = len(info["sources_default"]) + len(info["sources_spike"])
+    label = (
+        f" Include archive & event files — {n_archive} archives, "
+        f"{n_incident} incidents (slower)"
+    )
+    return [{"label": label, "value": "extra"}]
 
 
 @dash.callback(
@@ -181,6 +206,7 @@ def update_groups(selected_record, selected_db, include_extra_value):
                             "fontSize": "16px",
                         },
                     ),
+                    style_editor.gear_button("ov", group_name),
                     html.Div(
                         [
                             html.Div(
@@ -222,6 +248,7 @@ def update_groups(selected_record, selected_db, include_extra_value):
                     "boxShadow": "0 2px 4px rgba(0,0,0,0.05)",
                     "overflow": "hidden",
                     "backgroundColor": "#ffffff",
+                    "position": "relative",
                 },
             )
         )
@@ -238,6 +265,7 @@ def update_groups(selected_record, selected_db, include_extra_value):
     Input("overview-records-downsampling", "value"),
     Input("dd-database", "value"),
     Input("overview-records-include-extra", "value"),
+    Input("ov-style-version", "data"),
     State("overview-records-group-entries", "data"),
     State({"type": "ov-dynamic-graph", "index": ALL}, "relayoutData"),
 )
@@ -249,18 +277,21 @@ def update_graphs(
     selected_algo,
     selected_db,
     include_extra_value,
+    _style_version,
     group_entries,
     all_relayout_data,
 ):
     if not selected_record or not all_sensor_ids:
         return [_EMPTY_FIG for _ in all_sensor_ids]
 
-    # Only checklist/downsampling/include-extra toggles keep the current zoom
+    # Only checklist/downsampling/include-extra/style-save toggles keep the current zoom
     # (they refine the existing view); picking a different record, x-axis, or
     # database is a new view, so it autoscales instead.
     maintain_zoom = False
     triggered_id = ctx.triggered_id
-    if triggered_id in ("overview-records-downsampling", "overview-records-include-extra") or (
+    if triggered_id in (
+        "overview-records-downsampling", "overview-records-include-extra", "ov-style-version"
+    ) or (
         isinstance(triggered_id, dict)
         and triggered_id.get("type") == "ov-group-sensors-checklist"
     ):
@@ -374,3 +405,56 @@ def sync_zoom_overview(relayout_data_list, graph_ids):
         patches.append(patched_fig)
 
     return patches
+
+
+def _style_context_fn(group_name, selected_record, selected_db, include_extra_value):
+    """Resolve this group's raw sensor names + source-type keys for the style-editor modal.
+
+    Only the regular (pupitre/overview/archive) files are considered — event
+    files (default/spike/trigger) render as marker+text annotations, not
+    styleable lines, so they're excluded from both the field rows and the
+    opacity-by-source section.
+    """
+    if not selected_record:
+        return [], []
+
+    include_extra = bool(include_extra_value)
+    housing, regular_files, _event_files = _record_sources(selected_record, selected_db, include_extra)
+    if housing is None:
+        return [], []
+
+    field_rows = []
+    seen_sensors = set()
+    source_keys = []
+    seen_sources = set()
+    for filename in regular_files:
+        mrun = db.load_mrun_object(filename, housing)
+        if mrun is None or group_name not in mrun.MagnetData.list_groups():
+            continue
+        try:
+            df = db.get_group_dataframe(filename, housing, group_name)
+        except KeyError:
+            continue
+
+        source_key = plot.resolve_file_type_key(filename)
+        for sensor in df.columns:
+            if sensor in ("t", "timestamp") or sensor in seen_sensors:
+                continue
+            seen_sensors.add(sensor)
+            field_rows.append((sensor, source_key))
+        if source_key and source_key not in seen_sources:
+            seen_sources.add(source_key)
+            source_keys.append(source_key)
+
+    return field_rows, source_keys
+
+
+style_editor.register_callbacks(
+    "ov",
+    context_fn=_style_context_fn,
+    extra_states=[
+        State("overview-records-record-filter", "value"),
+        State("dd-database", "value"),
+        State("overview-records-include-extra", "value"),
+    ],
+)

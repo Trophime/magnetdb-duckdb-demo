@@ -20,6 +20,7 @@ import magnetdb_analysis as db
 import magnetdb_plot as plot
 import pandas as pd
 import dash_selectors as selectors
+import style_editor
 from natsort import natsorted
 
 dash.register_page(__name__, path="/file_viewer", name="File viewer", order=6)
@@ -80,6 +81,7 @@ def layout(assembly=None, file=None, **kwargs):
                         children=[],
                         style={"marginTop": "10px"},
                     ),
+                    style_editor.modal_component("fv"),
                     html.Br(),
                     html.Label("7. Downsampling Method:", style={"fontWeight": "bold"}),
                     dcc.Dropdown(
@@ -206,6 +208,7 @@ def update_sensors_menus(
                             "fontSize": "16px",
                         },
                     ),
+                    style_editor.gear_button("fv", group_name),
                     # 2. CONTENU : Les deux colonnes (Checklist et Graphique)
                     html.Div(
                         [
@@ -267,6 +270,7 @@ def update_sensors_menus(
                     "boxShadow": "0 2px 4px rgba(0,0,0,0.05)",
                     "overflow": "hidden",
                     "backgroundColor": "#ffffff",
+                    "position": "relative",
                 },
             )
         )
@@ -283,6 +287,7 @@ def update_sensors_menus(
     Input({"type": "group-sensors-checklist", "index": ALL}, "value"),
     Input({"type": "group-sensors-checklist", "index": ALL}, "id"),
     Input("dropdown-downsampling", "value"),
+    Input("fv-style-version", "data"),
     State({"type": "dynamic-graph", "index": ALL}, "relayoutData"),
 )
 def update_outputs(
@@ -293,6 +298,7 @@ def update_outputs(
     all_sensors_lists,
     all_sensors_ids,
     selected_algo,
+    _style_version,
     all_relayout_data,
 ):
 
@@ -320,9 +326,10 @@ def update_outputs(
     maintain_zoom = False
     triggered_id = ctx.triggered_id
 
-    # On maintient le zoom SEULEMENT si l'action vient d'une case a cocher ou d'un changement d'algo de downsampling.
-    # Si on change de fichier ou d'axe X, on veut que le graphique s'autoscale (remise a zero).
-    if triggered_id == "dropdown-downsampling" or (
+    # On maintient le zoom SEULEMENT si l'action vient d'une case a cocher, d'un changement
+    # d'algo de downsampling, ou d'une sauvegarde de style. Si on change de fichier ou d'axe X,
+    # on veut que le graphique s'autoscale (remise a zero).
+    if triggered_id in ("dropdown-downsampling", "fv-style-version") or (
         isinstance(triggered_id, dict)
         and triggered_id.get("type") == "group-sensors-checklist"
     ):
@@ -473,3 +480,30 @@ def reset_checklists(selected_file, all_checklists_ids):
     num_checklists = len(all_checklists_ids)
 
     return [[] for _ in range(num_checklists)]
+
+
+def _style_context_fn(group_name, selected_file, selected_assembly):
+    """Resolve this group's raw sensor names + source-type key for the style-editor modal."""
+    if not selected_file or not selected_assembly:
+        return [], []
+
+    housing = selected_assembly.split("_")[0]
+    mrun = db.load_mrun_object(selected_file, housing)
+    if mrun is None or group_name not in mrun.MagnetData.list_groups():
+        return [], []
+
+    sensors = [
+        c for c in mrun.MagnetData.get_group_data(group_name).columns
+        if c not in ("t", "timestamp")
+    ]
+    source_key = plot.resolve_file_type_key(selected_file)
+    field_rows = [(s, source_key) for s in sensors]
+    source_keys = [source_key] if source_key else []
+    return field_rows, source_keys
+
+
+style_editor.register_callbacks(
+    "fv",
+    context_fn=_style_context_fn,
+    extra_states=[State("dd-file", "value"), State("dd-assembly", "value")],
+)
