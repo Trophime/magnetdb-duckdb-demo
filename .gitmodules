@@ -9,4 +9,4 @@
 	url = https://github.com/MagnetDB/python_magnetgeo.git
 [submodule "python_magnetsetup"]
 	path = python_magnetsetup
-	url = https://github.com/MagnetDB/python_magnetsetup.git
+	url = https://github.com/MagnetDB/python_magnetgeo.git
