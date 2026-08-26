@@ -50,13 +50,16 @@ def resolve_sensor_unit(mrun, sensor: str, group_name: str = ""):
     tuple
         ``(symbol, unit)``, or ``(None, None)`` if neither key resolves.
     """
-    try:
-        return mrun.getUnit(sensor)
-    except RuntimeError:
+    for key in (sensor, f"{group_name}/{sensor}"):
         try:
-            return mrun.getUnit(f"{group_name}/{sensor}")
+            result = mrun.getUnit(key)
         except RuntimeError:
-            return None, None
+            continue
+        # Some MagnetData.getUnitKey() backends return () (not a RuntimeError)
+        # for a TDMS channel name that matches no known keyword.
+        if isinstance(result, tuple) and len(result) == 2:
+            return result
+    return None, None
 
 
 def group_display_unit(mrun, group_name: str, sensor: str):
@@ -118,6 +121,31 @@ def convert_values_to_unit(values, unit, target_unit):
         return (np.asarray(values) * unit).to(target_unit).magnitude
     except pint.errors.DimensionalityError:
         return values
+
+
+def format_sensor_label(base_label: str, symbol: str | None, unit) -> str:
+    """Append a "(symbol [unit])" suffix to *base_label* when resolvable.
+
+    Parameters
+    ----------
+    base_label : str
+        Sensor name or other label text to annotate.
+    symbol : str or None
+        Physical-quantity symbol (e.g. ``"Q"``), or ``None`` if unresolved.
+    unit : pint.Unit or None
+        Unit to display, or ``None`` if unresolved.
+
+    Returns
+    -------
+    str
+        ``"{base_label} ({symbol} [{unit:~P}])"``, ``"{base_label} ({symbol})"``
+        if only *symbol* is known, or *base_label* unchanged if neither is.
+    """
+    if symbol and unit is not None:
+        return f"{base_label} ({symbol} [{unit:~P}])"
+    elif symbol:
+        return f"{base_label} ({symbol})"
+    return base_label
 
 
 @dataclass
@@ -588,23 +616,15 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
         return go.Figure()
 
     ylabel = "Value"
+    target_unit = None
     for item in files_data:
         mrun_obj = item.get('mrun')
         sensors_list = item.get('sensors', [])
         if mrun_obj and sensors_list:
-            sensor = sensors_list[0]
-            symbol, unit_str = None, None
-            try:
-                symbol, unit_str = mrun_obj.getUnit(sensor)
-            except RuntimeError:
-                try:
-                    if group_name:
-                        symbol, unit_str = mrun_obj.getUnit(f"{group_name}/{sensor}")
-                except RuntimeError:
-                    pass
+            symbol, target_unit = group_display_unit(mrun_obj, group_name, sensors_list[0])
 
-            if symbol and unit_str is not None:
-                ylabel = f"{symbol} [{unit_str:~P}]"
+            if symbol and target_unit is not None:
+                ylabel = f"{symbol} [{target_unit:~P}]"
                 break
             elif symbol:
                 ylabel = symbol
@@ -618,6 +638,7 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
         file = item['file']
         df_raw = item.get('df')
         sensors = item.get('sensors') or []
+        mrun_obj = item.get('mrun')
 
         if df_raw is None or df_raw.empty or not sensors:
             continue
@@ -658,10 +679,15 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
 
             x_data = sub_df[x_col]
 
+            sensor_unit = None
+            if mrun_obj and target_unit is not None:
+                _, sensor_unit = resolve_sensor_unit(mrun_obj, sensor, group_name)
+            y_data = np.asarray(convert_values_to_unit(sub_df[target_col], sensor_unit, target_unit))
+
             if is_event:
-                max_idx = sub_df[target_col].abs().values.argmax()
+                max_idx = np.abs(y_data).argmax()
                 event_x = x_data.iloc[max_idx]
-                event_y = sub_df[target_col].iloc[max_idx]
+                event_y = y_data[max_idx]
                 event_color = style.color if style else "red"
                 fig.add_trace(go.Scatter(
                     x=[event_x],
@@ -695,7 +721,7 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
             else:
                 fig.add_trace(go.Scatter(
                     x=x_data,
-                    y=sub_df[target_col],
+                    y=y_data,
                     mode='lines',
                     name=f"{file} - {sensor}",
                     legendgroup=file,

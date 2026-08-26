@@ -15,6 +15,7 @@ from functools import wraps
 import pandas as pd
 import scipy.signal as sg
 from natsort import natsorted
+import magnetdb_plot as plot
 
 try:
     from zoneinfo import ZoneInfo
@@ -812,6 +813,8 @@ def get_overview_group_entries(regular_files, housing):
     """
     pupitre_columns = {}
     tdms_columns = {}
+    pupitre_mrun_by_channel = {}
+    tdms_mrun_by_channel = {}
 
     for filename in regular_files or []:
         mrun = load_mrun_object(filename, housing)
@@ -824,10 +827,17 @@ def get_overview_group_entries(regular_files, housing):
         for group_name in mrun.MagnetData.list_groups():
             if group_name == "Infos":
                 continue
-            columns = get_group_dataframe(filename, housing, group_name).columns
-            target.setdefault(group_name, set()).update(
-                c for c in columns if c not in ("t", "timestamp")
-            )
+            columns = [
+                c for c in get_group_dataframe(filename, housing, group_name).columns
+                if c not in ("t", "timestamp")
+            ]
+            target.setdefault(group_name, set()).update(columns)
+            if fmt == "pupitre":
+                for c in columns:
+                    pupitre_mrun_by_channel.setdefault(c, mrun)
+            else:
+                for c in columns:
+                    tdms_mrun_by_channel.setdefault((group_name, c), mrun)
 
     entries = {}
     consumed_tdms = set()
@@ -838,6 +848,9 @@ def get_overview_group_entries(regular_files, housing):
         for channel in sorted(pupitre_columns[group_name]):
             if channel in excluded:
                 continue
+            symbol, unit = plot.group_display_unit(
+                pupitre_mrun_by_channel[channel], group_name, channel
+            )
             alias = _PUPITRE_DEFS.get(channel, {}).get("aliases", {}).get("pigbrother")
             matched = None
             if alias and "/" in alias:
@@ -848,13 +861,13 @@ def get_overview_group_entries(regular_files, housing):
                 tgroup, tchan = matched
                 consumed_tdms.add(matched)
                 group_entries.append({
-                    "label": f"{channel} / {tchan}",
+                    "label": plot.format_sensor_label(f"{channel} / {tchan}", symbol, unit),
                     "value": f"{group_name}::{channel}::pigbrother::{tchan}",
                     "channels": {"pupitre": channel, "pigbrother": tchan},
                 })
             else:
                 group_entries.append({
-                    "label": channel,
+                    "label": plot.format_sensor_label(channel, symbol, unit),
                     "value": f"{group_name}::{channel}",
                     "channels": {"pupitre": channel},
                 })
@@ -868,8 +881,11 @@ def get_overview_group_entries(regular_files, housing):
             continue
         group_entries = entries.setdefault(tgroup, [])
         for channel in leftover:
+            symbol, unit = plot.group_display_unit(
+                tdms_mrun_by_channel[(tgroup, channel)], tgroup, channel
+            )
             group_entries.append({
-                "label": channel,
+                "label": plot.format_sensor_label(channel, symbol, unit),
                 "value": f"{tgroup}::pigbrother::{channel}",
                 "channels": {"pigbrother": channel},
             })

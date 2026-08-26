@@ -1,5 +1,6 @@
 import dash
-from dash import html, dcc, Input, Output, State, ALL
+from dash import html, dcc, Input, Output, State, ALL, Patch, ctx
+from dash.exceptions import PreventUpdate
 from plotly import graph_objects as go
 
 import magnetdb_analysis as db
@@ -238,6 +239,7 @@ def update_groups(selected_record, selected_db, include_extra_value):
     Input("dd-database", "value"),
     Input("overview-records-include-extra", "value"),
     State("overview-records-group-entries", "data"),
+    State({"type": "ov-dynamic-graph", "index": ALL}, "relayoutData"),
 )
 def update_graphs(
     selected_record,
@@ -248,9 +250,32 @@ def update_graphs(
     selected_db,
     include_extra_value,
     group_entries,
+    all_relayout_data,
 ):
     if not selected_record or not all_sensor_ids:
         return [_EMPTY_FIG for _ in all_sensor_ids]
+
+    # Only checklist/downsampling/include-extra toggles keep the current zoom
+    # (they refine the existing view); picking a different record, x-axis, or
+    # database is a new view, so it autoscales instead.
+    maintain_zoom = False
+    triggered_id = ctx.triggered_id
+    if triggered_id in ("overview-records-downsampling", "overview-records-include-extra") or (
+        isinstance(triggered_id, dict)
+        and triggered_id.get("type") == "ov-group-sensors-checklist"
+    ):
+        maintain_zoom = True
+
+    x_range = None
+    if maintain_zoom and all_relayout_data:
+        for relayout in all_relayout_data:
+            if relayout:
+                if "xaxis.range[0]" in relayout:
+                    x_range = [relayout["xaxis.range[0]"], relayout["xaxis.range[1]"]]
+                    break
+                elif "xaxis.range" in relayout:
+                    x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
+                    break
 
     include_extra = bool(include_extra_value)
     housing, regular_files, event_files = _record_sources(selected_record, selected_db, include_extra)
@@ -289,6 +314,63 @@ def update_graphs(
                 continue
             files_data.append({"file": filename, "df": df, "sensors": file_sensors, "mrun": mrun})
 
-        figures.append(plot.create_annotated_plot(files_data, selected_x, selected_algo, group_name=group_name))
+        fig = plot.create_annotated_plot(files_data, selected_x, selected_algo, group_name=group_name)
+
+        if x_range is not None:
+            fig.update_layout(xaxis=dict(range=x_range, autorange=False))
+
+        figures.append(fig)
 
     return figures
+
+
+# Live cross-graph zoom sync: propagates one plot's zoom/pan/autoscale to all
+# the others without rebuilding any figure (mirrors file_viewer's sync_zoom_home).
+@dash.callback(
+    Output({"type": "ov-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
+    Input({"type": "ov-dynamic-graph", "index": ALL}, "relayoutData"),
+    State({"type": "ov-dynamic-graph", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def sync_zoom_overview(relayout_data_list, graph_ids):
+    triggered_id = ctx.triggered_id
+    if not triggered_id:
+        raise PreventUpdate
+
+    trigger_index = graph_ids.index(triggered_id)
+    relayout_data = relayout_data_list[trigger_index]
+
+    if not relayout_data:
+        raise PreventUpdate
+
+    patches = []
+    x_min, x_max = None, None
+    autoscale = False
+
+    if "xaxis.range[0]" in relayout_data:
+        x_min = relayout_data["xaxis.range[0]"]
+        x_max = relayout_data["xaxis.range[1]"]
+    elif "xaxis.range" in relayout_data:
+        x_min = relayout_data["xaxis.range"][0]
+        x_max = relayout_data["xaxis.range"][1]
+    elif "xaxis.autorange" in relayout_data:
+        autoscale = True
+    else:
+        raise PreventUpdate
+
+    for g_id in graph_ids:
+        if g_id == triggered_id:
+            patches.append(dash.no_update)
+            continue
+
+        patched_fig = Patch()
+
+        if autoscale:
+            patched_fig["layout"]["xaxis"]["autorange"] = True
+        else:
+            patched_fig["layout"]["xaxis"]["range"] = [x_min, x_max]
+            patched_fig["layout"]["xaxis"]["autorange"] = False
+
+        patches.append(patched_fig)
+
+    return patches

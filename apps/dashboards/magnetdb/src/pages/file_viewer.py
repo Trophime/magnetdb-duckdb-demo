@@ -183,15 +183,7 @@ def update_sensors_menus(
         options = []
         for s in sensors:
             symbol, unit = plot.group_display_unit(mrun, group_name, s)
-
-            if symbol and unit is not None:
-                label = f"{s} ({symbol} [{unit:~P}])"
-            elif symbol:
-                label = f"{s} ({symbol})"
-            else:
-                label = s
-
-            options.append({"label": label, "value": s})
+            options.append({"label": plot.format_sensor_label(s, symbol, unit), "value": s})
 
         saved_values_for_this_group = saved_state_map.get(group_name, [])
         for target in pending_auto_plot:
