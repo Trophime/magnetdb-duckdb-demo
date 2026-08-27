@@ -3,57 +3,52 @@ from _common import *
 
 
 
-# ### Link with the user DB: Add foreign key column and populate
+# ### Report on the overview_records <-> experiments link built by
+# ### _import_housing.py. The link itself is formed at table-creation time
+# ### (via the LEFT JOIN on sources_pupitre), so this step is read-only: it
+# ### audits how complete that link is.
 
 def main():
 
-    # Link each housing summary record to the corresponding experiment stored 
-    # in MagnetDB using Pupitre filename.
+    print_title("2. LINK EXPERIMENTS (coverage report)")
 
     con = duckdb.connect(DB)
 
-    con.execute(
+    print("\nOverview records by number of linked experiments:\n",
+        con.execute(
+            """
+                SELECT n_links, COUNT(*) AS n_overview_records
+                FROM (
+                    SELECT filename, COUNT(experiment_id) AS n_links
+                    FROM overview_experiments
+                    GROUP BY filename
+                )
+                GROUP BY n_links
+                ORDER BY n_links
+            """
+        ).fetchdf()
+    )
+
+    n_linked = con.execute(
+        "SELECT COUNT(*) FROM overview_experiments WHERE experiment_id IS NOT NULL"
+    ).fetchone()[0]
+    n_total = con.execute("SELECT COUNT(*) FROM overview_experiments").fetchone()[0]
+
+    print(f"\nLinked {n_linked} / {n_total} overview_experiments rows to an experiment "
+          f"({100 * n_linked / n_total:.2f}%).")
+
+    # Experiments that never matched any overview_record's sources_pupitre.
+
+    unmatched = con.execute(
         """
-            UPDATE housing_summary AS h
-            SET experiment_id = e.id
+            SELECT e.id, e.file, e.assembly_name
             FROM experiments AS e
-            WHERE h.pupitre LIKE '%' || e.file
+            LEFT JOIN overview_experiments AS oe ON oe.experiment_id = e.id
+            WHERE oe.experiment_id IS NULL
         """
-    )
+    ).fetchdf()
 
-    # Validate the linkade by reporting the number of matched experiments and
-    # several linked records.
-
-    print("\nLINKED EXPERIMENTS:",
-        con.execute(
-            """
-                SELECT COUNT(*)
-                FROM housing_summary
-                WHERE experiment_id IS NOT NULL
-            """
-        ).fetchone()[0]
-    )
-    print(
-        con.execute(
-            """
-                SELECT experiment_id, filename, pupitre
-                FROM housing_summary
-                WHERE experiment_id IS NOT NULL
-                LIMIT 10
-            """
-        ).fetchdf()
-    )
-    print(
-        con.execute(
-            """
-                SELECT h.experiment_id, e.name, e.file, h.pupitre
-                FROM housing_summary AS h
-                JOIN experiments AS e
-                ON h.experiment_id = e.id
-                LIMIT 10
-            """
-        ).fetchdf()
-    )
+    print(f"\nExperiments with no matching overview_record ({len(unmatched)}):\n", unmatched)
 
     con.close()
 
@@ -61,5 +56,5 @@ def main():
 
 
 if __name__ == "__main__":
-    
+
     main()

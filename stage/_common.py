@@ -15,7 +15,7 @@ from python_magnetrun.signature import Signature
 
 
 ROOT           = Path(__file__).resolve().parent.parent
-DATA_DIR       = ROOT / "Data"
+RESULTS_DIR    = ROOT / "stage/results"
 
 RECORDS_DIR    = Path("/mnt/LNCMIG-Data/records")
 PUPITRE_DIR    = RECORDS_DIR / "srv-data-install"
@@ -23,12 +23,10 @@ PIGBROTHER_DIR = RECORDS_DIR / "pbsurv"
 
 PIGBROTHER     = PIGBROTHER_DIR / "M10" / "Overview" / "M10_Overview_251201-0909.tdms"
 
-DB = Path("../to_duckdb/new-magnetdb.duckdb")
+DB = Path("../to_duckdb/test-magnetdb.duckdb")
 
 FIELD_THRESHOLD = 0.1
 
-PATH_COLUMNS = [
-    "overview", "archive", "pupitre", "default", "trigger", "spike",
-    "hybrid_kHz", "hybrid_rms", "hybrid_trigger", "hybrid_vprocess",
-    "pigbrother_runlog", "pupitre_runlog",
-]
+def print_title(title):
+
+    print("\n" + (" " + title + " ").center(80, "=") + "\n")

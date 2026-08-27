@@ -5,103 +5,113 @@ from _common import *
 
 def main():
 
-    # Compute field stats and signatures for all housing records that have not 
-    # yet been processed.
+    # Fill in field_max/field_mean/field_std/field_median/field_time_on from
+    # the per-experiment scalars already computed by to_duckdb's
+    # compute_exp_stats.py (exp_run_scalars) -- no raw file I/O needed for
+    # these. field_signature is the only value that still requires loading
+    # the raw Pupitre file, since the compressed time/value/regime signature
+    # isn't stored anywhere else.
+
+    print_title("3. FIELD STATISTICS")
 
     con = duckdb.connect(DB)
 
+    con.execute(
+        """
+            WITH pivoted AS (
+                SELECT
+                    experiment_id,
+                    MAX(CASE WHEN channel = 'field_max'            THEN value END) AS field_max,
+                    MAX(CASE WHEN channel = 'field_mean'           THEN value END) AS field_mean,
+                    MAX(CASE WHEN channel = 'field_std'            THEN value END) AS field_std,
+                    MAX(CASE WHEN channel = 'field_median'         THEN value END) AS field_median,
+                    MAX(CASE WHEN channel = 'duration_field_on_s'  THEN value END) AS field_time_on
+                FROM exp_run_scalars
+                GROUP BY experiment_id
+            )
+            UPDATE overview_experiments AS oe
+            SET
+                field_max     = p.field_max,
+                field_mean    = p.field_mean,
+                field_std     = p.field_std,
+                field_median  = p.field_median,
+                field_time_on = p.field_time_on
+            FROM pivoted AS p
+            WHERE oe.experiment_id = p.experiment_id
+        """
+    )
+
+    n_with_exp = con.execute(
+        "SELECT COUNT(*) FROM overview_experiments WHERE experiment_id IS NOT NULL"
+    ).fetchone()[0]
+    n_with_stats = con.execute(
+        "SELECT COUNT(*) FROM overview_experiments WHERE field_max IS NOT NULL"
+    ).fetchone()[0]
+
+    print(f"\nField scalars filled in from exp_run_scalars: {n_with_stats} / {n_with_exp} "
+          f"linked rows ({100 * n_with_stats / n_with_exp:.2f}%).")
+    print("Rows with a linked experiment but no exp_run_scalars entry yet need "
+          "compute_exp_stats.py run/reprocessed for that experiment.")
+
+    # Compute field_signature for rows that have a Pupitre file but no
+    # signature yet.
+
     rows = con.execute(
         """
-            SELECT rowid, housing, pupitre
-            FROM housing_summary
-            WHERE pupitre <> '' AND (field_signature = '' OR field_signature IS NULL)
+            SELECT rowid, housing, pupitre_file
+            FROM overview_experiments
+            WHERE pupitre_file IS NOT NULL AND field_signature IS NULL
         """
     ).fetchall()
-
 
     start = time.perf_counter()
 
     with Progress() as progress:
 
-        task = progress.add_task("Updating field stats", total=len(rows))
+        task = progress.add_task("Computing field signatures", total=len(rows))
 
-        for rowid, housing, pupitre in rows:
-            filename = Path(pupitre).name
-            filepath = PUPITRE_DIR / housing / filename
-            progress.update(task, description=f"{housing}/{filename}")
+        for rowid, housing, pupitre_file in rows:
+
+            filepath = PUPITRE_DIR / housing / pupitre_file
+            progress.update(task, description = f"{housing}/{pupitre_file}")
 
             if not filepath.exists():
                 progress.advance(task)
                 continue
 
             try:
-                # Load the Pupitre acquisition corresponding to the experiment.
+
                 md = load_mrun(str(filepath), housing = housing).getMData()
-                df = md.Data
-
-                # Compute a compressed signature describing the field evolution.
                 signature = Signature.from_mdata(md, "Field", "t", FIELD_THRESHOLD)
-                field_signature = json.dumps({"times": signature.times, "values": signature.values})
-                field = df["Field"]
+                field_signature = json.dumps({
+                    "times": signature.times,
+                    "values": signature.values,
+                    "regimes": signature.regimes,
+                })
 
-                # Store the computed quantities in the database.
                 con.execute(
                     """
-                        UPDATE housing_summary
-                        SET 
-                            field_max = ?,
-                            field_mean = ?,
-                            field_time_on = ?,
-                            field_std = ?,
-                            field_median = ?,
-                            field_signature = ?
+                        UPDATE overview_experiments
+                        SET field_signature = ?
                         WHERE rowid = ?
-                    """, 
-                    (float(field.max()), float(field.mean()), 
-                     int((field > FIELD_THRESHOLD).sum()), float(field.std()),
-                     float(field.median()), field_signature, int(rowid))
+                    """,
+                    (field_signature, int(rowid))
                 )
 
             except Exception as e:
-                progress.console.print(f"[red]{filename}: {e}[/red]")
+
+                progress.console.print(f"[red]{pupitre_file}: {e}[/red]")
 
             progress.advance(task)
 
     end = time.perf_counter()
-    print(f"Dataframe updated in {int((end - start) // 60)} m {((end - start) % 60):.2f} s")
+    print(f"Signatures updated in {int((end - start) // 60)} m {((end - start) % 60):.2f} s.")
 
+    n_signatures = con.execute(
+        "SELECT COUNT(field_signature) FROM overview_experiments"
+    ).fetchone()[0]
+    print(f"Field signatures in database: {n_signatures}")
 
-    # Validated the update: check that field stats and signatures have been 
-    # successfully added to the database.
-
-    print(
-        con.execute(
-            """
-                SELECT COUNT(field_max) AS field_stats, COUNT(field_signature) AS signatures
-                FROM housing_summary
-            """
-        ).fetchdf()
-    )
-    print(
-        con.execute(
-            """
-                SELECT experiment_id, field_max, field_signature
-                FROM housing_summary
-                WHERE field_signature <> ''
-                LIMIT 10
-            """
-        ).fetchdf()
-    )
-    print(
-        con.execute(
-            """
-                SELECT experiment_id, field_signature
-                FROM housing_summary
-                WHERE field_signature IS NOT NULL
-                LIMIT 5
-            """
-        ).fetchdf()
-    )
     con.close()
 
 
