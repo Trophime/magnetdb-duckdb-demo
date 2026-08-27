@@ -982,6 +982,58 @@ def get_housings(db_path=None):
     return natsorted(names)
 
 
+def get_housing_file_summary(db_path=None):
+    """Return per-housing experiment/overview-record counts and time ranges.
+
+    Parameters
+    ----------
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per housing (naturally sorted, from :func:`get_housings`),
+        with columns ``housing``, ``n_experiments``, ``experiments_start``,
+        ``experiments_end`` (parsed from ``experiments.name``, ``NaT`` if
+        unparseable or none) and ``n_overview_records``,
+        ``overview_records_start``, ``overview_records_end`` (from live
+        ``overview_records.t0``, i.e. ``merged_into IS NULL``).
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        experiments_df = conn.execute(
+            """
+                SELECT a.housing AS housing, e.name AS experiment
+                FROM experiments AS e
+                JOIN assemblies AS a ON a.name = e.assembly_name
+            """
+        ).df()
+        overview_df = conn.execute(
+            "SELECT housing, t0 FROM overview_records WHERE merged_into IS NULL"
+        ).df()
+
+    experiments_df["experiment"] = pd.to_datetime(experiments_df["experiment"], errors="coerce")
+    exp_summary = experiments_df.groupby("housing").agg(
+        n_experiments=("housing", "size"),
+        experiments_start=("experiment", "min"),
+        experiments_end=("experiment", "max"),
+    ).reset_index()
+
+    overview_df["t0"] = pd.to_datetime(overview_df["t0"], errors="coerce")
+    ov_summary = overview_df.groupby("housing").agg(
+        n_overview_records=("housing", "size"),
+        overview_records_start=("t0", "min"),
+        overview_records_end=("t0", "max"),
+    ).reset_index()
+
+    summary = pd.DataFrame({"housing": get_housings(db_path)})
+    summary = summary.merge(exp_summary, on="housing", how="left")
+    summary = summary.merge(ov_summary, on="housing", how="left")
+    summary["n_experiments"] = summary["n_experiments"].fillna(0).astype(int)
+    summary["n_overview_records"] = summary["n_overview_records"].fillna(0).astype(int)
+    return summary
+
+
 def load_assemblies_meta(db_path=None):
     """Load every assembly's name, housing, and commissioning window.
 
@@ -1061,6 +1113,12 @@ def assemblies_year_range(assemblies_meta):
 def get_pupitres_for_housing(housing, db_path=None):
     """Return the list of Pupitre files recorded for a given housing.
 
+    Merges two independent sources: ``overview_records.sources_pupitre`` and
+    ``experiments.file`` (joined through ``assemblies`` for the housing
+    filter, since ``experiments`` has no ``housing`` column). Filenames
+    present in ``experiments`` but missing from ``overview_records`` are
+    printed as a diagnostic.
+
     Parameters
     ----------
     housing : str
@@ -1071,11 +1129,40 @@ def get_pupitres_for_housing(housing, db_path=None):
     Returns
     -------
     list of str
-        Pupitre filenames for *housing*.
+        Deduplicated Pupitre filenames for *housing*.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        query = "SELECT pupitre FROM housing_summary WHERE housing = ? AND pupitre <> ''"
-        return conn.execute(query, [housing]).df()["pupitre"].tolist()
+        overview_pupitres = set(
+            conn.execute(
+                """
+                    SELECT DISTINCT pupitre
+                    FROM overview_records, UNNEST(sources_pupitre) AS t(pupitre)
+                    WHERE housing = ?
+                """,
+                [housing],
+            ).df()["pupitre"]
+        )
+        experiment_pupitres = set(
+            conn.execute(
+                """
+                    SELECT DISTINCT e.file AS pupitre
+                    FROM experiments AS e
+                    JOIN assemblies AS a ON a.name = e.assembly_name
+                    WHERE a.housing = ?
+                """,
+                [housing],
+            ).df()["pupitre"]
+        )
+
+    missing_from_overview = sorted(experiment_pupitres - overview_pupitres)
+    if missing_from_overview:
+        print(
+            f"[get_pupitres_for_housing] {len(missing_from_overview)} file(s) found in "
+            f"experiments but not in overview_records for housing {housing!r}: "
+            f"{missing_from_overview}"
+        )
+
+    return sorted(overview_pupitres | experiment_pupitres)
 
 
 def get_linked_files(housing, pupitre_filename, db_path=None):
@@ -1086,30 +1173,79 @@ def get_linked_files(housing, pupitre_filename, db_path=None):
     housing : str
         Housing name (e.g. ``"M9"``).
     pupitre_filename : str
-        Pupitre filename to look up in ``housing_summary``.
+        Pupitre filename to look up in ``overview_records.sources_pupitre``.
     db_path : str or :class:`~pathlib.Path`, optional
         Path to the DuckDB database. Defaults to `DB_PATH`.
 
     Returns
     -------
     dict or None
-        Dict with ``pigbrother_file``, ``archive_file`` and ``default_file``
-        keys, or ``None`` if *pupitre_filename* has no matching row.
+        Dict with ``pigbrother_file`` (str), ``archive_file`` (list of str)
+        and ``default_file`` (list of str) keys, or ``None`` if
+        *pupitre_filename* has no matching row.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
             SELECT
-                overview as pigbrother_file,
-                archive as archive_file,
-                "default" as default_file
-            FROM housing_summary
-            WHERE housing = ? AND pupitre = ?
+                sources_overview[1] AS pigbrother_file,
+                sources_archive AS archive_file,
+                sources_default AS default_file
+            FROM overview_records
+            WHERE housing = ? AND list_contains(sources_pupitre, ?)
         """
         result = conn.execute(query, [housing, pupitre_filename]).df().to_dict("records")
     return result[0] if result else None
 
 
-def get_research_area_stats(housing=None, year=None, db_path=None):
+def get_research_areas(db_path=None):
+    """Return the list of distinct research areas defined in ``users``, sorted.
+
+    Parameters
+    ----------
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Research area names.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = "SELECT DISTINCT research_area FROM users WHERE research_area IS NOT NULL"
+        names = conn.execute(query).df()["research_area"].tolist()
+    return sorted(names)
+
+
+def get_users(db_path=None):
+    """Return the list of distinct user acronyms defined in ``users``, sorted.
+
+    Duplicate acronyms (rows sharing the same acronym) are collapsed to a
+    single entry; any found are printed as a diagnostic.
+
+    Parameters
+    ----------
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Distinct, sorted user acronyms.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        acronyms = conn.execute(
+            "SELECT acronym FROM users WHERE acronym IS NOT NULL"
+        ).df()["acronym"]
+
+    counts = acronyms.value_counts()
+    duplicates = sorted(counts[counts > 1].index)
+    if duplicates:
+        print(f"[get_users] duplicate acronym(s) found: {duplicates}")
+
+    return sorted(counts.index)
+
+
+def get_research_area_stats(housing=None, year=None, research_area=None, user=None, db_path=None):
     """Return per-research-area usage statistics from the ``users`` table.
 
     Parameters
@@ -1120,6 +1256,12 @@ def get_research_area_stats(housing=None, year=None, db_path=None):
     year : str or int, optional
         Restrict to sessions whose ``hstart`` falls in this year. ``None``
         includes all years.
+    research_area : str, optional
+        Restrict to sessions with this research area. ``None`` includes all
+        research areas.
+    user : str, optional
+        Restrict to sessions with this user acronym. ``None`` includes all
+        users.
     db_path : str or :class:`~pathlib.Path`, optional
         Path to the DuckDB database. Defaults to `DB_PATH`.
 
@@ -1129,7 +1271,8 @@ def get_research_area_stats(housing=None, year=None, db_path=None):
         One row per research area, with columns ``research_area``,
         ``n_experiments`` (distinct experiments), ``n_users`` (distinct
         acronyms) and ``total_field_time_s`` (summed
-        ``overview_records.duration`` [s]).
+        ``exp_run_scalars.value`` where ``channel = 'duration_field_on_s'``
+        [s]).
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
@@ -1139,6 +1282,8 @@ def get_research_area_stats(housing=None, year=None, db_path=None):
                 WHERE research_area IS NOT NULL
                     AND (? IS NULL OR housing = ?)
                     AND (? IS NULL OR EXTRACT(YEAR FROM hstart) = ?)
+                    AND (? IS NULL OR research_area = ?)
+                    AND (? IS NULL OR acronym = ?)
             ),
             exp_counts AS (
                 SELECT research_area, COUNT(DISTINCT eid) AS n_experiments
@@ -1151,9 +1296,9 @@ def get_research_area_stats(housing=None, year=None, db_path=None):
                 GROUP BY research_area
             ),
             field_time AS (
-                SELECT fu.research_area, SUM(o.duration) AS total_field_time_s
-                FROM filtered_users AS fu, UNNEST(fu.overview_records_ids) AS t(ovid)
-                JOIN overview_records AS o ON o.filename = t.ovid AND o.merged_into IS NULL
+                SELECT fu.research_area, SUM(s.value) AS total_field_time_s
+                FROM filtered_users AS fu, UNNEST(fu.experiments_ids) AS t(eid)
+                JOIN exp_run_scalars AS s ON s.experiment_id = t.eid AND s.channel = 'duration_field_on_s'
                 GROUP BY fu.research_area
             )
             SELECT
@@ -1167,7 +1312,179 @@ def get_research_area_stats(housing=None, year=None, db_path=None):
             ORDER BY u.research_area
         """
         year = None if year is None else int(year)
-        params = [housing, housing, year, year]
+        params = [housing, housing, year, year, research_area, research_area, user, user]
+        return conn.execute(query, params).df()
+
+
+def get_research_area_stats_by_year(housing=None, year=None, research_area=None, user=None, db_path=None):
+    """Return per-(research-area, year) usage statistics from the ``users`` table.
+
+    Same semantics as :func:`get_research_area_stats`, but broken out by
+    the ``users.hstart`` session year instead of aggregated across all
+    years.
+
+    Parameters
+    ----------
+    housing : str, optional
+        Restrict to sessions on this housing (e.g. ``"M9"``). ``None``
+        includes all housings.
+    year : str or int, optional
+        Restrict to sessions whose ``hstart`` falls in this year. ``None``
+        includes all years.
+    research_area : str, optional
+        Restrict to sessions with this research area. ``None`` includes all
+        research areas.
+    user : str, optional
+        Restrict to sessions with this user acronym. ``None`` includes all
+        users.
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per ``(research_area, year)`` combination present in the
+        matching sessions, with columns ``research_area``, ``year``
+        (extracted from ``users.hstart``), ``n_experiments`` (distinct
+        experiments), ``n_users`` (distinct acronyms) and
+        ``total_field_time_s`` (summed ``exp_run_scalars.value`` where
+        ``channel = 'duration_field_on_s'`` [s]).
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            WITH filtered_users AS (
+                SELECT *, EXTRACT(YEAR FROM hstart) AS session_year
+                FROM users
+                WHERE research_area IS NOT NULL
+                    AND (? IS NULL OR housing = ?)
+                    AND (? IS NULL OR EXTRACT(YEAR FROM hstart) = ?)
+                    AND (? IS NULL OR research_area = ?)
+                    AND (? IS NULL OR acronym = ?)
+            ),
+            exp_counts AS (
+                SELECT research_area, session_year, COUNT(DISTINCT eid) AS n_experiments
+                FROM filtered_users, UNNEST(experiments_ids) AS t(eid)
+                GROUP BY research_area, session_year
+            ),
+            user_counts AS (
+                SELECT research_area, session_year, COUNT(DISTINCT acronym) AS n_users
+                FROM filtered_users
+                GROUP BY research_area, session_year
+            ),
+            field_time AS (
+                SELECT fu.research_area, fu.session_year, SUM(s.value) AS total_field_time_s
+                FROM filtered_users AS fu, UNNEST(fu.experiments_ids) AS t(eid)
+                JOIN exp_run_scalars AS s ON s.experiment_id = t.eid AND s.channel = 'duration_field_on_s'
+                GROUP BY fu.research_area, fu.session_year
+            )
+            SELECT
+                u.research_area,
+                u.session_year AS year,
+                COALESCE(e.n_experiments, 0) AS n_experiments,
+                u.n_users,
+                COALESCE(f.total_field_time_s, 0.0) AS total_field_time_s
+            FROM user_counts AS u
+            LEFT JOIN exp_counts AS e ON e.research_area = u.research_area AND e.session_year = u.session_year
+            LEFT JOIN field_time AS f ON f.research_area = u.research_area AND f.session_year = u.session_year
+            ORDER BY u.research_area, u.session_year
+        """
+        year = None if year is None else int(year)
+        params = [housing, housing, year, year, research_area, research_area, user, user]
+        return conn.execute(query, params).df()
+
+
+def get_experiments_for_filters(housing=None, year=None, research_area=None, user=None, db_path=None):
+    """Return experiments linked to users matching the given filters.
+
+    Parameters
+    ----------
+    housing : str, optional
+        Restrict to sessions on this housing (e.g. ``"M9"``). ``None``
+        includes all housings.
+    year : str or int, optional
+        Restrict to sessions whose ``hstart`` falls in this year. ``None``
+        includes all years.
+    research_area : str, optional
+        Restrict to sessions with this research area. ``None`` includes all
+        research areas.
+    user : str, optional
+        Restrict to sessions with this user acronym. ``None`` includes all
+        users.
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per distinct experiment linked to a matching ``users``
+        session, with columns ``id``, ``name``, ``description``, ``file``,
+        ``assembly_name`` and ``status``.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            WITH filtered_users AS (
+                SELECT *
+                FROM users
+                WHERE (? IS NULL OR housing = ?)
+                    AND (? IS NULL OR EXTRACT(YEAR FROM hstart) = ?)
+                    AND (? IS NULL OR research_area = ?)
+                    AND (? IS NULL OR acronym = ?)
+            )
+            SELECT DISTINCT e.id, e.name, e.description, e.file, e.assembly_name, e.status
+            FROM filtered_users AS u, UNNEST(u.experiments_ids) AS t(eid)
+            JOIN experiments AS e ON e.id = t.eid
+            ORDER BY e.name
+        """
+        year = None if year is None else int(year)
+        params = [housing, housing, year, year, research_area, research_area, user, user]
+        return conn.execute(query, params).df()
+
+
+def get_overview_records_for_filters(housing=None, year=None, research_area=None, user=None, db_path=None):
+    """Return overview records linked to users matching the given filters.
+
+    Parameters
+    ----------
+    housing : str, optional
+        Restrict to sessions on this housing (e.g. ``"M9"``). ``None``
+        includes all housings.
+    year : str or int, optional
+        Restrict to sessions whose ``hstart`` falls in this year. ``None``
+        includes all years.
+    research_area : str, optional
+        Restrict to sessions with this research area. ``None`` includes all
+        research areas.
+    user : str, optional
+        Restrict to sessions with this user acronym. ``None`` includes all
+        users.
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per distinct live (``merged_into IS NULL``) overview record
+        linked to a matching ``users`` session, with columns ``filename``,
+        ``assembly_name``, ``housing``, ``mode``, ``t0`` and ``duration``
+        [s].
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            WITH filtered_users AS (
+                SELECT *
+                FROM users
+                WHERE (? IS NULL OR housing = ?)
+                    AND (? IS NULL OR EXTRACT(YEAR FROM hstart) = ?)
+                    AND (? IS NULL OR research_area = ?)
+                    AND (? IS NULL OR acronym = ?)
+            )
+            SELECT DISTINCT o.filename, o.assembly_name, o.housing, o.mode, o.t0, o.duration
+            FROM filtered_users AS u, UNNEST(u.overview_records_ids) AS t(ovid)
+            JOIN overview_records AS o ON o.filename = t.ovid AND o.merged_into IS NULL
+            ORDER BY o.t0
+        """
+        year = None if year is None else int(year)
+        params = [housing, housing, year, year, research_area, research_area, user, user]
         return conn.execute(query, params).df()
 
 

@@ -21,4 +21,8 @@ SCALAR_CHANNEL_UNITS: dict[str, str] = {
     "heat_extracted_j": "joule",
     "duration_s": "second",
     "duration_field_on_s": "second",
+    "field_max": "tesla",
+    "field_mean": "tesla",
+    "field_std": "tesla",
+    "field_median": "tesla",
 }

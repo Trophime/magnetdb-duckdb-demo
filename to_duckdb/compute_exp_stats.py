@@ -9,7 +9,11 @@ For each experiments file not yet processed this script:
        'energy_j'            = sum(Ptot[W] * dt)  (Ptot stored in MW, ×1e6)
        'heat_extracted_j'    = sum((tsb - teb) * Q_m3s * rho_cp * dt)
        'duration_s'          = sum(dt)
-       'duration_field_on_s' = sum(dt) where Field > field_threshold
+       'duration_field_on_s' = sum(dt) where abs(Field) > field_threshold
+       'field_max'           = max(Field)
+       'field_mean'          = sum(Field * dt) / sum(dt)            (time-weighted)
+       'field_std'           = sqrt(sum(Field^2 * dt)/sum(dt) - field_mean^2)  (time-weighted)
+       'field_median'        = time-weighted median of Field (no interpolation)
   3. Computes assembly-level field-bin stats → exp_assembly_bin_stats
        channels: Pmagnet, Ptot, tsb, teb, debitbrut  (configurable)
   4. Computes per-part field-bin stats  → exp_part_bin_stats
@@ -215,6 +219,18 @@ def _conversion_factor(units: dict, key: str, target_unit, ureg) -> float | None
     return (1.0 * declared_unit).to(target_unit).magnitude
 
 
+def _weighted_median(x: pd.Series, dt: pd.Series) -> float:
+    """Time-weighted median: the value where cumulative ``dt`` reaches half its total."""
+    order = np.argsort(x.to_numpy())
+    x_sorted = x.to_numpy()[order]
+    dt_sorted = dt.to_numpy()[order]
+    cum_dt = np.cumsum(dt_sorted)
+    half = cum_dt[-1] / 2.0
+    idx = int(np.searchsorted(cum_dt, half))
+    idx = min(idx, len(x_sorted) - 1)
+    return float(x_sorted[idx])
+
+
 def compute_scalars(
     df: pd.DataFrame,
     flow_to_m3s: float = FLOW_TO_M3S,
@@ -231,8 +247,18 @@ def compute_scalars(
 
     scalars["duration_s"] = float(dt.sum())
 
-    field_on = df[FIELD_COL].astype(float) > FIELD_THRESHOLD
+    field = df[FIELD_COL].astype(float)
+    field_on = field.abs() > FIELD_THRESHOLD
     scalars["duration_field_on_s"] = float(dt[field_on].sum())
+
+    sum_dt = float(dt.sum())
+    sum_field_dt = float((field * dt).sum())
+    field_mean = sum_field_dt / sum_dt
+    field_var = float((field**2 * dt).sum()) / sum_dt - field_mean**2
+    scalars["field_max"] = float(field.max())
+    scalars["field_mean"] = field_mean
+    scalars["field_std"] = (max(field_var, 0.0)) ** 0.5
+    scalars["field_median"] = _weighted_median(field, dt)
 
     if "Ptot" in df.columns:
         ptot_to_w = _conversion_factor(units, "Ptot", ureg.watt, ureg)
