@@ -1,22 +1,14 @@
-#!/usr/bin/env python
-# coding: utf-8
-
 # In[10]:
 
 
 import json
+import time
+from pathlib import Path
+
 import duckdb
 import pandas as pd
-import numpy as np
-from pathlib import Path
-import time
-
+from python_magnetrun.MagnetRun import load_mrun
 from rich.progress import Progress
-
-from python_magnetrun.MagnetRun import MagnetRun, load_mrun
-
-
-
 
 DATA_DIR = Path("../Data")
 PUPITRE_ROOT = Path("~/LNCMIG-Data/records/srv-data-install").expanduser()

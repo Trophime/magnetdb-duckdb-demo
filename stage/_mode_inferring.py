@@ -1,9 +1,7 @@
-from _common import *
-
-
-
-
-
+import matplotlib.pyplot as plt
+import numpy as np
+from _common import PIGBROTHER, RESULTS_DIR
+from python_magnetrun.MagnetRun import MagnetRun
 
 IB_ZERO_THRESHOLD = 50
 IH_ZERO_THRESHOLD = 50

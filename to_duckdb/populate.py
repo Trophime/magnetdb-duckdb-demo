@@ -32,7 +32,6 @@ except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 import duckdb
-
 from python_magnetrun.data_dirs import PIGBROTHER_DATA_DIR, PUPITRE_DATA_DIR
 from schema import ensure_schema
 
@@ -204,8 +203,7 @@ def parse_pupitre_file_ts(filename: str) -> datetime | None:
     if not m:
         return None
     try:
-        naive = datetime.strptime(m.group(1), _PUPITRE_TS_FMT)
-        return naive.replace(tzinfo=FILE_TZ)
+        return datetime.strptime(m.group(1), _PUPITRE_TS_FMT).replace(tzinfo=FILE_TZ)
     except ValueError:
         return None
 
@@ -275,8 +273,7 @@ def parse_tdms_file_ts(filename: str, file_type: str) -> datetime | None:
     if not m:
         return None
     try:
-        naive = datetime.strptime(m.group(1), fmt)
-        return naive.replace(tzinfo=FILE_TZ)
+        return datetime.strptime(m.group(1), fmt).replace(tzinfo=FILE_TZ)
     except ValueError:
         return None
 

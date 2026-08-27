@@ -1,11 +1,11 @@
 import argparse
 import logging
 from pathlib import Path
+
 import numpy as np
-import pandas as pd
 import scipy.signal as sg
-from python_magnetrun.MagnetRun import load_mrun
 from python_magnetrun.log_utils import LogConfig, setup_logging
+from python_magnetrun.MagnetRun import load_mrun
 
 
 def get_lag(

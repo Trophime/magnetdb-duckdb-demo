@@ -1,21 +1,19 @@
 import dash
+import dash_selectors as selectors
 import duckdb
-import pandas as pd
-
-from dash import Dash, html, dcc, Input, Output
-from dash.dash_table import DataTable
-
-import plotly.express as px
-from plotly import graph_objects as go
 import magnetdb_analysis as db
+import pandas as pd
+import plotly.express as px
+from dash import Input, Output, dcc, html
+from dash.dash_table import DataTable
 from experiment_links import (
+    assembly_link,
     experiment_link,
+    magnet_link,
     overview_record_link,
     part_link,
-    magnet_link,
-    assembly_link,
 )
-import dash_selectors as selectors
+from plotly import graph_objects as go
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
 dash.register_page(__name__, path="/magnet_stats", name="Magnet stats", order=3)

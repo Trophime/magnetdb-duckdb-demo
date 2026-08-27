@@ -1,17 +1,14 @@
 import dash
-import duckdb
-import pandas as pd
-
-from dash import html, dcc, Input, Output
-from dash.dash_table import DataTable
-from natsort import natsorted
-
-import plotly.express as px
-from plotly import graph_objects as go
 import dash_bootstrap_components as dbc
-import magnetdb_analysis as db
 import dash_selectors as selectors
+import duckdb
+import magnetdb_analysis as db
+import plotly.express as px
+from dash import Input, Output, dcc, html
+from dash.dash_table import DataTable
 from experiment_links import assembly_link
+from natsort import natsorted
+from plotly import graph_objects as go
 
 dash.register_page(__name__, path="/", name="Housing stats", order=1)
 

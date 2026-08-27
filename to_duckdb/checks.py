@@ -79,9 +79,9 @@ def _rebuild_magnet_assembly(con, magnet_name: str, magnet_type: str):
         ``MagnetType`` (e.g. legacy ``'hybrid'`` data).
     """
     from python_magnetgeo.Bitters import Bitters
+    from python_magnetgeo.deserialize import unserialize_object
     from python_magnetgeo.Insert import Insert
     from python_magnetgeo.Supras import Supras
-    from python_magnetgeo.deserialize import unserialize_object
 
     if magnet_type not in _VALID_MAGNET_TYPES:
         raise ValueError(

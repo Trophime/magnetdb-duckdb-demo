@@ -1,27 +1,22 @@
-from dash import (
-    Dash,
-    html,
-    dcc,
-    Input,
-    Output,
-    no_update,
-    ALL,
-    State,
-    register_page,
-    MATCH,
-    Patch,
-    ctx,
-)
 import dash
-from dash.exceptions import PreventUpdate
-import plotly.express as px
-from plotly import graph_objects as go
+import dash_selectors as selectors
 import magnetdb_analysis as db
 import magnetdb_plot as plot
 import pandas as pd
-import dash_selectors as selectors
 import style_editor
-from natsort import natsorted
+from dash import (
+    ALL,
+    Input,
+    Output,
+    Patch,
+    State,
+    ctx,
+    dcc,
+    html,
+    no_update,
+)
+from dash.exceptions import PreventUpdate
+from plotly import graph_objects as go
 
 dash.register_page(__name__, path="/file_viewer", name="File viewer", order=6)
 
@@ -316,7 +311,7 @@ def update_outputs(
         xaxis={"visible": False},
         yaxis={"visible": False},
         template="plotly_white",
-        margin=dict(l=20, r=20, t=30, b=20),
+        margin={"l": 20, "r": 20, "t": 30, "b": 20},
     )
 
     if not selected_file or not selected_assembly:
@@ -401,7 +396,7 @@ def update_outputs(
 
         # --- ETAPE 3 : INJECTER LE ZOOM DANS LA NOUVELLE FIGURE ---
         if x_range is not None:
-            fig.update_layout(xaxis=dict(range=x_range, autorange=False))
+            fig.update_layout(xaxis={"range": x_range, "autorange": False})
 
         outputs_figures.append(fig)
 

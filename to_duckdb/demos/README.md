@@ -15,13 +15,27 @@ add only new rows and correct mismatched existing ones in place (leaving
 `experiments_ids`/`overview_records_ids` untouched). After (re)populating,
 the script backfills `experiments_ids` by matching each row's housing and
 `[hstart, hstop]` range against `experiments`' file-embedded timestamp, and
-`overview_records_ids` the same way against `overview_records.t0` — pass
-`--no-link` to skip both steps. Pass `--link-only` to skip the CSV rebuild
-entirely and just re-run that backfill against the table's current
-contents (e.g. after populating new `experiments`/`overview_records` rows
-with nothing changed on the users/sessions side) — mutually exclusive with
-`--sync` and `--no-link`. Not wired into `magnetdb.py populate` yet —
-run standalone from the repository root.
+`overview_records_ids` the same way against `overview_records.t0` —
+converted from UTC (its storage timezone) to Europe/Paris local time
+before comparing, since `hstart`/`hstop` are naive Europe/Paris local
+time — pass `--no-link` to skip both steps. Pass `--link-only` to skip
+the CSV rebuild entirely and just re-run that backfill against the
+table's current contents (e.g. after populating new
+`experiments`/`overview_records` rows with nothing changed on the
+users/sessions side) — mutually exclusive with `--sync` and `--no-link`.
+Not wired into `magnetdb.py populate` yet — run standalone from the
+repository root.
+
+Linking prints a detailed coverage report: `users` records with
+`hstop IS NULL` (unlinkable — only closed sessions are matched) per
+housing; matched/unmatched `experiments_ids`/`overview_records_ids`
+counts with a per-housing `matched / total (%)` breakdown; how many
+*distinct* `experiments`/`overview_records` rows got linked at all, per
+housing, against the total available; rows linked to neither table, per
+housing; and how many `sources_pupitre` entries inside `overview_records`
+are also reflected in `experiments`, per housing and year. Pass
+`--no-rows` to keep the summary counts/breakdowns but suppress the full
+per-row listings.
 
 ```bash
 python to_duckdb/demos/users_table_demo.py
@@ -31,6 +45,7 @@ python to_duckdb/demos/users_table_demo.py --fuzzy-cutoff 0.8 --sample 10
 python to_duckdb/demos/users_table_demo.py --sync
 python to_duckdb/demos/users_table_demo.py --no-link
 python to_duckdb/demos/users_table_demo.py --link-only
+python to_duckdb/demos/users_table_demo.py --link-only --no-rows
 ```
 
 | Flag | Default | Description |
@@ -44,6 +59,43 @@ python to_duckdb/demos/users_table_demo.py --link-only
 | `--sync` | off (full replace) | Add new rows and fix mismatched existing rows instead of replacing the whole table's contents |
 | `--no-link` | off (linking runs) | Skip backfilling `experiments_ids`/`overview_records_ids` after (re)populating |
 | `--link-only` | off | Skip the CSV rebuild entirely; just re-run the `experiments_ids`/`overview_records_ids` backfill against the table's current contents. Mutually exclusive with `--sync`/`--no-link` |
+| `--no-rows` | off (rows shown) | Skip the full per-row listings in the coverage/unlinked reports (summary counts and breakdowns are always printed) |
+
+---
+
+## find_research_area_candidates.py
+
+Helps resolve `users` rows with `research_area IS NULL`. Splits them into
+two buckets:
+
+- **Tech Staff**: acronym is `"EXPLOIT."` or contains `"test"`
+  (case-insensitive) — internal LNCMI exploitation/testing sessions, never
+  backed by a real proposal. Reported only by default; pass
+  `--apply-tech-staff` to write `research_area = "LNCMI Tech Staff"` for
+  these rows (only `research_area` is touched).
+- **Candidate search**: the remaining genuinely-unmatched acronyms
+  (`research_area`/`call_number`/`access_mode` all `NULL`) are searched
+  against `proposals.csv` for proposals whose date coverage (exact
+  `Experiment Start/End Date`, or `Experiment Year` when dates are blank)
+  overlaps that acronym's session `hstart`/`hstop`, ranked by acronym
+  similarity (`difflib.SequenceMatcher` ratio). Read-only — prints
+  candidates for manual review, never writes.
+
+```bash
+python to_duckdb/demos/find_research_area_candidates.py
+python to_duckdb/demos/find_research_area_candidates.py --apply-tech-staff
+python to_duckdb/demos/find_research_area_candidates.py --acronym GSO02
+python to_duckdb/demos/find_research_area_candidates.py --top 5 --min-score 0.5
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db` | `to_duckdb/test-magnetdb.duckdb` | Target DuckDB file |
+| `--proposals` | `Data/proposals.csv` | Input proposals CSV |
+| `--top` | `10` | Maximum candidates printed per acronym |
+| `--acronym` | none (all acronyms) | Restrict the candidate search to a single acronym |
+| `--min-score` | `0.0` | Minimum acronym-similarity score for a candidate to be shown |
+| `--apply-tech-staff` | off (dry run) | Write `research_area='LNCMI Tech Staff'` for the tech-staff bucket |
 
 ---
 

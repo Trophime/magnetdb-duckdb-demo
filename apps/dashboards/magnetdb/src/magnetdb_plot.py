@@ -3,12 +3,13 @@ import logging
 import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
+
 import numpy as np
-import pint
-from plotly.subplots import make_subplots
-import plotly.graph_objects as go
 import pandas as pd
-from python_magnetrun.utils.downsampling import downsample_dataframe, DownsampleConfig
+import pint
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+from python_magnetrun.utils.downsampling import DownsampleConfig, downsample_dataframe
 from python_magnetrun.utils.files import classify_pigbrother_file
 
 logger = logging.getLogger(__name__)
@@ -402,23 +403,23 @@ def _apply_style(
     )
     opacity = style.opacity if style else 1.0
 
-    line_kwargs = dict(width=width)
+    line_kwargs = {'width': width}
     if color is not None:
         line_kwargs["color"] = color
     if dash is not None:
         line_kwargs["dash"] = dash
 
-    kwargs = dict(mode="lines", line=line_kwargs, opacity=opacity)
+    kwargs = {'mode': "lines", 'line': line_kwargs, 'opacity': opacity}
 
     if marker_symbol:
         kwargs["mode"] = "lines+markers"
         if marker_every and marker_every > 1 and n_points > 0:
-            kwargs["marker"] = dict(
-                symbol=marker_symbol,
-                size=[8 if i % marker_every == 0 else 0 for i in range(n_points)],
-            )
+            kwargs["marker"] = {
+                'symbol': marker_symbol,
+                'size': [8 if i % marker_every == 0 else 0 for i in range(n_points)],
+            }
         else:
-            kwargs["marker"] = dict(symbol=marker_symbol)
+            kwargs["marker"] = {'symbol': marker_symbol}
 
     return kwargs
 
@@ -526,11 +527,11 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
     fig.update_layout(
         title=title,
         template="plotly_white",
-        margin=dict(l=40, r=40, t=60, b=40),
-        xaxis=dict(title=x_title),
-        yaxis=dict(title=ylabel),
+        margin={'l': 40, 'r': 40, 't': 60, 'b': 40},
+        xaxis={'title': x_title},
+        yaxis={'title': ylabel},
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend={'orientation': "h", 'yanchor': "bottom", 'y': 1.02, 'xanchor': "right", 'x': 1},
         hovermode="x unified",
         uirevision='constant',
     )
@@ -628,7 +629,7 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
             try:
                 config = DownsampleConfig(n_out=_DEFAULT_N_OUT, method=_METHOD_MAP.get(downsample_method, 'stride'))
                 df_plot = downsample_dataframe(df_raw, time_col=x_col, value_cols=list(sensors), config=config)
-            except Exception as e:
+            except Exception:
                 df_plot = df_raw.copy()
 
         # --- Tracé sur les 2 Lignes ---
@@ -689,13 +690,13 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
                             mode='markers+text',
                             text=[event_label],
                             textposition="top center",
-                            textfont=dict(color=style.color if style else "red", size=11, family="Arial Black"),
-                            marker=dict(
-                                size=14, 
-                                symbol='x' if file_type == 'default' else 'star',
-                                color=style.color if style else "red",
-                                line=dict(width=2, color='DarkSlateGrey')
-                            ),
+                            textfont={'color': style.color if style else "red", 'size': 11, 'family': "Arial Black"},
+                            marker={
+                                'size': 14, 
+                                'symbol': 'x' if file_type == 'default' else 'star',
+                                'color': style.color if style else "red",
+                                'line': {'width': 2, 'color': 'DarkSlateGrey'}
+                            },
                             name=f"{file} - {sensor}" if row == 1 else f"{file} - {sensor} (Aligned)",
                             legendgroup=file,
                             showlegend=(row == 1)
@@ -717,10 +718,10 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
     x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time'}
     fig.update_layout(
         template="plotly_white",
-        margin=dict(t=50, b=20, l=40, r=20),
+        margin={'t': 50, 'b': 20, 'l': 40, 'r': 20},
         hovermode="x unified",
         uirevision='constant',
-        legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
+        legend={'orientation': "h", 'yanchor': "bottom", 'y': 1.05, 'xanchor': "right", 'x': 1}
     )
     
     fig.update_xaxes(title_text=x_label_mapping.get(x_col, x_col), row=2, col=1)
@@ -850,12 +851,12 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
                     x=[event_x],
                     y=[event_y],
                     mode='markers',
-                    marker=dict(
-                        size=14,
-                        symbol='x' if file_type == 'default' else 'star',
-                        color=event_color,
-                        line=dict(width=2, color='DarkSlateGrey'),
-                    ),
+                    marker={
+                        'size': 14,
+                        'symbol': 'x' if file_type == 'default' else 'star',
+                        'color': event_color,
+                        'line': {'width': 2, 'color': 'DarkSlateGrey'},
+                    },
                     name=f"{file} - {sensor}",
                     showlegend=False,
                     hovertext=f"{event_label}<br>{file}<br>{sensor}: {event_y:.3g}",
@@ -873,7 +874,7 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
                     bgcolor="white",
                     bordercolor=event_color,
                     borderwidth=1,
-                    font=dict(color=event_color, size=11, family="Arial Black"),
+                    font={'color': event_color, 'size': 11, 'family': "Arial Black"},
                 )
             else:
                 override = _resolve_field_override(group_name, sensor)
@@ -889,11 +890,11 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
     fig.update_layout(
         title=group_name,
         template="plotly_white",
-        margin=dict(l=40, r=40, t=60, b=40),
-        xaxis=dict(title=x_label_mapping.get(x_col, x_col)),
-        yaxis=dict(title=ylabel),
+        margin={'l': 40, 'r': 40, 't': 60, 'b': 40},
+        xaxis={'title': x_label_mapping.get(x_col, x_col)},
+        yaxis={'title': ylabel},
         showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        legend={'orientation': "h", 'yanchor': "bottom", 'y': 1.02, 'xanchor': "right", 'x': 1},
         hovermode="x unified",
         uirevision='constant',
     )

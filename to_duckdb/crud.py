@@ -49,7 +49,7 @@ infer_operating_mode(df)
 
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -159,6 +159,7 @@ def load_geometry_json(geometry_path) -> str | None:
         return None
     try:
         import os
+
         import yaml as _yaml
         from python_magnetgeo.deserialize import serialize_instance
         orig_dir = os.getcwd()
@@ -537,8 +538,10 @@ def _date_from_coded_name(name: str, prefix_pattern: str) -> str | None:
     match = re.match(rf"^{prefix_pattern}(\d{{6}})\d{{2}}$", name)
     if not match:
         return None
+    yy, mm, dd = (int(match.group(1)[i : i + 2]) for i in (0, 2, 4))
+    year = 1900 + yy if yy >= 69 else 2000 + yy
     try:
-        return datetime.strptime(match.group(1), "%y%m%d").strftime("%Y-%m-%d")
+        return date(year, mm, dd).isoformat()
     except ValueError:
         return None
 
@@ -662,17 +665,16 @@ def insert_assembly(
         return
 
     housing = data.get("housing") or None
-    if housing is not None:
-        if con.execute(
-            "SELECT 1 FROM housing_config WHERE name = ?", [housing]
-        ).fetchone() is None:
-            if create_housing:
-                insert_housing_config_from_magnetrun(con, housing, verbose=verbose)
-            else:
-                raise ValueError(
-                    f"Housing config '{housing}' not found in housing_config table. "
-                    "Call insert_housing_config() first, or pass create_housing=True."
-                )
+    if housing is not None and con.execute(
+        "SELECT 1 FROM housing_config WHERE name = ?", [housing]
+    ).fetchone() is None:
+        if create_housing:
+            insert_housing_config_from_magnetrun(con, housing, verbose=verbose)
+        else:
+            raise ValueError(
+                f"Housing config '{housing}' not found in housing_config table. "
+                "Call insert_housing_config() first, or pass create_housing=True."
+            )
 
     commissioned_at = parse_timestamp(data.get("commissioned_at"))
     decommissioned_at = parse_timestamp(data.get("decommissioned_at"))
@@ -2308,10 +2310,11 @@ def _parse_overview_filename(filename: str) -> tuple[str, datetime | None]:
     if not m:
         return housing, None
     try:
-        naive = datetime.strptime(m.group(1), _OVERVIEW_FILENAME_TS_FMT)
+        return housing, datetime.strptime(
+            m.group(1), _OVERVIEW_FILENAME_TS_FMT
+        ).replace(tzinfo=FILE_TZ)
     except ValueError:
         return housing, None
-    return housing, naive.replace(tzinfo=FILE_TZ)
 
 
 def _find_assembly_for_timestamp(con, housing: str, t0: datetime, db_tz) -> str | None:

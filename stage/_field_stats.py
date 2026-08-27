@@ -1,6 +1,11 @@
-from _common import *
+import json
+import time
 
-
+import duckdb
+from _common import DB, FIELD_THRESHOLD, PUPITRE_DIR, print_title
+from python_magnetrun.MagnetRun import load_mrun
+from python_magnetrun.signature import Signature
+from rich.progress import Progress
 
 
 def main():
@@ -98,7 +103,7 @@ def main():
                     (field_signature, int(rowid))
                 )
 
-            except Exception as e:
+            except (ValueError, KeyError, IndexError, TypeError, OSError) as e:
 
                 progress.console.print(f"[red]{pupitre_file}: {e}[/red]")
 

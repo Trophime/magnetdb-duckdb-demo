@@ -15,8 +15,9 @@ Public API
     parallel_map(items, worker, max_workers, desc) -> list
 """
 
+from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Sequence, TypeVar
+from typing import TypeVar
 
 T = TypeVar("T")
 R = TypeVar("R")
@@ -55,11 +56,9 @@ def parallel_map(
     results: list[R] = [None] * len(items)  # type: ignore[list-item]
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(worker, item): i for i, item in enumerate(items)}
-        done = 0
-        for future in as_completed(futures):
+        for done, future in enumerate(as_completed(futures), start=1):
             i = futures[future]
             results[i] = future.result()
-            done += 1
             if desc:
                 print(f"  {desc}: {done}/{len(items)}", end="\r")
     if desc:

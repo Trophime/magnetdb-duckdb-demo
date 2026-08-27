@@ -9,11 +9,10 @@ relevant to a given group in that page's current state.
 """
 
 import dash
+import dash_bootstrap_components as dbc
+import magnetdb_plot as plot
 from dash import ALL, MATCH, Input, Output, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
-import dash_bootstrap_components as dbc
-
-import magnetdb_plot as plot
 
 # Plotly/d3's default qualitative "category10" palette — the same 10 colors
 # FILE_TYPE_STYLES' six source-type defaults are already drawn from, plus the

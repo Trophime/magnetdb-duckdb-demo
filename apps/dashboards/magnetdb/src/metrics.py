@@ -1,9 +1,8 @@
-import numpy as np
-import scipy.signal as sg
 import os
 from datetime import datetime
-import pandas as pd
 
+import numpy as np
+import pandas as pd
 
 OUTPUT_DIR = "/workspaces/magnetdb-duckdb-demo/apps/dashboards/magnetdb/metrics_reports"
 
@@ -100,7 +99,7 @@ def generate_metrics_report(file_ref, sensor_ref, file_sec, sensor_sec, results,
         f.write(f"MAE After Alignment         : {results['Distance_MAE']['After Alignment']:.4f}\n")
         f.write("-" * 45 + "\n\n")
 
-        f.write(f"SHAPE SIMILARITY (Pearson Correlation)\n")
+        f.write("SHAPE SIMILARITY (Pearson Correlation)\n")
         f.write(f"Before Alignment              : {results['Pearson_Correlation']['Before Alignment']:.4f}\n")
         f.write(f"After Alignment               : {results['Pearson_Correlation']['After Alignment']:.4f}\n")
         

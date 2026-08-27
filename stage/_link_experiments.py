@@ -1,7 +1,5 @@
-from _common import *
-
-
-
+import duckdb
+from _common import DB, print_title
 
 # ### Report on the overview_records <-> experiments link built by
 # ### _import_housing.py. The link itself is formed at table-creation time

@@ -1,9 +1,8 @@
 import dash
-from dash import html, dcc, dash_table, Input, Output
 import dash_bootstrap_components as dbc
 import duckdb
-import pandas as pd
 import numpy as np
+from dash import Input, Output, dash_table, dcc, html
 
 DB_PATH = "/workspaces/magnetdb-duckdb-demo/to_duckdb/magnetdb.duckdb"
 

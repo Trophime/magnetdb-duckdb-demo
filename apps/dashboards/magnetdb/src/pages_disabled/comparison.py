@@ -1,17 +1,16 @@
 import os
+
 import dash
-from dash import html, dcc, Output, Input, State, MATCH, ALL, Patch, ctx
-from dash.exceptions import PreventUpdate
 import dash_bootstrap_components as dbc
-import plotly.graph_objects as go
 import magnetdb_analysis as db
-from magnetdb_plot import create_plot, create_comparison_plot
+import numpy as np
 import pandas as pd
-from plotly.subplots import make_subplots
+import plotly.graph_objects as go
+from dash import ALL, MATCH, Input, Output, Patch, State, ctx, dcc, html
+from dash.exceptions import PreventUpdate
+from magnetdb_plot import create_comparison_plot
 from metrics import evaluate_metrics, generate_metrics_report
 from python_magnetrun.utils.files import classify_pigbrother_file
-import numpy as np
-
 
 TARGET_TABLE = 'operationaldata'
 

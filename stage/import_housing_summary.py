@@ -1,21 +1,17 @@
 #!/usr/bin/env python
-# coding: utf-8
 
 # In[1]:
 
 
 import json
+import time
+from pathlib import Path
+
 import duckdb
 import pandas as pd
-import numpy as np
-from pathlib import Path
-import time
-
-from rich.progress import Progress
-
 from python_magnetrun.MagnetRun import MagnetRun, load_mrun
 from python_magnetrun.signature import Signature
-
+from rich.progress import Progress
 
 # In[2]:
 
@@ -309,7 +305,7 @@ with Progress() as progress:
                 (float(field.max()), float(field.mean()), int((field > FIELD_THRESHOLD).sum()), field_signature, int(rowid))
             )
 
-        except Exception as e:
+        except (ValueError, KeyError, IndexError, TypeError, OSError) as e:
             progress.console.print(f"[red]{filename}: {e}[/red]")
 
         progress.advance(task)

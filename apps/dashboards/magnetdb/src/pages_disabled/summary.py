@@ -1,10 +1,10 @@
 import dash
-from dash import html, dcc, Output, Input, State, MATCH, ALL
 import dash_bootstrap_components as dbc
+import magnetdb_analysis as db
 import pandas as pd
 import plotly.graph_objects as go
-import magnetdb_analysis as db
-from magnetdb_plot import create_plot 
+from dash import MATCH, Input, Output, State, dcc, html
+from magnetdb_plot import create_plot
 
 # --- 1. ENREGISTREMENT DE LA PAGE ---
 dash.register_page(

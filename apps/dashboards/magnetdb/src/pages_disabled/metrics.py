@@ -1,6 +1,6 @@
-from dash import Input, Output, callback, html, dcc
 import dash
 import magnetdb_analysis as db
+from dash import Input, Output, callback, dcc, html
 
 dash.register_page(__name__, path="/metrics", name="Metrics", order=6)
 

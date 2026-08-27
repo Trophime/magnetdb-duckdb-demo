@@ -1,9 +1,11 @@
-from _common import *
+import json
 
-from sklearn.preprocessing import StandardScaler
+import duckdb
+import matplotlib.pyplot as plt
+import pandas as pd
+from _common import DB, RESULTS_DIR, print_title
 from sklearn.decomposition import PCA
-
-
+from sklearn.preprocessing import StandardScaler
 
 
 def load_data():
@@ -96,7 +98,7 @@ def get_pca_features(df, scenario_number):
 
                     if times[i + 1] - times[i] > 0:
                         slopes.append(abs((values[i + 1] - values[i]) / (times[i + 1] - times[i])))
-                    total_variation += abs((values[i + 1] - values[i]))
+                    total_variation += abs(values[i + 1] - values[i])
 
                 max_slope = max(slopes) if slopes else 0
                 mean_slope = sum(slopes) / len(slopes) if slopes else 0

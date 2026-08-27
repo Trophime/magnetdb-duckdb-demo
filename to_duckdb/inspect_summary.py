@@ -1,8 +1,8 @@
 import json
-import duckdb
-import pandas as pd
 from pathlib import Path
 
+import duckdb
+import pandas as pd
 from python_magnetrun.magnetdata import MagnetData
 
 path = "/mnt/LNCMIG-Data/records/srv-data-install/M9/2025.01.23 - 16:56:54.txt"
@@ -35,7 +35,7 @@ elif isinstance(data, dict):
 
     print("\nTop-levelkeys:\n")
 
-    for k in data.keys():
+    for k in data:
         print(k)
 
         print("\nExample values:\n")

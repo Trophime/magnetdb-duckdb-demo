@@ -1,6 +1,6 @@
-from _common import *
-
-
+import duckdb
+import matplotlib.pyplot as plt
+from _common import DB
 
 
 def plot_stats_per_research_field(stats, title, ylabel, field2, png_name):
@@ -87,7 +87,7 @@ def main():
         ).fetchdf()
     )
 
-    print("\n" + f" MATCHES PER RESEARCH AREA ".center(80, "=") + "\n",
+    print("\n" + " MATCHES PER RESEARCH AREA ".center(80, "=") + "\n",
         con.execute(
             """
                 SELECT research_area, COUNT(*) AS n
@@ -99,9 +99,9 @@ def main():
         ).fetchdf()
     )
 
-    print("\n" + f" UNLINKED RECORDS BY HOUSING AND YEAR ".center(80, "=") + "\n",
+    print("\n" + " UNLINKED RECORDS BY HOUSING AND YEAR ".center(80, "=") + "\n",
         con.execute(
-            f"""
+            """
                 SELECT
                     housing, year, COUNT(*) AS n
                 FROM overview_experiments
@@ -113,7 +113,7 @@ def main():
     )
 
     stats = con.execute(
-        f"""
+        """
             SELECT
                 research_area,
                 MIN(year) AS first_year, MAX(year) AS last_year,
@@ -133,7 +133,7 @@ def main():
         """
     ).fetchdf()
 
-    print("\n" + f" STATISTICS PER RESEARCH AREA ".center(80, "=") + "\n",
+    print("\n" + " STATISTICS PER RESEARCH AREA ".center(80, "=") + "\n",
         stats.to_string(index = False))
 
     # Visulalise the statistics per research area

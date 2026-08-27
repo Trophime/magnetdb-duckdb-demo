@@ -1,21 +1,26 @@
-import duckdb
-import os
-import glob
 import functools
-from pathlib import Path
-from python_magnetrun.MagnetRun import load_mrun
-from python_magnetrun.field_defs import match_channels_across_formats, load_defs, resolve_defs_file
-from python_magnetrun.magnetdata_base import DataType
-import re
-from datetime import datetime, timedelta
-import numpy as np
+import glob
 import json
+import os
+import re
 import time
+from datetime import datetime, timedelta
 from functools import wraps
+from pathlib import Path
+
+import duckdb
+import magnetdb_plot as plot
+import numpy as np
 import pandas as pd
 import scipy.signal as sg
 from natsort import natsorted
-import magnetdb_plot as plot
+from python_magnetrun.field_defs import (
+    load_defs,
+    match_channels_across_formats,
+    resolve_defs_file,
+)
+from python_magnetrun.magnetdata_base import DataType
+from python_magnetrun.MagnetRun import load_mrun
 
 try:
     from zoneinfo import ZoneInfo

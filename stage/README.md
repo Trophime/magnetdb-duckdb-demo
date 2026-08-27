@@ -23,10 +23,10 @@ python magnetdb.py populate  experiments --all --db $DB --records-base $RECORDS
 python -c "
 import duckdb
 con = duckdb.connect('$DB', read_only=True)
-for (s,) in con.execute('SELECT name FROM sites ORDER BY name').fetchall():
+for (s,) in con.execute('SELECT name FROM assemblies ORDER BY name').fetchall():
     print(s)
-" | while read SITE; do
-    python compute_exp_stats.py --db $DB --site "$SITE"
+ " | while read ASSEMBLY; do
+    python compute_exp_stats.py --db $DB --assembly "$ASSEMBLY"
 done
 
 # Populate OperationalData
@@ -35,12 +35,12 @@ python magnetdb.py populate  operationaldata --all --db $DB --records-base $RECO
 python -c "
 import duckdb
 con = duckdb.connect('$DB', read_only=True)
-for (s,) in con.execute('SELECT name FROM sites ORDER BY name').fetchall():
+for (s,) in con.execute('SELECT name FROM assemblies ORDER BY name').fetchall():
     print(s)
-" | while read SITE; do
+ " | while read ASSEMBLY; do
     python compute_op_stats.py --db $DB \
         --records $RECORDS/srv-data-install \
-        --site "$SITE" --type Pupitre
+        --assembly "$ASSEMBLY" --type Pupitre
 done
 
 # Populate overview_records from JSON
@@ -56,3 +56,7 @@ python to_duckdb/demos/users_table_demo.py --link-only --db to_duckdb/test-magne
 
 # Check users that are not linked (nor associated with any records -- either experiments or overview records)
 python to_duckdb/demos/list_users_unlinked.py --db to_duckdb/test-magnetdb.duckdb
+
+# update magnet/part status retro-actively
+# get DB coverage from Valentin work
+# try pca analysis including localcontact, diameter of innerbore of the innermost magnet in assembly in addition to fields used by Valentin

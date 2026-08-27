@@ -682,6 +682,71 @@ def sync_users(con, users: list[dict], verbose: bool = True) -> dict:
     return stats
 
 
+def _print_housing_breakdown(con, condition: str) -> None:
+    """Print an indented ``housing: count`` breakdown for users rows matching `condition`."""
+    for housing, count in con.execute(
+        f"SELECT housing, COUNT(*) FROM users WHERE {condition} "
+        "GROUP BY housing ORDER BY housing"
+    ).fetchall():
+        print(f"  {housing}: {count}")
+
+
+def report_missing_hstop(con, verbose: bool = True) -> int:
+    """Print/return the count of ``users`` rows with ``hstop IS NULL``.
+
+    These are open/unclosed sessions: both `update_experiments_ids` and
+    `update_overview_records_ids` only update rows ``WHERE hstop IS NOT
+    NULL``, so these rows can never end up linked.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    verbose : bool
+        Print the count (with a per-housing breakdown) when done.
+
+    Returns
+    -------
+    int
+        Count of rows with ``hstop IS NULL``.
+    """
+    count = con.execute("SELECT COUNT(*) FROM users WHERE hstop IS NULL").fetchone()[0]
+    if verbose:
+        print(f"Records with hstop == NaT: {count}")
+        _print_housing_breakdown(con, "hstop IS NULL")
+    return count
+
+
+def _print_housing_matched_breakdown(con, condition: str) -> None:
+    """Print an indented ``housing: matched / total`` breakdown.
+
+    ``total`` is the number of ``users`` entries for that housing
+    (matching `condition` or not), for context on what share of a
+    housing's sessions got linked.
+    """
+    for housing, matched, total in con.execute(
+        f"SELECT housing, COUNT(*) FILTER (WHERE {condition}), COUNT(*) "
+        "FROM users GROUP BY housing ORDER BY housing"
+    ).fetchall():
+        print(f"  {housing}: {matched} / {total} ({matched / total:.1%})")
+
+
+def _print_distinct_linked_breakdown(con, list_column: str, totals: dict[str, int]) -> None:
+    """Print an indented ``housing: distinct linked / total source rows (%)`` breakdown.
+
+    Unnests `list_column` (an id/filename list column on ``users``) per
+    housing and counts distinct values, against `totals` (total rows
+    available per housing in the source table).
+    """
+    for housing, distinct_count in con.execute(
+        f"SELECT housing, COUNT(DISTINCT x) FROM "
+        f"(SELECT housing, UNNEST({list_column}) AS x FROM users WHERE {list_column} IS NOT NULL) "
+        "GROUP BY housing ORDER BY housing"
+    ).fetchall():
+        total = totals.get(housing, 0)
+        print(f"  {housing}: {distinct_count} / {total} ({distinct_count / total:.1%})")
+
+
 def update_experiments_ids(con, verbose: bool = True) -> dict:
     """Link each ``users`` row to its ``experiments`` via housing + time range.
 
@@ -695,12 +760,13 @@ def update_experiments_ids(con, verbose: bool = True) -> dict:
     con:
         Open DuckDB connection.
     verbose : bool
-        Print matched/unmatched counts when done.
+        Print total/matched/unmatched counts (with a per-housing breakdown
+        of matched and unmatched) when done.
 
     Returns
     -------
     dict
-        ``{"matched": int, "unmatched": int}``.
+        ``{"matched": int, "unmatched": int, "total": int}``.
     """
     con.execute(
         f"UPDATE users SET experiments_ids = ("
@@ -715,10 +781,31 @@ def update_experiments_ids(con, verbose: bool = True) -> dict:
     unmatched = con.execute(
         "SELECT COUNT(*) FROM users WHERE experiments_ids IS NULL"
     ).fetchone()[0]
+    total = con.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if verbose:
+        experiments_totals = dict(
+            con.execute(
+                "SELECT split_part(assembly_name, '_', 1) AS housing, COUNT(*) "
+                "FROM experiments GROUP BY housing"
+            ).fetchall()
+        )
+        total_experiments = con.execute("SELECT COUNT(*) FROM experiments").fetchone()[0]
+        distinct_linked = con.execute(
+            "SELECT COUNT(DISTINCT experiment_id) FROM "
+            "(SELECT UNNEST(experiments_ids) AS experiment_id FROM users "
+            "WHERE experiments_ids IS NOT NULL)"
+        ).fetchone()[0]
+        print(f"Total users records: {total}")
         print(f"Records with matched experiments_ids: {matched}")
+        _print_housing_matched_breakdown(con, "experiments_ids IS NOT NULL")
+        print(
+            f"Distinct experiments_ids linked: {distinct_linked} / {total_experiments} "
+            f"({distinct_linked / total_experiments:.1%})"
+        )
+        _print_distinct_linked_breakdown(con, "experiments_ids", experiments_totals)
         print(f"Records with no experiments_ids: {unmatched}")
-    return {"matched": matched, "unmatched": unmatched}
+        _print_housing_breakdown(con, "experiments_ids IS NULL")
+    return {"matched": matched, "unmatched": unmatched, "total": total}
 
 
 def update_overview_records_ids(con, verbose: bool = True) -> dict:
@@ -728,25 +815,34 @@ def update_overview_records_ids(con, verbose: bool = True) -> dict:
     record's t0 against [hstart, hstop]. Rows with no hstop have no closed
     range to contain anything, so they're left with overview_records_ids = NULL.
 
+    ``overview_records.t0`` is stored in UTC (populate defaults to
+    ``--db-tz UTC``), while ``users.hstart``/``hstop`` are naive Europe/Paris
+    local wall-clock time (parsed as-is from EXPERIENCES_LOG). ``t0`` is
+    therefore converted to Europe/Paris before comparing, or matches would
+    silently be missed whenever a record's local time falls within the
+    UTC/local offset (1h winter, 2h summer) of ``hstart``/``hstop``.
+
     Parameters
     ----------
     con:
         Open DuckDB connection.
     verbose : bool
-        Print matched/unmatched counts when done.
+        Print total/matched/unmatched counts (with a per-housing breakdown
+        of matched and unmatched) when done.
 
     Returns
     -------
     dict
-        ``{"matched": int, "unmatched": int}``.
+        ``{"matched": int, "unmatched": int, "total": int}``.
     """
     con.execute(
-        "UPDATE users SET overview_records_ids = ("
-        "SELECT LIST(o.filename) FROM overview_records o "
-        "WHERE o.housing = users.housing "
-        "AND o.t0 BETWEEN users.hstart AND users.hstop "
-        "AND o.merged_into IS NULL"
-        ") WHERE users.hstop IS NOT NULL"
+        f"UPDATE users SET overview_records_ids = ("
+        f"SELECT LIST(o.filename) FROM overview_records o "
+        f"WHERE o.housing = users.housing "
+        f"AND (o.t0 AT TIME ZONE 'UTC') AT TIME ZONE '{FILE_TZ.key}' "
+        f"BETWEEN users.hstart AND users.hstop "
+        f"AND o.merged_into IS NULL"
+        f") WHERE users.hstop IS NOT NULL"
     )
     matched = con.execute(
         "SELECT COUNT(*) FROM users WHERE overview_records_ids IS NOT NULL"
@@ -754,10 +850,132 @@ def update_overview_records_ids(con, verbose: bool = True) -> dict:
     unmatched = con.execute(
         "SELECT COUNT(*) FROM users WHERE overview_records_ids IS NULL"
     ).fetchone()[0]
+    total = con.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if verbose:
+        overview_totals = dict(
+            con.execute(
+                "SELECT housing, COUNT(*) FROM overview_records "
+                "WHERE merged_into IS NULL GROUP BY housing"
+            ).fetchall()
+        )
+        total_overview_records = con.execute(
+            "SELECT COUNT(*) FROM overview_records WHERE merged_into IS NULL"
+        ).fetchone()[0]
+        distinct_linked = con.execute(
+            "SELECT COUNT(DISTINCT filename) FROM "
+            "(SELECT UNNEST(overview_records_ids) AS filename FROM users "
+            "WHERE overview_records_ids IS NOT NULL)"
+        ).fetchone()[0]
+        print(f"Total users records: {total}")
         print(f"Records with matched overview_records_ids: {matched}")
+        _print_housing_matched_breakdown(con, "overview_records_ids IS NOT NULL")
+        print(
+            f"Distinct overview_records_ids linked: {distinct_linked} / "
+            f"{total_overview_records} ({distinct_linked / total_overview_records:.1%})"
+        )
+        _print_distinct_linked_breakdown(con, "overview_records_ids", overview_totals)
         print(f"Records with no overview_records_ids: {unmatched}")
-    return {"matched": matched, "unmatched": unmatched}
+        _print_housing_breakdown(con, "overview_records_ids IS NULL")
+    return {"matched": matched, "unmatched": unmatched, "total": total}
+
+
+def report_unlinked_records(con, verbose: bool = True, show_rows: bool = True) -> int:
+    """Print/return the count of ``users`` rows linked to neither table.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    verbose : bool
+        Print the count (with a per-housing breakdown) when done.
+    show_rows : bool
+        Also print the full row listing.
+
+    Returns
+    -------
+    int
+        Count of rows with both ``experiments_ids`` and
+        ``overview_records_ids`` NULL.
+    """
+    condition = "experiments_ids IS NULL AND overview_records_ids IS NULL"
+    count = con.execute(f"SELECT COUNT(*) FROM users WHERE {condition}").fetchone()[0]
+    if verbose:
+        print(
+            "Records with neither experiments_ids nor overview_records_ids: "
+            f"{count}"
+        )
+        _print_housing_breakdown(con, condition)
+        if show_rows:
+            rows = con.execute(
+                f"SELECT * FROM users WHERE {condition} "
+                "ORDER BY acronym, housing, hstart"
+            ).df()
+            print(
+                f"\nRows with neither experiments_ids nor overview_records_ids "
+                f"({len(rows)}):"
+            )
+            print(rows.to_string(index=False))
+    return count
+
+
+def report_pupitre_sources_coverage(con, verbose: bool = True) -> None:
+    """Print, per housing and year, distinct sources_pupitre entries in overview_records vs. total experiments.
+
+    Both ``overview_records.sources_pupitre`` and ``experiments`` are
+    backed by the same pupitre TXT files (``"YYYY.MM.DD - HH:MM:SS.txt"``),
+    so this compares how much of that file space is reflected inside
+    overview_records per housing, broken down by the year embedded in the
+    filename.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    verbose : bool
+        Print the totals and per-housing/per-year breakdown when done.
+    """
+    experiments_totals = dict(
+        con.execute(
+            "SELECT split_part(assembly_name, '_', 1) AS housing, COUNT(*) "
+            "FROM experiments GROUP BY housing"
+        ).fetchall()
+    )
+    experiments_by_year = {
+        (housing, year): count
+        for housing, year, count in con.execute(
+            "SELECT split_part(assembly_name, '_', 1) AS housing, LEFT(file, 4) AS year, "
+            "COUNT(*) FROM experiments GROUP BY housing, year"
+        ).fetchall()
+    }
+    total_experiments = con.execute("SELECT COUNT(*) FROM experiments").fetchone()[0]
+    total_pupitre = con.execute(
+        "SELECT COUNT(DISTINCT src) FROM "
+        "(SELECT UNNEST(sources_pupitre) AS src FROM overview_records "
+        "WHERE merged_into IS NULL)"
+    ).fetchone()[0]
+    pupitre_years_by_housing: dict[str, list[tuple[str, int]]] = defaultdict(list)
+    for housing, year, count in con.execute(
+        "SELECT housing, LEFT(src, 4) AS year, COUNT(DISTINCT src) FROM "
+        "(SELECT housing, UNNEST(sources_pupitre) AS src FROM overview_records "
+        "WHERE merged_into IS NULL) GROUP BY housing, year ORDER BY housing, year"
+    ).fetchall():
+        pupitre_years_by_housing[housing].append((year, count))
+    if verbose:
+        print(
+            f"sources_pupitre in overview_records: {total_pupitre} / "
+            f"{total_experiments} ({total_pupitre / total_experiments:.1%})"
+        )
+        for housing, count in con.execute(
+            "SELECT housing, COUNT(DISTINCT src) FROM "
+            "(SELECT housing, UNNEST(sources_pupitre) AS src FROM overview_records "
+            "WHERE merged_into IS NULL) GROUP BY housing ORDER BY housing"
+        ).fetchall():
+            total = experiments_totals.get(housing, 0)
+            print(f"  {housing}: {count} / {total} ({count / total:.1%})")
+            for year, yr_count in pupitre_years_by_housing[housing]:
+                yr_total = experiments_by_year.get((housing, year), 0)
+                pct = f"{yr_count / yr_total:.1%}" if yr_total else "—"
+                print(f"    {year}: {yr_count} / {yr_total} ({pct})")
 
 
 def report_source_stats(users: list[dict], stats: dict, match_counts: Counter) -> None:
@@ -798,14 +1016,24 @@ def report_data_quality(con) -> None:
         print(f"  {acronym}")
 
 
-def report_experiments_ids_coverage(con) -> None:
-    """Print rows missing experiments_ids and experiments shared across rows."""
-    rows_no_experiments_ids = con.execute(
-        "SELECT * FROM users WHERE experiments_ids IS NULL "
-        "ORDER BY acronym, housing, hstart"
-    ).df()
-    print(f"\nRows with no experiments_ids ({len(rows_no_experiments_ids)}):")
-    print(rows_no_experiments_ids.to_string(index=False))
+def report_experiments_ids_coverage(con, show_rows: bool = True) -> None:
+    """Print rows missing experiments_ids and experiments shared across rows.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    show_rows : bool
+        Print the full row listings (missing-rows table and per-shared-id
+        row dumps). When ``False``, only the summary counts are printed.
+    """
+    if show_rows:
+        rows_no_experiments_ids = con.execute(
+            "SELECT * FROM users WHERE experiments_ids IS NULL "
+            "ORDER BY acronym, housing, hstart"
+        ).df()
+        print(f"\nRows with no experiments_ids ({len(rows_no_experiments_ids)}):")
+        print(rows_no_experiments_ids.to_string(index=False))
 
     shared_experiment_ids = con.execute(
         "SELECT experiment_id FROM (SELECT unnest(experiments_ids) AS experiment_id "
@@ -816,24 +1044,35 @@ def report_experiments_ids_coverage(con) -> None:
         f"Experiments shared across multiple users rows: "
         f"{len(shared_experiment_ids)}"
     )
-    for (experiment_id,) in shared_experiment_ids:
-        print(f"  experiment {experiment_id}:")
-        rows = con.execute(
-            "SELECT * FROM users WHERE list_contains(experiments_ids, ?) "
-            "ORDER BY acronym, housing, hstart",
-            [experiment_id],
+    if show_rows:
+        for (experiment_id,) in shared_experiment_ids:
+            print(f"  experiment {experiment_id}:")
+            rows = con.execute(
+                "SELECT * FROM users WHERE list_contains(experiments_ids, ?) "
+                "ORDER BY acronym, housing, hstart",
+                [experiment_id],
+            ).df()
+            print(rows.to_string(index=False))
+
+
+def report_overview_records_ids_coverage(con, show_rows: bool = True) -> None:
+    """Print rows missing overview_records_ids and records shared across rows.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    show_rows : bool
+        Print the full row listings (missing-rows table and per-shared-id
+        row dumps). When ``False``, only the summary counts are printed.
+    """
+    if show_rows:
+        rows_no_overview_records_ids = con.execute(
+            "SELECT * FROM users WHERE overview_records_ids IS NULL "
+            "ORDER BY acronym, housing, hstart"
         ).df()
-        print(rows.to_string(index=False))
-
-
-def report_overview_records_ids_coverage(con) -> None:
-    """Print rows missing overview_records_ids and records shared across rows."""
-    rows_no_overview_records_ids = con.execute(
-        "SELECT * FROM users WHERE overview_records_ids IS NULL "
-        "ORDER BY acronym, housing, hstart"
-    ).df()
-    print(f"\nRows with no overview_records_ids ({len(rows_no_overview_records_ids)}):")
-    print(rows_no_overview_records_ids.to_string(index=False))
+        print(f"\nRows with no overview_records_ids ({len(rows_no_overview_records_ids)}):")
+        print(rows_no_overview_records_ids.to_string(index=False))
 
     shared_overview_records_ids = con.execute(
         "SELECT filename FROM (SELECT unnest(overview_records_ids) AS filename "
@@ -844,14 +1083,15 @@ def report_overview_records_ids_coverage(con) -> None:
         f"Overview records shared across multiple users rows: "
         f"{len(shared_overview_records_ids)}"
     )
-    for (filename,) in shared_overview_records_ids:
-        print(f"  overview_record {filename}:")
-        rows = con.execute(
-            "SELECT * FROM users WHERE list_contains(overview_records_ids, ?) "
-            "ORDER BY acronym, housing, hstart",
-            [filename],
-        ).df()
-        print(rows.to_string(index=False))
+    if show_rows:
+        for (filename,) in shared_overview_records_ids:
+            print(f"  overview_record {filename}:")
+            rows = con.execute(
+                "SELECT * FROM users WHERE list_contains(overview_records_ids, ?) "
+                "ORDER BY acronym, housing, hstart",
+                [filename],
+            ).df()
+            print(rows.to_string(index=False))
 
 
 # ---------------------------------------------------------------------------
@@ -991,6 +1231,14 @@ def main() -> None:
         help="Skip backfilling experiments_ids/overview_records_ids after (re)populating.",
     )
     parser.add_argument(
+        "--no-rows",
+        dest="show_rows",
+        action="store_false",
+        default=True,
+        help="Skip the full per-row listings in the coverage/unlinked reports "
+        "(summary counts and breakdowns are always printed).",
+    )
+    parser.add_argument(
         "--link-only",
         action="store_true",
         help="Skip rebuilding rows from --log/--proposals entirely; just "
@@ -1042,10 +1290,13 @@ def main() -> None:
         con = duckdb.connect(str(args.db))
         try:
             create_users_table(con, verbose=False)
+            report_missing_hstop(con)
             update_experiments_ids(con)
-            report_experiments_ids_coverage(con)
+            report_experiments_ids_coverage(con, show_rows=args.show_rows)
             update_overview_records_ids(con)
-            report_overview_records_ids_coverage(con)
+            report_overview_records_ids_coverage(con, show_rows=args.show_rows)
+            report_unlinked_records(con, show_rows=args.show_rows)
+            report_pupitre_sources_coverage(con)
             report_sample(con, args.sample)
         finally:
             con.close()
@@ -1071,13 +1322,16 @@ def main() -> None:
             replace_all_users(con, users, verbose=False)
             print(f"Replaced 'users' contents with {len(users)} rows ({args.db})")
 
+        report_missing_hstop(con)
         report_data_quality(con)
 
         if args.link:
             update_experiments_ids(con)
-            report_experiments_ids_coverage(con)
+            report_experiments_ids_coverage(con, show_rows=args.show_rows)
             update_overview_records_ids(con)
-            report_overview_records_ids_coverage(con)
+            report_overview_records_ids_coverage(con, show_rows=args.show_rows)
+            report_unlinked_records(con, show_rows=args.show_rows)
+            report_pupitre_sources_coverage(con)
 
         report_sample(con, args.sample)
     finally:

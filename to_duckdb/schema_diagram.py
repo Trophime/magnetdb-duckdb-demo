@@ -26,7 +26,6 @@ import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 # ── Data structures ───────────────────────────────────────────────────────────
 
 @dataclass
@@ -117,7 +116,7 @@ def _load_from_db(db_path: str) -> tuple[list[Table], list[ForeignKey]]:
 
 
 def _load_from_sql() -> tuple[list[Table], list[ForeignKey]]:
-    from schema import SCHEMA_SQL  # noqa: PLC0415
+    from schema import SCHEMA_SQL
 
     tables: list[Table] = []
     fks: list[ForeignKey] = []
@@ -282,8 +281,8 @@ def draw_diagram(
     fks: list[ForeignKey],
     output: str | None,
 ) -> None:
-    import matplotlib.pyplot as plt
     import matplotlib.patches as mpatches
+    import matplotlib.pyplot as plt
 
     tmap = {t.name: t for t in tables}
     ncols_map = {t.name: len(t.columns) for t in tables}
@@ -299,7 +298,7 @@ def draw_diagram(
 
     fig_w = (x1_fig - x0_fig) * 1.1
     fig_h = (y1_fig - y0_fig) * 1.1
-    fig, ax = plt.subplots(figsize=(max(fig_w, 20), max(fig_h, 16)))
+    _fig, ax = plt.subplots(figsize=(max(fig_w, 20), max(fig_h, 16)))
     ax.set_xlim(x0_fig, x1_fig)
     ax.set_ylim(y0_fig, y1_fig)
     ax.axis("off")
@@ -332,13 +331,13 @@ def draw_diagram(
             "",
             xy=centres[fk.dst_table],
             xytext=centres[fk.src_table],
-            arrowprops=dict(
-                arrowstyle="-|>",
-                color="#aaaaaa" if is_stats else "#555555",
-                lw=0.7 if is_stats else 1.0,
-                alpha=0.5 if is_stats else 0.8,
-                connectionstyle="arc3,rad=0.15",
-            ),
+            arrowprops={
+                "arrowstyle": "-|>",
+                "color": "#aaaaaa" if is_stats else "#555555",
+                "lw": 0.7 if is_stats else 1.0,
+                "alpha": 0.5 if is_stats else 0.8,
+                "connectionstyle": "arc3,rad=0.15",
+            },
             zorder=1,
         )
 

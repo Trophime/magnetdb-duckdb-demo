@@ -1,25 +1,12 @@
-import json
-import duckdb
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
 from pathlib import Path
-import time
 
-from rich.progress import Progress
-
-from python_magnetrun.MagnetRun import MagnetRun, load_mrun
-from python_magnetrun.signature import Signature
-
-
-
+from python_magnetrun.data_dirs import PIGBROTHER_DATA_DIR, PUPITRE_DATA_DIR
 
 ROOT           = Path(__file__).resolve().parent.parent
 RESULTS_DIR    = ROOT / "stage/results"
 
-RECORDS_DIR    = Path("/mnt/LNCMIG-Data/records")
-PUPITRE_DIR    = RECORDS_DIR / "srv-data-install"
-PIGBROTHER_DIR = RECORDS_DIR / "pbsurv"
+PUPITRE_DIR    = Path(PUPITRE_DATA_DIR)
+PIGBROTHER_DIR = Path(PIGBROTHER_DATA_DIR)
 
 PIGBROTHER     = PIGBROTHER_DIR / "M10" / "Overview" / "M10_Overview_251201-0909.tdms"
 

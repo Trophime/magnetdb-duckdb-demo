@@ -2,13 +2,13 @@ import argparse
 import logging
 import os
 from pathlib import Path
+
 import duckdb
 import numpy as np
-import pandas as pd
 import scipy.signal as sg
-from python_magnetrun.MagnetRun import load_mrun
 from python_magnetrun.analysis.loaders import load_files_data
 from python_magnetrun.log_utils import LogConfig, setup_logging
+from python_magnetrun.MagnetRun import load_mrun
 
 DB_PATH = os.environ.get(
     "MAGNETDB_DB_PATH", "/workspaces/magnetdb-duckdb-demo/to_duckdb/magnetdb.duckdb"

@@ -44,7 +44,6 @@ import duckdb
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
-
 from config import DEFAULT_DB
 from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE
 from populate import _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
@@ -846,8 +845,9 @@ def compute_hoop_stress_history(
                     t0_dt = parse_filename_timestamp(Path(exp_file).name)
                     if t0_dt is not None:
                         t0_str = t0_dt.isoformat()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    if verbose:
+                        print(f"  [WARN] could not parse t0 from filename {exp_file}: {exc}")
 
             # Save Parquet (columns renamed to part names; original df with
             # slot names is left untouched for the bin-stats/fatigue loop below)

@@ -1,11 +1,10 @@
 import dash
-import pandas as pd
-from dash import html, dcc, callback, Input, Output
-from dash.dash_table import DataTable
-
-import plotly.express as px
-import magnetdb_analysis as db
 import dash_selectors as selectors
+import magnetdb_analysis as db
+import pandas as pd
+import plotly.express as px
+from dash import Input, Output, callback, dcc, html
+from dash.dash_table import DataTable
 
 dash.register_page(__name__, path="/research-area", name="Research areas", order=7)
 

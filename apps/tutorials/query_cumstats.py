@@ -476,7 +476,7 @@ def plot_assembly_bins(df: pd.DataFrame, assembly_name: str) -> None:
         print("matplotlib not available — skipping plots")
         return
     channels = df["channel"].unique()
-    fig, axes = plt.subplots(1, len(channels), figsize=(7 * len(channels), 5), squeeze=False)
+    _fig, axes = plt.subplots(1, len(channels), figsize=(7 * len(channels), 5), squeeze=False)
     colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
     for ax, ch in zip(axes[0], channels):
         grp = df[df["channel"] == ch]
@@ -502,7 +502,7 @@ def plot_part_bins(df: pd.DataFrame, scope: str, label_col: str = "channel") -> 
 
     for ch in channels:
         sub = df[df["channel"] == ch]
-        fig, ax = plt.subplots(figsize=(10, 5))
+        _fig, ax = plt.subplots(figsize=(10, 5))
         for idx, part in enumerate(parts if parts[0] is not None else [None]):
             grp = sub[sub["part_name"] == part] if part else sub
             if grp.empty:

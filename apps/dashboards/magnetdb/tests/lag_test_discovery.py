@@ -1,18 +1,17 @@
 import argparse
 import logging
 from pathlib import Path
+
 import matplotlib.dates as mdates
 import numpy as np
 import pandas as pd
 import pint
 import scipy.signal as sg
-from tabulate import tabulate
 from python_magnetrun.analysis.config import (
     DEFAULT_DATA_DIR,
     DEFAULT_PIGBROTHER_DATA_DIR,
     ThresholdConfig,
 )
-from python_magnetrun.analysis.processing import ProcessingConfig, process_overview_file
 from python_magnetrun.analysis.field_comparison import (
     REFERENCE_LAG_KEYS,
     compare_all_fields,
@@ -22,19 +21,19 @@ from python_magnetrun.analysis.field_comparison import (
 )
 from python_magnetrun.analysis.loaders import load_files_data
 from python_magnetrun.analysis.metrics import compare_series
+from python_magnetrun.analysis.processing import ProcessingConfig, process_overview_file
 from python_magnetrun.analysis.synchronization import (
     apply_lag_correction,
-    check_lag_reliability,
-    find_best_matching_regime,
 )
 from python_magnetrun.log_utils import LogConfig, setup_logging
 from python_magnetrun.MagnetRun import load_mrun
-from python_magnetrun.processing.plateaux import nplateaus
 from python_magnetrun.plotting.backend import get_backend
 from python_magnetrun.plotting.style import DEFAULT_STYLE
 from python_magnetrun.plotting.timeseries import plot_overlay
+from python_magnetrun.processing.plateaux import nplateaus
 from python_magnetrun.signature import Signature
 from python_magnetrun.utils.timezone import series_utc_to_local_naive
+from tabulate import tabulate
 
 
 def get_lag(
@@ -337,7 +336,7 @@ def fill_small_gaps(df, tkey="timestamp", max_gap_seconds=30.0):
     new_rows = []
     for idx, gap in gap_positions.items():
         i0, i1 = idx - 1, idx
-        n_fill = int(round(gap / dt_median)) - 1
+        n_fill = round(gap / dt_median) - 1
         for k in range(1, n_fill + 1):
             frac = k / (n_fill + 1)
             row = df.iloc[i0].copy()
@@ -728,7 +727,7 @@ def main() -> None:
             print()
 
             if not df_pupitre.empty and not df_archive.empty:
-                col_pup, col_arc, col_ref_arc = pick_columns(df_pupitre, df_archive)
+                col_pup, col_arc, _col_ref_arc = pick_columns(df_pupitre, df_archive)
                 lag_archive = get_lag(df_pupitre, df_archive, col_pup, col_arc)
                 ref_lag, ref_field = compute_reference_lag(
                     record,

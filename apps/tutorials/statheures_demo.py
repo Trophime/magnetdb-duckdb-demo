@@ -180,7 +180,7 @@ def accumulate_hours(
     step:        float = DEFAULT_STEP,
     champmin:    float = 0.0,
     champmax:    float = 36.0,
-    year:        int   = None,
+    year:        int | None   = None,
 ) -> pd.Series:
     """
     Accumulate hours per field bin across all record files for a site.
@@ -409,7 +409,7 @@ def query_compare_intervals(
 
 def plot_hours_histogram(hours: pd.Series, title: str, step: float) -> None:
     """Bar chart of hours per field bin."""
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    _fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
     # Linear scale
     axes[0].bar(hours.index, hours.values, width=step * 0.8,
@@ -439,7 +439,7 @@ def plot_hours_histogram(hours: pd.Series, title: str, step: float) -> None:
 def plot_comparison(df: pd.DataFrame, year1: int, year2: int,
                     step: float, site_name: str) -> None:
     """Side-by-side bar chart comparing two years."""
-    fig, ax = plt.subplots(figsize=(12, 5))
+    _fig, ax = plt.subplots(figsize=(12, 5))
     x = df["field_bin"].values
     w = step * 0.4
     ax.bar(x,       df[f"heures_{year1}"], width=w, align='edge',

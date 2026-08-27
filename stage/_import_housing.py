@@ -1,6 +1,5 @@
-from _common import *
-
-
+import duckdb
+from _common import DB, print_title
 
 
 def main():

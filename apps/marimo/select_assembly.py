@@ -6,10 +6,11 @@ app = marimo.App(width="medium", app_title="MagnetDB Assembly Explorer")
 
 @app.cell
 def _():
-    import marimo as mo
-    import duckdb
-    import pandas as pd
     from pathlib import Path
+
+    import duckdb
+    import marimo as mo
+    import pandas as pd
 
     return Path, duckdb, mo, pd
 

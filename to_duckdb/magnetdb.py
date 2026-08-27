@@ -80,17 +80,19 @@ except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 import duckdb
-
 from checks import print_check_report, run_checks
+from config import DEFAULT_DB
 from crud import (
     _resolve_source_path,
     check_geometry_data,
     decommission_assembly,
+    delete_assembly,
     delete_magnet,
     delete_material,
-    delete_assembly,
     infer_magnet_type,
     infer_overview_record_fields,
+    insert_assembly,
+    insert_assembly_magnets,
     insert_experiments,
     insert_magnet,
     insert_magnet_parts,
@@ -98,8 +100,6 @@ from crud import (
     insert_overview_record,
     insert_overview_record_from_dict,
     insert_part,
-    insert_assembly,
-    insert_assembly_magnets,
     list_objects,
     load_json,
     merge_duplicate_pupitre_records,
@@ -109,6 +109,8 @@ from crud import (
     update_magnet_status,
     update_part_status,
     upsert_overview_record,
+    view_assemblies,
+    view_assembly,
     view_experiments,
     view_housing_config,
     view_housing_configs,
@@ -120,21 +122,29 @@ from crud import (
     view_overview_records,
     view_part,
     view_parts,
-    view_assembly,
-    view_assemblies,
+)
+from populate import (
+    _PBSURV as _DEFAULT_PBSURV,
+)
+from populate import (
+    _RECORDS_BASE as _DEFAULT_RECORDS_BASE,
+)
+from populate import (
+    _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR,
 )
 from populate import (
     ALL_POPULATE_TYPES,
-    _PBSURV as _DEFAULT_PBSURV,
-    _RECORDS_BASE as _DEFAULT_RECORDS_BASE,
-    _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR,
+)
+from populate import (
     find_and_register_pupitre as _pupitre_find_and_register,
+)
+from populate import (
     find_and_register_tdms as _tdms_find_and_register,
+)
+from populate import (
     load_assembly as _load_assembly,
 )
-from config import DEFAULT_DB
 from schema import COIL_TYPES, ensure_schema
-
 
 # ---------------------------------------------------------------------------
 # list handler
@@ -802,7 +812,7 @@ def cmd_populate_operationaldata(args) -> None:
         sys.exit(1)
     try:
         db_tz = ZoneInfo(args.db_tz)
-    except Exception:
+    except (ValueError, KeyError):
         print(f"Error: Unknown timezone '{args.db_tz}'")
         sys.exit(1)
 
@@ -841,7 +851,7 @@ def cmd_populate_experiments(args) -> None:
         sys.exit(1)
     try:
         db_tz = ZoneInfo(args.db_tz)
-    except Exception:
+    except (ValueError, KeyError):
         print(f"Error: Unknown timezone '{args.db_tz}'")
         sys.exit(1)
 
@@ -906,7 +916,7 @@ def cmd_populate_overview_records_from_json(args) -> None:
         sys.exit(1)
     try:
         db_tz = ZoneInfo(args.db_tz)
-    except Exception:
+    except (ValueError, KeyError):
         print(f"Error: Unknown timezone '{args.db_tz}'")
         sys.exit(1)
 
@@ -981,7 +991,7 @@ def cmd_populate_overview_records_infer(args) -> None:
         sys.exit(1)
     try:
         db_tz = ZoneInfo(args.db_tz)
-    except Exception:
+    except (ValueError, KeyError):
         print(f"Error: Unknown timezone '{args.db_tz}'")
         sys.exit(1)
 
@@ -1042,7 +1052,7 @@ def cmd_populate_overview_records(args) -> None:
         sys.exit(1)
     try:
         db_tz = ZoneInfo(args.db_tz)
-    except Exception:
+    except (ValueError, KeyError):
         print(f"Error: Unknown timezone '{args.db_tz}'")
         sys.exit(1)
 
@@ -1089,7 +1099,11 @@ def cmd_populate_overview_records(args) -> None:
 
 
 def cmd_hoop_stress_compute(args) -> None:
-    from compute_hoop_stats import DEFAULT_STRESS_BINS, _parse_bins, compute_hoop_stress_history
+    from compute_hoop_stats import (
+        DEFAULT_STRESS_BINS,
+        _parse_bins,
+        compute_hoop_stress_history,
+    )
 
     db_path = args.db
     if not Path(db_path).exists():

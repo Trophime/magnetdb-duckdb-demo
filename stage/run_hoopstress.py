@@ -1,5 +1,6 @@
 import os
 import sys
+
 import duckdb
 import pandas as pd
 
@@ -29,7 +30,7 @@ def compute_and_export_m9_hoop_stress():
         " 'M9_%';"
     )
     df_sites = conn.execute(query).fetchdf()
-  except Exception as e:
+  except duckdb.Error as e:
     print(f"Impossible de lire la table experiments : {e}")
     return
   finally:
@@ -50,7 +51,7 @@ def compute_and_export_m9_hoop_stress():
 
     try:
       summary = compute_hoop_stress_history(
-          site_name=site,
+          assembly_name=site,
           db_path=db_file,
           pupitre_datadir="/mnt/LNCMIG-Data/records/srv-data-install",
           verbose=True,
@@ -66,7 +67,7 @@ def compute_and_export_m9_hoop_stress():
           ),
       })
 
-    except Exception as e:
+    except (duckdb.Error, OSError, ValueError, KeyError, TypeError) as e:
       print(f"Erreur pour le site {site}: {e}")
       results.append({"site": site, "status": "Failed", "log": str(e)})
 

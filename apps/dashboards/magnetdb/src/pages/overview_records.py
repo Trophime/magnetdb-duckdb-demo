@@ -1,12 +1,11 @@
 import dash
-from dash import html, dcc, Input, Output, State, ALL, Patch, ctx
-from dash.exceptions import PreventUpdate
-from plotly import graph_objects as go
-
+import dash_selectors as selectors
 import magnetdb_analysis as db
 import magnetdb_plot as plot
-import dash_selectors as selectors
 import style_editor
+from dash import ALL, Input, Output, Patch, State, ctx, dcc, html
+from dash.exceptions import PreventUpdate
+from plotly import graph_objects as go
 
 dash.register_page(__name__, path="/overview-records", name="Overview records", order=5)
 
@@ -25,7 +24,7 @@ _EMPTY_FIG.update_layout(
     xaxis={"visible": False},
     yaxis={"visible": False},
     template="plotly_white",
-    margin=dict(l=20, r=20, t=30, b=20),
+    margin={"l": 20, "r": 20, "t": 30, "b": 20},
 )
 
 
@@ -348,7 +347,7 @@ def update_graphs(
         fig = plot.create_annotated_plot(files_data, selected_x, selected_algo, group_name=group_name)
 
         if x_range is not None:
-            fig.update_layout(xaxis=dict(range=x_range, autorange=False))
+            fig.update_layout(xaxis={"range": x_range, "autorange": False})
 
         figures.append(fig)
 

@@ -41,21 +41,20 @@ import tempfile
 from pathlib import Path
 
 import duckdb
+import magnettools.Bmap as bmap
+import magnettools.magnettools as mt
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-
-import magnettools.Bmap as bmap
-import magnettools.magnettools as mt
 from config import DEFAULT_DB
 from enums import MagnetType, PartType
-from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE, _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
+from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE
+from populate import _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
 from python_magnetrun.magnetdata import load_magnetdata
 from python_magnetrun.runetl import prepareData
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
 from python_magnetsetup.ana import assembly_setup
 from python_magnetsetup.config import appenv
-
 
 # ---------------------------------------------------------------------------
 # Step 1 — Build config dict from DuckDB
@@ -442,9 +441,10 @@ def magnet_geometry_config_to_yaml(
     """
     import copy
     import json as _json
+
+    from python_magnetgeo.Bitters import Bitters
     from python_magnetgeo.deserialize import unserialize_object
     from python_magnetgeo.Insert import Insert
-    from python_magnetgeo.Bitters import Bitters
     from python_magnetgeo.Supras import Supras
 
     print(
@@ -802,7 +802,7 @@ def validate_fast_from_pupitre(
     H1_fast…HN_fast, B1_fast…BM_fast, Supra1_fast…Supra K_fast
     depending on magnet_type and which magnet groups are present in *data*.
     """
-    Tubes, Helices, OHelices, BMagnets, UMagnets, Shims = data
+    Tubes, Helices, OHelices, BMagnets, UMagnets, _Shims = data
     icurrents = mt.get_currents(Tubes, Helices, BMagnets, UMagnets)
     n_tubes = len(Tubes)
     n_umag = len(UMagnets)
@@ -1250,7 +1250,7 @@ def annotate_with_rpe(result: dict, assembly_name: str, db_path: str) -> pd.Data
 
 def plot_stress_map(df: pd.DataFrame, magnet_name: str, i_h: float) -> None:
     x = np.arange(len(df))
-    fig, ax = plt.subplots(figsize=(10, 5))
+    _fig, ax = plt.subplots(figsize=(10, 5))
     ax.bar(
         x - 0.2,
         df["hoop_MPa"],
@@ -1317,7 +1317,7 @@ def compute_hoop_at_currents(
         f"\n── Computing hoop stress at currents IH={i_h} A, IB={i_b} A, IS={i_s} A …"
     )
     print(f"   MagnetTools data: {type(data)}, {len(data)} elements")
-    Tubes, Helices, OHelices, BMagnets, UMagnets, Shims = data
+    Tubes, Helices, OHelices, BMagnets, UMagnets, _Shims = data
 
     def _set_currents(ih, ib, is_):
         icurrents = mt.get_currents(Tubes, Helices, BMagnets, UMagnets)
@@ -1336,7 +1336,6 @@ def compute_hoop_at_currents(
         )
 
     def _get_hoop():
-        mdata_type = {"H": Helices, "B": BMagnets, "S": UMagnets}
         headers, values = bmap.getHoop(Tubes, Helices, BMagnets, UMagnets)
         hdf = pd.DataFrame.from_records(values, columns=headers)
         return hdf["num"].tolist(), hdf["Hoop[MPa]"].tolist()
@@ -1410,7 +1409,7 @@ def plot_fatigue(
 ) -> None:
     """Two-panel plot: hoop stress time series + rainflow amplitude histogram."""
     x = df["t"] if "t" in df.columns else df.index
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
+    _fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 10))
 
     ax1.plot(x, df[col], color="steelblue", linewidth=1)
     ax1.set_title(f"Hoop stress time series — {col} ({magnet_name})")
@@ -1609,7 +1608,7 @@ def _load_assembly(
 
     print("\n── Loading MagnetTools objects …")
     data = load_magnettools(assembly_config, tempdir, debug=args.debug)
-    Tubes, Helices, OHelices, BMagnets, UMagnets, Shims = data
+    Tubes, Helices, _OHelices, BMagnets, UMagnets, _Shims = data
     print(
         f"Tubes: {len(Tubes)}  Helices: {len(Helices)}  "
         f"BMagnets: {len(BMagnets)}  UMagnets: {len(UMagnets)}"
@@ -1697,7 +1696,7 @@ def _load_history(args: argparse.Namespace, data: tuple, housing: str) -> pd.Dat
 
 
 def cmd_barchart(args: argparse.Namespace) -> None:
-    tempdir, data, magnets, housing = _load_assembly(args)
+    tempdir, data, _magnets, _housing = _load_assembly(args)
     try:
         print(f"\n── Computing hoop stress at Ih={args.i_h/1e3:.1f} kA …")
         result = compute_hoop_at_currents(data, args.i_h, args.i_b, args.i_s)
@@ -1736,7 +1735,7 @@ def cmd_barchart(args: argparse.Namespace) -> None:
 
 
 def cmd_history(args: argparse.Namespace) -> None:
-    tempdir, data, magnets, housing = _load_assembly(args)
+    tempdir, data, _magnets, housing = _load_assembly(args)
 
     try:
         df = _load_history(args, data, housing)
@@ -1747,7 +1746,7 @@ def cmd_history(args: argparse.Namespace) -> None:
 
 
 def cmd_stats(args: argparse.Namespace) -> None:
-    tempdir, data, magnets, housing = _load_assembly(args)
+    tempdir, data, _magnets, housing = _load_assembly(args)
 
     try:
         df = _load_history(args, data, housing)
@@ -1762,7 +1761,7 @@ def cmd_stats(args: argparse.Namespace) -> None:
 
 
 def cmd_fatigue(args: argparse.Namespace) -> None:
-    tempdir, data, magnets, housing = _load_assembly(args)
+    tempdir, data, _magnets, housing = _load_assembly(args)
     try:
         df = _load_history(args, data, housing)
         fast_cols = [c for c in df.columns if re.match(r"(H|B|Supra)\d+_fast", c)]

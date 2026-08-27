@@ -1,10 +1,10 @@
 import argparse
 import os
-import os
+
 import dash
-from dash import Dash, html, dcc
 import dash_bootstrap_components as dbc
 import magnetdb_analysis as db
+from dash import Dash, dcc, html
 
 app = Dash(
     __name__,
@@ -22,6 +22,7 @@ if os.environ.get("MAGNETDB_PROFILE"):
     # e.g. `ls profiles/ | grep update-component`.
     # Open a .prof file with: snakeviz profiles/<file>.prof
     from pathlib import Path
+
     from werkzeug.middleware.profiler import ProfilerMiddleware
 
     profile_dir = Path(os.environ.get("PROFILE_DIR", "profiles"))

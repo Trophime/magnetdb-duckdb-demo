@@ -1,11 +1,9 @@
+import _field_stats
 import _import_housing
 import _link_experiments
-import _field_stats
 import _link_users
 import _mode_inferring
 import _pca
-
-
 
 
 def main():

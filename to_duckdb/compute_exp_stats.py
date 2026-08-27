@@ -40,10 +40,11 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pandas as pd
-
 from config import DEFAULT_DB, MW_TO_W, SCALAR_CHANNEL_UNITS
 from populate import (
     _RECORDS_BASE as _DEFAULT_RECORDS_BASE,
+)
+from populate import (
     _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR,
 )
 from schema import ensure_schema
@@ -90,8 +91,8 @@ def _compute_dt(df: pd.DataFrame) -> pd.Series:
             )
             dt = ts.diff().dt.total_seconds().fillna(0.0)
             return dt.clip(lower=0.0)
-        except Exception:
-            pass
+        except Exception as exc:
+            print(f"  [WARN] could not parse Date/Time columns ({exc}); falling back to 't' column")
     if "t" in df.columns:
         return df["t"].diff().fillna(0.0).clip(lower=0.0)
     return pd.Series(1.0, index=df.index)
@@ -269,11 +270,14 @@ def compute_scalars(
     if all(c in df.columns for c in ("tsb", "teb", "debitbrut")):
         for key in ("tsb", "teb"):
             entry = units.get(key)
-            if entry and entry[1] is not None:
-                if entry[1].dimensionality != ureg.degC.dimensionality:
-                    raise ValueError(
-                        f"compute_scalars: expected a temperature unit for {key!r}, got {entry[1]}"
-                    )
+            if (
+                entry
+                and entry[1] is not None
+                and entry[1].dimensionality != ureg.degC.dimensionality
+            ):
+                raise ValueError(
+                    f"compute_scalars: expected a temperature unit for {key!r}, got {entry[1]}"
+                )
         delta_t = df["tsb"].astype(float) - df["teb"].astype(float)
 
         debit_to_m3s = _conversion_factor(
