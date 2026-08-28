@@ -99,6 +99,37 @@ python to_duckdb/demos/find_research_area_candidates.py --top 5 --min-score 0.5
 
 ---
 
+## find_linking_candidates.py
+
+Companion to `find_research_area_candidates.py`. For `users` rows with no
+`experiments_ids` (resp. no `overview_records_ids`), searches same-housing
+`experiments` (resp. live `overview_records`) for the nearest file(s) by
+the timestamp embedded in the filename, and scores them by proximity to
+`[hstart, hstop]`. Both the pupitre filename
+(`"YYYY.MM.DD - HH:MM:SS.txt"`) and the Overview filename
+(`"<housing>_Overview_YYMMDD-HHMM"`) embed Europe/Paris local time
+directly, same as `hstart`/`hstop` — this reads the raw filename rather
+than the `overview_records.t0` column (which is stored in UTC), so no
+timezone conversion is needed. Distance `0` means the candidate's
+timestamp falls inside `[hstart, hstop]`; otherwise it's the time to the
+nearer window edge, converted to a score (`1 / (1 + distance_hours)`).
+Read-only — prints candidates for manual review, never writes.
+
+```bash
+python to_duckdb/demos/find_linking_candidates.py
+python to_duckdb/demos/find_linking_candidates.py --acronym GIS0122
+python to_duckdb/demos/find_linking_candidates.py --top 5 --max-distance-hours 6
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db` | `to_duckdb/test-magnetdb.duckdb` | Target DuckDB file |
+| `--top` | `3` | Maximum candidates printed per row |
+| `--max-distance-hours` | `24.0` | Only show candidates within this many hours of the session window |
+| `--acronym` | none (all acronyms) | Restrict the search to a single acronym |
+
+---
+
 ## list_users_unlinked.py
 
 Prints `users` rows where both `experiments_ids` and `overview_records_ids`
@@ -123,6 +154,13 @@ could not match to any proposal — useful for spotting genuine typos that fell
 outside `--fuzzy-cutoff`, versus codes that were never real proposal acronyms
 (test/maintenance codes, etc.). It's a manual recipe run against an existing
 populated `users` table, not a saved script.
+
+Note: `find_research_area_candidates.py` above automates finding candidates
+for this same unmatched set (same base query as step 1, and the same
+fuzzy-score technique as step 3), but does date/year-based proposal matching
+rather than producing a flat CSV. Use this recipe instead when you
+specifically want a standalone `Data/unmatched_users.csv` file (e.g. to share
+or filter further by hand).
 
 **1. Base report** — one row per unmatched acronym, with the magnets used,
 session count, and session date range:
