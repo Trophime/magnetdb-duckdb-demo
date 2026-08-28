@@ -77,7 +77,7 @@ flowchart TB
         P_ret(["retired"])
         P_dead(["dead"])
         P_stock -->|"parent magnet commissioned"| P_op
-        P_op -->|"parent magnet → in_stock/retired/dead"| P_stock
+        P_op -->|"parent magnet → retired/dead"| P_stock
         P_study -.->|"update-status"| P_stock
         P_stock -.->|"update-status"| P_ret
         P_stock -.->|"update-status, or named as magnet's --dead-part"| P_dead

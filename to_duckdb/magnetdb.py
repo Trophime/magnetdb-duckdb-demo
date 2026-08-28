@@ -347,6 +347,12 @@ def _validate_magnet(data: dict) -> list[str]:
             errors.append(f"Part '{part.get('name', i)}' is missing 'type'")
         if not part.get("material") or not part["material"].get("name"):
             errors.append(f"Part '{part.get('name', i)}' is missing 'material.name'")
+        part_status = part.get("status")
+        if part_status and part_status != "in_stock":
+            errors.append(
+                f"Part '{part.get('name', i)}' has status '{part_status}', not "
+                "'in_stock' — cannot be linked to a new magnet via JSON import."
+            )
     return errors
 
 

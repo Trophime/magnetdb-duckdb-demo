@@ -75,6 +75,22 @@ def test_cli_magnet_add_missing_json_exits(tmp_path, monkeypatch):
              "--db", str(tmp_path / "test.duckdb"))
 
 
+def test_cli_magnet_add_rejects_non_in_stock_part(tmp_path, monkeypatch, capsys):
+    bad_json = {**MAGNET_JSON, "parts": [
+        {**MAGNET_JSON["parts"][0], "status": "in_operation"},
+        MAGNET_JSON["parts"][1],
+    ]}
+    json_path = tmp_path / "MAG_JSON.json"
+    json_path.write_text(json.dumps(bad_json))
+    db_path = tmp_path / "test.duckdb"
+
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "magnet", "add", str(json_path), "--db", str(db_path))
+
+    assert "not 'in_stock'" in capsys.readouterr().out
+    assert not db_path.exists()
+
+
 # ---------------------------------------------------------------------------
 # magnet view
 # ---------------------------------------------------------------------------

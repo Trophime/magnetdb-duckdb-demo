@@ -256,3 +256,82 @@ ship as independently-reviewable increments. Phase C (docs/cleanup) follows.
    pre-computed-row path does not enforce the in-stock-parts rule, since it
    has no live production caller (only test fixtures) — flag if it should
    validate too, e.g. if it ever gains a real caller.
+
+## Follow-up — 2026-08-28: parts stay `in_operation` through assembly disassembly
+
+Status: **implemented 2026-08-28** — approved 2026-08-28. Amends, without
+rewriting, the "Magnet → in_stock/retired/dead → parts" rule above.
+
+### Goal
+
+Rebalance the downward cascade: assembly disassembly no longer pulls a
+magnet's parts down to `in_stock` — only an explicit magnet-level transition
+to `retired` or `dead` does. Also closes a related latent bug: `magnet add`
+(JSON import) could crash mid-write if a part's JSON `status` wasn't
+`in_stock`.
+
+### Domain rule changes (supersedes "Magnet → in_stock/retired/dead → parts")
+
+- **Magnet → `in_stock` → parts: no longer cascades.** A magnet transitioning
+  to `in_stock` — whether via assembly disassembly or a direct
+  `update_magnet_status` call — leaves its linked parts' status untouched.
+  In practice, parts commissioned into `in_operation` stay `in_operation`
+  after their magnet is disassembled/stocked, until the magnet is explicitly
+  `retired` or marked `dead`.
+- **Magnet → `retired`/`dead` → parts: unchanged.** Both still cascade
+  `NULL`/`in_operation` parts to `in_stock` (`retired`: all linked parts;
+  `dead`: all except the explicitly-named `dead_parts`), and the
+  dead-invariant (`--dead-part` required) is unchanged.
+- **`insert_magnet_parts`'s in-stock-only linkage rule is unchanged** —
+  parts must still be exactly `in_stock` to be linked to a magnet (new or
+  existing). Explicitly decided not to loosen this to also accept
+  `in_operation`, even though disassembly can now leave parts at
+  `in_operation`.
+- **New: `magnet add` (JSON import) fails fast on a non-`in_stock` part
+  status.** Previously, a JSON part with e.g. `"status": "in_operation"` was
+  written to the `parts` table by `insert_part` before `insert_magnet_parts`
+  rejected the link, leaving a partial write and an unhandled `ValueError`
+  traceback. `_validate_magnet` now rejects such payloads up front, before
+  any DB writes.
+
+### Files affected
+
+- `to_duckdb/crud.py` — edit: `_DOWN_CASCADE_STATUSES` drops `in_stock`,
+  keeping only `{retired, dead}`; docstring fixes on `_set_magnet_status`
+  and `_cascade_assembly_disassembly`.
+- `to_duckdb/docs/schema.md` — edit: "## Lifecycle" diagram edge corrected.
+- `to_duckdb/magnetdb.py` — edit: `_validate_magnet` gains a per-part status
+  check.
+- `to_duckdb/tests/test_crud.py` — edit: disassembly-cascade test now
+  asserts parts stay `in_operation`; added tests that `retired` still
+  cascades and that a direct `in_stock` update does not.
+- `to_duckdb/tests/test_magnetdb.py` — edit: new test for the `magnet add`
+  fail-fast validation.
+
+### Approach
+
+1. Remove `LifecycleStatus.IN_STOCK.value` from `_DOWN_CASCADE_STATUSES`
+   (`crud.py`).
+2. Update the two stale docstrings referencing the old `in_stock` cascade
+   behavior (`_set_magnet_status`, `_cascade_assembly_disassembly`).
+3. Add the up-front per-part status check to `_validate_magnet`
+   (`magnetdb.py`), erroring on any part whose JSON `status` is present and
+   not `"in_stock"`.
+4. Update `docs/schema.md`'s lifecycle diagram.
+5. Update/add the tests listed above.
+
+### Verification
+
+- `to_duckdb/venv-systempackages/bin/python3 -m pytest to_duckdb/tests/`
+  stays green, including the updated/new cases above.
+- Manual check: `magnet add` with a part JSON `status: "in_operation"` exits
+  non-zero with a clear message and writes zero rows.
+
+### Assumptions
+
+- `dead`'s existing behavior for non-named parts (still cascading to
+  `in_stock`) is intentionally unchanged.
+- The original numbered rules/phases (1–16) and the 2026-08-18 addendum
+  above are left as a historical record of what shipped 2026-08-19; this
+  section layers an amendment on top rather than editing them.
+- No SQL/schema changes needed.

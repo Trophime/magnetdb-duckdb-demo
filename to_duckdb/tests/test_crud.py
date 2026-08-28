@@ -504,12 +504,14 @@ def test_insert_assembly_auto_close_cascades_magnets_to_in_stock(con):
     insert_material(con, MATERIAL_COPPER, verbose=False)
     insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
     insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
+    insert_magnet_parts(con, "MAG_01", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
     insert_assembly(con, {
         "name": "A1", "housing": "M10",
         "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
     }, verbose=False)
     insert_assembly_magnets(con, "A1", ["MAG_01"], verbose=False)
     assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "in_operation"
+    assert con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "in_operation"
 
     insert_assembly(con, {
         "name": "A2", "housing": "M10",
@@ -517,6 +519,7 @@ def test_insert_assembly_auto_close_cascades_magnets_to_in_stock(con):
     }, verbose=False)
 
     assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "in_stock"
+    assert con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "in_operation"
     row = con.execute(
         "SELECT decommissioned_at FROM assembly_magnets WHERE assembly_name = 'A1' AND magnet_name = 'MAG_01'"
     ).fetchone()
@@ -543,16 +546,19 @@ def test_decommission_assembly_cascades_magnet_to_in_stock(con):
     insert_material(con, MATERIAL_COPPER, verbose=False)
     insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
     insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
+    insert_magnet_parts(con, "MAG_01", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
     insert_assembly(con, {
         "name": "A1", "housing": "M10",
         "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
     }, verbose=False)
     insert_assembly_magnets(con, "A1", ["MAG_01"], verbose=False)
     assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "in_operation"
+    assert con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "in_operation"
 
     decommission_assembly(con, "A1", verbose=False)
 
     assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "in_stock"
+    assert con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "in_operation"
 
 
 def test_decommission_assembly_leaves_retired_magnet_untouched(con):
@@ -713,11 +719,24 @@ def test_update_part_status_raises_for_invalid_status(con):
 # ---------------------------------------------------------------------------
 
 
-def test_update_magnet_status_cascades_parts_to_in_stock(con_populated):
+def test_update_magnet_status_in_stock_leaves_parts_untouched(con_populated):
     update_magnet_status(con_populated, "MAG_01", "in_stock", verbose=False)
     assert con_populated.execute(
         "SELECT status FROM magnets WHERE name = 'MAG_01'"
     ).fetchone()[0] == "in_stock"
+    assert con_populated.execute(
+        "SELECT status FROM parts WHERE name = 'HELIX_01'"
+    ).fetchone()[0] == "in_operation"
+    assert con_populated.execute(
+        "SELECT status FROM parts WHERE name = 'RING_01'"
+    ).fetchone()[0] == "in_operation"
+
+
+def test_update_magnet_status_retired_cascades_parts_to_in_stock(con_populated):
+    update_magnet_status(con_populated, "MAG_01", "retired", verbose=False)
+    assert con_populated.execute(
+        "SELECT status FROM magnets WHERE name = 'MAG_01'"
+    ).fetchone()[0] == "retired"
     assert con_populated.execute(
         "SELECT status FROM parts WHERE name = 'HELIX_01'"
     ).fetchone()[0] == "in_stock"
@@ -762,15 +781,15 @@ def test_update_magnet_status_dead_parts_rejected_with_non_dead_status(con_popul
 
 
 def test_update_magnet_status_same_status_recall_logs_without_recascading(con_populated):
-    update_magnet_status(con_populated, "MAG_01", "in_stock", verbose=False)
+    update_magnet_status(con_populated, "MAG_01", "retired", verbose=False)
     history_1 = json.loads(
         con_populated.execute("SELECT status_history FROM magnets WHERE name = 'MAG_01'").fetchone()[0]
     )
-    update_magnet_status(con_populated, "MAG_01", "in_stock", verbose=False)
+    update_magnet_status(con_populated, "MAG_01", "retired", verbose=False)
     row = con_populated.execute(
         "SELECT status, status_history FROM magnets WHERE name = 'MAG_01'"
     ).fetchone()
-    assert row[0] == "in_stock"
+    assert row[0] == "retired"
     history_2 = json.loads(row[1])
     assert len(history_2) == len(history_1) + 1
     assert con_populated.execute(

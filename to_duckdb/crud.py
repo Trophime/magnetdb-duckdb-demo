@@ -450,7 +450,7 @@ def insert_magnet_part_row(
 
 
 _DOWN_CASCADE_STATUSES = frozenset(
-    {LifecycleStatus.IN_STOCK.value, LifecycleStatus.RETIRED.value, LifecycleStatus.DEAD.value}
+    {LifecycleStatus.RETIRED.value, LifecycleStatus.DEAD.value}
 )
 
 
@@ -492,11 +492,11 @@ def _set_magnet_status(
 ) -> None:
     """Set a magnet's status, log the change, and cascade to its parts.
 
-    Downward (``in_stock``/``retired``/``dead``) pulls ``NULL``/``in_operation``
-    parts to ``in_stock``; upward (``in_operation``, the commissioning
-    cascade) pushes ``NULL``/``in_stock`` parts to ``in_operation``. Either
-    cascade is a no-op once its target parts have already moved, so
-    re-calling with the same status is safe (logs an event, cascades nothing).
+    Downward (``retired``/``dead``) pulls ``NULL``/``in_operation`` parts to
+    ``in_stock``; upward (``in_operation``, the commissioning cascade) pushes
+    ``NULL``/``in_stock`` parts to ``in_operation``. Either cascade is a
+    no-op once its target parts have already moved, so re-calling with the
+    same status is safe (logs an event, cascades nothing).
     """
     con.execute("UPDATE magnets SET status = ? WHERE name = ?", [status, name])
     _append_status_history(con, "magnets", name, status, description, changed_at, attachments)
@@ -707,9 +707,10 @@ def insert_assembly(
 
 def _cascade_assembly_disassembly(con, assembly_name: str, decommissioned_at, verbose: bool = True) -> None:
     """Close open ``assembly_magnets`` rows for *assembly_name* and cascade
-    its ``NULL``/``in_operation`` magnets (and, transitively, their parts)
-    to ``in_stock``. Naturally idempotent: a link already closed by a prior
-    call is skipped."""
+    its ``NULL``/``in_operation`` magnets to ``in_stock`` (their parts are
+    left untouched — parts only cascade when a magnet is explicitly
+    ``retired`` or marked ``dead``). Naturally idempotent: a link already
+    closed by a prior call is skipped."""
     magnet_rows = con.execute(
         "SELECT magnet_name FROM assembly_magnets "
         "WHERE assembly_name = ? AND decommissioned_at IS NULL",

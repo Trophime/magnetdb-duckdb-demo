@@ -15,6 +15,14 @@ directly — same convention as ``hstart``/``hstop`` — so no timezone
 conversion is needed here (this intentionally reads the raw filename
 rather than ``overview_records.t0``, which is stored in UTC).
 
+Each candidate is treated as spanning ``[t0, t0 + duration]``, not just
+the filename's point-in-time ``t0`` — a record can start before the
+session window and still overlap it once its measured duration is
+accounted for. Duration comes from ``overview_records.duration``
+(seconds) and, for ``experiments``, from ``exp_run_scalars`` (channel
+``"duration_s"``, precomputed for ~99.9% of rows) — neither requires
+loading the raw data file.
+
 Read-only — prints candidates for manual review, never writes anything
 back.
 
@@ -29,7 +37,7 @@ import argparse
 import bisect
 import re
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import duckdb
@@ -42,7 +50,7 @@ _OVERVIEW_FILENAME_TS_RE = re.compile(r"(\d{6}-\d{4})$")
 _OVERVIEW_FILENAME_TS_FMT = "%y%m%d-%H%M"
 
 
-def build_experiments_index(con) -> dict[str, list[tuple[datetime, str]]]:
+def build_experiments_index(con) -> dict[str, list[tuple[datetime, str, float]]]:
     """Build a per-housing, timestamp-sorted index of ``experiments``.
 
     Parameters
@@ -52,27 +60,32 @@ def build_experiments_index(con) -> dict[str, list[tuple[datetime, str]]]:
 
     Returns
     -------
-    dict[str, list[tuple[datetime, str]]]
-        Housing -> list of ``(timestamp, file)``, sorted by timestamp.
-        `timestamp` is parsed from `file`'s embedded
+    dict[str, list[tuple[datetime, str, float]]]
+        Housing -> list of ``(t0, file, duration_seconds)``, sorted by
+        `t0`. `t0` is parsed from `file`'s embedded
         ``"YYYY.MM.DD - HH:MM:SS"`` (Europe/Paris local, same as
-        `_EXP_FILE_TS` in ``crud.py``). Rows with no ``assembly_name`` or
-        an unparseable `file` are skipped.
+        `_EXP_FILE_TS` in ``crud.py``). `duration_seconds` comes from
+        ``exp_run_scalars`` (channel ``"duration_s"``), or ``0.0`` for
+        the few experiments without one. Rows with no ``assembly_name``
+        or an unparseable `file` are skipped.
     """
     rows = con.execute(
         f"SELECT file, split_part(assembly_name, '_', 1) AS housing, "
-        f"{_EXP_FILE_TS_SQL} AS ts FROM experiments WHERE assembly_name IS NOT NULL"
+        f"{_EXP_FILE_TS_SQL} AS ts, s.value AS duration "
+        f"FROM experiments e "
+        f"LEFT JOIN exp_run_scalars s ON s.experiment_id = e.id AND s.channel = 'duration_s' "
+        f"WHERE assembly_name IS NOT NULL"
     ).fetchall()
-    by_housing: dict[str, list[tuple[datetime, str]]] = defaultdict(list)
-    for file, housing, ts in rows:
+    by_housing: dict[str, list[tuple[datetime, str, float]]] = defaultdict(list)
+    for file, housing, ts, duration in rows:
         if ts is not None:
-            by_housing[housing].append((ts, file))
+            by_housing[housing].append((ts, file, duration or 0.0))
     for entries in by_housing.values():
         entries.sort(key=lambda entry: entry[0])
     return by_housing
 
 
-def build_overview_index(con) -> dict[str, list[tuple[datetime, str]]]:
+def build_overview_index(con) -> dict[str, list[tuple[datetime, str, float]]]:
     """Build a per-housing, timestamp-sorted index of live ``overview_records``.
 
     Parameters
@@ -82,19 +95,22 @@ def build_overview_index(con) -> dict[str, list[tuple[datetime, str]]]:
 
     Returns
     -------
-    dict[str, list[tuple[datetime, str]]]
-        Housing -> list of ``(timestamp, filename)``, sorted by
-        timestamp. `timestamp` is parsed straight from `filename`'s
-        embedded ``YYMMDD-HHMM`` (Europe/Paris local, per
+    dict[str, list[tuple[datetime, str, float]]]
+        Housing -> list of ``(t0, filename, duration_seconds)``, sorted
+        by `t0`. `t0` is parsed straight from `filename`'s embedded
+        ``YYMMDD-HHMM`` (Europe/Paris local, per
         ``_parse_overview_filename`` in ``crud.py``) — deliberately not
-        read from the ``t0`` column, which is stored in UTC. Only
-        ``merged_into IS NULL`` (live) rows are considered.
+        read from the ``t0`` column, which is stored in UTC.
+        `duration_seconds` is the row's own ``duration`` column (``0.0``
+        if ``NULL``). Only ``merged_into IS NULL`` (live) rows are
+        considered.
     """
     rows = con.execute(
-        "SELECT filename, housing FROM overview_records WHERE merged_into IS NULL"
+        "SELECT filename, housing, duration FROM overview_records "
+        "WHERE merged_into IS NULL"
     ).fetchall()
-    by_housing: dict[str, list[tuple[datetime, str]]] = defaultdict(list)
-    for filename, housing in rows:
+    by_housing: dict[str, list[tuple[datetime, str, float]]] = defaultdict(list)
+    for filename, housing, duration in rows:
         match = _OVERVIEW_FILENAME_TS_RE.search(filename)
         if not match:
             continue
@@ -102,7 +118,7 @@ def build_overview_index(con) -> dict[str, list[tuple[datetime, str]]]:
             ts = datetime.strptime(match.group(1), _OVERVIEW_FILENAME_TS_FMT)
         except ValueError:
             continue
-        by_housing[housing].append((ts, filename))
+        by_housing[housing].append((ts, filename, duration or 0.0))
     for entries in by_housing.values():
         entries.sort(key=lambda entry: entry[0])
     return by_housing
@@ -131,7 +147,7 @@ def fetch_unmatched(con, id_column: str) -> list[tuple[str, str, datetime, datet
 
 
 def _nearest_candidates(
-    entries: list[tuple[datetime, str]],
+    entries: list[tuple[datetime, str, float]],
     keys: list[datetime],
     hstart: datetime,
     hstop: datetime | None,
@@ -140,17 +156,25 @@ def _nearest_candidates(
 ) -> list[tuple[str, float, float, float]]:
     """Find the nearest indexed entries to a session window.
 
+    Each entry is treated as spanning ``[t0, t0 + duration]``, not just
+    the point `t0` — a candidate can start before the window and still
+    overlap it once its duration is accounted for.
+
     Searches around both `hstart` and the window end (`hstop`, or
     `hstart` again for an open session) via `bisect`, since for a wide
     window the nearest-before-start and nearest-after-end candidates can
-    sit far apart in `entries`.
+    sit far apart in `entries`. `bisect` orders purely by `t0` (start),
+    which stays correct regardless of duration: the closest-starting
+    candidate before `hstart` is exactly the one whose extended span is
+    checked for overlap.
 
     Parameters
     ----------
-    entries : list[tuple[datetime, str]]
-        Timestamp-sorted ``(timestamp, label)`` pairs for one housing.
+    entries : list[tuple[datetime, str, float]]
+        Timestamp-sorted ``(t0, label, duration_seconds)`` triples for
+        one housing.
     keys : list[datetime]
-        The timestamps from `entries`, as a separate list for `bisect`.
+        The `t0` values from `entries`, as a separate list for `bisect`.
     hstart : datetime
         Session start.
     hstop : datetime or None
@@ -165,13 +189,15 @@ def _nearest_candidates(
     list[tuple[str, float, float, float]]
         ``(label, signed_distance_seconds, score, hstart_distance_seconds)``,
         sorted by score descending and capped at `top`.
-        `signed_distance_seconds` is ``0.0`` inside the window, negative
-        before `hstart`, positive after the window end; `score` is
-        ``1 / (1 + distance_hours)`` (computed from
-        `signed_distance_seconds`). `hstart_distance_seconds` is always
-        ``timestamp - hstart`` regardless of the window — negative before
-        `hstart`, positive after — so it can differ from
-        `signed_distance_seconds` when the candidate is nearer `hstop`.
+        `signed_distance_seconds` is ``0.0`` when ``[t0, t0 + duration]``
+        overlaps the window, negative when the candidate's span ends
+        before `hstart` (measured from that end), positive when it
+        starts after the window end (duration doesn't help here — it
+        only extends the span further from the window). `score` is
+        ``1 / (1 + distance_hours)``. `hstart_distance_seconds` is the
+        same idea but always relative to `hstart` alone, so it can
+        differ from `signed_distance_seconds` when the candidate is
+        nearer `hstop`.
     """
     window_end = hstop if hstop is not None else hstart
     max_distance_seconds = max_distance_hours * 3600
@@ -185,17 +211,26 @@ def _nearest_candidates(
 
     scored = []
     for idx in candidate_idxs:
-        ts, label = entries[idx]
-        if hstart <= ts <= window_end:
+        ts, label, duration = entries[idx]
+        ts_end = ts + timedelta(seconds=duration)
+
+        if ts <= window_end and ts_end >= hstart:
             signed_distance = 0.0
-        elif ts < hstart:
-            signed_distance = (ts - hstart).total_seconds()
+        elif ts_end < hstart:
+            signed_distance = (ts_end - hstart).total_seconds()
         else:
             signed_distance = (ts - window_end).total_seconds()
         if abs(signed_distance) > max_distance_seconds:
             continue
         score = 1 / (1 + abs(signed_distance) / 3600)
-        hstart_distance = (ts - hstart).total_seconds()
+
+        if ts <= hstart <= ts_end:
+            hstart_distance = 0.0
+        elif ts_end < hstart:
+            hstart_distance = (ts_end - hstart).total_seconds()
+        else:
+            hstart_distance = (ts - hstart).total_seconds()
+
         scored.append((label, signed_distance, score, hstart_distance))
 
     scored.sort(key=lambda entry: -entry[2])
@@ -231,7 +266,7 @@ def _format_hstart_distance(signed_distance: float) -> str:
 def report_section(
     label: str,
     unmatched_rows: list[tuple[str, str, datetime, datetime | None]],
-    index_by_housing: dict[str, list[tuple[datetime, str]]],
+    index_by_housing: dict[str, list[tuple[datetime, str, float]]],
     top: int,
     max_distance_hours: float,
     acronym_filter: str | None,
@@ -244,7 +279,7 @@ def report_section(
         Section label, e.g. ``"experiments_ids"``.
     unmatched_rows : list[tuple[str, str, datetime, datetime | None]]
         Rows from `fetch_unmatched`.
-    index_by_housing : dict[str, list[tuple[datetime, str]]]
+    index_by_housing : dict[str, list[tuple[datetime, str, float]]]
         Index from `build_experiments_index`/`build_overview_index`.
     top : int
         Maximum candidates printed per row.
@@ -259,7 +294,7 @@ def report_section(
         if acronym_filter and acronym != acronym_filter:
             continue
         entries = index_by_housing.get(housing, [])
-        candidates: list[tuple[str, float, float]] = []
+        candidates: list[tuple[str, float, float, float]] = []
         if entries:
             keys = [entry[0] for entry in entries]
             candidates = _nearest_candidates(
