@@ -23,8 +23,12 @@ the CSV rebuild entirely and just re-run that backfill against the
 table's current contents (e.g. after populating new
 `experiments`/`overview_records` rows with nothing changed on the
 users/sessions side) — mutually exclusive with `--sync` and `--no-link`.
-Not wired into `magnetdb.py populate` yet — run standalone from the
-repository root.
+Pass `--housing M9 M10` to restrict rebuilding to those housings; sessions
+for any other housing are skipped, and in full-replace mode only the
+listed housings' existing `users` rows are deleted before reinserting —
+other housings' rows are left untouched. Mutually exclusive with
+`--link-only`. Not wired into `magnetdb.py populate` yet — run standalone
+from the repository root.
 
 Linking prints a detailed coverage report: `users` records with
 `hstop IS NULL` (unlinkable — only closed sessions are matched) per
@@ -42,6 +46,7 @@ python to_duckdb/demos/users_table_demo.py
 python to_duckdb/demos/users_table_demo.py --db to_duckdb/test-magnetdb.duckdb
 python to_duckdb/demos/users_table_demo.py --from 2020-01-01
 python to_duckdb/demos/users_table_demo.py --fuzzy-cutoff 0.8 --sample 10
+python to_duckdb/demos/users_table_demo.py --housing M9 M10
 python to_duckdb/demos/users_table_demo.py --sync
 python to_duckdb/demos/users_table_demo.py --no-link
 python to_duckdb/demos/users_table_demo.py --link-only
@@ -56,6 +61,7 @@ python to_duckdb/demos/users_table_demo.py --link-only --no-rows
 | `--from` | none (no filtering) | Discard entries before this date (Europe/Paris local time), e.g. `2020-01-01` |
 | `--fuzzy-cutoff` | `0.8` | `difflib` similarity cutoff for fuzzy acronym matching |
 | `--sample` | `20` | Number of resulting `users` rows to print |
+| `--housing` | `ALL` (no filtering) | Restrict rebuilding to these housings (e.g. `M9 M10`); other housings' existing rows are left untouched in full-replace mode. Mutually exclusive with `--link-only` |
 | `--sync` | off (full replace) | Add new rows and fix mismatched existing rows instead of replacing the whole table's contents |
 | `--no-link` | off (linking runs) | Skip backfilling `experiments_ids`/`overview_records_ids` after (re)populating |
 | `--link-only` | off | Skip the CSV rebuild entirely; just re-run the `experiments_ids`/`overview_records_ids` backfill against the table's current contents. Mutually exclusive with `--sync`/`--no-link` |
@@ -144,6 +150,36 @@ python to_duckdb/demos/list_users_unlinked.py --db to_duckdb/test-magnetdb.duckd
 | Flag | Default | Description |
 |---|---|---|
 | `--db` | `to_duckdb/test-magnetdb.duckdb` | Target DuckDB file |
+
+---
+
+## retire_superseded_magnets.py
+
+For every `helix`/`bitter`/`supra` part, builds that part's magnet-usage
+history (`magnet_parts`, ordered by `assembled_at`) and flags every magnet
+in that history except the most recently assembled one. The deduplicated
+union of flagged magnets is set to `status='retired'` via
+`update_magnet_status` (status_history logged, the magnet's own parts
+cascaded to `in_stock`). A magnet with no `assembled_at` can't be ordered,
+so it's skipped with a warning and left untouched; a magnet already
+`retired` or `dead` is also left untouched, so re-running is a no-op once
+every candidate has been processed.
+
+The rule is per-part and literal: a magnet is retired if it is not the
+latest holder of *any* shared coil part, even if it is still the latest
+holder of a different one.
+
+Writes by default; pass `--dry-run` to preview.
+
+```bash
+python to_duckdb/demos/retire_superseded_magnets.py --dry-run
+python to_duckdb/demos/retire_superseded_magnets.py --db to_duckdb/test-magnetdb.duckdb
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db` | `to_duckdb/test-magnetdb.duckdb` | Target DuckDB file |
+| `--dry-run` | off (writes) | Preview changes without writing anything |
 
 ---
 

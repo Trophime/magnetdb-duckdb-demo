@@ -137,7 +137,7 @@ def _nearest_candidates(
     hstop: datetime | None,
     top: int,
     max_distance_hours: float,
-) -> list[tuple[str, float, float]]:
+) -> list[tuple[str, float, float, float]]:
     """Find the nearest indexed entries to a session window.
 
     Searches around both `hstart` and the window end (`hstop`, or
@@ -162,11 +162,16 @@ def _nearest_candidates(
 
     Returns
     -------
-    list[tuple[str, float, float]]
-        ``(label, signed_distance_seconds, score)``, sorted by score
-        descending and capped at `top`. `signed_distance_seconds` is
-        ``0.0`` inside the window, negative before `hstart`, positive
-        after the window end. `score` is ``1 / (1 + distance_hours)``.
+    list[tuple[str, float, float, float]]
+        ``(label, signed_distance_seconds, score, hstart_distance_seconds)``,
+        sorted by score descending and capped at `top`.
+        `signed_distance_seconds` is ``0.0`` inside the window, negative
+        before `hstart`, positive after the window end; `score` is
+        ``1 / (1 + distance_hours)`` (computed from
+        `signed_distance_seconds`). `hstart_distance_seconds` is always
+        ``timestamp - hstart`` regardless of the window — negative before
+        `hstart`, positive after — so it can differ from
+        `signed_distance_seconds` when the candidate is nearer `hstop`.
     """
     window_end = hstop if hstop is not None else hstart
     max_distance_seconds = max_distance_hours * 3600
@@ -190,27 +195,37 @@ def _nearest_candidates(
         if abs(signed_distance) > max_distance_seconds:
             continue
         score = 1 / (1 + abs(signed_distance) / 3600)
-        scored.append((label, signed_distance, score))
+        hstart_distance = (ts - hstart).total_seconds()
+        scored.append((label, signed_distance, score, hstart_distance))
 
     scored.sort(key=lambda entry: -entry[2])
     return scored[:top]
 
 
-def _format_distance(signed_distance: float) -> str:
-    """Human-readable label for a signed distance in seconds."""
+def _format_duration(seconds: float) -> str:
+    """Human-readable text for a non-negative duration in seconds."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    elif seconds < 3600:
+        return f"{seconds / 60:.1f}min"
+    elif seconds < 86400:
+        return f"{seconds / 3600:.2f}h"
+    else:
+        return f"{seconds / 86400:.1f}d"
+
+
+def _format_window_distance(signed_distance: float) -> str:
+    """Human-readable label for a signed distance to the session window."""
     if signed_distance == 0.0:
         return "within window"
     direction = "before hstart" if signed_distance < 0 else "after hstop"
-    magnitude = abs(signed_distance)
-    if magnitude < 60:
-        text = f"{magnitude:.1f}s"
-    elif magnitude < 3600:
-        text = f"{magnitude / 60:.1f}min"
-    elif magnitude < 86400:
-        text = f"{magnitude / 3600:.2f}h"
-    else:
-        text = f"{magnitude / 86400:.1f}d"
-    return f"{text} {direction}"
+    return f"{_format_duration(abs(signed_distance))} {direction}"
+
+
+def _format_hstart_distance(signed_distance: float) -> str:
+    """Human-readable label for a signed distance to hstart."""
+    direction = "before hstart" if signed_distance < 0 else "after hstart"
+    return f"{_format_duration(abs(signed_distance))} {direction}"
 
 
 def report_section(
@@ -263,10 +278,13 @@ def report_section(
     for acronym, housing, hstart, hstop, candidates in results:
         hstop_str = hstop if hstop is not None else "(open)"
         print(f"  {acronym}  {housing}  {hstart} -> {hstop_str}")
-        for i, (candidate_label, signed_distance, score) in enumerate(candidates, start=1):
+        for i, (candidate_label, signed_distance, score, hstart_distance) in enumerate(
+            candidates, start=1
+        ):
             print(
                 f"    {i}. {candidate_label}  score={score:.3f}  "
-                f"distance={_format_distance(signed_distance)}"
+                f"distance={_format_window_distance(signed_distance)}  "
+                f"hstart_distance={_format_hstart_distance(hstart_distance)}"
             )
 
 

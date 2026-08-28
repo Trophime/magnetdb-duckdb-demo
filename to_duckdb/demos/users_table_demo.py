@@ -13,6 +13,7 @@ Run from the repository root, e.g.::
 
     python to_duckdb/demos/users_table_demo.py
     python to_duckdb/demos/users_table_demo.py --from 2020-01-01
+    python to_duckdb/demos/users_table_demo.py --housing M9 M10
     python to_duckdb/demos/users_table_demo.py --sync
     python to_duckdb/demos/users_table_demo.py --link-only
     python to_duckdb/demos/users_table_demo.py --list
@@ -90,10 +91,11 @@ def parse_cutoff(value: str) -> datetime:
 
 
 def load_log(
-    log_path: Path, cutoff: datetime | None
+    log_path: Path, cutoff: datetime | None, housing_filter: set[str] | None = None
 ) -> tuple[
     dict[str, list[tuple[str, str | None, datetime, datetime | None]]],
     dict[str, list[datetime]],
+    int,
     int,
     int,
 ]:
@@ -106,6 +108,9 @@ def load_log(
     cutoff : datetime or None
         Naive Europe/Paris datetime; sessions strictly before it are
         discarded. ``None`` disables filtering.
+    housing_filter : set[str] or None
+        Upper-cased housing names to keep (e.g. ``{"M9", "M10"}``); sessions
+        on any other housing are discarded. ``None`` disables filtering.
 
     Returns
     -------
@@ -121,6 +126,8 @@ def load_log(
         Total rows read.
     n_discarded : int
         Rows dropped by `cutoff`.
+    n_housing_excluded : int
+        Rows dropped by `housing_filter`.
 
     Raises
     ------
@@ -134,6 +141,7 @@ def load_log(
     timestamps: dict[str, list[datetime]] = defaultdict(list)
     n_total = 0
     n_discarded = 0
+    n_housing_excluded = 0
     with open(log_path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for lineno, row in enumerate(reader, start=2):
@@ -149,13 +157,16 @@ def load_log(
                 continue
             raw_magnet = row["Magnet"].strip()
             magnet = normalize_magnet(raw_magnet)
+            if housing_filter is not None and magnet.upper() not in housing_filter:
+                n_housing_excluded += 1
+                continue
             variant = raw_magnet[-1] if raw_magnet != magnet else None
             hstart = parse_hlog_timestamp(row["HStart"])
             hstop_str = row["HStop"].strip()
             hstop = parse_hlog_timestamp(hstop_str) if hstop_str else None
             sessions[acronym].append((magnet, variant, hstart, hstop))
             timestamps[acronym].append(ts)
-    return sessions, timestamps, n_total, n_discarded
+    return sessions, timestamps, n_total, n_discarded, n_housing_excluded
 
 
 def load_proposals(
@@ -335,7 +346,11 @@ def resolve_proposal_row(
 
 
 def build_users(
-    log_path: Path, proposals_path: Path, cutoff: datetime | None, fuzzy_cutoff: float
+    log_path: Path,
+    proposals_path: Path,
+    cutoff: datetime | None,
+    fuzzy_cutoff: float,
+    housing_filter: set[str] | None = None,
 ) -> tuple[list[dict], Counter, dict]:
     """Build the list of `users` rows to insert.
 
@@ -349,6 +364,9 @@ def build_users(
         Naive Europe/Paris datetime cutoff (see `parse_cutoff`).
     fuzzy_cutoff : float
         `difflib.get_close_matches` similarity cutoff for typo matching.
+    housing_filter : set[str] or None
+        Upper-cased housing names to keep (see `load_log`). ``None``
+        includes every housing found in `log_path`.
 
     Returns
     -------
@@ -372,7 +390,9 @@ def build_users(
         Row counts read/discarded from both source files, plus
         ``duplicates_removed``, for reporting.
     """
-    sessions, timestamps, log_total, log_discarded = load_log(log_path, cutoff)
+    sessions, timestamps, log_total, log_discarded, log_housing_excluded = load_log(
+        log_path, cutoff, housing_filter
+    )
     (
         acronym_rows,
         proposals_total,
@@ -490,6 +510,7 @@ def build_users(
         "proposals_supra_excluded": proposals_supra_excluded,
         "log_total": log_total,
         "log_discarded": log_discarded,
+        "log_housing_excluded": log_housing_excluded,
         "proposals_total": proposals_total,
         "proposals_discarded": proposals_discarded,
     }
@@ -605,8 +626,13 @@ def insert_users(con, users: list[dict], verbose: bool = True) -> None:
         print(f"Inserted {len(users)} rows into 'users'")
 
 
-def replace_all_users(con, users: list[dict], verbose: bool = True) -> None:
-    """Replace the entire contents of ``users`` with `users`.
+def replace_all_users(
+    con,
+    users: list[dict],
+    verbose: bool = True,
+    housing_filter: set[str] | None = None,
+) -> None:
+    """Replace the contents of ``users`` with `users`.
 
     Parameters
     ----------
@@ -616,8 +642,22 @@ def replace_all_users(con, users: list[dict], verbose: bool = True) -> None:
         Rows as built by `build_users`.
     verbose : bool
         Print a count line when done.
+    housing_filter : set[str] or None
+        If given, only existing rows for these housings are deleted before
+        inserting — other housings' existing rows are left untouched. This
+        must match whatever `housing_filter` was passed to `build_users`,
+        or rows for a housing excluded from `users` but not from the
+        delete (or vice versa) would be dropped/orphaned incorrectly.
+        ``None`` deletes the whole table (full unfiltered replace).
     """
-    con.execute("DELETE FROM users")
+    if housing_filter is None:
+        con.execute("DELETE FROM users")
+    else:
+        placeholders = ", ".join("?" for _ in housing_filter)
+        con.execute(
+            f"DELETE FROM users WHERE housing IN ({placeholders})",
+            list(housing_filter),
+        )
     insert_users(con, users, verbose=verbose)
 
 
@@ -981,7 +1021,8 @@ def report_pupitre_sources_coverage(con, verbose: bool = True) -> None:
 def report_source_stats(users: list[dict], stats: dict, match_counts: Counter) -> None:
     """Print row-count, dedup, and proposal-match stats from `build_users`."""
     print(f"\nRead {stats['log_total']} EXPERIENCES_LOG rows "
-          f"({stats['log_discarded']} discarded by --from)")
+          f"({stats['log_discarded']} discarded by --from)"
+          f"({stats['log_housing_excluded']} excluded by --housing)")
     print(f"Read {stats['proposals_total']} proposals rows "
           f"({stats['proposals_discarded']} discarded by --from)"
           f"({stats['proposals_ignored']} ignored for empty acronym or invalid start date)"
@@ -1218,6 +1259,18 @@ def main() -> None:
         help="Number of resulting users rows to print.",
     )
     parser.add_argument(
+        "--housing",
+        nargs="+",
+        default=["ALL"],
+        metavar="HOUSING",
+        help="Restrict rebuilding to these housings (e.g. --housing M9 M10). "
+        "EXPERIENCES_LOG sessions for any other housing are skipped, and "
+        "(in full-replace mode) only these housings' existing users rows "
+        "are replaced — other housings' rows are left untouched. Pass ALL "
+        "(default) to include every housing found in --log. Mutually "
+        "exclusive with --link-only.",
+    )
+    parser.add_argument(
         "--sync",
         action="store_true",
         help="Add new rows and fix mismatched existing rows instead of "
@@ -1268,6 +1321,13 @@ def main() -> None:
         parser.error("--link-only and --sync are mutually exclusive")
     if args.link_only and not args.link:
         parser.error("--link-only and --no-link are mutually exclusive")
+    if args.link_only and args.housing != ["ALL"]:
+        parser.error("--link-only and --housing are mutually exclusive")
+
+    if len(args.housing) == 1 and args.housing[0].upper() == "ALL":
+        housing_filter = None
+    else:
+        housing_filter = {h.upper() for h in args.housing}
 
     if args.list or args.view is not None:
         with duckdb.connect(str(args.db), read_only=True) as con:
@@ -1305,7 +1365,7 @@ def main() -> None:
     cutoff = parse_cutoff(args.from_date) if args.from_date else None
 
     users, match_counts, stats = build_users(
-        args.log, args.proposals, cutoff, args.fuzzy_cutoff
+        args.log, args.proposals, cutoff, args.fuzzy_cutoff, housing_filter
     )
 
     con = duckdb.connect(str(args.db))
@@ -1319,7 +1379,7 @@ def main() -> None:
                   f"{sync_stats['updated']} updated, "
                   f"{sync_stats['unchanged']} unchanged")
         else:
-            replace_all_users(con, users, verbose=False)
+            replace_all_users(con, users, verbose=False, housing_filter=housing_filter)
             print(f"Replaced 'users' contents with {len(users)} rows ({args.db})")
 
         report_missing_hstop(con)
