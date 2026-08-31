@@ -201,7 +201,7 @@ OVERVIEW_RECORD_COLUMNS = [
 ]
 
 
-def _overview_records_section(overview_df):
+def _overview_records_section(overview_df, start_date=None, end_date=None):
     """Build the "Overview records" accordion content for a pre-filtered dataframe.
 
     Parameters
@@ -209,6 +209,9 @@ def _overview_records_section(overview_df):
     overview_df : :class:`~pandas.DataFrame`
         Rows from :func:`load_overview_records`, already filtered to the
         page's current Housing/Year/Assembly selection.
+    start_date, end_date : str, optional
+        Inclusive ``t0`` date bounds (``"YYYY-MM-DD"``) from the section's
+        date-range picker. No date filtering when both are ``None``.
 
     Returns
     -------
@@ -216,6 +219,8 @@ def _overview_records_section(overview_df):
         A "no records" message if *overview_df* is empty, otherwise a
         `DataTable` of its rows (linked into ``/overview-records``).
     """
+    overview_df = selectors.filter_by_date_range(overview_df, "t0", start_date, end_date)
+
     if overview_df.empty:
         return html.Div(
             "No overview records found for the current filters.",
@@ -306,8 +311,18 @@ def _build_page_content(
     selected_year=None,
     assemblies_meta=None,
     db_path=None,
+    table_start_date=None,
+    table_end_date=None,
 ):
-    """Build the figures, table rows, and summary text for a loaded experiments dataframe."""
+    """Build the figures, table rows, and summary text for a loaded experiments dataframe.
+
+    Parameters
+    ----------
+    table_start_date, table_end_date : str, optional
+        Inclusive ``Experiment`` date bounds (``"YYYY-MM-DD"``) from the
+        Experiments table's date-range picker. Only the returned table rows
+        are restricted to this range; figures and summary use the full *df*.
+    """
     housing_order = sorted(df["Housing"].dropna().unique(), key=lambda h: int(h[1:]))
 
     fig_per_exp = px.bar(
@@ -387,9 +402,12 @@ def _build_page_content(
         title="Magnet Time per Assembly (h)",
     )
 
-    table_df = df.drop(columns=["File"])
-    table_df["Experiment"] = df.apply(experiment_link, axis=1)
-    table_df["Assembly"] = df.apply(assembly_link, axis=1)
+    table_source_df = selectors.filter_by_date_range(
+        df, "Experiment", table_start_date, table_end_date
+    )
+    table_df = table_source_df.drop(columns=["File"])
+    table_df["Experiment"] = table_source_df.apply(experiment_link, axis=1)
+    table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
     if selected_assembly and selected_assembly != selectors.ALL:
         assemblies_line = f"Assemblies: 1 selected of {total_assemblies}"
@@ -487,7 +505,15 @@ def layout(assembly=None, **kwargs):
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
-                        id="assembly-stats-overview-records", style={"padding": "10px"}
+                        [
+                            selectors.date_range_filter(
+                                "assembly-stats-overview-date-filter",
+                                "Filter by record date (t0)",
+                                style={"marginBottom": "10px"},
+                            ),
+                            html.Div(id="assembly-stats-overview-records"),
+                        ],
+                        style={"padding": "10px"},
                     ),
                 ],
                 open=False,
@@ -505,16 +531,23 @@ def layout(assembly=None, **kwargs):
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
-                        DataTable(
-                            id="assembly-stats-table",
-                            columns=TABLE_COLUMNS,
-                            data=[],
-                            page_size=20,
-                            sort_action="native",
-                            style_table={"overflowX": "auto"},
-                            style_cell={"textAlign": "center", "padding": "6px"},
-                            style_header={"fontWeight": "auto"},
-                        ),
+                        [
+                            selectors.date_range_filter(
+                                "assembly-stats-table-date-filter",
+                                "Filter by experiment date",
+                                style={"marginBottom": "10px"},
+                            ),
+                            DataTable(
+                                id="assembly-stats-table",
+                                columns=TABLE_COLUMNS,
+                                data=[],
+                                page_size=20,
+                                sort_action="native",
+                                style_table={"overflowX": "auto"},
+                                style_cell={"textAlign": "center", "padding": "6px"},
+                                style_header={"fontWeight": "auto"},
+                            ),
+                        ],
                         style={"padding": "10px"},
                     ),
                 ],
@@ -548,9 +581,20 @@ def layout(assembly=None, **kwargs):
     Input("assembly-stats-housing-filter", "value"),
     Input("assembly-stats-year-filter", "value"),
     Input("assembly-stats-assembly-filter", "value"),
+    Input("assembly-stats-table-date-filter", "start_date"),
+    Input("assembly-stats-table-date-filter", "end_date"),
+    Input("assembly-stats-overview-date-filter", "start_date"),
+    Input("assembly-stats-overview-date-filter", "end_date"),
 )
 def update_assembly_stats(
-    selected_db, selected_housing, selected_year, selected_assembly
+    selected_db,
+    selected_housing,
+    selected_year,
+    selected_assembly,
+    table_start_date,
+    table_end_date,
+    overview_start_date,
+    overview_end_date,
 ):
     if not selected_db:
         return (
@@ -643,8 +687,12 @@ def update_assembly_stats(
         selected_year,
         assemblies_meta,
         selected_db,
+        table_start_date,
+        table_end_date,
     )
-    overview_records_section = _overview_records_section(overview_plot_df)
+    overview_records_section = _overview_records_section(
+        overview_plot_df, overview_start_date, overview_end_date
+    )
     magnets_section = _magnets_section(selected_assembly, selected_db)
     return (
         fig_per_exp,

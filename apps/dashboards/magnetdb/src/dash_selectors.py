@@ -1,3 +1,4 @@
+import pandas as pd
 from dash import dcc, html
 
 ALL = "All"
@@ -77,3 +78,70 @@ def aggregate_filter(id, label, options=None, style=None, value=None):
         ],
         style=style or {},
     )
+
+
+def date_range_filter(id, label, style=None):
+    """Build a labeled, clearable date-range picker for filtering a table's rows.
+
+    Parameters
+    ----------
+    id : str
+        Dash component id for the ``dcc.DatePickerRange``.
+    label : str
+        Text shown above the picker (e.g. ``"Filter by experiment date"``).
+    style : dict, optional
+        CSS style applied to the wrapping ``html.Div``.
+
+    Returns
+    -------
+    :class:`~dash.html.Div`
+        Label plus ``dcc.DatePickerRange``, with both bounds unset (no
+        filtering) until the user picks dates.
+    """
+    return html.Div(
+        [
+            html.Label(label),
+            html.Br(),
+            dcc.DatePickerRange(
+                id=id,
+                display_format="YYYY-MM-DD",
+                clearable=True,
+            ),
+        ],
+        style=style or {},
+    )
+
+
+def filter_by_date_range(df, column, start_date, end_date):
+    """Filter *df* to rows whose *column* date falls within [*start_date*, *end_date*].
+
+    Parameters
+    ----------
+    df : :class:`~pandas.DataFrame`
+        Rows to filter.
+    column : str
+        Name of the datetime column to filter on.
+    start_date : str or None
+        Inclusive lower bound (``"YYYY-MM-DD"``), from a
+        ``dcc.DatePickerRange``'s ``start_date``. No lower bound if ``None``.
+    end_date : str or None
+        Inclusive upper bound (``"YYYY-MM-DD"``), from a
+        ``dcc.DatePickerRange``'s ``end_date``. No upper bound if ``None``.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        *df* unchanged if it's empty or neither bound is set; otherwise the
+        rows whose *column* date lies in the closed range. Rows with a null
+        *column* value are excluded once a bound is set.
+    """
+    if df.empty or (not start_date and not end_date):
+        return df
+
+    dates = pd.to_datetime(df[column]).dt.date
+    mask = pd.Series(True, index=df.index)
+    if start_date:
+        mask &= dates >= pd.to_datetime(start_date).date()
+    if end_date:
+        mask &= dates <= pd.to_datetime(end_date).date()
+    return df[mask]

@@ -180,7 +180,7 @@ ASSEMBLY_HISTORY_COLUMNS = [
 ]
 
 
-def _overview_records_section(overview_df):
+def _overview_records_section(overview_df, start_date=None, end_date=None):
     """Build the "Overview records" accordion content for a pre-filtered dataframe.
 
     Parameters
@@ -188,6 +188,9 @@ def _overview_records_section(overview_df):
     overview_df : :class:`~pandas.DataFrame`
         Rows from :func:`load_overview_records`, already filtered to the
         page's current magnet selection.
+    start_date, end_date : str, optional
+        Inclusive ``t0`` date bounds (``"YYYY-MM-DD"``) from the section's
+        date-range picker. No date filtering when both are ``None``.
 
     Returns
     -------
@@ -195,6 +198,8 @@ def _overview_records_section(overview_df):
         A "no records" message if *overview_df* is empty, otherwise a
         `DataTable` of its rows (linked into ``/overview-records``).
     """
+    overview_df = selectors.filter_by_date_range(overview_df, "t0", start_date, end_date)
+
     if overview_df.empty:
         return html.Div(
             "No overview records found for the current filters.",
@@ -307,8 +312,30 @@ def _parts_section(selected_magnet, db_path):
     )
 
 
-def _build_page_content(df, selected_magnet=None, db_path=None):
-    """Build the figures, table rows, and summary text for a loaded (experiment, magnet) dataframe."""
+def _build_page_content(
+    df, selected_magnet=None, db_path=None, table_start_date=None, table_end_date=None
+):
+    """Build the figures, table rows, and summary text for a loaded (experiment, magnet) dataframe.
+
+    Parameters
+    ----------
+    df : :class:`~pandas.DataFrame`
+        Rows from :func:`load_data`, already filtered to the page's current
+        magnet/status selection.
+    selected_magnet : str, optional
+        Magnet name from the page's filter dropdown.
+    db_path : str, optional
+        Path to the DuckDB database.
+    table_start_date, table_end_date : str, optional
+        Inclusive ``Experiment`` date bounds (``"YYYY-MM-DD"``) from the
+        Experiments table's date-range picker. Only the returned table rows
+        are restricted to this range; figures and summary use the full *df*.
+
+    Returns
+    -------
+    tuple
+        ``(fig_field_on, table_records, summary)``.
+    """
     exp_df = df.drop_duplicates(subset="ID").copy()
 
     field_on_by_magnet = df.groupby(["Magnet", "Housing"], as_index=False).agg(
@@ -331,10 +358,13 @@ def _build_page_content(df, selected_magnet=None, db_path=None):
         title="Magnet Time (h)",
     )
 
-    table_df = df.drop(columns=["File"])
-    table_df["Experiment"] = df.apply(experiment_link, axis=1)
-    table_df["Magnet"] = df.apply(magnet_link, axis=1)
-    table_df["Assembly"] = df.apply(assembly_link, axis=1)
+    table_source_df = selectors.filter_by_date_range(
+        df, "Experiment", table_start_date, table_end_date
+    )
+    table_df = table_source_df.drop(columns=["File"])
+    table_df["Experiment"] = table_source_df.apply(experiment_link, axis=1)
+    table_df["Magnet"] = table_source_df.apply(magnet_link, axis=1)
+    table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
     counts = db.get_db_counts(db_path)
     magnets_line = (
@@ -429,7 +459,15 @@ def layout(magnet=None, **kwargs):
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
-                        id="magnet-stats-overview-records", style={"padding": "10px"}
+                        [
+                            selectors.date_range_filter(
+                                "magnet-stats-overview-date-filter",
+                                "Filter by record date (t0)",
+                                style={"marginBottom": "10px"},
+                            ),
+                            html.Div(id="magnet-stats-overview-records"),
+                        ],
+                        style={"padding": "10px"},
                     ),
                 ],
                 open=False,
@@ -446,16 +484,23 @@ def layout(magnet=None, **kwargs):
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
-                        DataTable(
-                            id="magnet-stats-table",
-                            columns=TABLE_COLUMNS,
-                            data=[],
-                            page_size=20,
-                            sort_action="native",
-                            style_table={"overflowX": "auto"},
-                            style_cell={"textAlign": "center", "padding": "6px"},
-                            style_header={"fontWeight": "auto"},
-                        ),
+                        [
+                            selectors.date_range_filter(
+                                "magnet-stats-table-date-filter",
+                                "Filter by experiment date",
+                                style={"marginBottom": "10px"},
+                            ),
+                            DataTable(
+                                id="magnet-stats-table",
+                                columns=TABLE_COLUMNS,
+                                data=[],
+                                page_size=20,
+                                sort_action="native",
+                                style_table={"overflowX": "auto"},
+                                style_cell={"textAlign": "center", "padding": "6px"},
+                                style_header={"fontWeight": "auto"},
+                            ),
+                        ],
                         style={"padding": "10px"},
                     ),
                 ],
@@ -485,8 +530,20 @@ def layout(magnet=None, **kwargs):
     Input("dd-database", "value"),
     Input("magnet-stats-magnet-filter", "value"),
     Input("magnet-stats-status-filter", "value"),
+    Input("magnet-stats-table-date-filter", "start_date"),
+    Input("magnet-stats-table-date-filter", "end_date"),
+    Input("magnet-stats-overview-date-filter", "start_date"),
+    Input("magnet-stats-overview-date-filter", "end_date"),
 )
-def update_magnet_stats(selected_db, selected_magnet, selected_status):
+def update_magnet_stats(
+    selected_db,
+    selected_magnet,
+    selected_status,
+    table_start_date,
+    table_end_date,
+    overview_start_date,
+    overview_end_date,
+):
     if not selected_db:
         return (
             go.Figure(),
@@ -529,7 +586,9 @@ def update_magnet_stats(selected_db, selected_magnet, selected_status):
         fig_field_on,
         table_records,
         summary,
-    ) = _build_page_content(plot_df, selected_magnet, selected_db)
+    ) = _build_page_content(
+        plot_df, selected_magnet, selected_db, table_start_date, table_end_date
+    )
 
     assembly_history = (
         db.get_assembly_history_for_magnet(selected_magnet, selected_db)
@@ -553,7 +612,9 @@ def update_magnet_stats(selected_db, selected_magnet, selected_status):
         overview_plot_df = overview_plot_df[
             overview_plot_df["Assembly"].isin(status_assembly_names)
         ]
-    overview_records_section = _overview_records_section(overview_plot_df)
+    overview_records_section = _overview_records_section(
+        overview_plot_df, overview_start_date, overview_end_date
+    )
 
     parts_section = _parts_section(selected_magnet, selected_db)
     return (
