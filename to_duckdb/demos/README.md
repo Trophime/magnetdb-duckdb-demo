@@ -183,6 +183,78 @@ python to_duckdb/demos/retire_superseded_magnets.py --db to_duckdb/test-magnetdb
 
 ---
 
+## plot_magnet_stress.py
+
+Plots magnetic field and hoop stress for a magnet across a given list of
+experiments. For each `--experiments` entry: loads the raw pupitre file via
+`python_magnetrun.MagnetRun.load_mrun()` (same call the dashboard's File
+Viewer page uses) and plots its `Field` [T] channel, then looks up
+`hoop_stress_processed.parquet_path` for that experiment and, **only if the
+Parquet file already exists on disk**, loads it and plots the hoop-stress
+[MPa] columns for the magnet's parts (`magnet_parts`/`parts`). No hoop-stress
+computation is performed — if the Parquet is missing (recorded or not), that
+panel is skipped with a hint pointing at `magnetdb.py hoop-stress compute`.
+Missing experiments, missing pupitre files, or a magnet with no parts are all
+skipped with a warning rather than raising. One PNG (Field on top, hoop
+stress on bottom, sharing the time axis) is saved per experiment.
+
+```bash
+python to_duckdb/demos/plot_magnet_stress.py --magnet M19061901 \
+    --experiments "2019.06.19 - 17:00:45" "2019.06.19 - 17:04:21"
+python to_duckdb/demos/plot_magnet_stress.py --magnet M19061901 \
+    --experiments "2019.06.20 - 14:36:30" --db to_duckdb/test-magnetdb.duckdb \
+    --output-dir stage/
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--magnet` | *(required)* | Magnet name (`magnets.name`) |
+| `--experiments` | *(required)* | One or more experiment names (`experiments.name`) |
+| `--db` | `test-magnetdb.duckdb` | Target DuckDB file |
+| `--output-dir` | `.` | Directory to save PNG figures into |
+
+---
+
+## plot_magnet_fatigue.py
+
+Plots rainflow fatigue cycles for a magnet's parts across a given list of
+experiments, reading the already-persisted `hoop_stress_fatigue` (per-part
+cycle totals) and `hoop_stress_fatigue_bins` (per-part rainflow range-bin
+matrix) tables written by `magnetdb.py hoop-stress compute`. No fatigue
+computation is performed here — pairs with no rows in either table are
+skipped with a hint pointing at that command.
+
+`--parts` is optional: when omitted (or empty), it defaults to every part of
+`--magnet` whose type is `helix`, `bitter`, or `supra`; when given
+explicitly, the same type filter is applied and anything else (wrong type,
+or not found in `parts`) is dropped with a warning.
+
+For each part, three PNGs are produced (all given experiments combined onto
+a single figure each): `fatigue_cycles_<magnet>_<part>.png` (cycle count per
+experiment), `fatigue_histogram_<magnet>_<part>.png` (cycle histogram over
+stress-range bins, grouped by experiment), and
+`fatigue_combined_<magnet>_<part>.png` (the same histogram summed across the
+whole experiment list). A cycle-count table (experiments x parts, with
+row/column totals and a grand-total `TOTAL` row) is printed to stdout.
+
+```bash
+python to_duckdb/demos/plot_magnet_fatigue.py --magnet M9Bitters \
+    --experiments "2023.06.09 - 09:43:40" "2023.06.09 - 10:21:37"
+python to_duckdb/demos/plot_magnet_fatigue.py --magnet M9Bitters \
+    --parts M9Be --experiments "2023.06.09 - 09:43:40" \
+    --db to_duckdb/test-magnetdb.duckdb --output-dir stage/
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--magnet` | *(required)* | Magnet name (`magnets.name`) |
+| `--experiments` | *(required)* | One or more experiment names (`experiments.name`) |
+| `--parts` | all `helix`/`bitter`/`supra` parts of `--magnet` | Part names (`parts.name`) to analyze, restricted to `helix`/`bitter`/`supra` types |
+| `--db` | `test-magnetdb.duckdb` | Target DuckDB file |
+| `--output-dir` | `.` | Directory to save PNG figures into |
+
+---
+
 ## Building `Data/unmatched_users.csv`
 
 This file is a report of `EXPERIENCES_LOG` acronyms that `users_table_demo.py`
