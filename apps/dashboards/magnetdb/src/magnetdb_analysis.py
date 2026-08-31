@@ -1462,6 +1462,72 @@ def get_research_area_stats_by_year(housing=None, year=None, research_area=None,
         return conn.execute(query, params).df()
 
 
+def get_research_area_field_bin_stats_by_year(housing=None, year=None, research_area=None, user=None, db_path=None):
+    """Return per-(research-area, year, field-bin) magnet-time distribution.
+
+    Parameters
+    ----------
+    housing : str, optional
+        Restrict to sessions on this housing (e.g. ``"M9"``). ``None``
+        includes all housings.
+    year : str or int, optional
+        Restrict to sessions whose ``hstart`` falls in this year. ``None``
+        includes all years.
+    research_area : str, optional
+        Restrict to sessions with this research area (``"NA"`` for sessions
+        with no research area recorded). ``None`` includes all research
+        areas.
+    user : str, optional
+        Restrict to sessions with this user acronym. ``None`` includes all
+        users.
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per ``(research_area, year, field_bin_low, field_bin_high)``
+        combination present in matching sessions' experiments, with
+        ``total_time_h`` (summed ``exp_assembly_bin_stats.sum_dt`` / 3600
+        [h], ``channel = 'Field'``). The ``[0, 0.1)`` "field off" bin is
+        excluded. Empty (with these columns) if ``exp_assembly_bin_stats``
+        doesn't exist.
+    """
+    db_path = db_path or DB_PATH
+    empty = pd.DataFrame(
+        columns=["research_area", "year", "field_bin_low", "field_bin_high", "total_time_h"]
+    )
+    if "exp_assembly_bin_stats" not in get_all_tables(db_path):
+        return empty
+
+    with duckdb.connect(db_path, read_only=True) as conn:
+        query = """
+            WITH filtered_users AS (
+                SELECT * EXCLUDE (research_area), COALESCE(research_area, 'NA') AS research_area,
+                    EXTRACT(YEAR FROM hstart) AS session_year
+                FROM users
+                WHERE (? IS NULL OR housing = ?)
+                    AND (? IS NULL OR EXTRACT(YEAR FROM hstart) = ?)
+                    AND (? IS NULL OR COALESCE(research_area, 'NA') = ?)
+                    AND (? IS NULL OR acronym = ?)
+            )
+            SELECT
+                fu.research_area,
+                fu.session_year AS year,
+                s.field_bin_low,
+                s.field_bin_high,
+                SUM(s.sum_dt) / 3600 AS total_time_h
+            FROM filtered_users AS fu, UNNEST(fu.experiments_ids) AS t(eid)
+            JOIN exp_assembly_bin_stats AS s ON s.experiment_id = t.eid
+            WHERE s.channel = 'Field' AND s.field_bin_low > 0
+            GROUP BY fu.research_area, fu.session_year, s.field_bin_low, s.field_bin_high
+            ORDER BY fu.research_area, fu.session_year, s.field_bin_low
+        """
+        year = None if year is None else int(year)
+        params = [housing, housing, year, year, research_area, research_area, user, user]
+        return conn.execute(query, params).df()
+
+
 def get_experiments_for_filters(housing=None, year=None, research_area=None, user=None, db_path=None):
     """Return experiments linked to users matching the given filters.
 

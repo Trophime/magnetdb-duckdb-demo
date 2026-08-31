@@ -5,12 +5,32 @@ import pandas as pd
 import plotly.express as px
 from dash import Input, Output, callback, dcc, html
 from dash.dash_table import DataTable
+from experiment_links import assembly_link, experiment_link, overview_record_link
+from plotly import graph_objects as go
 
 dash.register_page(__name__, path="/research-area", name="Research areas", order=7)
 
 RA_STATS_COLUMNS = [
     {"name": c, "id": c}
     for c in ("research_area", "n_experiments", "n_users", "total_field_time_h")
+]
+
+EXPERIMENTS_COLUMNS = [
+    (
+        {"name": c, "id": c, "presentation": "markdown"}
+        if c in ("Experiment", "Assembly")
+        else {"name": c, "id": c}
+    )
+    for c in ("ID", "Experiment", "Assembly", "Housing", "Status")
+]
+
+OVERVIEW_RECORD_COLUMNS = [
+    (
+        {"name": c, "id": c, "presentation": "markdown"}
+        if c in ("Overview Record", "Assembly")
+        else {"name": c, "id": c}
+    )
+    for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0")
 ]
 
 
@@ -23,9 +43,26 @@ def _experiments_section(exp_df):
     """Build the "Matching experiments" accordion content for a filtered dataframe."""
     if exp_df.empty:
         return _no_data_message("No experiments found for the current filters.")
+    source_df = exp_df.rename(
+        columns={
+            "id": "ID",
+            "name": "Experiment",
+            "file": "File",
+            "assembly_name": "Assembly",
+            "status": "Status",
+        }
+    )
+    source_df["Experiment"] = pd.to_datetime(source_df["Experiment"])
+    source_df["Housing"] = source_df["Assembly"].str.extract(r"^(M\d+)")
+
+    table_df = source_df.drop(columns=["File"])
+    table_df["Experiment"] = source_df.apply(experiment_link, axis=1)
+    table_df["Assembly"] = source_df.apply(assembly_link, axis=1)
+    table_df = table_df[["ID", "Experiment", "Assembly", "Housing", "Status"]]
+
     return DataTable(
-        columns=[{"name": c, "id": c} for c in exp_df.columns],
-        data=exp_df.to_dict("records"),
+        columns=EXPERIMENTS_COLUMNS,
+        data=table_df.to_dict("records"),
         page_size=10,
         sort_action="native",
         style_table={"overflowX": "auto"},
@@ -38,15 +75,67 @@ def _overview_records_section(ov_df):
     """Build the "Matching overview records" accordion content for a filtered dataframe."""
     if ov_df.empty:
         return _no_data_message("No overview records found for the current filters.")
+    source_df = ov_df.rename(
+        columns={
+            "filename": "Overview Record",
+            "assembly_name": "Assembly",
+            "housing": "Housing",
+            "mode": "Mode",
+        }
+    )
+
+    table_df = source_df[["Overview Record", "Assembly", "Housing", "Mode", "t0"]].copy()
+    table_df["Overview Record"] = source_df.apply(overview_record_link, axis=1)
+    table_df["Assembly"] = source_df.apply(assembly_link, axis=1)
+
     return DataTable(
-        columns=[{"name": c, "id": c} for c in ov_df.columns],
-        data=ov_df.to_dict("records"),
+        columns=OVERVIEW_RECORD_COLUMNS,
+        data=table_df.to_dict("records"),
         page_size=10,
         sort_action="native",
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
     )
+
+
+def _add_field_bin_columns(df, percent_group_cols):
+    """Add a "Field bin" label column and a per-group "Percent" column to a bin-stats df.
+
+    Parameters
+    ----------
+    df : :class:`~pandas.DataFrame`
+        Must have ``field_bin_low``, ``field_bin_high``, ``Time (h)``
+        columns, as returned by :func:`db.get_research_area_field_bin_stats_by_year`.
+        Mutated in place with the new ``"Field bin"`` and ``"Percent"``
+        columns.
+    percent_group_cols : list of str
+        Columns to group by when computing each row's ``Percent`` of its
+        group's total ``Time (h)``.
+
+    Returns
+    -------
+    tuple of (list of str, list of str)
+        ``(bin_order, bin_colors)`` -- the field-bin labels in ascending
+        field order, and a matching Viridis color for each.
+    """
+    df["Field bin"] = [
+        f"{low:g}-{high:g} T"
+        for low, high in zip(df["field_bin_low"], df["field_bin_high"])
+    ]
+    bin_order = (
+        df[["field_bin_low", "Field bin"]]
+        .drop_duplicates()
+        .sort_values("field_bin_low")["Field bin"]
+        .tolist()
+    )
+    bin_colors = px.colors.sample_colorscale(
+        "Viridis", [i / max(len(bin_order) - 1, 1) for i in range(len(bin_order))]
+    )
+    df["Percent"] = (
+        df["Time (h)"] / df.groupby(percent_group_cols)["Time (h)"].transform("sum") * 100
+    )
+    return bin_order, bin_colors
 
 
 def _file_range_text(label, count, start, end):
@@ -102,6 +191,7 @@ layout = html.Div(
         html.Br(),
         dcc.Graph(id="ra-exp"),
         dcc.Graph(id="ra-time"),
+        dcc.Graph(id="ra-time-by-bin"),
         dcc.Graph(id="ra-users"),
         html.Details(
             [
@@ -151,6 +241,7 @@ layout = html.Div(
     Output("ra-exp", "figure"),
     Output("ra-users", "figure"),
     Output("ra-time", "figure"),
+    Output("ra-time-by-bin", "figure"),
     Output("ra-experiments", "style"),
     Output("ra-experiments-content", "children"),
     Output("ra-overview-records", "style"),
@@ -210,6 +301,35 @@ def update(research_area, housing, year, user):
         title="Total field time (h)",
     )
 
+    bin_df = db.get_research_area_field_bin_stats_by_year(
+        housing=housing, year=year, research_area=research_area, user=user
+    )
+    if bin_df.empty:
+        fig_time_by_bin = go.Figure()
+    else:
+        bin_df["year"] = bin_df["year"].astype(int).astype(str)
+        bin_df = bin_df.rename(columns={"total_time_h": "Time (h)"})
+        bin_order, bin_colors = _add_field_bin_columns(bin_df, ["research_area", "year"])
+
+        fig_time_by_bin = px.bar(
+            bin_df,
+            x="year",
+            y="Time (h)",
+            color="Field bin",
+            facet_col="research_area",
+            category_orders={"Field bin": bin_order},
+            color_discrete_sequence=bin_colors,
+            custom_data=["Percent"],
+            title="Total field time per research area per year by field bin (h)",
+        )
+        fig_time_by_bin.update_traces(
+            hovertemplate=(
+                "%{fullData.name}<br>%{x}<br>"
+                "%{y:.1f} h (%{customdata[0]:.1f}% of research area total)<extra></extra>"
+            )
+        )
+        fig_time_by_bin.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+
     filters_active = any(v is not None for v in (research_area, housing, year, user))
 
     section_style = {"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "10px"}
@@ -229,6 +349,7 @@ def update(research_area, housing, year, user):
         fig_exp,
         fig_users,
         fig_time,
+        fig_time_by_bin,
         section_style,
         exp_content,
         section_style,

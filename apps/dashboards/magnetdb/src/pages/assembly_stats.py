@@ -52,9 +52,9 @@ def _housing_sort_key(df):
 def _adaptive_time_ticks(span_days):
     """Pick a bar-chart x-axis (dtick, tickformat) pair sized to a date span in days."""
     if span_days <= 21:
-        return "D1", "%d %b"
+        return "D1", "%d %b %Y"
     if span_days <= 120:
-        return "D7", "%d %b"
+        return "D7", "%d %b %Y"
     if span_days <= 730:
         return "M1", "%b %Y"
     return "M3", "%b %Y"

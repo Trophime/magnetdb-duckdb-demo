@@ -206,6 +206,147 @@ def load_housing_summary_by_month(year, db_path=None):
     return df.fillna(0)
 
 
+def load_field_bin_stats_by_housing_year(db_path=None):
+    """Aggregate per-housing-per-year magnetic-field-bin time distribution.
+
+    Parameters
+    ----------
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per ``(Housing, Year, field_bin_low, field_bin_high)``,
+        with ``Housing``, ``Year``, ``field_bin_low``, ``field_bin_high``
+        [T], and ``Time (h)`` (summed ``sum_dt`` / 3600). The ``[0, 0.1)``
+        "field off" bin is excluded. Empty if the table doesn't exist.
+    """
+    db_path = db_path or db.DB_PATH
+    con = duckdb.connect(db_path, read_only=True)
+
+    tables = (
+        con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        )
+        .df()["table_name"]
+        .tolist()
+    )
+    if "exp_assembly_bin_stats" not in tables:
+        con.close()
+        return pd.DataFrame(columns=["Housing", "Year", "field_bin_low", "field_bin_high", "Time (h)"])
+
+    df = con.execute("""
+        SELECT
+            a.housing AS Housing,
+            CAST(regexp_extract(e.name, '^(\\d{4})', 1) AS INTEGER) AS Year,
+            s.field_bin_low,
+            s.field_bin_high,
+            SUM(s.sum_dt) / 3600 AS "Time (h)"
+        FROM exp_assembly_bin_stats AS s
+        JOIN experiments AS e ON e.id = s.experiment_id
+        JOIN assemblies AS a ON a.name = e.assembly_name
+        WHERE s.channel = 'Field' AND s.field_bin_low > 0
+        GROUP BY a.housing, Year, s.field_bin_low, s.field_bin_high
+        ORDER BY a.housing, Year, s.field_bin_low
+    """).fetchdf()
+    con.close()
+
+    return df
+
+
+def load_field_bin_stats_by_housing_month(year, db_path=None):
+    """Aggregate per-housing-per-month magnetic-field-bin time distribution, for one year.
+
+    Parameters
+    ----------
+    year : int
+        Restrict to experiments starting in this year.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per ``(Housing, Month, field_bin_low, field_bin_high)``,
+        with ``Housing``, ``Month`` (integer 1-12), ``field_bin_low``,
+        ``field_bin_high`` [T], and ``Time (h)`` (summed ``sum_dt`` /
+        3600). The ``[0, 0.1)`` "field off" bin is excluded. Empty if the
+        table doesn't exist.
+    """
+    db_path = db_path or db.DB_PATH
+    con = duckdb.connect(db_path, read_only=True)
+
+    tables = (
+        con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        )
+        .df()["table_name"]
+        .tolist()
+    )
+    if "exp_assembly_bin_stats" not in tables:
+        con.close()
+        return pd.DataFrame(columns=["Housing", "Month", "field_bin_low", "field_bin_high", "Time (h)"])
+
+    df = con.execute("""
+        SELECT
+            a.housing AS Housing,
+            CAST(regexp_extract(e.name, '^\\d{4}\\.(\\d{2})', 1) AS INTEGER) AS Month,
+            s.field_bin_low,
+            s.field_bin_high,
+            SUM(s.sum_dt) / 3600 AS "Time (h)"
+        FROM exp_assembly_bin_stats AS s
+        JOIN experiments AS e ON e.id = s.experiment_id
+        JOIN assemblies AS a ON a.name = e.assembly_name
+        WHERE s.channel = 'Field' AND s.field_bin_low > 0
+            AND regexp_extract(e.name, '^(\\d{4})', 1) = ?
+        GROUP BY a.housing, Month, s.field_bin_low, s.field_bin_high
+        ORDER BY a.housing, Month, s.field_bin_low
+    """, [str(year)]).fetchdf()
+    con.close()
+
+    return df
+
+
+def _add_field_bin_columns(df, percent_group_cols):
+    """Add a "Field bin" label column and a per-group "Percent" column to a bin-stats df.
+
+    Parameters
+    ----------
+    df : :class:`~pandas.DataFrame`
+        Must have ``field_bin_low``, ``field_bin_high``, ``Time (h)``
+        columns, as returned by the ``load_field_bin_stats_by_housing*``
+        functions. Mutated in place with the new ``"Field bin"`` and
+        ``"Percent"`` columns.
+    percent_group_cols : list of str
+        Columns to group by when computing each row's ``Percent`` of its
+        group's total ``Time (h)``.
+
+    Returns
+    -------
+    tuple of (list of str, list of str)
+        ``(bin_order, bin_colors)`` -- the field-bin labels in ascending
+        field order, and a matching Viridis color for each.
+    """
+    df["Field bin"] = [
+        f"{low:g}-{high:g} T"
+        for low, high in zip(df["field_bin_low"], df["field_bin_high"])
+    ]
+    bin_order = (
+        df[["field_bin_low", "Field bin"]]
+        .drop_duplicates()
+        .sort_values("field_bin_low")["Field bin"]
+        .tolist()
+    )
+    bin_colors = px.colors.sample_colorscale(
+        "Viridis", [i / max(len(bin_order) - 1, 1) for i in range(len(bin_order))]
+    )
+    df["Percent"] = (
+        df["Time (h)"] / df.groupby(percent_group_cols)["Time (h)"].transform("sum") * 100
+    )
+    return bin_order, bin_colors
+
+
 def load_commissioning_history(db_path=None, assemblies_in_year=None):
     """Return assemblies grouped by housing, ordered by commissioning date.
 
@@ -368,6 +509,8 @@ def layout(**kwargs):
             html.Br(),
             dcc.Graph(id="housing-stats-field-on-year-fig"),
             html.Br(),
+            dcc.Graph(id="housing-stats-field-bins-year-fig"),
+            html.Br(),
             html.Div(id="housing-stats-sections"),
         ],
         style={"padding": "20px"},
@@ -380,6 +523,7 @@ def layout(**kwargs):
     Output("housing-stats-field-bins-fig", "figure"),
     Output("housing-stats-energy-year-fig", "figure"),
     Output("housing-stats-field-on-year-fig", "figure"),
+    Output("housing-stats-field-bins-year-fig", "figure"),
     Output("housing-stats-sections", "children"),
     Output("housing-stats-year-filter", "options"),
     Input("dd-database", "value"),
@@ -387,7 +531,7 @@ def layout(**kwargs):
 )
 def update_housing_stats(selected_db, selected_year):
     if not selected_db:
-        return [], go.Figure(), go.Figure(), go.Figure(), go.Figure(), [], [selectors.ALL]
+        return [], go.Figure(), go.Figure(), go.Figure(), go.Figure(), go.Figure(), [], [selectors.ALL]
 
     summary_df = load_housing_summary(selected_db)
     summary_by_year_df = load_housing_summary_by_year(selected_db)
@@ -439,24 +583,7 @@ def update_housing_stats(selected_db, selected_year):
     if field_bin_df.empty:
         fig_field_bins = go.Figure()
     else:
-        field_bin_df["Field bin"] = [
-            f"{low:g}-{high:g} T"
-            for low, high in zip(field_bin_df["field_bin_low"], field_bin_df["field_bin_high"])
-        ]
-        bin_order = (
-            field_bin_df[["field_bin_low", "Field bin"]]
-            .drop_duplicates()
-            .sort_values("field_bin_low")["Field bin"]
-            .tolist()
-        )
-        bin_colors = px.colors.sample_colorscale(
-            "Viridis", [i / max(len(bin_order) - 1, 1) for i in range(len(bin_order))]
-        )
-        field_bin_df["Percent"] = (
-            field_bin_df["Time (h)"]
-            / field_bin_df.groupby("Housing")["Time (h)"].transform("sum")
-            * 100
-        )
+        bin_order, bin_colors = _add_field_bin_columns(field_bin_df, ["Housing"])
 
         fig_field_bins = px.bar(
             field_bin_df,
@@ -505,6 +632,26 @@ def update_housing_stats(selected_db, selected_year):
         fig_field_on_year.update_xaxes(
             dtick=1, tickvals=list(range(1, 13)), ticktext=_MONTH_LABELS, title="Month"
         )
+
+        field_bin_period_df = load_field_bin_stats_by_housing_month(year_filter, selected_db)
+        if field_bin_period_df.empty:
+            fig_field_bins_year = go.Figure()
+        else:
+            bin_order_p, bin_colors_p = _add_field_bin_columns(field_bin_period_df, ["Housing", "Month"])
+            fig_field_bins_year = px.bar(
+                field_bin_period_df,
+                x="Month",
+                y="Time (h)",
+                color="Field bin",
+                facet_col="Housing",
+                category_orders={"Housing": housing_order, "Field bin": bin_order_p},
+                color_discrete_sequence=bin_colors_p,
+                custom_data=["Percent"],
+                title=f"Magnet Time per Housing per Month by Field Bin (h){year_suffix}",
+            )
+            fig_field_bins_year.update_xaxes(
+                dtick=1, tickvals=list(range(1, 13)), ticktext=_MONTH_LABELS, title="Month"
+            )
     else:
         fig_energy_year = px.bar(
             summary_by_year_df,
@@ -530,6 +677,32 @@ def update_housing_stats(selected_db, selected_year):
         )
         fig_field_on_year.update_xaxes(dtick=1, title="Year")
 
+        field_bin_period_df = load_field_bin_stats_by_housing_year(selected_db)
+        if field_bin_period_df.empty:
+            fig_field_bins_year = go.Figure()
+        else:
+            bin_order_p, bin_colors_p = _add_field_bin_columns(field_bin_period_df, ["Housing", "Year"])
+            fig_field_bins_year = px.bar(
+                field_bin_period_df,
+                x="Year",
+                y="Time (h)",
+                color="Field bin",
+                facet_col="Housing",
+                category_orders={"Housing": housing_order, "Field bin": bin_order_p},
+                color_discrete_sequence=bin_colors_p,
+                custom_data=["Percent"],
+                title="Magnet Time per Housing per Year by Field Bin (h)",
+            )
+            fig_field_bins_year.update_xaxes(dtick=1, title="Year")
+
+    fig_field_bins_year.update_traces(
+        hovertemplate=(
+            "%{fullData.name}<br>%{x}<br>"
+            "%{y:.1f} h (%{customdata[0]:.1f}% of housing total)<extra></extra>"
+        )
+    )
+    fig_field_bins_year.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+
     sections = []
     for housing in housing_order:
         matching_rows = section_summary_df[section_summary_df["Housing"] == housing]
@@ -546,6 +719,7 @@ def update_housing_stats(selected_db, selected_year):
         fig_field_bins,
         fig_energy_year,
         fig_field_on_year,
+        fig_field_bins_year,
         dbc.Accordion(sections),
         year_options,
     )
