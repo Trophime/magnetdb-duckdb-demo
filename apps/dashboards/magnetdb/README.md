@@ -116,6 +116,23 @@ The build context must be the **repo root**, since the image needs the
 docker build -f apps/dashboards/magnetdb/Dockerfile -t magnetdb-dashboard .
 ```
 
+The build accepts these `--build-arg` overrides:
+
+| Arg | Default | Purpose |
+|---|---|---|
+| `BASE_IMAGE` | `trophime/magnettools:trixie` | Base image to build from |
+| `USERNAME` | `jovyan` | App user created in the image |
+| `USER_UID` | `1000` | UID for that user |
+| `USER_GID` | `100` | GID for that user |
+
+```bash
+docker build -f apps/dashboards/magnetdb/Dockerfile \
+    --build-arg BASE_IMAGE=trophime/magnettools:bookworm \
+    -t magnetdb-dashboard .
+```
+
+> [!CAUTION] Do nothange build arguments unless you know what you are doing.
+
 `MAGNETDB_DB_PATH` and `MAGNETDB_RECORDS_DIR` are data, not image content —
 supply them at `docker run` time, mounting the host paths in:
 
