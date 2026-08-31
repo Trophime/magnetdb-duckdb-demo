@@ -52,21 +52,27 @@ COPY --chown=${USERNAME}:${USERNAME} python_magnetcooling/ ./python_magnetcoolin
 RUN pip install --no-cache-dir "./python_magnetcooling[fitting]"
 
 COPY --chown=${USERNAME}:${USERNAME} python_magnetrun/ ./python_magnetrun/
-RUN pip install --no-cache-dir "./python_magnetrun[hybrid]"
+RUN pip install --no-cache-dir "./python_magnetrun[signal,dash,hybrid]"
 
 # Now copy the actual app code
 COPY --chown=${USERNAME}:${USERNAME} apps/dashboards/magnetdb/src/ ./src/
 WORKDIR /app/src
+
+COPY --chown=${USERNAME}:${USERNAME} apps/dashboards/magnetdb/entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
+ENV PORT=8050 \
+    WORKERS=1 \
+    THREADS=4 \
+    TIMEOUT=120
 
 EXPOSE 8050
 
 # MAGNETDB_DB_PATH and MAGNETDB_RECORDS_DIR must be supplied at `docker run`
 # time (-e MAGNETDB_DB_PATH=... -v host/duckdb:...  -v host/records:/mnt/...)
 # since the duckdb file and the records tree are data, not image content.
+# PORT, WORKERS, THREADS, and TIMEOUT are also runtime-overridable via -e,
+# e.g. -e WORKERS=3 -e THREADS=2; defaults above match prior fixed values.
 
-# magnetdb_app:server assumes magnetdb_app.py exposes `server = app.server`
-CMD ["gunicorn", "magnetdb_app:server", \
-     "--bind", "0.0.0.0:8050", \
-     "--workers", "1", \
-     "--threads", "4", \
-     "--timeout", "120"]
+# entrypoint.sh execs gunicorn so it stays PID 1 and receives SIGTERM directly
+ENTRYPOINT ["./entrypoint.sh"]
