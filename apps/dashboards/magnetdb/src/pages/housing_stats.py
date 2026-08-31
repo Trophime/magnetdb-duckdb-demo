@@ -3,6 +3,7 @@ import dash_bootstrap_components as dbc
 import dash_selectors as selectors
 import duckdb
 import magnetdb_analysis as db
+import pandas as pd
 import plotly.express as px
 from dash import Input, Output, dcc, html
 from dash.dash_table import DataTable
@@ -75,6 +76,63 @@ def load_housing_summary(db_path=None, assembly_names=None):
     con.close()
 
     return counts_df.merge(energy_df, on="Housing", how="left").fillna(0)
+
+
+def load_field_bin_stats_by_housing(db_path=None, assembly_names=None):
+    """Aggregate per-housing magnetic-field-bin time distribution.
+
+    Parameters
+    ----------
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
+    assembly_names : collection of str, optional
+        Restrict to these assemblies only. Defaults to all assemblies.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per ``(Housing, field_bin_low, field_bin_high)``, with
+        ``Housing``, ``field_bin_low``, ``field_bin_high`` [T], and
+        ``Time (h)`` (summed ``sum_dt`` / 3600). The ``[0, 0.1)`` "field
+        off" bin is excluded, so summing ``Time (h)`` per housing matches
+        its "Magnet Time (h)" (``duration_field_on_s``, threshold 0.1 T).
+        Empty if the table doesn't exist.
+    """
+    db_path = db_path or db.DB_PATH
+    con = duckdb.connect(db_path, read_only=True)
+
+    tables = (
+        con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        )
+        .df()["table_name"]
+        .tolist()
+    )
+    if "exp_assembly_bin_stats" not in tables:
+        con.close()
+        return pd.DataFrame(columns=["Housing", "field_bin_low", "field_bin_high", "Time (h)"])
+
+    query = """
+        SELECT
+            a.housing AS Housing,
+            s.field_bin_low,
+            s.field_bin_high,
+            SUM(s.sum_dt) / 3600 AS "Time (h)"
+        FROM exp_assembly_bin_stats AS s
+        JOIN experiments AS e ON e.id = s.experiment_id
+        JOIN assemblies AS a ON a.name = e.assembly_name
+        WHERE s.channel = 'Field' AND s.field_bin_low > 0
+    """
+    params = []
+    if assembly_names is not None:
+        query += " AND a.name = ANY(?)"
+        params.append(list(assembly_names))
+    query += " GROUP BY a.housing, s.field_bin_low, s.field_bin_high ORDER BY a.housing, s.field_bin_low"
+
+    df = con.execute(query, params).fetchdf()
+    con.close()
+
+    return df
 
 
 def load_housing_summary_by_year(db_path=None):
@@ -304,6 +362,8 @@ def layout(**kwargs):
             html.Div(id="housing-stats-summary"),
             dcc.Graph(id="housing-stats-energy-fig"),
             html.Br(),
+            dcc.Graph(id="housing-stats-field-bins-fig"),
+            html.Br(),
             dcc.Graph(id="housing-stats-energy-year-fig"),
             html.Br(),
             dcc.Graph(id="housing-stats-field-on-year-fig"),
@@ -317,6 +377,7 @@ def layout(**kwargs):
 @dash.callback(
     Output("housing-stats-summary", "children"),
     Output("housing-stats-energy-fig", "figure"),
+    Output("housing-stats-field-bins-fig", "figure"),
     Output("housing-stats-energy-year-fig", "figure"),
     Output("housing-stats-field-on-year-fig", "figure"),
     Output("housing-stats-sections", "children"),
@@ -326,7 +387,7 @@ def layout(**kwargs):
 )
 def update_housing_stats(selected_db, selected_year):
     if not selected_db:
-        return [], go.Figure(), go.Figure(), go.Figure(), [], [selectors.ALL]
+        return [], go.Figure(), go.Figure(), go.Figure(), go.Figure(), [], [selectors.ALL]
 
     summary_df = load_housing_summary(selected_db)
     summary_by_year_df = load_housing_summary_by_year(selected_db)
@@ -373,6 +434,46 @@ def update_housing_stats(selected_db, selected_year):
         category_orders={"Housing": housing_order},
         title=f"Total Energy per Housing{year_suffix}",
     )
+
+    field_bin_df = load_field_bin_stats_by_housing(selected_db, assembly_names=assemblies_in_year)
+    if field_bin_df.empty:
+        fig_field_bins = go.Figure()
+    else:
+        field_bin_df["Field bin"] = [
+            f"{low:g}-{high:g} T"
+            for low, high in zip(field_bin_df["field_bin_low"], field_bin_df["field_bin_high"])
+        ]
+        bin_order = (
+            field_bin_df[["field_bin_low", "Field bin"]]
+            .drop_duplicates()
+            .sort_values("field_bin_low")["Field bin"]
+            .tolist()
+        )
+        bin_colors = px.colors.sample_colorscale(
+            "Viridis", [i / max(len(bin_order) - 1, 1) for i in range(len(bin_order))]
+        )
+        field_bin_df["Percent"] = (
+            field_bin_df["Time (h)"]
+            / field_bin_df.groupby("Housing")["Time (h)"].transform("sum")
+            * 100
+        )
+
+        fig_field_bins = px.bar(
+            field_bin_df,
+            x="Housing",
+            y="Time (h)",
+            color="Field bin",
+            category_orders={"Housing": housing_order, "Field bin": bin_order},
+            color_discrete_sequence=bin_colors,
+            custom_data=["Percent"],
+            title=f"Magnet Time per Housing by Field Bin (h){year_suffix}",
+        )
+        fig_field_bins.update_traces(
+            hovertemplate=(
+                "%{fullData.name}<br>%{x}<br>"
+                "%{y:.1f} h (%{customdata[0]:.1f}% of housing total)<extra></extra>"
+            )
+        )
 
     if year_filter is not None:
         summary_by_month_df = load_housing_summary_by_month(year_filter, selected_db)
@@ -439,4 +540,12 @@ def update_housing_stats(selected_db, selected_year):
             )
         )
 
-    return top_summary, fig, fig_energy_year, fig_field_on_year, dbc.Accordion(sections), year_options
+    return (
+        top_summary,
+        fig,
+        fig_field_bins,
+        fig_energy_year,
+        fig_field_on_year,
+        dbc.Accordion(sections),
+        year_options,
+    )

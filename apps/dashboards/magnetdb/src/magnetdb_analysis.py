@@ -1306,8 +1306,8 @@ def get_users(db_path=None):
 
     counts = acronyms.value_counts()
     duplicates = sorted(counts[counts > 1].index)
-    if duplicates:
-        print(f"[get_users] duplicate acronym(s) found: {duplicates}")
+    # if duplicates:
+    #     print(f"[get_users] duplicate acronym(s) found: {duplicates}")
 
     return sorted(counts.index)
 

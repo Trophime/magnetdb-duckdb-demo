@@ -179,6 +179,66 @@ def load_assembly_summary(db_path=None):
     return total_assemblies, assemblies_in_operation or 0
 
 
+def load_field_bin_stats(experiment_ids, db_path=None):
+    """Load per-assembly magnetic-field-bin time distribution for a set of experiments.
+
+    Parameters
+    ----------
+    experiment_ids : sequence of int
+        ``experiments.id`` values to include (already filtered by the
+        page's Housing/Year/Assembly selection).
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per ``(Assembly, field_bin_low, field_bin_high)``, with
+        ``Assembly``, ``field_bin_low``, ``field_bin_high`` [T], and
+        ``Time (h)`` (summed ``sum_dt`` / 3600). The ``[0, 0.1)`` "field
+        off" bin is excluded, so summing ``Time (h)`` per assembly matches
+        its "Magnet Time (h)" (``duration_field_on_s``, threshold 0.1 T).
+        Empty if *experiment_ids* is empty or the table doesn't exist.
+    """
+    empty = pd.DataFrame(columns=["Assembly", "field_bin_low", "field_bin_high", "Time (h)"])
+    if not experiment_ids:
+        return empty
+
+    db_path = db_path or db.DB_PATH
+    con = duckdb.connect(db_path, read_only=True)
+
+    tables = (
+        con.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        )
+        .df()["table_name"]
+        .tolist()
+    )
+    if "exp_assembly_bin_stats" not in tables:
+        con.close()
+        return empty
+
+    df = con.execute(
+        """
+            SELECT
+                e.assembly_name AS Assembly,
+                s.field_bin_low,
+                s.field_bin_high,
+                SUM(s.sum_dt) / 3600 AS "Time (h)"
+            FROM exp_assembly_bin_stats AS s
+            JOIN experiments AS e ON e.id = s.experiment_id
+            WHERE s.channel = 'Field' AND s.field_bin_low > 0 AND s.experiment_id = ANY(?)
+            GROUP BY e.assembly_name, s.field_bin_low, s.field_bin_high
+            ORDER BY e.assembly_name, s.field_bin_low
+        """,
+        [list(experiment_ids)],
+    ).fetchdf()
+
+    con.close()
+
+    return df
+
+
 _TABLE_MARKDOWN_COLUMNS = {"Experiment", "Assembly"}
 
 TABLE_COLUMNS = [
@@ -402,6 +462,49 @@ def _build_page_content(
         title="Magnet Time per Assembly (h)",
     )
 
+    field_bin_df = load_field_bin_stats(df["ID"].tolist(), db_path)
+    if field_bin_df.empty:
+        fig_field_bins = go.Figure()
+    else:
+        field_bin_df["Field bin"] = [
+            f"{low:g}-{high:g} T"
+            for low, high in zip(field_bin_df["field_bin_low"], field_bin_df["field_bin_high"])
+        ]
+        bin_order = (
+            field_bin_df[["field_bin_low", "Field bin"]]
+            .drop_duplicates()
+            .sort_values("field_bin_low")["Field bin"]
+            .tolist()
+        )
+        bin_colors = px.colors.sample_colorscale(
+            "Viridis", [i / max(len(bin_order) - 1, 1) for i in range(len(bin_order))]
+        )
+        field_bin_df["Percent"] = (
+            field_bin_df["Time (h)"]
+            / field_bin_df.groupby("Assembly")["Time (h)"].transform("sum")
+            * 100
+        )
+
+        fig_field_bins = px.bar(
+            field_bin_df,
+            x="Assembly",
+            y="Time (h)",
+            color="Field bin",
+            category_orders={
+                "Assembly": field_on_by_assembly["Assembly"].tolist(),
+                "Field bin": bin_order,
+            },
+            color_discrete_sequence=bin_colors,
+            custom_data=["Percent"],
+            title="Magnet Time per Assembly by Field Bin (h)",
+        )
+        fig_field_bins.update_traces(
+            hovertemplate=(
+                "%{fullData.name}<br>%{x}<br>"
+                "%{y:.1f} h (%{customdata[0]:.1f}% of assembly total)<extra></extra>"
+            )
+        )
+
     table_source_df = selectors.filter_by_date_range(
         df, "Experiment", table_start_date, table_end_date
     )
@@ -439,6 +542,7 @@ def _build_page_content(
         fig_per_exp,
         fig_per_assembly,
         fig_field_on,
+        fig_field_bins,
         table_df.to_dict("records"),
         summary,
     )
@@ -481,6 +585,8 @@ def layout(assembly=None, **kwargs):
             dcc.Graph(id="fig-per-assembly"),
             html.Br(),
             dcc.Graph(id="fig-field-on"),
+            html.Br(),
+            dcc.Graph(id="fig-field-bins"),
             html.Br(),
             html.Details(
                 [
@@ -569,6 +675,7 @@ def layout(assembly=None, **kwargs):
     Output("fig-per-assembly", "style"),
     Output("fig-field-on", "figure"),
     Output("fig-field-on", "style"),
+    Output("fig-field-bins", "figure"),
     Output("assembly-stats-table", "data"),
     Output("assembly-stats-summary", "children"),
     Output("assembly-stats-assembly-filter", "options"),
@@ -603,6 +710,7 @@ def update_assembly_stats(
             {},
             go.Figure(),
             {},
+            go.Figure(),
             [],
             [],
             [],
@@ -657,6 +765,7 @@ def update_assembly_stats(
     fig_per_assembly_style = (
         {"display": "none"} if selected_assembly != selectors.ALL else {}
     )
+    fig_field_on_style = {}
 
     overview_plot_df = load_overview_records(selected_db)
     if selected_housing and selected_housing != selectors.ALL:
@@ -676,6 +785,7 @@ def update_assembly_stats(
         fig_per_exp,
         fig_per_assembly,
         fig_field_on,
+        fig_field_bins,
         table_records,
         summary,
     ) = _build_page_content(
@@ -699,7 +809,8 @@ def update_assembly_stats(
         fig_per_assembly,
         fig_per_assembly_style,
         fig_field_on,
-        fig_per_assembly_style,
+        fig_field_on_style,
+        fig_field_bins,
         table_records,
         summary,
         assembly_options,
