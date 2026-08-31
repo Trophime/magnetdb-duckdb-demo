@@ -22,6 +22,8 @@ dash.register_page(__name__, path="/part_stats", name="Part stats", order=4)
 
 S_TO_H = 3600
 
+PART_TYPES = ("bitter", "helix", "supra")
+
 EXP_PART_BIN_STATS_COLUMNS = [
     "ID",
     "Experiment",
@@ -519,7 +521,9 @@ def _build_page_content(
     """
     exp_df = df.drop_duplicates(subset="ID").copy()
 
-    part_order = [p for p in db.get_all_parts(db_path) if p in set(df["Part"])]
+    part_order = [
+        p for p in db.get_all_parts(db_path, types=PART_TYPES) if p in set(df["Part"])
+    ]
 
     field_on_by_part_magnet = df.groupby(["Part", "Magnet"], as_index=False).agg(
         {"Time (h)": "sum"}
@@ -834,7 +838,7 @@ def update_part_stats(
     )
     part_options = [selectors.ALL] + [
         p
-        for p in db.get_all_parts(selected_db)
+        for p in db.get_all_parts(selected_db, types=PART_TYPES)
         if names_with_status is None or p in names_with_status
     ]
 
