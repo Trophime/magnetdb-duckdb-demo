@@ -92,7 +92,7 @@ layout = html.Div(
                     "ra-year",
                     "Year",
                     options=["2022", "2023", "2024", "2025", "2026"],
-                    style={"width": "250 px"},
+                    style={"width": "250px"},
                 ),
                 selectors.aggregate_filter("ra-user", "User", options=db.get_users(), style={"width": "250px"}),
             ],
