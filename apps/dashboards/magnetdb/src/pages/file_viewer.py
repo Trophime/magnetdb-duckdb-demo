@@ -78,6 +78,20 @@ def layout(assembly=None, file=None, **kwargs):
                     ),
                     style_editor.modal_component("fv"),
                     html.Br(),
+                    html.Label("6. Cursor sync:", style={"fontWeight": "bold"}),
+                    html.Div(
+                        [
+                            dcc.Checklist(
+                                id="fv-sync-cursor-toggle",
+                                options=[{"label": " Sync cursor across graphs", "value": "sync"}],
+                                value=["sync"],
+                                style={"display": "inline-block", "marginRight": "15px"},
+                            ),
+                            html.Button("Clear cursors", id="fv-clear-cursors-btn", n_clicks=0),
+                        ],
+                        style={"marginTop": "4px"},
+                    ),
+                    html.Br(),
                     html.Label("7. Downsampling Method:", style={"fontWeight": "bold"}),
                     dcc.Dropdown(
                         id="dropdown-downsampling",
@@ -167,7 +181,7 @@ def update_sensors_menus(
     menus_blocks = []
 
     # On boucle sur TOUS les groupes existants dans le fichier
-    for group_name in mrun.MagnetData.list_groups():
+    for group_name in db.order_groups(mrun.MagnetData.list_groups()):
         if group_name == "Infos":
             continue
 
@@ -240,7 +254,6 @@ def update_sensors_menus(
                                             "type": "dynamic-graph",
                                             "index": group_name,
                                         },
-                                        clear_on_unhover=True,
                                         style={"height": "350px"},
                                     )
                                 ],
@@ -463,54 +476,88 @@ def sync_zoom_home(relayout_data_list, graph_ids):
     return patches
 
 
-# CALLBACK 6 : Synchronisation d'une ligne verticale (curseur) entre tous les graphiques
-#
-# Clientside (not a server round trip): a Python callback here would need two
-# separate HTTP requests for the hover and the clear-on-unhover events, with no
-# guarantee they resolve in order -- a fast mouse movement can make the "clear"
-# response land after the "set" one and erase a still-valid cursor line. Calling
-# Plotly.relayout() directly in the browser keeps both in the same synchronous
-# event order they actually fired in.
-dash.clientside_callback(
-    """
-    function(hoverDataList, ids) {
-        const ctx = window.dash_clientside.callback_context;
-        const triggeredId = ctx.triggered_id;
-        if (!triggeredId) {
-            return ids.map(() => window.dash_clientside.no_update);
-        }
-        const triggeredKey = JSON.stringify(triggeredId, Object.keys(triggeredId).sort());
-        const idx = ids.findIndex(
-            (i) => JSON.stringify(i, Object.keys(i).sort()) === triggeredKey
-        );
-        const hover = hoverDataList[idx];
-        const cursorX = (hover && hover.points && hover.points.length) ? hover.points[0].x : null;
+_CURSOR_LINE_STYLE = {"color": "#888888", "width": 1, "dash": "dot"}
+_CURSOR_MATCH_THRESHOLD = {"timestamp": 2.0, "t": 0.5}  # seconds
 
-        ids.forEach((id) => {
-            if (JSON.stringify(id, Object.keys(id).sort()) === triggeredKey) {
-                return;
-            }
-            const wrapper = document.getElementById(JSON.stringify(id, Object.keys(id).sort()));
-            const gd = wrapper && wrapper.querySelector('.js-plotly-plot');
-            if (!gd) {
-                return;
-            }
-            const shapes = cursorX === null ? [] : [{
-                type: 'line', x0: cursorX, x1: cursorX, y0: 0, y1: 1,
-                xref: 'x', yref: 'paper',
-                line: {color: '#888888', width: 1, dash: 'dot'},
-            }];
-            Plotly.relayout(gd, {shapes: shapes});
-        });
 
-        return ids.map(() => window.dash_clientside.no_update);
+def _cursor_line_shape(x):
+    return {
+        "type": "line", "x0": x, "x1": x, "y0": 0, "y1": 1,
+        "xref": "x", "yref": "paper", "line": _CURSOR_LINE_STYLE,
     }
-    """,
+
+
+def _cursor_x_distance(a, b, x_mode):
+    if x_mode == "timestamp":
+        return abs((pd.Timestamp(a) - pd.Timestamp(b)).total_seconds())
+    return abs(float(a) - float(b))
+
+
+# CALLBACK 6 : Epingler/retirer une ligne verticale (curseur) sur un ou tous les graphiques
+@dash.callback(
     Output({"type": "dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
-    Input({"type": "dynamic-graph", "index": ALL}, "hoverData"),
+    Input({"type": "dynamic-graph", "index": ALL}, "clickData"),
+    State({"type": "dynamic-graph", "index": ALL}, "id"),
+    State({"type": "dynamic-graph", "index": ALL}, "figure"),
+    State("fv-sync-cursor-toggle", "value"),
+    State("dd-x-axis", "value"),
+    prevent_initial_call=True,
+)
+def pin_cursor_home(click_data_list, graph_ids, figures, sync_toggle, x_mode):
+    triggered_id = ctx.triggered_id
+    if not triggered_id:
+        raise PreventUpdate
+
+    trigger_index = graph_ids.index(triggered_id)
+    click_data = click_data_list[trigger_index]
+    if not click_data or not click_data.get("points"):
+        raise PreventUpdate
+    clicked_x = click_data["points"][0]["x"]
+
+    threshold = _CURSOR_MATCH_THRESHOLD.get(x_mode, _CURSOR_MATCH_THRESHOLD["t"])
+    current_shapes = (figures[trigger_index].get("layout") or {}).get("shapes") or []
+    match_idx = next(
+        (i for i, s in enumerate(current_shapes) if _cursor_x_distance(s["x0"], clicked_x, x_mode) <= threshold),
+        None,
+    )
+    if match_idx is not None:
+        new_shapes = current_shapes[:match_idx] + current_shapes[match_idx + 1:]
+    else:
+        new_shapes = current_shapes + [_cursor_line_shape(clicked_x)]
+
+    propagate = bool(sync_toggle)
+    patches = []
+    for g_id in graph_ids:
+        if g_id == triggered_id:
+            patched_fig = Patch()
+            patched_fig["layout"]["shapes"] = new_shapes
+            patches.append(patched_fig)
+            continue
+
+        if not propagate:
+            patches.append(dash.no_update)
+            continue
+
+        patched_fig = Patch()
+        patched_fig["layout"]["shapes"] = new_shapes
+        patches.append(patched_fig)
+
+    return patches
+
+
+@dash.callback(
+    Output({"type": "dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
+    Input("fv-clear-cursors-btn", "n_clicks"),
     State({"type": "dynamic-graph", "index": ALL}, "id"),
     prevent_initial_call=True,
 )
+def clear_cursors_home(n_clicks, graph_ids):
+    patches = []
+    for _ in graph_ids:
+        patched_fig = Patch()
+        patched_fig["layout"]["shapes"] = []
+        patches.append(patched_fig)
+    return patches
 
 
 @dash.callback(

@@ -2,6 +2,7 @@ import dash
 import dash_selectors as selectors
 import magnetdb_analysis as db
 import magnetdb_plot as plot
+import pandas as pd
 import style_editor
 from dash import ALL, Input, Output, Patch, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
@@ -93,6 +94,20 @@ def layout(assembly=None, record=None, **kwargs):
                 id="overview-records-include-extra",
                 options=[{"label": " Include archive & event files (slower)", "value": "extra"}],
                 value=[],
+                style={"marginTop": "4px"},
+            ),
+            html.Br(),
+            html.Label("6. Cursor sync:", style={"fontWeight": "bold"}),
+            html.Div(
+                [
+                    dcc.Checklist(
+                        id="overview-records-sync-cursor-toggle",
+                        options=[{"label": " Sync cursor across graphs", "value": "sync"}],
+                        value=["sync"],
+                        style={"display": "inline-block", "marginRight": "15px"},
+                    ),
+                    html.Button("Clear cursors", id="overview-records-clear-cursors-btn", n_clicks=0),
+                ],
                 style={"marginTop": "4px"},
             ),
             html.Br(),
@@ -231,7 +246,6 @@ def update_groups(selected_record, selected_db, include_extra_value):
                                 dcc.Graph(
                                     id={"type": "ov-dynamic-graph", "index": group_name},
                                     figure=_EMPTY_FIG,
-                                    clear_on_unhover=True,
                                     style={"height": "350px"},
                                 ),
                                 style={"flexGrow": 1, "minWidth": "0", "padding": "10px"},
@@ -407,55 +421,89 @@ def sync_zoom_overview(relayout_data_list, graph_ids):
     return patches
 
 
-# Live cross-graph cursor sync: mirrors sync_zoom_overview but propagates a
-# shared hover cursor (vertical line) instead of zoom/pan.
-#
-# Clientside (not a server round trip): a Python callback here would need two
-# separate HTTP requests for the hover and the clear-on-unhover events, with no
-# guarantee they resolve in order -- a fast mouse movement can make the "clear"
-# response land after the "set" one and erase a still-valid cursor line. Calling
-# Plotly.relayout() directly in the browser keeps both in the same synchronous
-# event order they actually fired in.
-dash.clientside_callback(
-    """
-    function(hoverDataList, ids) {
-        const ctx = window.dash_clientside.callback_context;
-        const triggeredId = ctx.triggered_id;
-        if (!triggeredId) {
-            return ids.map(() => window.dash_clientside.no_update);
-        }
-        const triggeredKey = JSON.stringify(triggeredId, Object.keys(triggeredId).sort());
-        const idx = ids.findIndex(
-            (i) => JSON.stringify(i, Object.keys(i).sort()) === triggeredKey
-        );
-        const hover = hoverDataList[idx];
-        const cursorX = (hover && hover.points && hover.points.length) ? hover.points[0].x : null;
+_CURSOR_LINE_STYLE = {"color": "#888888", "width": 1, "dash": "dot"}
+_CURSOR_MATCH_THRESHOLD = {"timestamp": 2.0, "t": 0.5}  # seconds
 
-        ids.forEach((id) => {
-            if (JSON.stringify(id, Object.keys(id).sort()) === triggeredKey) {
-                return;
-            }
-            const wrapper = document.getElementById(JSON.stringify(id, Object.keys(id).sort()));
-            const gd = wrapper && wrapper.querySelector('.js-plotly-plot');
-            if (!gd) {
-                return;
-            }
-            const shapes = cursorX === null ? [] : [{
-                type: 'line', x0: cursorX, x1: cursorX, y0: 0, y1: 1,
-                xref: 'x', yref: 'paper',
-                line: {color: '#888888', width: 1, dash: 'dot'},
-            }];
-            Plotly.relayout(gd, {shapes: shapes});
-        });
 
-        return ids.map(() => window.dash_clientside.no_update);
+def _cursor_line_shape(x):
+    return {
+        "type": "line", "x0": x, "x1": x, "y0": 0, "y1": 1,
+        "xref": "x", "yref": "paper", "line": _CURSOR_LINE_STYLE,
     }
-    """,
+
+
+def _cursor_x_distance(a, b, x_mode):
+    if x_mode == "timestamp":
+        return abs((pd.Timestamp(a) - pd.Timestamp(b)).total_seconds())
+    return abs(float(a) - float(b))
+
+
+# Pin/remove a cursor line on one or all graphs, mirroring sync_zoom_overview's
+# pattern-matching id lookup.
+@dash.callback(
     Output({"type": "ov-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
-    Input({"type": "ov-dynamic-graph", "index": ALL}, "hoverData"),
+    Input({"type": "ov-dynamic-graph", "index": ALL}, "clickData"),
+    State({"type": "ov-dynamic-graph", "index": ALL}, "id"),
+    State({"type": "ov-dynamic-graph", "index": ALL}, "figure"),
+    State("overview-records-sync-cursor-toggle", "value"),
+    State("overview-records-x-axis", "value"),
+    prevent_initial_call=True,
+)
+def pin_cursor_overview(click_data_list, graph_ids, figures, sync_toggle, x_mode):
+    triggered_id = ctx.triggered_id
+    if not triggered_id:
+        raise PreventUpdate
+
+    trigger_index = graph_ids.index(triggered_id)
+    click_data = click_data_list[trigger_index]
+    if not click_data or not click_data.get("points"):
+        raise PreventUpdate
+    clicked_x = click_data["points"][0]["x"]
+
+    threshold = _CURSOR_MATCH_THRESHOLD.get(x_mode, _CURSOR_MATCH_THRESHOLD["t"])
+    current_shapes = (figures[trigger_index].get("layout") or {}).get("shapes") or []
+    match_idx = next(
+        (i for i, s in enumerate(current_shapes) if _cursor_x_distance(s["x0"], clicked_x, x_mode) <= threshold),
+        None,
+    )
+    if match_idx is not None:
+        new_shapes = current_shapes[:match_idx] + current_shapes[match_idx + 1:]
+    else:
+        new_shapes = current_shapes + [_cursor_line_shape(clicked_x)]
+
+    propagate = bool(sync_toggle)
+    patches = []
+    for g_id in graph_ids:
+        if g_id == triggered_id:
+            patched_fig = Patch()
+            patched_fig["layout"]["shapes"] = new_shapes
+            patches.append(patched_fig)
+            continue
+
+        if not propagate:
+            patches.append(dash.no_update)
+            continue
+
+        patched_fig = Patch()
+        patched_fig["layout"]["shapes"] = new_shapes
+        patches.append(patched_fig)
+
+    return patches
+
+
+@dash.callback(
+    Output({"type": "ov-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
+    Input("overview-records-clear-cursors-btn", "n_clicks"),
     State({"type": "ov-dynamic-graph", "index": ALL}, "id"),
     prevent_initial_call=True,
 )
+def clear_cursors_overview(n_clicks, graph_ids):
+    patches = []
+    for _ in graph_ids:
+        patched_fig = Patch()
+        patched_fig["layout"]["shapes"] = []
+        patches.append(patched_fig)
+    return patches
 
 
 def _style_context_fn(group_name, selected_record, selected_db, include_extra_value):
