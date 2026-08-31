@@ -130,13 +130,16 @@ def get_all_assemblies(db_path=None):
         return conn.execute(query).df()["name"].tolist()
 
 
-def get_all_parts(db_path=None):
+def get_all_parts(db_path=None, types=None):
     """Select the list of all parts, sorted by ascending manufacturing date.
 
     Parameters
     ----------
     db_path : str or :class:`~pathlib.Path`, optional
         Path to the DuckDB database. Defaults to `DB_PATH`.
+    types : sequence of str, optional
+        Restrict to parts whose ``type`` is in this collection. Defaults to
+        no restriction (all part types).
 
     Returns
     -------
@@ -144,12 +147,13 @@ def get_all_parts(db_path=None):
         Part names (``parts.name``).
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        query = """
-            SELECT name
-            FROM parts
-            ORDER BY manufactured_at ASC
-        """
-        return conn.execute(query).df()["name"].tolist()
+        query = "SELECT name FROM parts"
+        params = []
+        if types is not None:
+            query += " WHERE type = ANY(?)"
+            params.append(list(types))
+        query += " ORDER BY manufactured_at ASC"
+        return conn.execute(query, params).df()["name"].tolist()
 
 
 def get_all_magnets(db_path=None):
@@ -769,6 +773,60 @@ def load_json_config(filepath):
     return {}
 
 
+_USER_GROUP_ORDER_PATH = Path.home() / ".config" / "magnetdb" / "group_order.json"
+_BUNDLED_GROUP_ORDER_PATH = Path(__file__).parent / "group_order.json"
+
+
+def _load_group_order() -> list[str]:
+    """Load the configured sensor-group display order.
+
+    Resolved in order: ``~/.config/magnetdb/group_order.json`` if present, else
+    the bundled default shipped next to this module. Returns an empty list
+    (no reordering) if neither is readable.
+
+    Returns
+    -------
+    list of str
+        Group names in the desired display order.
+    """
+    for candidate in (_USER_GROUP_ORDER_PATH, _BUNDLED_GROUP_ORDER_PATH):
+        if candidate.exists():
+            try:
+                with open(candidate, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception as e:
+                print(f"Error loading group order {candidate}: {e}")
+    return []
+
+
+_GROUP_ORDER = _load_group_order()
+
+
+def order_groups(group_names: list[str]) -> list[str]:
+    """Reorder group names per the configured sensor-group display order.
+
+    Groups listed in ``group_order.json`` appear first, in that order; any
+    group not listed keeps its original relative position and is appended
+    after the listed ones.
+
+    Parameters
+    ----------
+    group_names : list of str
+        Group names in their original (unordered) sequence.
+
+    Returns
+    -------
+    list of str
+        *group_names* reordered per the configured group order.
+    """
+    priority = {name: i for i, name in enumerate(_GROUP_ORDER)}
+    listed = sorted(
+        (g for g in group_names if g in priority), key=lambda g: priority[g]
+    )
+    unlisted = [g for g in group_names if g not in priority]
+    return listed + unlisted
+
+
 _PUPITRE_DEFS = load_defs(resolve_defs_file("pupitre-defs.json"))
 
 _DEFS_FORMAT_BY_DATATYPE = {
@@ -812,9 +870,10 @@ def get_overview_group_entries(regular_files, housing):
     -------
     dict
         ``{group_name: [{"label": str, "value": str, "channels": {fmt:
-        name}}]}``, pupitre groups first (alphabetical), then leftover
-        tdms-only groups (alphabetical). Groups left empty by exclusions are
-        dropped.
+        name}}]}``. Groups left empty by exclusions are dropped; the
+        remaining keys are ordered per :func:`order_groups` (configured
+        order first, then any unlisted groups keeping their pupitre-first,
+        alphabetical-within-format position).
     """
     pupitre_columns = {}
     tdms_columns = {}
@@ -895,7 +954,8 @@ def get_overview_group_entries(regular_files, housing):
                 "channels": {"pigbrother": channel},
             })
 
-    return {g: e for g, e in entries.items() if e}
+    entries = {g: e for g, e in entries.items() if e}
+    return {g: entries[g] for g in order_groups(list(entries.keys()))}
 
 
 def get_comparable_pairs_for_group(group_name, selected_files, housing):
