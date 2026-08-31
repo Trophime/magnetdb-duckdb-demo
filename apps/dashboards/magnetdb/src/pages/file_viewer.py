@@ -240,6 +240,7 @@ def update_sensors_menus(
                                             "type": "dynamic-graph",
                                             "index": group_name,
                                         },
+                                        clear_on_unhover=True,
                                         style={"height": "350px"},
                                     )
                                 ],
@@ -460,6 +461,56 @@ def sync_zoom_home(relayout_data_list, graph_ids):
         patches.append(patched_fig)
 
     return patches
+
+
+# CALLBACK 6 : Synchronisation d'une ligne verticale (curseur) entre tous les graphiques
+#
+# Clientside (not a server round trip): a Python callback here would need two
+# separate HTTP requests for the hover and the clear-on-unhover events, with no
+# guarantee they resolve in order -- a fast mouse movement can make the "clear"
+# response land after the "set" one and erase a still-valid cursor line. Calling
+# Plotly.relayout() directly in the browser keeps both in the same synchronous
+# event order they actually fired in.
+dash.clientside_callback(
+    """
+    function(hoverDataList, ids) {
+        const ctx = window.dash_clientside.callback_context;
+        const triggeredId = ctx.triggered_id;
+        if (!triggeredId) {
+            return ids.map(() => window.dash_clientside.no_update);
+        }
+        const triggeredKey = JSON.stringify(triggeredId, Object.keys(triggeredId).sort());
+        const idx = ids.findIndex(
+            (i) => JSON.stringify(i, Object.keys(i).sort()) === triggeredKey
+        );
+        const hover = hoverDataList[idx];
+        const cursorX = (hover && hover.points && hover.points.length) ? hover.points[0].x : null;
+
+        ids.forEach((id) => {
+            if (JSON.stringify(id, Object.keys(id).sort()) === triggeredKey) {
+                return;
+            }
+            const wrapper = document.getElementById(JSON.stringify(id, Object.keys(id).sort()));
+            const gd = wrapper && wrapper.querySelector('.js-plotly-plot');
+            if (!gd) {
+                return;
+            }
+            const shapes = cursorX === null ? [] : [{
+                type: 'line', x0: cursorX, x1: cursorX, y0: 0, y1: 1,
+                xref: 'x', yref: 'paper',
+                line: {color: '#888888', width: 1, dash: 'dot'},
+            }];
+            Plotly.relayout(gd, {shapes: shapes});
+        });
+
+        return ids.map(() => window.dash_clientside.no_update);
+    }
+    """,
+    Output({"type": "dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
+    Input({"type": "dynamic-graph", "index": ALL}, "hoverData"),
+    State({"type": "dynamic-graph", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
 
 
 @dash.callback(
