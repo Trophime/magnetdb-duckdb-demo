@@ -361,20 +361,79 @@ def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> No
         print(f"  + magnet    {name}  [{magnet_type}]  {status}")
 
 
+def _reclaim_reused_parts(con, new_magnet_name: str, part_names: list[str], verbose: bool = True) -> None:
+    """Retire whichever still-active magnet(s) currently hold *part_names*
+    and close their open assembly link(s), freeing the parts for reuse by
+    *new_magnet_name*.
+
+    "Currently hold" is determined from ``magnet_parts`` history joined to
+    ``magnets.status`` (not a part's own ``status`` field), since a part can
+    accumulate rows across every magnet it's ever belonged to. A part with
+    no such active holder is left untouched — the caller's own in-stock
+    check then raises for that case, same as before this function existed.
+    An old magnet's already-closed assembly link (explicit
+    ``decommissioned_at``) is never reopened or overridden.
+    """
+    retire_at = _fallback_decommission_at(assembled_at_from_name(new_magnet_name))
+
+    old_magnets: dict[str, None] = {}
+    for part_name in part_names:
+        rows = con.execute(
+            "SELECT DISTINCT mp.magnet_name FROM magnet_parts mp "
+            "JOIN magnets m ON m.name = mp.magnet_name "
+            "WHERE mp.part_name = ? AND mp.magnet_name != ? "
+            "AND m.status NOT IN (?, ?)",
+            [part_name, new_magnet_name, LifecycleStatus.RETIRED.value, LifecycleStatus.DEAD.value],
+        ).fetchall()
+        for (old_magnet,) in rows:
+            old_magnets.setdefault(old_magnet, None)
+
+    for old_magnet in old_magnets:
+        update_magnet_status(
+            con, old_magnet, LifecycleStatus.RETIRED.value,
+            description=f"Superseded by magnet '{new_magnet_name}'.",
+            changed_at=retire_at, verbose=verbose,
+        )
+        open_links = con.execute(
+            "SELECT assembly_name FROM assembly_magnets "
+            "WHERE magnet_name = ? AND decommissioned_at IS NULL",
+            [old_magnet],
+        ).fetchall()
+        for (open_assembly,) in open_links:
+            decommission_assembly(
+                con, open_assembly, decommissioned_at=retire_at,
+                description=f"Auto-closed: magnet '{old_magnet}' retired.",
+                verbose=verbose,
+            )
+
+
 def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool = True) -> None:
     """Link parts to a magnet, computing coil_index for helix/bitter parts.
 
     ``parts`` must be a list of part dicts, each with at least ``name`` and
     ``type`` keys (i.e. the raw parts list from the magnet JSON export).
 
-    Every part must currently have ``status == "in_stock"`` — validated up
-    front, before any row is inserted, so a rejected call leaves zero
-    ``magnet_parts`` rows rather than a partial set.
+    Every part must end up ``in_stock`` before linking — validated up front,
+    before any row is inserted, so a rejected call leaves zero
+    ``magnet_parts`` rows rather than a partial set. A part already linked
+    to *magnet_name* itself is exempt (an idempotent re-call skips it,
+    regardless of its current status). A part that already exists with a
+    non-``in_stock`` status is otherwise first offered to
+    :func:`_reclaim_reused_parts`: if some other still-active magnet
+    currently holds it, that magnet is retired (and its open assembly link
+    closed) to free the part. A non-``in_stock`` part with no such holder
+    (e.g. one set directly via ``part update-status``) still raises.
+
+    Each newly-linked part (not one already present, skipped as a
+    duplicate) is then promoted to ``in_operation`` via
+    :func:`update_part_status` — attaching a part to a magnet commits it,
+    independent of whether that magnet is ever linked to an assembly.
 
     Raises
     ------
     ValueError
-        If a part is not found, or its status is not ``"in_stock"``.
+        If a part is not found, or its status is not ``"in_stock"`` and no
+        active holder can be reclaimed for it.
     """
     part_names = [p["name"] for p in parts]
     if part_names:
@@ -388,6 +447,31 @@ def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool 
         for part_name in part_names:
             if part_name not in status_by_name:
                 raise ValueError(f"Part '{part_name}' not found in database.")
+
+        already_linked = {
+            r[0] for r in con.execute(
+                f"SELECT part_name FROM magnet_parts WHERE magnet_name = ? "
+                f"AND part_name IN ({placeholders})",
+                [magnet_name] + part_names,
+            ).fetchall()
+        }
+
+        non_in_stock = [
+            p for p in part_names
+            if status_by_name[p] != LifecycleStatus.IN_STOCK.value and p not in already_linked
+        ]
+        if non_in_stock:
+            _reclaim_reused_parts(con, magnet_name, non_in_stock, verbose=verbose)
+            status_by_name = dict(
+                con.execute(
+                    f"SELECT name, status FROM parts WHERE name IN ({placeholders})",
+                    part_names,
+                ).fetchall()
+            )
+
+        for part_name in part_names:
+            if part_name in already_linked:
+                continue
             status = status_by_name[part_name]
             if status != LifecycleStatus.IN_STOCK.value:
                 raise ValueError(
@@ -420,6 +504,12 @@ def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool 
             [magnet_name, part_name, rank, coil_index],
         )
         inserted += 1
+
+        update_part_status(
+            con, part_name, LifecycleStatus.IN_OPERATION.value,
+            description=f"Attached to magnet '{magnet_name}'.",
+            changed_at=assembled_at_from_name(magnet_name), verbose=verbose,
+        )
 
     if verbose:
         print(
@@ -556,6 +646,27 @@ def manufactured_at_from_name(name: str) -> str | None:
     return _date_from_coded_name(name, "[HR]")
 
 
+def _fallback_decommission_at(reference) -> str | None:
+    """Return a safe auto-close fallback timestamp anchored to *reference*
+    (an incoming ``commissioned_at``/``assembled_at`` value), or ``None``.
+
+    Same calendar day at ``07:00``, matching the incoming side's ``08:00``
+    — the same-day handoff pairing already used throughout the source data.
+    A bare date (no time-of-day, e.g. from :func:`assembled_at_from_name`)
+    is treated as defaulting to that convention's ``08:00`` anchor. An
+    explicit timestamp is respected as-is and the result clamped to never
+    land after it, so an auto-closed predecessor can never appear to still
+    be open past the successor's actual, explicitly-given start.
+    """
+    if not reference:
+        return None
+    reference = str(reference)
+    if len(reference) <= 10:  # bare date, no explicit time-of-day
+        reference = f"{reference} 08:00:00"
+    same_day_07 = f"{reference[:10]} 07:00:00"
+    return min(reference, same_day_07)
+
+
 def _assembly_is_active(con, name: str) -> bool:
     """True if *name* is a non-``in_study`` assembly with no ``decommissioned_at``."""
     row = con.execute(
@@ -600,7 +711,7 @@ def _resolve_housing_overlap(
     ).fetchone()
     if open_predecessor is not None:
         decommission_assembly(
-            con, open_predecessor[0], decommissioned_at=commissioned_at,
+            con, open_predecessor[0], decommissioned_at=_fallback_decommission_at(commissioned_at),
             description=f"Auto-closed: superseded by assembly '{name}'.",
             verbose=verbose,
         )
@@ -751,7 +862,12 @@ def decommission_assembly(
     name:
         Assembly name.
     decommissioned_at:
-        Timestamp; defaults to now. Only applied if not already set.
+        Timestamp used only if the assembly doesn't already have one; an
+        already-set value on the assembly row always wins (so a re-call —
+        e.g. from an auto-close path with no date of its own — backfills any
+        still-open ``assembly_magnets`` link and logs status_history with
+        the assembly's true original date, not a fresh fallback). Defaults
+        to now if the assembly has none and none is passed in.
     description:
         Free-text note appended to ``status_history``.
     attachments:
@@ -768,7 +884,12 @@ def decommission_assembly(
     if not exists(con, "assemblies", name):
         raise ValueError(f"Assembly '{name}' not found.")
 
-    decommissioned_at = parse_timestamp(decommissioned_at) or datetime.now().isoformat()
+    existing = con.execute(
+        "SELECT decommissioned_at FROM assemblies WHERE name = ?", [name]
+    ).fetchone()[0]
+    decommissioned_at = (
+        parse_timestamp(existing) or parse_timestamp(decommissioned_at) or datetime.now().isoformat()
+    )
     con.execute(
         "UPDATE assemblies SET status = ?, decommissioned_at = COALESCE(decommissioned_at, CAST(? AS TIMESTAMP)) "
         "WHERE name = ?",
@@ -797,18 +918,24 @@ def insert_assembly_magnets(
     dict with optional positional/temporal fields (z_offset, r_offset,
     parallax, commissioned_at, decommissioned_at, metadata).
 
-    For an entry with no ``decommissioned_at`` (i.e. an open link): rejects
-    if the magnet already has an open link to a *different* assembly, and —
-    if *assembly_name* is currently active (see :func:`_assembly_is_active`)
-    — cascades the magnet (and its parts) from ``in_stock`` to
-    ``in_operation`` (the commissioning cascade).
-
-    Raises
-    ------
-    ValueError
-        If the magnet already has an open link to a different assembly.
+    For an entry with no ``decommissioned_at`` (i.e. an open link): if the
+    magnet already has an open link to a *different* assembly (moved to a
+    new housing), that other assembly is auto-closed via
+    :func:`decommission_assembly` — fallback ``07:00`` same day as this
+    entry's own ``commissioned_at``, or *assembly_name*'s own
+    ``commissioned_at`` if the entry doesn't carry one, when no explicit
+    ``decommissioned_at`` is already recorded for it — mirroring the
+    same-housing auto-close in :func:`_resolve_housing_overlap`. Then, if
+    *assembly_name* is currently active (see :func:`_assembly_is_active`),
+    the magnet (and its parts) cascade from ``in_stock`` to ``in_operation``
+    (the commissioning cascade).
     """
     assembly_active = _assembly_is_active(con, assembly_name)
+    assembly_row = con.execute(
+        "SELECT commissioned_at FROM assemblies WHERE name = ?", [assembly_name]
+    ).fetchone()
+    assembly_commissioned_at = assembly_row[0] if assembly_row else None
+
     for entry in magnet_entries:
         magnet_name = _magnet_entry_name(entry)
         extra = entry if isinstance(entry, dict) else {}
@@ -830,9 +957,12 @@ def insert_assembly_magnets(
                 [magnet_name, assembly_name],
             ).fetchone()
             if other is not None:
-                raise ValueError(
-                    f"Magnet '{magnet_name}' is already actively linked to assembly "
-                    f"'{other[0]}'; decommission that link before linking it to '{assembly_name}'."
+                reference = parse_timestamp(extra.get("commissioned_at")) or assembly_commissioned_at
+                decommission_assembly(
+                    con, other[0],
+                    decommissioned_at=_fallback_decommission_at(reference),
+                    description=f"Auto-closed: magnet '{magnet_name}' moved to assembly '{assembly_name}'.",
+                    verbose=verbose,
                 )
 
         con.execute(

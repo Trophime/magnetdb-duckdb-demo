@@ -153,36 +153,6 @@ python to_duckdb/demos/list_users_unlinked.py --db to_duckdb/test-magnetdb.duckd
 
 ---
 
-## retire_superseded_magnets.py
-
-For every `helix`/`bitter`/`supra` part, builds that part's magnet-usage
-history (`magnet_parts`, ordered by `assembled_at`) and flags every magnet
-in that history except the most recently assembled one. The deduplicated
-union of flagged magnets is set to `status='retired'` via
-`update_magnet_status` (status_history logged, the magnet's own parts
-cascaded to `in_stock`). A magnet with no `assembled_at` can't be ordered,
-so it's skipped with a warning and left untouched; a magnet already
-`retired` or `dead` is also left untouched, so re-running is a no-op once
-every candidate has been processed.
-
-The rule is per-part and literal: a magnet is retired if it is not the
-latest holder of *any* shared coil part, even if it is still the latest
-holder of a different one.
-
-Writes by default; pass `--dry-run` to preview.
-
-```bash
-python to_duckdb/demos/retire_superseded_magnets.py --dry-run
-python to_duckdb/demos/retire_superseded_magnets.py --db to_duckdb/test-magnetdb.duckdb
-```
-
-| Flag | Default | Description |
-|---|---|---|
-| `--db` | `to_duckdb/test-magnetdb.duckdb` | Target DuckDB file |
-| `--dry-run` | off (writes) | Preview changes without writing anything |
-
----
-
 ## plot_magnet_stress.py
 
 Plots magnetic field and hoop stress for a magnet across a given list of

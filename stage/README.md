@@ -10,10 +10,22 @@ RECORDS=~/LNCMIG-Data/records
 python magnetdb.py db create --db $DB
 
 # load assembly by data and check data
-for file in $(../scripts/list_site_configs.sh); do
-    echo $file
-    python magnetdb.py assembly add "$file" --db $DB
+for file in $(../scripts/list_assembly_configs.sh); do
+    echo -n "$JSON/$file"
+    if python magnetdb.py assembly add "$JSON/$file" --db "$DB" >> "$DB.log" 2>&1; then
+        echo -e ": \033[32mOK\033[0m"
+    else
+        echo -e ": \033[31mERROR\033[0m"
+    fi
 done
+python magnetdb.py magnet update-status M09052601 --db "$DB" --status retired ... 
+python magnetdb.py magnet update-status M12082401 --db "$DB" --status retired ... 
+
+# python magnetdb.py magnet update-status M09052601 \
+#     --status retired \
+#     --description "Superseded, coils reused / no longer in service." \
+#     --changed-at "2026-09-02 07:00:00" \
+#     --db "$DB"
 
 python magnetdb.py check --db $DB   # flags missing geometry_data, bad file paths, etc.
 
@@ -43,6 +55,7 @@ for (s,) in con.execute('SELECT name FROM assemblies ORDER BY name').fetchall():
         --assembly "$ASSEMBLY" --type Pupitre
 done
 
+# note on creating *summary*.json
 # Populate overview_records from JSON
 for file in $(ls ../Data/*summary*.json); do
     python magnetdb.py populate overview-records-from-json "$file" --db $DB

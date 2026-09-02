@@ -297,12 +297,86 @@ def test_insert_magnet_parts_multiple_coil_channels(con):
     assert [r[0] for r in indexes] == [1, 2, 3]
 
 
+def test_insert_magnet_parts_promotes_part_to_in_operation(con):
+    """A part is promoted to in_operation as soon as it's attached to a
+    magnet — no assembly involved at all."""
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_material(con, MATERIAL_STEEL, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_part(con, {**PART_RING, "status": "in_stock"}, verbose=False)
+    insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
+
+    parts = [{"name": "HELIX_01", "type": "helix"}, {"name": "RING_01", "type": "ring"}]
+    insert_magnet_parts(con, "MAG_01", parts, verbose=False)
+
+    assert con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "in_operation"
+    assert con.execute("SELECT status FROM parts WHERE name = 'RING_01'").fetchone()[0] == "in_operation"
+
+
 def test_insert_magnet_parts_rejects_non_in_stock_part(con):
     insert_material(con, MATERIAL_COPPER, verbose=False)
     insert_part(con, {**PART_HELIX, "status": "in_operation"}, verbose=False)
     insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
     with pytest.raises(ValueError, match="not 'in_stock'"):
         insert_magnet_parts(con, "MAG_01", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+
+
+def test_insert_magnet_parts_reuse_retires_old_magnet_and_closes_its_assembly(con):
+    """A part already held by another still-active magnet is reclaimed: the
+    old magnet is retired, its open assembly link is auto-closed (fallback
+    07:00 same day as the new magnet's assembled_at), and the part links to
+    the new magnet."""
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_magnet(con, {**MAGNET_DATA, "name": "M19061901", "status": "in_stock"}, "insert", verbose=False)
+    insert_magnet_parts(con, "M19061901", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+    insert_assembly(con, {
+        "name": "OLD_A", "housing": "M9",
+        "commissioned_at": "2019-06-19 08:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    insert_assembly_magnets(con, "OLD_A", ["M19061901"], verbose=False)
+    assert con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "in_operation"
+
+    insert_magnet(con, {**MAGNET_DATA, "name": "M20022001", "status": "in_stock"}, "insert", verbose=False)
+    insert_magnet_parts(con, "M20022001", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+
+    assert con.execute("SELECT status FROM magnets WHERE name = 'M19061901'").fetchone()[0] == "retired"
+    a_status, a_decommissioned_at = con.execute(
+        "SELECT status, decommissioned_at FROM assemblies WHERE name = 'OLD_A'"
+    ).fetchone()
+    assert a_status == "disassembled"
+    assert a_decommissioned_at.isoformat() == "2020-02-20T07:00:00"
+    assert con.execute(
+        "SELECT 1 FROM magnet_parts WHERE magnet_name = 'M20022001' AND part_name = 'HELIX_01'"
+    ).fetchone() is not None
+    assert con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "in_operation"
+
+
+def test_insert_magnet_parts_reuse_does_not_override_explicit_decommissioned_at(con):
+    """If the old assembly link already carries an explicit decommissioned_at,
+    reclaiming the part must not touch it."""
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_magnet(con, {**MAGNET_DATA, "name": "M19061901", "status": "in_stock"}, "insert", verbose=False)
+    insert_magnet_parts(con, "M19061901", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+    insert_assembly(con, {
+        "name": "OLD_A", "housing": "M9",
+        "commissioned_at": "2019-06-19 08:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    insert_assembly_magnets(con, "OLD_A", ["M19061901"], verbose=False)
+    con.execute(
+        "UPDATE assembly_magnets SET decommissioned_at = '2019-12-31 07:00:00' "
+        "WHERE assembly_name = 'OLD_A' AND magnet_name = 'M19061901'"
+    )
+
+    insert_magnet(con, {**MAGNET_DATA, "name": "M20022001", "status": "in_stock"}, "insert", verbose=False)
+    insert_magnet_parts(con, "M20022001", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+
+    assert con.execute("SELECT status FROM magnets WHERE name = 'M19061901'").fetchone()[0] == "retired"
+    assembly_decommissioned_at = con.execute(
+        "SELECT decommissioned_at FROM assemblies WHERE name = 'OLD_A'"
+    ).fetchone()[0]
+    assert assembly_decommissioned_at is None
 
 
 def test_insert_magnet_parts_rejects_unknown_part(con):
@@ -577,6 +651,43 @@ def test_decommission_assembly_leaves_retired_magnet_untouched(con):
     assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "retired"
 
 
+def test_decommission_assembly_backfills_orphaned_link_with_assemblys_own_date(con):
+    """An assembly already closed from creation (explicit decommissioned_at)
+    can still have an open assembly_magnets link (insert_assembly_magnets
+    doesn't read the assembly's own decommissioned_at for plain-string
+    magnet entries). Re-calling decommission_assembly on it — e.g. via the
+    auto-close paths, with no date of its own to pass in — must backfill
+    that link (and log status_history) with the assembly's own true date,
+    not a fresh now()/passed-in fallback."""
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
+    insert_magnet_parts(con, "MAG_01", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": "2025-06-01 07:00:00",
+    }, verbose=False)
+    insert_assembly_magnets(con, "A1", ["MAG_01"], verbose=False)
+    assert con.execute(
+        "SELECT decommissioned_at FROM assembly_magnets WHERE assembly_name = 'A1' AND magnet_name = 'MAG_01'"
+    ).fetchone()[0] is None
+
+    decommission_assembly(con, "A1", verbose=False)  # no decommissioned_at passed -> would default to now()
+
+    link_at, assembly_at = con.execute(
+        "SELECT am.decommissioned_at, a.decommissioned_at FROM assembly_magnets am "
+        "JOIN assemblies a ON a.name = am.assembly_name "
+        "WHERE am.assembly_name = 'A1' AND am.magnet_name = 'MAG_01'"
+    ).fetchone()
+    assert assembly_at.isoformat() == "2025-06-01T07:00:00"
+    assert link_at == assembly_at
+
+    latest_event = json.loads(
+        con.execute("SELECT status_history FROM assemblies WHERE name = 'A1'").fetchone()[0]
+    )[-1]
+    assert latest_event["date"] == "2025-06-01 07:00:00"
+
+
 def test_decommission_assembly_raises_for_unknown(con):
     with pytest.raises(ValueError):
         decommission_assembly(con, "NOPE", verbose=False)
@@ -643,7 +754,10 @@ def test_insert_assembly_magnets_no_cascade_when_assembly_not_active(con):
     assert con.execute("SELECT status FROM magnets WHERE name = 'MAG_01'").fetchone()[0] == "in_stock"
 
 
-def test_insert_assembly_magnets_rejects_magnet_already_active_elsewhere(con):
+def test_insert_assembly_magnets_auto_closes_predecessor_on_different_housing(con):
+    """A magnet moved to a new housing auto-closes its still-open assembly
+    link elsewhere (fallback 07:00 same day as the new commissioned_at),
+    instead of being rejected."""
     insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
     insert_assembly(con, {
         "name": "A1", "housing": "M10",
@@ -653,10 +767,18 @@ def test_insert_assembly_magnets_rejects_magnet_already_active_elsewhere(con):
 
     insert_assembly(con, {
         "name": "A2", "housing": "M9",
-        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+        "commissioned_at": "2025-06-15 08:00:00", "decommissioned_at": None,
     }, verbose=False)
-    with pytest.raises(ValueError, match="already actively linked"):
-        insert_assembly_magnets(con, "A2", ["MAG_01"], verbose=False)
+    insert_assembly_magnets(con, "A2", ["MAG_01"], verbose=False)
+
+    a1_status, a1_decommissioned_at = con.execute(
+        "SELECT status, decommissioned_at FROM assemblies WHERE name = 'A1'"
+    ).fetchone()
+    assert a1_status == "disassembled"
+    assert a1_decommissioned_at.isoformat() == "2025-06-15T07:00:00"
+    assert con.execute(
+        "SELECT 1 FROM assembly_magnets WHERE assembly_name = 'A2' AND magnet_name = 'MAG_01'"
+    ).fetchone() is not None
 
 
 # ---------------------------------------------------------------------------
