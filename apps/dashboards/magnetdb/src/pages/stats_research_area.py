@@ -12,7 +12,7 @@ dash.register_page(__name__, path="/research-area", name="Research areas", order
 
 RA_STATS_COLUMNS = [
     {"name": c, "id": c}
-    for c in ("research_area", "n_experiments", "n_users", "total_field_time_h")
+    for c in ("research_area", "n_experiments", "n_manips", "total_field_time_h")
 ]
 
 EXPERIMENTS_COLUMNS = [
@@ -84,7 +84,9 @@ def _overview_records_section(ov_df):
         }
     )
 
-    table_df = source_df[["Overview Record", "Assembly", "Housing", "Mode", "t0"]].copy()
+    table_df = source_df[
+        ["Overview Record", "Assembly", "Housing", "Mode", "t0"]
+    ].copy()
     table_df["Overview Record"] = source_df.apply(overview_record_link, axis=1)
     table_df["Assembly"] = source_df.apply(assembly_link, axis=1)
 
@@ -133,7 +135,9 @@ def _add_field_bin_columns(df, percent_group_cols):
         "Viridis", [i / max(len(bin_order) - 1, 1) for i in range(len(bin_order))]
     )
     df["Percent"] = (
-        df["Time (h)"] / df.groupby(percent_group_cols)["Time (h)"].transform("sum") * 100
+        df["Time (h)"]
+        / df.groupby(percent_group_cols)["Time (h)"].transform("sum")
+        * 100
     )
     return bin_order, bin_colors
 
@@ -155,12 +159,20 @@ def _housing_summary():
         lines.append(html.B(row.housing))
         lines.append(html.Br())
         lines.append(
-            _file_range_text("  Experiments", row.n_experiments, row.experiments_start, row.experiments_end)
+            _file_range_text(
+                "  Experiments",
+                row.n_experiments,
+                row.experiments_start,
+                row.experiments_end,
+            )
         )
         lines.append(html.Br())
         lines.append(
             _file_range_text(
-                "  Overview records", row.n_overview_records, row.overview_records_start, row.overview_records_end
+                "  Overview records",
+                row.n_overview_records,
+                row.overview_records_start,
+                row.overview_records_end,
             )
         )
         lines.append(html.Br())
@@ -174,16 +186,26 @@ layout = html.Div(
         html.Div(
             [
                 selectors.aggregate_filter(
-                    "ra-research-area", "Research area", options=db.get_research_areas(), style={"width": "250px"}
+                    "ra-research-area",
+                    "Research area",
+                    options=db.get_research_areas(),
+                    style={"width": "250px"},
                 ),
-                selectors.aggregate_filter("ra-housing", "Housing", options=db.get_housings(), style={"width": "250px"}),
+                selectors.aggregate_filter(
+                    "ra-housing",
+                    "Housing",
+                    options=db.get_housings(),
+                    style={"width": "250px"},
+                ),
                 selectors.aggregate_filter(
                     "ra-year",
                     "Year",
                     options=["2022", "2023", "2024", "2025", "2026"],
                     style={"width": "250px"},
                 ),
-                selectors.aggregate_filter("ra-user", "User", options=db.get_users(), style={"width": "250px"}),
+                selectors.aggregate_filter(
+                    "ra-user", "Manip", options=db.get_users(), style={"width": "250px"}
+                ),
             ],
             style={"display": "flex", "gap": "30px", "marginBottom": "30px"},
         ),
@@ -195,7 +217,9 @@ layout = html.Div(
         dcc.Graph(id="ra-users"),
         html.Details(
             [
-                html.Summary("📊 Statistics", style={"fontWeight": "bold", "cursor": "pointer"}),
+                html.Summary(
+                    "📊 Statistics", style={"fontWeight": "bold", "cursor": "pointer"}
+                ),
                 html.Div(
                     DataTable(
                         id="ra-table",
@@ -211,25 +235,45 @@ layout = html.Div(
                 ),
             ],
             open=True,
-            style={"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "20px"},
+            style={
+                "border": "1px solid #ddd",
+                "borderRadius": "8px",
+                "marginBottom": "20px",
+            },
         ),
         html.Details(
             [
-                html.Summary("📊 Matching experiments", style={"fontWeight": "bold", "cursor": "pointer"}),
+                html.Summary(
+                    "📊 Matching experiments",
+                    style={"fontWeight": "bold", "cursor": "pointer"},
+                ),
                 html.Div(id="ra-experiments-content", style={"padding": "10px"}),
             ],
             id="ra-experiments",
             open=False,
-            style={"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "10px", "display": "none"},
+            style={
+                "border": "1px solid #ddd",
+                "borderRadius": "8px",
+                "marginBottom": "10px",
+                "display": "none",
+            },
         ),
         html.Details(
             [
-                html.Summary("📁 Matching overview records", style={"fontWeight": "bold", "cursor": "pointer"}),
+                html.Summary(
+                    "📁 Matching overview records",
+                    style={"fontWeight": "bold", "cursor": "pointer"},
+                ),
                 html.Div(id="ra-overview-records-content", style={"padding": "10px"}),
             ],
             id="ra-overview-records",
             open=False,
-            style={"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "10px", "display": "none"},
+            style={
+                "border": "1px solid #ddd",
+                "borderRadius": "8px",
+                "marginBottom": "10px",
+                "display": "none",
+            },
         ),
     ],
     style={"padding": "20px"},
@@ -264,7 +308,9 @@ def update(research_area, housing, year, user):
         research_area=research_area,
         user=user,
     )
-    df = df.rename(columns={"total_field_time_s": "total_field_time_h"})
+    df = df.rename(
+        columns={"total_field_time_s": "total_field_time_h", "n_users": "n_manips"}
+    )
     df["total_field_time_h"] = df["total_field_time_h"] / 3600
 
     by_year_df = db.get_research_area_stats_by_year(
@@ -286,10 +332,10 @@ def update(research_area, housing, year, user):
     fig_users = px.bar(
         by_year_df,
         x="research_area",
-        y="n_users",
+        y="n_manips",
         color="year",
         barmode="group",
-        title="Users per research area",
+        title="Manips per research area",
     )
 
     fig_time = px.bar(
@@ -308,8 +354,12 @@ def update(research_area, housing, year, user):
         fig_time_by_bin = go.Figure()
     else:
         bin_df["year"] = bin_df["year"].astype(int).astype(str)
-        bin_df = bin_df.rename(columns={"total_time_h": "Time (h)"})
-        bin_order, bin_colors = _add_field_bin_columns(bin_df, ["research_area", "year"])
+        bin_df = bin_df.rename(
+            columns={"total_time_h": "Time (h)", "n_users": "n_manips"}
+        )
+        bin_order, bin_colors = _add_field_bin_columns(
+            bin_df, ["research_area", "year"]
+        )
 
         fig_time_by_bin = px.bar(
             bin_df,
@@ -328,15 +378,25 @@ def update(research_area, housing, year, user):
                 "%{y:.1f} h (%{customdata[0]:.1f}% of research area total)<extra></extra>"
             )
         )
-        fig_time_by_bin.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+        fig_time_by_bin.for_each_annotation(
+            lambda a: a.update(text=a.text.split("=")[-1])
+        )
 
     filters_active = any(v is not None for v in (research_area, housing, year, user))
 
-    section_style = {"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "10px"}
+    section_style = {
+        "border": "1px solid #ddd",
+        "borderRadius": "8px",
+        "marginBottom": "10px",
+    }
 
     if filters_active:
-        exp_df = db.get_experiments_for_filters(housing=housing, year=year, research_area=research_area, user=user)
-        ov_df = db.get_overview_records_for_filters(housing=housing, year=year, research_area=research_area, user=user)
+        exp_df = db.get_experiments_for_filters(
+            housing=housing, year=year, research_area=research_area, user=user
+        )
+        ov_df = db.get_overview_records_for_filters(
+            housing=housing, year=year, research_area=research_area, user=user
+        )
         section_style = {**section_style, "display": "block"}
         exp_content = _experiments_section(exp_df)
         ov_content = _overview_records_section(ov_df)

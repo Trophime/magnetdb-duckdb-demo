@@ -657,12 +657,13 @@ def get_overview_record_sources(filename, db_path=None):
     dict or None
         Keys ``housing``, ``assembly_name``, ``sources_overview``,
         ``sources_archive``, ``sources_pupitre``, ``sources_default``,
-        ``sources_spike``. ``None`` if *filename* has no matching row.
+        ``sources_spike``, ``t0``, ``duration``. ``None`` if *filename* has
+        no matching row.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
             SELECT housing, assembly_name, sources_overview, sources_archive,
-                   sources_pupitre, sources_default, sources_spike
+                   sources_pupitre, sources_default, sources_spike, t0, duration
             FROM overview_records
             WHERE filename = ?
         """
@@ -1265,7 +1266,7 @@ def get_linked_files(housing, pupitre_filename, db_path=None):
 def get_research_areas(db_path=None):
     """Return the list of distinct research areas defined in ``users``, sorted.
 
-    Rows with a ``NULL`` research area are reported as ``"NA"``.
+    Rows with a ``NULL`` research area are reported as ``"Undefined"``.
 
     Parameters
     ----------
@@ -1278,7 +1279,7 @@ def get_research_areas(db_path=None):
         Research area names.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        query = "SELECT DISTINCT COALESCE(research_area, 'NA') AS research_area FROM users"
+        query = "SELECT DISTINCT COALESCE(research_area, 'Undefined') AS research_area FROM users"
         names = conn.execute(query).df()["research_area"].tolist()
     return sorted(names)
 
@@ -1324,7 +1325,7 @@ def get_research_area_stats(housing=None, year=None, research_area=None, user=No
         Restrict to sessions whose ``hstart`` falls in this year. ``None``
         includes all years.
     research_area : str, optional
-        Restrict to sessions with this research area (``"NA"`` for sessions
+        Restrict to sessions with this research area (``"Undefined"`` for sessions
         with no research area recorded). ``None`` includes all research
         areas.
     user : str, optional
@@ -1336,7 +1337,7 @@ def get_research_area_stats(housing=None, year=None, research_area=None, user=No
     Returns
     -------
     :class:`~pandas.DataFrame`
-        One row per research area, with columns ``research_area`` (``"NA"``
+        One row per research area, with columns ``research_area`` (``"Undefined"``
         for sessions with no research area recorded), ``n_experiments``
         (distinct experiments), ``n_users`` (distinct acronyms) and
         ``total_field_time_s`` (summed ``exp_run_scalars.value`` where
@@ -1345,11 +1346,11 @@ def get_research_area_stats(housing=None, year=None, research_area=None, user=No
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
             WITH filtered_users AS (
-                SELECT * EXCLUDE (research_area), COALESCE(research_area, 'NA') AS research_area
+                SELECT * EXCLUDE (research_area), COALESCE(research_area, 'Undefined') AS research_area
                 FROM users
                 WHERE (? IS NULL OR housing = ?)
                     AND (? IS NULL OR EXTRACT(YEAR FROM hstart) = ?)
-                    AND (? IS NULL OR COALESCE(research_area, 'NA') = ?)
+                    AND (? IS NULL OR COALESCE(research_area, 'Undefined') = ?)
                     AND (? IS NULL OR acronym = ?)
             ),
             exp_counts AS (
@@ -1399,7 +1400,7 @@ def get_research_area_stats_by_year(housing=None, year=None, research_area=None,
         Restrict to sessions whose ``hstart`` falls in this year. ``None``
         includes all years.
     research_area : str, optional
-        Restrict to sessions with this research area (``"NA"`` for sessions
+        Restrict to sessions with this research area (``"Undefined"`` for sessions
         with no research area recorded). ``None`` includes all research
         areas.
     user : str, optional
@@ -1412,7 +1413,7 @@ def get_research_area_stats_by_year(housing=None, year=None, research_area=None,
     -------
     :class:`~pandas.DataFrame`
         One row per ``(research_area, year)`` combination present in the
-        matching sessions, with columns ``research_area`` (``"NA"`` for
+        matching sessions, with columns ``research_area`` (``"Undefined"`` for
         sessions with no research area recorded), ``year`` (extracted from
         ``users.hstart``), ``n_experiments`` (distinct experiments),
         ``n_users`` (distinct acronyms) and ``total_field_time_s`` (summed
@@ -1422,12 +1423,12 @@ def get_research_area_stats_by_year(housing=None, year=None, research_area=None,
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
             WITH filtered_users AS (
-                SELECT * EXCLUDE (research_area), COALESCE(research_area, 'NA') AS research_area,
+                SELECT * EXCLUDE (research_area), COALESCE(research_area, 'Undefined') AS research_area,
                     EXTRACT(YEAR FROM hstart) AS session_year
                 FROM users
                 WHERE (? IS NULL OR housing = ?)
                     AND (? IS NULL OR EXTRACT(YEAR FROM hstart) = ?)
-                    AND (? IS NULL OR COALESCE(research_area, 'NA') = ?)
+                    AND (? IS NULL OR COALESCE(research_area, 'Undefined') = ?)
                     AND (? IS NULL OR acronym = ?)
             ),
             exp_counts AS (
@@ -1474,7 +1475,7 @@ def get_research_area_field_bin_stats_by_year(housing=None, year=None, research_
         Restrict to sessions whose ``hstart`` falls in this year. ``None``
         includes all years.
     research_area : str, optional
-        Restrict to sessions with this research area (``"NA"`` for sessions
+        Restrict to sessions with this research area (``"Undefined"`` for sessions
         with no research area recorded). ``None`` includes all research
         areas.
     user : str, optional
@@ -1503,12 +1504,12 @@ def get_research_area_field_bin_stats_by_year(housing=None, year=None, research_
     with duckdb.connect(db_path, read_only=True) as conn:
         query = """
             WITH filtered_users AS (
-                SELECT * EXCLUDE (research_area), COALESCE(research_area, 'NA') AS research_area,
+                SELECT * EXCLUDE (research_area), COALESCE(research_area, 'Undefined') AS research_area,
                     EXTRACT(YEAR FROM hstart) AS session_year
                 FROM users
                 WHERE (? IS NULL OR housing = ?)
                     AND (? IS NULL OR EXTRACT(YEAR FROM hstart) = ?)
-                    AND (? IS NULL OR COALESCE(research_area, 'NA') = ?)
+                    AND (? IS NULL OR COALESCE(research_area, 'Undefined') = ?)
                     AND (? IS NULL OR acronym = ?)
             )
             SELECT
@@ -1540,7 +1541,7 @@ def get_experiments_for_filters(housing=None, year=None, research_area=None, use
         Restrict to sessions whose ``hstart`` falls in this year. ``None``
         includes all years.
     research_area : str, optional
-        Restrict to sessions with this research area (``"NA"`` for sessions
+        Restrict to sessions with this research area (``"Undefined"`` for sessions
         with no research area recorded). ``None`` includes all research
         areas.
     user : str, optional
@@ -1563,7 +1564,7 @@ def get_experiments_for_filters(housing=None, year=None, research_area=None, use
                 FROM users
                 WHERE (? IS NULL OR housing = ?)
                     AND (? IS NULL OR EXTRACT(YEAR FROM hstart) = ?)
-                    AND (? IS NULL OR COALESCE(research_area, 'NA') = ?)
+                    AND (? IS NULL OR COALESCE(research_area, 'Undefined') = ?)
                     AND (? IS NULL OR acronym = ?)
             )
             SELECT DISTINCT e.id, e.name, e.description, e.file, e.assembly_name, e.status
@@ -1588,7 +1589,7 @@ def get_overview_records_for_filters(housing=None, year=None, research_area=None
         Restrict to sessions whose ``hstart`` falls in this year. ``None``
         includes all years.
     research_area : str, optional
-        Restrict to sessions with this research area (``"NA"`` for sessions
+        Restrict to sessions with this research area (``"Undefined"`` for sessions
         with no research area recorded). ``None`` includes all research
         areas.
     user : str, optional
@@ -1612,7 +1613,7 @@ def get_overview_records_for_filters(housing=None, year=None, research_area=None
                 FROM users
                 WHERE (? IS NULL OR housing = ?)
                     AND (? IS NULL OR EXTRACT(YEAR FROM hstart) = ?)
-                    AND (? IS NULL OR COALESCE(research_area, 'NA') = ?)
+                    AND (? IS NULL OR COALESCE(research_area, 'Undefined') = ?)
                     AND (? IS NULL OR acronym = ?)
             )
             SELECT DISTINCT o.filename, o.assembly_name, o.housing, o.mode, o.t0, o.duration
