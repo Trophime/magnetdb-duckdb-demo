@@ -40,14 +40,7 @@ def layout(assembly=None, file=None, **kwargs):
                     html.Hr(),
                     selectors.cascading_selector("dd-assembly", "Assembly", 1, value=assembly),
                     html.Br(),
-                    html.Label("2. Choose Table :", style={"fontWeight": "bold"}),
-                    dcc.Dropdown(
-                        id="dd-table",
-                        options=["experiments", "operationaldata"],
-                        value="experiments",
-                    ),
-                    html.Br(),
-                    html.Label("3. Choose File :", style={"fontWeight": "bold"}),
+                    html.Label("2. Choose File :", style={"fontWeight": "bold"}),
                     dcc.Dropdown(
                         id="dd-file",
                         options=[file] if file else [],
@@ -56,7 +49,7 @@ def layout(assembly=None, file=None, **kwargs):
                     ),
                     html.Br(),
                     html.Label(
-                        "4. Choose X-axis :",
+                        "3. Choose X-axis :",
                         style={"fontWeight": "bold", "color": "#007bff"},
                     ),
                     dcc.Dropdown(
@@ -69,7 +62,7 @@ def layout(assembly=None, file=None, **kwargs):
                         clearable=False,
                     ),
                     html.Br(),
-                    html.Label("5. Choose Sensors :", style={"fontWeight": "bold"}),
+                    html.Label("4. Choose Sensors :", style={"fontWeight": "bold"}),
                     # C'est ce conteneur unique qui contiendra tout (Groupes + Checklist + Graphiques associés)
                     html.Div(
                         id="sensors-selectors-container",
@@ -78,7 +71,7 @@ def layout(assembly=None, file=None, **kwargs):
                     ),
                     style_editor.modal_component("fv"),
                     html.Br(),
-                    html.Label("6. Cursor sync:", style={"fontWeight": "bold"}),
+                    html.Label("5. Cursor sync:", style={"fontWeight": "bold"}),
                     html.Div(
                         [
                             dcc.Checklist(
@@ -92,7 +85,7 @@ def layout(assembly=None, file=None, **kwargs):
                         style={"marginTop": "4px"},
                     ),
                     html.Br(),
-                    html.Label("7. Downsampling Method:", style={"fontWeight": "bold"}),
+                    html.Label("6. Downsampling Method:", style={"fontWeight": "bold"}),
                     dcc.Dropdown(
                         id="dropdown-downsampling",
                         options=["raw data", "LTTB", "minmax", "M4", "naive"],
@@ -118,21 +111,20 @@ def update_assembly_dropdown(selected_db):
     return db.get_all_assemblies(selected_db)
 
 
-# CALLBACK 1 : Met à jour la liste des fichiers en fonction du Assembly ET de la Table
+# CALLBACK 1 : Met à jour la liste des fichiers en fonction du Assembly
 @dash.callback(
     Output("dd-file", "options"),
     Input("dd-assembly", "value"),
-    Input("dd-table", "value"),
     Input("dd-database", "value"),
 )
-def update_file_dropdown(selected_assembly, selected_table, selected_db):
-    if not selected_assembly or not selected_table:
+def update_file_dropdown(selected_assembly, selected_db):
+    if not selected_assembly:
         return []
 
     magnet_types = db.get_magnet_types_for_assembly(selected_assembly, selected_db)
     print(f"[file_viewer.py] selected_assembly={selected_assembly!r} magnet_types={magnet_types}")
 
-    files = db.get_files_for_assembly(selected_assembly, selected_table, selected_db)
+    files = db.get_files_for_assembly(selected_assembly, "experiments", selected_db)
     return [{"label": f, "value": f} for f in files]
 
 
@@ -291,7 +283,6 @@ def update_sensors_menus(
     Output({"type": "dynamic-graph", "index": ALL}, "figure"),
     Input("dd-file", "value"),
     Input("dd-assembly", "value"),
-    Input("dd-table", "value"),
     Input("dd-x-axis", "value"),
     Input({"type": "group-sensors-checklist", "index": ALL}, "value"),
     Input({"type": "group-sensors-checklist", "index": ALL}, "id"),
@@ -302,7 +293,6 @@ def update_sensors_menus(
 def update_outputs(
     selected_file,
     selected_assembly,
-    selected_table,
     selected_x,
     all_sensors_lists,
     all_sensors_ids,
