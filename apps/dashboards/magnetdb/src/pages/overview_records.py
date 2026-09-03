@@ -55,6 +55,37 @@ def _record_sources(record_filename, db_path, include_extra=False):
     return info["housing"], regular_files, event_files
 
 
+def _record_x_range(record_filename, db_path):
+    """Fixed timestamp-axis range spanning this record's sources_overview files.
+
+    Parameters
+    ----------
+    record_filename : str
+        ``overview_records.filename`` primary key.
+    db_path : str
+        Path to the DuckDB database.
+
+    Returns
+    -------
+    list or None
+        ``[t0, t0 + duration]`` as ISO datetime strings, or ``None`` if the
+        record has no ``sources_overview`` files or no usable ``t0``/
+        ``duration`` — callers should fall back to per-graph autorange.
+    """
+    info = db.get_overview_record_sources(record_filename, db_path)
+    if info is None:
+        return None
+    sources_overview = info.get("sources_overview")
+    if sources_overview is None or len(sources_overview) == 0:
+        return None
+    t0 = info.get("t0")
+    duration = info.get("duration") or 0.0
+    if t0 is None or pd.isna(t0) or duration <= 0:
+        return None
+    t0 = pd.Timestamp(t0)
+    return [t0.isoformat(), (t0 + pd.Timedelta(seconds=duration)).isoformat()]
+
+
 def layout(assembly=None, record=None, **kwargs):
     return html.Div(
         [
@@ -311,7 +342,7 @@ def update_graphs(
     ):
         maintain_zoom = True
 
-    x_range = None
+    x_range = _record_x_range(selected_record, selected_db) if selected_x == "timestamp" else None
     if maintain_zoom and all_relayout_data:
         for relayout in all_relayout_data:
             if relayout:
