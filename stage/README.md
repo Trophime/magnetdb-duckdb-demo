@@ -65,8 +65,10 @@ for (s,) in con.execute('SELECT name FROM assemblies ORDER BY name').fetchall():
 done
 
 # note on creating *summary*.json
+# magnetrun analysis M9_Overview_25*.tdms --housing M9 > M9_2025.log
+# mv summary.json to ../Data/M9_summary_2025.json
 # Populate overview_records from JSON
-for file in $(ls ../Data/*summary*.json); do
+for file in $(../scripts/sort_summary_by_year.sh); do
     python magnetdb.py populate overview-records-from-json "$file" --db $DB
 done
 # Consolidate overview_records and remove duplicates
@@ -79,6 +81,7 @@ python magnetdb.py populate overview-records-infer --db $DB
 #    --host <SUPERVISION_HOST> --user <U> --password <P> --database <SUPERVISION_DB>
 # to be stored in Data/
 # Use envdir to define environment variables such as EMFL_API_KEY and SUPERVISION_DB credentials
+# see python_magnetrun original .envrc
 
 python to_duckdb/demos/users_table_demo.py --from 2018-01-01 --db to_duckdb/test-magnetdb.duckdb 
 python to_duckdb/demos/users_table_demo.py --link-only --db to_duckdb/test-magnetdb.duckdb
