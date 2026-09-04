@@ -18,16 +18,25 @@ for file in $(../scripts/list_assembly_configs.sh); do
         echo -e ": \033[31mERROR\033[0m"
     fi
 done
-python magnetdb.py magnet update-status M09052601 --db "$DB" --status retired ... 
-python magnetdb.py magnet update-status M12082401 --db "$DB" --status retired ... 
 
 # python magnetdb.py magnet update-status M09052601 \
-#     --status retired \
-#     --description "Superseded, coils reused / no longer in service." \
-#     --changed-at "2026-09-02 07:00:00" \
+#     --status dead --dead-part ALL \
+#     --description "HS, coils declared dead following major incident on 2024-11-09." \
+#     --changed-at "2024-12-06 02 07:00:00" \
 #     --db "$DB"
 
-python magnetdb.py check --db $DB   # flags missing geometry_data, bad file paths, etc.
+# python magnetdb.py magnet update-status M12082401 \
+#     --status retired \
+#     --description "Superseded, coils reused / no longer in service." \
+#     --changed-at "2024-12-10 07:00:00" \
+#     --db "$DB"
+
+# mark Bitters -- aka M9_Bi and M9_Bi09 -- that has burned as dead
+
+# check database consistency
+../scripts/list_assembly_configs.sh
+python magnetdb.py part update $JSON/HybridSupra.json --db $DB
+python magnetdb.py part update $JSON/M9_newBi10.json --db $DB
 
 # Populate experiments
 python magnetdb.py populate  experiments --all --db $DB --records-base $RECORDS
@@ -64,6 +73,13 @@ done
 python magnetdb.py populate overview-records-infer --db $DB 
 
 # Get user table contents from csv proposals from EMFL DB and SUPERVISION DB (experiences_log table)
+# EMFL DB: curl -H "X-API-Token: ${EMFL_API_KEY}" "https://user.portal.emfl.eu/api/proposals-for-ct/export-csv" -o proposals.csv to be stored in Data/
+# SUPERVISION DB: python python_magnetrun/examples/mysql_connect.py --mode export --format csv \
+#    --output-dir Data/ --tables <experiences_log_table> \
+#    --host <SUPERVISION_HOST> --user <U> --password <P> --database <SUPERVISION_DB>
+# to be stored in Data/
+# Use envdir to define environment variables such as EMFL_API_KEY and SUPERVISION_DB credentials
+
 python to_duckdb/demos/users_table_demo.py --from 2018-01-01 --db to_duckdb/test-magnetdb.duckdb 
 python to_duckdb/demos/users_table_demo.py --link-only --db to_duckdb/test-magnetdb.duckdb
 

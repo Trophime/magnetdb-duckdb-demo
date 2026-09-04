@@ -17,18 +17,21 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py material delete <name>   [--db ...]
 
     python magnetdb.py part view [<name>]               [--db ...] [--type TYPE] [--status STATUS]
+    python magnetdb.py part update <json_file>          [--db ...] [--dry-run]
     python magnetdb.py part update-status <name> --status STATUS
                                             [--db ...] [--description ...] [--changed-at ...] [--attachment KIND=PATH ...]
 
     python magnetdb.py magnet add <json_file> [--db ...] [--input-dir ...] [--part-dir ...] [--geometry ...] [--dry-run]
     python magnetdb.py magnet view [<name>]             [--db ...] [--type insert|bitters|supras] [--status STATUS]
     python magnetdb.py magnet check-geometry [<name>]   [--db ...]
+    python magnetdb.py magnet update <json_file>        [--db ...] [--dry-run]
     python magnetdb.py magnet delete <name>             [--db ...]
-    python magnetdb.py magnet update-status <name> --status STATUS [--dead-part PART ...]
+    python magnetdb.py magnet update-status <name> --status STATUS [--dead-part PART ... | --dead-part ALL]
                                             [--db ...] [--description ...] [--changed-at ...] [--attachment KIND=PATH ...]
 
     python magnetdb.py assembly add <json_file> [--db ...] [--input-dir ...] [--magnet-dir ...] [--dry-run]
     python magnetdb.py assembly view [<name>]   [--db ...] [--housing HOUSING] [--status STATUS]
+    python magnetdb.py assembly update <json_file> [--db ...] [--dry-run]
     python magnetdb.py assembly delete <name>   [--db ...]
     python magnetdb.py assembly update-magnet <assembly> <magnet> [--db ...] [--z-offset ...]
     python magnetdb.py assembly decommission <name> [--db ...] [--decommissioned-at ...]
@@ -46,6 +49,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py populate operationaldata [--assembly ASSEMBLY ...] [--all] [--type ...] [--records-base ...] [--dry-run]
     python magnetdb.py populate experiments     [--assembly ASSEMBLY ...] [--all] [--dry-run]
     python magnetdb.py populate overview-records [--assembly ASSEMBLY ...] [--all] [--reprocess] [--dry-run]
+    python magnetdb.py populate overview-records-from-archive [--assembly ASSEMBLY ...] [--all] [--reprocess] [--dry-run]
     python magnetdb.py populate overview-records-from-json <json_file> [--assembly ASSEMBLY] [--db-tz ...] [--reprocess] [--dry-run] [--db ...]
 
     python magnetdb.py hoop-stress compute  [--assembly ASSEMBLY ...] [--all] [--db ...] [--magnet-type H|B|S|all]
@@ -105,8 +109,11 @@ from crud import (
     merge_duplicate_pupitre_records,
     print_geometry_check,
     resolve_overview_assembly,
+    update_assembly_from_json,
     update_assembly_magnet,
+    update_magnet_from_json,
     update_magnet_status,
+    update_part_from_json,
     update_part_status,
     upsert_overview_record,
     view_assemblies,
@@ -539,6 +546,23 @@ def cmd_part_view(args) -> None:
             view_parts(con, type_filter=args.type, status_filter=args.status)
 
 
+def cmd_part_update(args) -> None:
+    json_path = Path(args.json_file)
+    if not json_path.exists():
+        print(f"Error: '{json_path}' not found.")
+        sys.exit(1)
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path), read_only=args.dry_run) as con:
+        try:
+            update_part_from_json(con, load_json(json_path), dry_run=args.dry_run)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+
+
 def cmd_part_update_status(args) -> None:
     db_path = Path(args.db)
     if not db_path.exists():
@@ -589,6 +613,23 @@ def cmd_magnet_view(args) -> None:
             view_magnet(con, args.name)
         else:
             view_magnets(con, type_filter=args.type, status_filter=args.status)
+
+
+def cmd_magnet_update(args) -> None:
+    json_path = Path(args.json_file)
+    if not json_path.exists():
+        print(f"Error: '{json_path}' not found.")
+        sys.exit(1)
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path), read_only=args.dry_run) as con:
+        try:
+            update_magnet_from_json(con, load_json(json_path), dry_run=args.dry_run)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
 
 
 def cmd_magnet_check_geometry(args) -> None:
@@ -656,6 +697,23 @@ def cmd_assembly_view(args) -> None:
             view_assembly(con, args.name)
         else:
             view_assemblies(con, housing_filter=args.housing, status_filter=args.status)
+
+
+def cmd_assembly_update(args) -> None:
+    json_path = Path(args.json_file)
+    if not json_path.exists():
+        print(f"Error: '{json_path}' not found.")
+        sys.exit(1)
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path), read_only=args.dry_run) as con:
+        try:
+            update_assembly_from_json(con, load_json(json_path), dry_run=args.dry_run)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
 
 
 def cmd_assembly_delete(args) -> None:
@@ -1099,6 +1157,75 @@ def cmd_populate_overview_records(args) -> None:
                 print(f"  [ERROR] {fpath.name}: {exc}")
 
 
+def cmd_populate_overview_records_from_archive(args) -> None:
+    try:
+        from python_magnetrun.analysis.processing import (
+            ProcessingConfig,
+            process_archive_file,
+        )
+    except ImportError:
+        print("Error: python_magnetrun is not installed.")
+        print("Install it with:  pip install python_magnetrun")
+        sys.exit(1)
+
+    db_path = args.db
+    if not Path(db_path).exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    try:
+        db_tz = ZoneInfo(args.db_tz)
+    except (ValueError, KeyError):
+        print(f"Error: Unknown timezone '{args.db_tz}'")
+        sys.exit(1)
+
+    assembly_names = _resolve_assembly_names(args, db_path)
+    if not assembly_names:
+        print("No assemblies specified. Use --assembly ASSEMBLY or --all.")
+        sys.exit(1)
+
+    records_base = Path(args.records_base)
+    insert_fn = upsert_overview_record if args.reprocess else insert_overview_record
+    config = ProcessingConfig(dry_run=args.dry_run)
+
+    with duckdb.connect(db_path) as con:
+        ensure_schema(con)
+        archive_rows = con.execute(
+            "SELECT sources_archive FROM overview_records WHERE sources_archive IS NOT NULL"
+        ).fetchall()
+    already_covered = {Path(f).name for (lst,) in archive_rows for f in (lst or [])}
+
+    for assembly_name in assembly_names:
+        assembly = _load_assembly(assembly_name, db_path)
+        if assembly is None:
+            print(f"[SKIP] '{assembly_name}' not found in DB.")
+            continue
+        print(f"\nAssembly: {assembly_name}  housing={assembly['housing']}")
+
+        matches = _tdms_find_and_register(
+            assembly, db_path, db_tz, dry_run=True,
+            type_filter=["Archive"], records_base=records_base, pbsurv=args.pbsurv,
+        )
+        if not matches:
+            continue
+
+        print(f"  {len(matches)} Archive file(s) matched")
+        for fpath, _ts, _file_type in matches:
+            if fpath.name in already_covered:
+                print(f"  ~ {fpath.name}  (already covered by an existing overview_records row, skipped)")
+                continue
+            if args.dry_run:
+                print(f"  [DRY RUN] would process {fpath.name}")
+                continue
+            try:
+                record = process_archive_file(str(fpath), config)
+                with duckdb.connect(db_path) as con:
+                    ensure_schema(con)
+                    insert_fn(con, record, assembly_name=assembly_name, verbose=True)
+                already_covered.add(fpath.name)
+            except Exception as exc:
+                print(f"  [ERROR] {fpath.name}: {exc}")
+
+
 # ---------------------------------------------------------------------------
 # hoop-stress handlers
 # ---------------------------------------------------------------------------
@@ -1229,14 +1356,17 @@ _DISPATCH = {
     ("material",          "view"):            cmd_material_view,
     ("material",          "delete"):          cmd_material_delete,
     ("part",              "view"):             cmd_part_view,
+    ("part",              "update"):           cmd_part_update,
     ("part",              "update-status"):    cmd_part_update_status,
     ("magnet",            "add"):              cmd_magnet_add,
     ("magnet",            "view"):             cmd_magnet_view,
     ("magnet",            "check-geometry"):   cmd_magnet_check_geometry,
+    ("magnet",            "update"):           cmd_magnet_update,
     ("magnet",            "delete"):           cmd_magnet_delete,
     ("magnet",            "update-status"):    cmd_magnet_update_status,
     ("assembly",          "add"):             cmd_assembly_add,
     ("assembly",          "view"):            cmd_assembly_view,
+    ("assembly",          "update"):          cmd_assembly_update,
     ("assembly",          "delete"):          cmd_assembly_delete,
     ("assembly",          "update-magnet"):   cmd_assembly_update_magnet,
     ("assembly",          "decommission"):    cmd_assembly_decommission,
@@ -1251,8 +1381,9 @@ _DISPATCH = {
     ("overview-records",  "view"):            cmd_overview_records_view,
     ("populate",          "operationaldata"): cmd_populate_operationaldata,
     ("populate",          "experiments"):     cmd_populate_experiments,
-    ("populate",          "overview-records"):           cmd_populate_overview_records,
-    ("populate",          "overview-records-from-json"): cmd_populate_overview_records_from_json,
+    ("populate",          "overview-records"):             cmd_populate_overview_records,
+    ("populate",          "overview-records-from-archive"): cmd_populate_overview_records_from_archive,
+    ("populate",          "overview-records-from-json"):   cmd_populate_overview_records_from_json,
     ("populate",          "overview-records-infer"):     cmd_populate_overview_records_infer,
     ("hoop-stress",       "compute"):                    cmd_hoop_stress_compute,
     ("hoop-stress",       "barchart"):                  cmd_hoop_stress_barchart,
@@ -1400,8 +1531,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     check_p.add_argument(
         "--fix", action="store_true",
-        help="For magnets: reconstruct missing geometry_data from parts' "
-             "geometry_data and write it back to the DB.",
+        help="For parts: load missing geometry_data from the part's geometry "
+             "file. For magnets: reconstruct missing geometry_data from parts' "
+             "geometry_data. Both are written back to the DB.",
     )
 
     # ── db ───────────────────────────────────────────────────────────────────
@@ -1452,7 +1584,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── part ────────────────────────────────────────────────────────────────
     part_p = entity.add_parser("part", help="View and manage part lifecycle status.")
     part_sub = part_p.add_subparsers(dest="action", required=True,
-                                     metavar="{view,update-status}")
+                                     metavar="{view,update,update-status}")
 
     pt_view = part_sub.add_parser("view", help="List all parts or show one.")
     pt_view.add_argument("name", nargs="?", default=None,
@@ -1462,6 +1594,18 @@ def build_parser() -> argparse.ArgumentParser:
     pt_view.add_argument("--status", default=None,
                          help="Filter list by status (ignored when <name> is given)")
     _db_arg(pt_view)
+
+    pt_reload = part_sub.add_parser(
+        "update",
+        help="Refresh a part's descriptive/geometry fields from a JSON file "
+             "(material, geometry, geometry_data, cad, design_office_reference). "
+             "A field absent from the JSON is left untouched; status is never "
+             "touched here.",
+    )
+    pt_reload.add_argument("json_file", help="Path to the part's JSON file")
+    _db_arg(pt_reload)
+    pt_reload.add_argument("--dry-run", action="store_true",
+                           help="Report which fields would change without writing")
 
     pt_upd = part_sub.add_parser("update-status", help="Set a part's lifecycle status.")
     pt_upd.add_argument("name", help="Part name")
@@ -1477,7 +1621,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── magnet ──────────────────────────────────────────────────────────────
     magnet_p = entity.add_parser("magnet", help="Manage magnets.")
     magnet_sub = magnet_p.add_subparsers(dest="action", required=True,
-                                         metavar="{add,view,check-geometry,delete,update-status}")
+                                         metavar="{add,view,check-geometry,update,delete,update-status}")
 
     m_add = magnet_sub.add_parser("add", help="Add a magnet from a JSON export.")
     m_add.add_argument("json_file", help="Path to the magnet JSON file (or bare name with --input-dir)")
@@ -1513,6 +1657,18 @@ def build_parser() -> argparse.ArgumentParser:
                        help="Magnet name (omit to check all magnets)")
     _db_arg(m_chk)
 
+    m_reload = magnet_sub.add_parser(
+        "update",
+        help="Refresh a magnet's descriptive/geometry fields from a JSON file "
+             "(geometry, geometry_data, design_office_reference). A field "
+             "absent from the JSON is left untouched; status and linked "
+             "parts are never touched here.",
+    )
+    m_reload.add_argument("json_file", help="Path to the magnet's JSON file")
+    _db_arg(m_reload)
+    m_reload.add_argument("--dry-run", action="store_true",
+                          help="Report which fields would change without writing")
+
     m_del = magnet_sub.add_parser("delete", help="Delete a magnet and its part links.")
     m_del.add_argument("name", help="Magnet name")
     _db_arg(m_del)
@@ -1520,14 +1676,16 @@ def build_parser() -> argparse.ArgumentParser:
     m_upd_status = magnet_sub.add_parser(
         "update-status",
         help="Set a magnet's lifecycle status. 'dead' requires --dead-part "
-             "(repeatable) naming at least one part to mark dead in the same call.",
+             "(repeatable) naming at least one part to mark dead in the same call, "
+             "or --dead-part ALL to mark every linked part dead.",
     )
     m_upd_status.add_argument("name", help="Magnet name")
     _db_arg(m_upd_status)
     m_upd_status.add_argument("--status", required=True,
                               help="New status (in_operation, in_stock, in_study, retired, dead)")
     m_upd_status.add_argument("--dead-part", action="append", dest="dead_part", metavar="PART",
-                              help="Part name to mark dead (repeatable); required with --status dead")
+                              help="Part name to mark dead (repeatable); required with --status dead. "
+                                   "Use 'ALL' alone to mark every part linked to the magnet dead.")
     m_upd_status.add_argument("--description", default=None,
                               help="Free-text note appended to status_history")
     m_upd_status.add_argument("--changed-at", dest="changed_at", default=None,
@@ -1537,7 +1695,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── assembly ─────────────────────────────────────────────────────────────────
     assembly_p = entity.add_parser("assembly", aliases=["site"], help="Manage assemblies.")
     assembly_sub = assembly_p.add_subparsers(dest="action", required=True,
-                                     metavar="{add,view,delete,update-magnet,decommission}")
+                                     metavar="{add,view,update,delete,update-magnet,decommission}")
 
     s_add = assembly_sub.add_parser("add", help="Add an assembly from a JSON export.")
     s_add.add_argument("json_file", help="Path to the assembly JSON file (or bare name with --input-dir)")
@@ -1557,6 +1715,18 @@ def build_parser() -> argparse.ArgumentParser:
     s_view.add_argument("--status", default=None,
                         help="Filter list by status (ignored when <name> is given)")
     _db_arg(s_view)
+
+    s_reload = assembly_sub.add_parser(
+        "update",
+        help="Refresh an assembly's description from a JSON file. Only "
+             "written when the JSON has a 'description' key; status, "
+             "housing, timestamps, and linked magnets/records are never "
+             "touched here.",
+    )
+    s_reload.add_argument("json_file", help="Path to the assembly's JSON file")
+    _db_arg(s_reload)
+    s_reload.add_argument("--dry-run", action="store_true",
+                          help="Report whether description would change without writing")
 
     s_del = assembly_sub.add_parser("delete",
                                  help="Delete an assembly, its magnet links, and experiments.")
@@ -1667,7 +1837,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── populate ─────────────────────────────────────────────────────────────
     pop_p = entity.add_parser("populate", help="Populate data tables from files.")
     pop_sub = pop_p.add_subparsers(dest="action", required=True,
-                                   metavar="{operationaldata,experiments,overview-records,overview-records-from-json}")
+                                   metavar="{operationaldata,experiments,overview-records,overview-records-from-archive,overview-records-from-json}")
 
     # populate operationaldata
     p_opdata = pop_sub.add_parser(
@@ -1746,6 +1916,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ov.add_argument("--dry-run", action="store_true",
                       help="Discover files but do not write to the DB.")
+
+    # populate overview-records-from-archive
+    p_ov_arch = pop_sub.add_parser(
+        "overview-records-from-archive",
+        help=(
+            "Scan the filesystem for Archive TDMS files and process them via "
+            "python_magnetrun, for sessions with no Overview TDMS capture "
+            "(e.g. M9 before 2019). Resulting rows have sources_overview empty."
+        ),
+    )
+    _db_arg(p_ov_arch)
+    _assemblies_arg(p_ov_arch)
+    p_ov_arch.add_argument(
+        "--records-base", default=str(_DEFAULT_RECORDS_BASE), dest="records_base",
+        help=f"Root of the records tree (default: {_DEFAULT_RECORDS_BASE})",
+    )
+    p_ov_arch.add_argument(
+        "--pbsurv", default=_DEFAULT_PBSURV,
+        help=f"Subdirectory of records-base for TDMS files (default: {_DEFAULT_PBSURV})",
+    )
+    p_ov_arch.add_argument(
+        "--db-tz", default="UTC", dest="db_tz",
+        help="Timezone of commissioned_at / decommissioned_at in the DB (default: UTC)",
+    )
+    p_ov_arch.add_argument(
+        "--reprocess", action="store_true",
+        help="Overwrite existing overview_records rows (upsert instead of skip).",
+    )
+    p_ov_arch.add_argument("--dry-run", action="store_true",
+                           help="Discover files but do not write to the DB.")
 
     # populate overview-records-from-json
     p_ov_json = pop_sub.add_parser(

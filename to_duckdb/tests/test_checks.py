@@ -3,6 +3,7 @@
 import pytest
 
 from checks import (
+    _ENTITY_CHECKS,
     check_assemblies,
     check_experiments,
     check_magnets,
@@ -31,7 +32,7 @@ def test_check_parts_reports_missing_geometry_and_geometry_data(con_populated):
     helix = _result_for(results, "HELIX_01")
     assert not helix["ok"]
     assert "geometry is not set" in helix["problems"]
-    assert "geometry_data is not set" in helix["problems"]
+    assert any("geometry_data is not set" in p for p in helix["problems"])
 
 
 def test_check_parts_name_filter(con_populated):
@@ -49,6 +50,37 @@ def test_check_parts_ok_when_both_fields_set(con):
     results = check_parts(con, name="P_OK")
     assert results[0]["ok"]
     assert results[0]["problems"] == []
+
+
+def test_check_parts_fix_loads_geometry_data_from_file(con_populated, monkeypatch):
+    monkeypatch.setattr("checks.load_geometry_json", lambda path: '{"__classname__": "Helix"}')
+    con_populated.execute("UPDATE parts SET geometry = '/fake/HELIX_01.yaml' WHERE name = 'HELIX_01'")
+    results = check_parts(con_populated, name="HELIX_01", fix=True)
+    helix = _result_for(results, "HELIX_01")
+    assert helix["ok"]
+    assert helix["problems"] == []
+    stored = con_populated.execute(
+        "SELECT geometry_data FROM parts WHERE name = 'HELIX_01'"
+    ).fetchone()[0]
+    assert stored is not None
+
+
+def test_check_parts_fix_reports_unfixable_when_load_fails(con_populated, monkeypatch):
+    monkeypatch.setattr("checks.load_geometry_json", lambda path: None)
+    con_populated.execute("UPDATE parts SET geometry = '/fake/missing.yaml' WHERE name = 'HELIX_01'")
+    results = check_parts(con_populated, name="HELIX_01", fix=True)
+    helix = _result_for(results, "HELIX_01")
+    assert not helix["ok"]
+    assert any("could not be auto-fixed" in p for p in helix["problems"])
+
+
+def test_check_parts_fix_no_geometry_path_is_unfixable(con_populated):
+    """HELIX_01 has geometry=None in con_populated — there's no file to load
+    from, so --fix must report it as an ordinary problem, not attempt a load."""
+    results = check_parts(con_populated, name="HELIX_01", fix=True)
+    helix = _result_for(results, "HELIX_01")
+    assert not helix["ok"]
+    assert any("cannot auto-fix" in p for p in helix["problems"])
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +348,12 @@ def test_run_checks_name_with_all_entity_raises(con_populated):
 def test_run_checks_unknown_entity_raises(con_populated):
     with pytest.raises(ValueError):
         run_checks(con_populated, entity="bogus")
+
+
+def test_entity_checks_fixes_parts_before_magnets(con_populated):
+    """entity='all' --fix must reconstruct parts' geometry_data before
+    attempting magnet reconstruction, since magnets depend on it."""
+    assert list(_ENTITY_CHECKS)[:2] == ["part", "magnet"]
 
 
 def test_print_check_report_returns_false_on_problems(con_populated, capsys):

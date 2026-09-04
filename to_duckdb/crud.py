@@ -33,6 +33,9 @@ insert_experiments(con, assembly_name, records, verbose)
 
 update_part_status(con, name, status, description, changed_at, attachments, verbose)
 update_magnet_status(con, name, status, description, changed_at, attachments, dead_parts, verbose)
+update_part_from_json(con, data, dry_run, verbose)
+update_magnet_from_json(con, data, dry_run, verbose)
+update_assembly_from_json(con, data, dry_run, verbose)
 
 view_parts(con, type_filter, status_filter)
 view_part(con, name)
@@ -327,6 +330,77 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
         print(f"  + part      {name}  [{part.get('type', '?')}]  {status}")
 
 
+def update_part_from_json(con, data: dict, dry_run: bool = False, verbose: bool = True) -> None:
+    """Refresh a part's descriptive/geometry fields from a JSON payload.
+
+    Only keys present in *data* are written; a key absent from *data* leaves
+    the corresponding column untouched — this is a partial refresh, not a
+    full re-sync. ``name``, ``type``, ``status``, and ``status_history`` are
+    never touched here; see :func:`update_part_status` for lifecycle changes.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    data:
+        Part dict; only ``material_name``/``material.name``, ``geometry``,
+        ``geometry_data``, ``cad``, and ``design_office_reference`` are
+        consulted. ``geometry_data`` is recomputed via
+        :func:`load_geometry_json` when ``geometry``/``geometry_config`` is
+        present but ``geometry_data`` itself is not.
+    dry_run:
+        When ``True``, report which fields would change without writing.
+    verbose:
+        Print status lines.
+
+    Raises
+    ------
+    ValueError
+        If the part is not found, or *data* sets ``material_name`` to a name
+        not present in ``materials``.
+    """
+    name = data["name"]
+    if not exists(con, "parts", name):
+        raise ValueError(f"Part '{name}' not found in DB — nothing to update.")
+
+    fields: dict = {}
+    if "material_name" in data or "material" in data:
+        material_name = data.get("material_name") or (data.get("material") or {}).get("name")
+        if material_name and con.execute(
+            "SELECT 1 FROM materials WHERE name = ?", [material_name]
+        ).fetchone() is None:
+            raise ValueError(
+                f"Material '{material_name}' not found — add it with "
+                "'material add' first, or fix the JSON."
+            )
+        fields["material_name"] = material_name
+    if "geometry" in data:
+        fields["geometry"] = data.get("geometry") or None
+    if "geometry_data" in data:
+        fields["geometry_data"] = data.get("geometry_data") or None
+    elif "geometry" in data or "geometry_config" in data:
+        fields["geometry_data"] = load_geometry_json(data.get("geometry") or data.get("geometry_config"))
+    if "cad" in data:
+        fields["cad"] = data.get("cad") or None
+    if "design_office_reference" in data:
+        fields["design_office_reference"] = data.get("design_office_reference") or None
+
+    if not fields:
+        if verbose:
+            print(f"  ~ part      {name}  (no descriptive fields in JSON, nothing to update)")
+        return
+
+    if dry_run:
+        if verbose:
+            print(f"[dry-run] part '{name}': would update {', '.join(fields)}")
+        return
+
+    set_clause = ", ".join(f"{col} = ?" for col in fields)
+    con.execute(f"UPDATE parts SET {set_clause} WHERE name = ?", [*fields.values(), name])
+    if verbose:
+        print(f"  ~ part      {name}  updated: {', '.join(fields)}")
+
+
 # ---------------------------------------------------------------------------
 # Magnet
 # ---------------------------------------------------------------------------
@@ -359,6 +433,65 @@ def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> No
     )
     if verbose:
         print(f"  + magnet    {name}  [{magnet_type}]  {status}")
+
+
+def update_magnet_from_json(con, data: dict, dry_run: bool = False, verbose: bool = True) -> None:
+    """Refresh a magnet's descriptive/geometry fields from a JSON payload.
+
+    Only keys present in *data* are written; a key absent from *data* leaves
+    the corresponding column untouched — this is a partial refresh, not a
+    full re-sync. ``name``, ``type``, ``status``, ``status_history``, and
+    linked ``parts`` are never touched here; see :func:`update_magnet_status`
+    for lifecycle changes.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    data:
+        Magnet dict; only ``geometry``, ``geometry_data``, and
+        ``design_office_reference`` are consulted. ``geometry_data`` is
+        recomputed via :func:`load_geometry_json` when
+        ``geometry``/``geometry_config`` is present but ``geometry_data``
+        itself is not.
+    dry_run:
+        When ``True``, report which fields would change without writing.
+    verbose:
+        Print status lines.
+
+    Raises
+    ------
+    ValueError
+        If the magnet is not found.
+    """
+    name = data["name"]
+    if not exists(con, "magnets", name):
+        raise ValueError(f"Magnet '{name}' not found in DB — nothing to update.")
+
+    fields: dict = {}
+    if "geometry" in data:
+        fields["geometry"] = data.get("geometry") or None
+    if "geometry_data" in data:
+        fields["geometry_data"] = data.get("geometry_data") or None
+    elif "geometry" in data or "geometry_config" in data:
+        fields["geometry_data"] = load_geometry_json(data.get("geometry") or data.get("geometry_config"))
+    if "design_office_reference" in data:
+        fields["design_office_reference"] = data.get("design_office_reference") or None
+
+    if not fields:
+        if verbose:
+            print(f"  ~ magnet    {name}  (no descriptive fields in JSON, nothing to update)")
+        return
+
+    if dry_run:
+        if verbose:
+            print(f"[dry-run] magnet '{name}': would update {', '.join(fields)}")
+        return
+
+    set_clause = ", ".join(f"{col} = ?" for col in fields)
+    con.execute(f"UPDATE magnets SET {set_clause} WHERE name = ?", [*fields.values(), name])
+    if verbose:
+        print(f"  ~ magnet    {name}  updated: {', '.join(fields)}")
 
 
 def _reclaim_reused_parts(con, new_magnet_name: str, part_names: list[str], verbose: bool = True) -> None:
@@ -816,6 +949,54 @@ def insert_assembly(
         print(f"  + assembly      {name}  [{housing or '?'}]  {status or ''}")
 
 
+def update_assembly_from_json(con, data: dict, dry_run: bool = False, verbose: bool = True) -> None:
+    """Refresh an assembly's ``description`` from a JSON payload.
+
+    Only writes ``description``, and only when that key is present in
+    *data* — this is a partial refresh, not a full re-sync. ``name``,
+    ``status``, ``status_history``, ``housing``,
+    ``commissioned_at``/``decommissioned_at``, and linked ``magnets``/
+    ``records`` are never touched here.
+
+    Parameters
+    ----------
+    con:
+        Open DuckDB connection.
+    data:
+        Assembly dict; only ``description`` is consulted.
+    dry_run:
+        When ``True``, report whether ``description`` would change without
+        writing.
+    verbose:
+        Print status lines.
+
+    Raises
+    ------
+    ValueError
+        If the assembly is not found.
+    """
+    name = data["name"]
+    if not exists(con, "assemblies", name):
+        raise ValueError(f"Assembly '{name}' not found in DB — nothing to update.")
+
+    if "description" not in data:
+        if verbose:
+            print(f"  ~ assembly      {name}  (no descriptive fields in JSON, nothing to update)")
+        return
+
+    if dry_run:
+        if verbose:
+            print(f"[dry-run] assembly '{name}': would update description")
+        return
+
+    con.execute(
+        "UPDATE assemblies SET description = ? WHERE name = ?",
+        [data.get("description") or None, name],
+    )
+    if verbose:
+        print(f"  ~ assembly      {name}  updated: description")
+
+
 def _cascade_assembly_disassembly(con, assembly_name: str, decommissioned_at, verbose: bool = True) -> None:
     """Close open ``assembly_magnets`` rows for *assembly_name* and cascade
     its ``NULL``/``in_operation`` magnets to ``in_stock`` (their parts are
@@ -1113,7 +1294,11 @@ def update_magnet_status(
         Required (non-empty) when ``status == "dead"``; each name must
         belong to this magnet (via ``magnet_parts``) and is itself set (or
         confirmed, if already dead) to ``"dead"`` before the magnet's own
-        status is updated. Rejected when ``status != "dead"``.
+        status is updated. Rejected when ``status != "dead"``. The special
+        value ``"ALL"`` (used alone, not combined with explicit names)
+        resolves to every part currently linked to this magnet. A part
+        that is already ``"dead"`` is re-confirmed rather than rejected,
+        printing a warning.
     verbose:
         Print status lines.
 
@@ -1122,8 +1307,9 @@ def update_magnet_status(
     ValueError
         If the magnet does not exist, *status* is invalid, ``dead_parts`` is
         missing/empty for a ``"dead"`` call, a name in ``dead_parts`` doesn't
-        belong to this magnet, or ``dead_parts`` is given for a non-``dead``
-        status.
+        belong to this magnet, ``dead_parts`` is given for a non-``dead``
+        status, ``"ALL"`` is combined with explicit part names, or ``"ALL"``
+        is given but the magnet has no linked parts.
     """
     if not exists(con, "magnets", name):
         raise ValueError(f"Magnet '{name}' not found.")
@@ -1132,15 +1318,24 @@ def update_magnet_status(
     if status == LifecycleStatus.DEAD.value:
         if not dead_parts:
             raise ValueError("Marking a magnet 'dead' requires at least one dead part.")
-        linked = {
-            r[0] for r in con.execute(
-                "SELECT part_name FROM magnet_parts WHERE magnet_name = ?", [name]
+        linked_status = {
+            r[0]: r[1] for r in con.execute(
+                "SELECT p.name, p.status FROM magnet_parts mp "
+                "JOIN parts p ON p.name = mp.part_name WHERE mp.magnet_name = ?", [name]
             ).fetchall()
         }
-        unknown = [p for p in dead_parts if p not in linked]
+        if "ALL" in dead_parts:
+            if len(dead_parts) > 1:
+                raise ValueError("'ALL' cannot be combined with explicit part names.")
+            if not linked_status:
+                raise ValueError(f"Magnet '{name}' has no linked parts to mark dead.")
+            dead_parts = sorted(linked_status)
+        unknown = [p for p in dead_parts if p not in linked_status]
         if unknown:
             raise ValueError(f"Part(s) {unknown} do not belong to magnet '{name}'.")
         for part_name in dead_parts:
+            if linked_status[part_name] == LifecycleStatus.DEAD.value:
+                print(f"  *** WARNING: part '{part_name}' is already dead — re-confirming. ***")
             update_part_status(
                 con, part_name, LifecycleStatus.DEAD.value,
                 description=description, changed_at=changed_at, verbose=verbose,

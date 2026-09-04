@@ -30,8 +30,11 @@ from crud import (
     merge_duplicate_pupitre_records,
     parse_timestamp,
     resolve_overview_assembly,
+    update_assembly_from_json,
     update_assembly_magnet,
+    update_magnet_from_json,
     update_magnet_status,
+    update_part_from_json,
     update_part_status,
     view_magnet,
     view_magnets,
@@ -809,6 +812,86 @@ def test_insert_experiments_skips_duplicate_file(con_populated):
 
 
 # ---------------------------------------------------------------------------
+# update_part_from_json()
+# ---------------------------------------------------------------------------
+
+
+def test_update_part_from_json_updates_only_present_fields(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, PART_HELIX, verbose=False)
+    update_part_from_json(con, {"name": "HELIX_01", "cad": "/new/cad.step"}, verbose=False)
+    row = con.execute(
+        "SELECT cad, geometry, design_office_reference FROM parts WHERE name = 'HELIX_01'"
+    ).fetchone()
+    assert row == ("/new/cad.step", None, "HL-TEST")
+
+
+def test_update_part_from_json_leaves_status_and_type_untouched(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, PART_HELIX, verbose=False)
+    update_part_from_json(
+        con, {"name": "HELIX_01", "type": "ring", "status": "dead", "cad": "/x.step"},
+        verbose=False,
+    )
+    row = con.execute("SELECT type, status FROM parts WHERE name = 'HELIX_01'").fetchone()
+    assert row == ("helix", "in_operation")
+
+
+def test_update_part_from_json_recomputes_geometry_data_when_geometry_changes(con, monkeypatch):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, PART_HELIX, verbose=False)
+    monkeypatch.setattr("crud.load_geometry_json", lambda path: '{"__classname__": "Helix"}')
+    update_part_from_json(con, {"name": "HELIX_01", "geometry": "/new/HELIX_01.yaml"}, verbose=False)
+    row = con.execute("SELECT geometry, geometry_data FROM parts WHERE name = 'HELIX_01'").fetchone()
+    assert row[0] == "/new/HELIX_01.yaml"
+    assert row[1] is not None
+
+
+def test_update_part_from_json_uses_explicit_geometry_data_over_recompute(con, monkeypatch):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, PART_HELIX, verbose=False)
+    monkeypatch.setattr(
+        "crud.load_geometry_json",
+        lambda path: (_ for _ in ()).throw(AssertionError("should not be called")),
+    )
+    update_part_from_json(
+        con, {"name": "HELIX_01", "geometry_data": '{"__classname__": "Helix"}'}, verbose=False,
+    )
+    row = con.execute("SELECT geometry_data FROM parts WHERE name = 'HELIX_01'").fetchone()
+    assert row[0] is not None
+
+
+def test_update_part_from_json_raises_for_unknown_material(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, PART_HELIX, verbose=False)
+    with pytest.raises(ValueError):
+        update_part_from_json(con, {"name": "HELIX_01", "material_name": "NOPE"}, verbose=False)
+
+
+def test_update_part_from_json_raises_for_unknown_part(con):
+    with pytest.raises(ValueError):
+        update_part_from_json(con, {"name": "NOPE", "cad": "/x.step"}, verbose=False)
+
+
+def test_update_part_from_json_nothing_to_update(con, capsys):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, PART_HELIX, verbose=False)
+    update_part_from_json(con, {"name": "HELIX_01"}, verbose=True)
+    row = con.execute("SELECT cad FROM parts WHERE name = 'HELIX_01'").fetchone()
+    assert row[0] is None
+    assert "nothing to update" in capsys.readouterr().out
+
+
+def test_update_part_from_json_dry_run_does_not_write(con, capsys):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, PART_HELIX, verbose=False)
+    update_part_from_json(con, {"name": "HELIX_01", "cad": "/new/cad.step"}, dry_run=True, verbose=True)
+    row = con.execute("SELECT cad FROM parts WHERE name = 'HELIX_01'").fetchone()
+    assert row[0] is None
+    assert "dry-run" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
 # update_part_status()
 # ---------------------------------------------------------------------------
 
@@ -834,6 +917,70 @@ def test_update_part_status_raises_for_invalid_status(con):
     insert_part(con, PART_HELIX, verbose=False)
     with pytest.raises(ValueError):
         update_part_status(con, "HELIX_01", "bogus", verbose=False)
+
+
+# ---------------------------------------------------------------------------
+# update_magnet_from_json()
+# ---------------------------------------------------------------------------
+
+
+def test_update_magnet_from_json_updates_only_present_fields(con_populated):
+    update_magnet_from_json(
+        con_populated, {"name": "MAG_01", "design_office_reference": "MAG-NEW"}, verbose=False,
+    )
+    row = con_populated.execute(
+        "SELECT design_office_reference, geometry FROM magnets WHERE name = 'MAG_01'"
+    ).fetchone()
+    assert row == ("MAG-NEW", None)
+
+
+def test_update_magnet_from_json_leaves_status_type_and_parts_untouched(con_populated):
+    before_parts = con_populated.execute(
+        "SELECT part_name FROM magnet_parts WHERE magnet_name = 'MAG_01' ORDER BY part_name"
+    ).fetchall()
+    update_magnet_from_json(
+        con_populated,
+        {"name": "MAG_01", "type": "bitters", "status": "dead", "design_office_reference": "X"},
+        verbose=False,
+    )
+    row = con_populated.execute("SELECT type, status FROM magnets WHERE name = 'MAG_01'").fetchone()
+    assert row == ("insert", "in_operation")
+    after_parts = con_populated.execute(
+        "SELECT part_name FROM magnet_parts WHERE magnet_name = 'MAG_01' ORDER BY part_name"
+    ).fetchall()
+    assert after_parts == before_parts
+
+
+def test_update_magnet_from_json_recomputes_geometry_data_when_geometry_changes(con_populated, monkeypatch):
+    monkeypatch.setattr("crud.load_geometry_json", lambda path: '{"__classname__": "Insert"}')
+    update_magnet_from_json(con_populated, {"name": "MAG_01", "geometry": "/new/MAG_01.yaml"}, verbose=False)
+    row = con_populated.execute(
+        "SELECT geometry, geometry_data FROM magnets WHERE name = 'MAG_01'"
+    ).fetchone()
+    assert row[0] == "/new/MAG_01.yaml"
+    assert row[1] is not None
+
+
+def test_update_magnet_from_json_raises_for_unknown_magnet(con):
+    with pytest.raises(ValueError):
+        update_magnet_from_json(con, {"name": "NOPE", "design_office_reference": "X"}, verbose=False)
+
+
+def test_update_magnet_from_json_nothing_to_update(con_populated, capsys):
+    update_magnet_from_json(con_populated, {"name": "MAG_01"}, verbose=True)
+    assert "nothing to update" in capsys.readouterr().out
+
+
+def test_update_magnet_from_json_dry_run_does_not_write(con_populated, capsys):
+    update_magnet_from_json(
+        con_populated, {"name": "MAG_01", "design_office_reference": "MAG-NEW"},
+        dry_run=True, verbose=True,
+    )
+    row = con_populated.execute(
+        "SELECT design_office_reference FROM magnets WHERE name = 'MAG_01'"
+    ).fetchone()
+    assert row[0] == "MAG-TEST-001"
+    assert "dry-run" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -964,6 +1111,52 @@ def test_update_assembly_magnet_nothing_to_update(con_populated, capsys):
     update_assembly_magnet(con_populated, "ASSEMBLY_01", "MAG_01")
     captured = capsys.readouterr()
     assert "Nothing to update" in captured.out
+
+
+# ---------------------------------------------------------------------------
+# update_assembly_from_json()
+# ---------------------------------------------------------------------------
+
+
+def test_update_assembly_from_json_updates_description(con_populated):
+    update_assembly_from_json(con_populated, {"name": "ASSEMBLY_01", "description": "new note"}, verbose=False)
+    row = con_populated.execute(
+        "SELECT description FROM assemblies WHERE name = 'ASSEMBLY_01'"
+    ).fetchone()
+    assert row[0] == "new note"
+
+
+def test_update_assembly_from_json_leaves_status_and_housing_untouched(con_populated):
+    update_assembly_from_json(
+        con_populated,
+        {"name": "ASSEMBLY_01", "description": "x", "status": "disassembled", "housing": "M99"},
+        verbose=False,
+    )
+    row = con_populated.execute(
+        "SELECT status, housing FROM assemblies WHERE name = 'ASSEMBLY_01'"
+    ).fetchone()
+    assert row == ("in_operation", "M10")
+
+
+def test_update_assembly_from_json_raises_for_unknown_assembly(con):
+    with pytest.raises(ValueError):
+        update_assembly_from_json(con, {"name": "NOPE", "description": "x"}, verbose=False)
+
+
+def test_update_assembly_from_json_nothing_to_update(con_populated, capsys):
+    update_assembly_from_json(con_populated, {"name": "ASSEMBLY_01"}, verbose=True)
+    assert "nothing to update" in capsys.readouterr().out
+
+
+def test_update_assembly_from_json_dry_run_does_not_write(con_populated, capsys):
+    update_assembly_from_json(
+        con_populated, {"name": "ASSEMBLY_01", "description": "new note"}, dry_run=True, verbose=True,
+    )
+    row = con_populated.execute(
+        "SELECT description FROM assemblies WHERE name = 'ASSEMBLY_01'"
+    ).fetchone()
+    assert row[0] == "Test assembly"
+    assert "dry-run" in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------

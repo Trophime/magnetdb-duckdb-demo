@@ -83,8 +83,9 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | `db delete [--yes]` | Delete DB file | [loading.md](docs/loading.md) |
 | `db drop-table --table TABLE [TABLE ...] [--yes] [--dry-run]` | Drop one or more tables from the DB | [loading.md](docs/loading.md) |
 | `material add/view/delete` | Manage materials | [loading.md](docs/loading.md) |
-| `magnet add/view/delete` | Manage magnets | [loading.md](docs/loading.md) |
-| `assembly add/view/delete` | Manage assemblies + experiment records | [loading.md](docs/loading.md) |
+| `part view/update/update-status` | View a part, refresh descriptive/geometry fields from JSON, or change lifecycle status | [loading.md](docs/loading.md) |
+| `magnet add/view/update/delete` | Manage magnets | [loading.md](docs/loading.md) |
+| `assembly add/view/update/delete` | Manage assemblies + experiment records | [loading.md](docs/loading.md) |
 | `assembly update-magnet` | Patch positional/temporal AssemblyMagnet fields | [loading.md](docs/loading.md) |
 | `housing view` | List housing configs | [loading.md](docs/loading.md#housing-configs) |
 | `experiments view` | List experiment records | [populate.md](docs/populate.md#experiments-view) |
@@ -122,7 +123,9 @@ Default DB: `magnetdb.duckdb` in the current directory.
 problems surface before they break `hoop-stress compute` or a query further
 down the pipeline:
 
-- **parts** — flags rows missing `geometry` and/or `geometry_data`.
+- **parts** — flags rows missing `geometry` and/or `geometry_data`. `--fix`
+  can populate a part's `geometry_data` from its recorded `geometry` file
+  path.
 - **magnets** — flags rows missing `geometry_data`, a `type` that isn't a
   valid `MagnetType` (`insert`/`bitters`/`supras`), or a linked part whose
   `type` doesn't belong to that magnet type.
@@ -137,15 +140,24 @@ python magnetdb.py check --db $DB
 python magnetdb.py check --db $DB --entity magnet
 python magnetdb.py check --db $DB --entity magnet --name M19071101
 
+# Load a part's geometry_data from its geometry file, where missing
+python magnetdb.py check --db $DB --entity part --fix
+
 # Reconstruct missing magnets.geometry_data from parts' geometry_data
 # (requires every linked part to already have its own geometry_data)
 python magnetdb.py check --db $DB --entity magnet --fix
+
+# Fix everything in one pass — parts are fixed before magnets, so a magnet
+# whose parts were only just repaired can be reconstructed in the same run
+python magnetdb.py check --db $DB --fix
 ```
 
 `check` exits non-zero if any problem remains unresolved, so it can gate a
-setup script. `--fix` only ever touches `magnets.geometry_data`; it never
-invents data for parts, experiments, or operationaldata, and it refuses (with
-a clear error) to "fix" a magnet whose `type` isn't a valid `MagnetType` —
+setup script. `--fix` can populate `parts.geometry_data` from an
+already-recorded `geometry` file path, and `magnets.geometry_data` from
+parts that already have theirs; it never invents a missing `geometry` path
+itself for parts, experiments, or operationaldata, and it refuses (with a
+clear error) to "fix" a magnet whose `type` isn't a valid `MagnetType` —
 that's a data-inconsistency bug to fix by hand, not something to paper over.
 
 ---

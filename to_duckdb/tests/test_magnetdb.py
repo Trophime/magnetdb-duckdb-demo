@@ -1,6 +1,7 @@
 """Integration tests for magnetdb.py — the unified CLI entry point."""
 
 import json
+from datetime import datetime
 
 import duckdb
 import pytest
@@ -134,6 +135,48 @@ def test_cli_magnet_delete_missing_db_exits(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# magnet update
+# ---------------------------------------------------------------------------
+
+
+def test_cli_magnet_update_writes_descriptive_fields(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    json_path = tmp_path / "MAG_JSON_update.json"
+    json_path.write_text(json.dumps({"name": "MAG_JSON", "design_office_reference": "NEW-REF"}))
+
+    _run(monkeypatch, "magnet", "update", str(json_path), "--db", str(db))
+
+    row = _fetch_one(db, "SELECT design_office_reference FROM magnets WHERE name = 'MAG_JSON'")
+    assert row[0] == "NEW-REF"
+
+
+def test_cli_magnet_update_dry_run_writes_nothing(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    json_path = tmp_path / "MAG_JSON_update.json"
+    json_path.write_text(json.dumps({"name": "MAG_JSON", "design_office_reference": "NEW-REF"}))
+
+    _run(monkeypatch, "magnet", "update", str(json_path), "--db", str(db), "--dry-run")
+
+    row = _fetch_one(db, "SELECT design_office_reference FROM magnets WHERE name = 'MAG_JSON'")
+    assert row[0] is None
+
+
+def test_cli_magnet_update_missing_magnet_exits(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    json_path = tmp_path / "nope_update.json"
+    json_path.write_text(json.dumps({"name": "NOPE", "design_office_reference": "X"}))
+
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "magnet", "update", str(json_path), "--db", str(db))
+
+
+def test_cli_magnet_update_missing_json_exits(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "magnet", "update", str(tmp_path / "NOPE.json"), "--db", str(db))
+
+
+# ---------------------------------------------------------------------------
 # assembly add
 # ---------------------------------------------------------------------------
 
@@ -207,6 +250,42 @@ def test_cli_assembly_delete_missing_db_exits(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         _run(monkeypatch, "assembly", "delete", "ASSEMBLY_JSON_01",
              "--db", str(tmp_path / "nope.duckdb"))
+
+
+# ---------------------------------------------------------------------------
+# assembly update
+# ---------------------------------------------------------------------------
+
+
+def test_cli_assembly_update_writes_description(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
+    json_path = tmp_path / "ASSEMBLY_JSON_01_update.json"
+    json_path.write_text(json.dumps({"name": "ASSEMBLY_JSON_01", "description": "new note"}))
+
+    _run(monkeypatch, "assembly", "update", str(json_path), "--db", str(db))
+
+    row = _fetch_one(db, "SELECT description FROM assemblies WHERE name = 'ASSEMBLY_JSON_01'")
+    assert row[0] == "new note"
+
+
+def test_cli_assembly_update_dry_run_writes_nothing(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
+    json_path = tmp_path / "ASSEMBLY_JSON_01_update.json"
+    json_path.write_text(json.dumps({"name": "ASSEMBLY_JSON_01", "description": "new note"}))
+
+    _run(monkeypatch, "assembly", "update", str(json_path), "--db", str(db), "--dry-run")
+
+    row = _fetch_one(db, "SELECT description FROM assemblies WHERE name = 'ASSEMBLY_JSON_01'")
+    assert row[0] is None
+
+
+def test_cli_assembly_update_missing_assembly_exits(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
+    json_path = tmp_path / "nope_update.json"
+    json_path.write_text(json.dumps({"name": "NOPE", "description": "x"}))
+
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "assembly", "update", str(json_path), "--db", str(db))
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +401,51 @@ def test_cli_part_update_status_missing_db_exits(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# part update
+# ---------------------------------------------------------------------------
+
+
+def test_cli_part_update_writes_descriptive_fields(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    json_path = tmp_path / "H_JSON_01_update.json"
+    json_path.write_text(json.dumps({"name": "H_JSON_01", "design_office_reference": "HL-NEW"}))
+
+    _run(monkeypatch, "part", "update", str(json_path), "--db", str(db))
+
+    row = _fetch_one(db, "SELECT design_office_reference FROM parts WHERE name = 'H_JSON_01'")
+    assert row[0] == "HL-NEW"
+
+
+def test_cli_part_update_dry_run_writes_nothing(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    json_path = tmp_path / "H_JSON_01_update.json"
+    json_path.write_text(json.dumps({"name": "H_JSON_01", "design_office_reference": "HL-NEW"}))
+
+    _run(monkeypatch, "part", "update", str(json_path), "--db", str(db), "--dry-run")
+
+    row = _fetch_one(db, "SELECT design_office_reference FROM parts WHERE name = 'H_JSON_01'")
+    assert row[0] is None
+
+
+def test_cli_part_update_unknown_material_exits(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    json_path = tmp_path / "H_JSON_01_update.json"
+    json_path.write_text(json.dumps({"name": "H_JSON_01", "material_name": "NOPE"}))
+
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "part", "update", str(json_path), "--db", str(db))
+
+
+def test_cli_part_update_missing_part_exits(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    json_path = tmp_path / "nope_update.json"
+    json_path.write_text(json.dumps({"name": "NOPE", "design_office_reference": "X"}))
+
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "part", "update", str(json_path), "--db", str(db))
+
+
+# ---------------------------------------------------------------------------
 # magnet update-status
 # ---------------------------------------------------------------------------
 
@@ -350,10 +474,129 @@ def test_cli_magnet_update_status_dead_with_dead_part(tmp_path, monkeypatch, cap
     assert "WARNING" in capsys.readouterr().out
 
 
+def test_cli_magnet_update_status_dead_all_marks_every_part(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    _run(monkeypatch, "magnet", "update-status", "MAG_JSON", "--status", "dead",
+         "--dead-part", "ALL", "--db", str(db))
+    row = _fetch_one(db, "SELECT status FROM magnets WHERE name = 'MAG_JSON'")
+    assert row[0] == "dead"
+    for part_name in ("H_JSON_01", "R_JSON_01"):
+        part_row = _fetch_one(db, "SELECT status FROM parts WHERE name = ?", [part_name])
+        assert part_row[0] == "dead"
+
+
+def test_cli_magnet_update_status_dead_all_combined_with_part_fails(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "magnet", "update-status", "MAG_JSON", "--status", "dead",
+             "--dead-part", "ALL", "--dead-part", "H_JSON_01", "--db", str(db))
+
+
+def test_cli_magnet_update_status_dead_repeat_dead_part_warns(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+    _run(monkeypatch, "magnet", "update-status", "MAG_JSON", "--status", "dead",
+         "--dead-part", "H_JSON_01", "--db", str(db))
+    capsys.readouterr()
+    _run(monkeypatch, "magnet", "update-status", "MAG_JSON", "--status", "dead",
+         "--dead-part", "H_JSON_01", "--db", str(db))
+    out = capsys.readouterr().out
+    assert "already dead" in out
+
+
 def test_cli_magnet_update_status_missing_db_exits(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         _run(monkeypatch, "magnet", "update-status", "MAG_JSON", "--status", "in_stock",
              "--db", str(tmp_path / "nope.duckdb"))
+
+
+# ---------------------------------------------------------------------------
+# populate overview-records-from-archive
+# ---------------------------------------------------------------------------
+
+
+def test_cli_populate_overview_records_from_archive_writes_thin_row(tmp_path, monkeypatch):
+    """CLI plumbing test: python_magnetrun's own file discovery/processing is
+    mocked out (it's covered by python_magnetrun's own test suite); this checks
+    that the new subcommand wires assembly resolution, type_filter=["Archive"],
+    and the record into a row with sources_overview empty."""
+    db = _db_with_assembly(tmp_path)  # ASSEMBLY_JSON_01, housing M10, commissioned 2025-01-01
+
+    from python_magnetrun.analysis.loaders import FileSet
+    from python_magnetrun.analysis.processing import OverviewRecord
+
+    archive_path = tmp_path / "M10_Archive_250115-1200.tdms"
+
+    def fake_find_and_register(assembly, db_path, db_tz, dry_run, type_filter, records_base, pbsurv):
+        assert type_filter == ["Archive"]
+        return [(archive_path, datetime(2025, 1, 15, 12, 0, 0), "Archive")]
+
+    def fake_process_archive_file(path, config):
+        return OverviewRecord(
+            filename="M10_Archive_250115-1200",
+            housing="M10",
+            mode="Archive",
+            t0=datetime(2025, 1, 15, 12, 0, 0),
+            duration=1800.0,
+            sources=FileSet(archive=[str(path)], pupitre=["2025.01.15 - 12:00:00.txt"]),
+        )
+
+    monkeypatch.setattr("magnetdb._tdms_find_and_register", fake_find_and_register)
+    monkeypatch.setattr(
+        "python_magnetrun.analysis.processing.process_archive_file", fake_process_archive_file
+    )
+
+    _run(monkeypatch, "populate", "overview-records-from-archive",
+         "--assembly", "ASSEMBLY_JSON_01", "--db", str(db))
+
+    row = _fetch_one(
+        db, "SELECT housing, assembly_name, sources_overview, sources_archive, sources_pupitre, "
+        "duration FROM overview_records WHERE filename = 'M10_Archive_250115-1200'"
+    )
+    assert row[0] == "M10"
+    assert row[1] == "ASSEMBLY_JSON_01"
+    assert row[2] == []
+    assert row[3] == [str(archive_path)]
+    assert row[4] == ["2025.01.15 - 12:00:00.txt"]
+    assert row[5] == 1800.0
+
+
+def test_cli_populate_overview_records_from_archive_skips_already_covered(tmp_path, monkeypatch):
+    """An archive file already referenced in some existing row's sources_archive
+    (e.g. a genuine Overview-anchored session) should be skipped, not duplicated."""
+    db = _db_with_assembly(tmp_path)  # ASSEMBLY_JSON_01, housing M10, commissioned 2025-01-01
+
+    from schema import ensure_schema
+
+    with duckdb.connect(str(db)) as con:
+        ensure_schema(con)
+        con.execute(
+            "INSERT INTO overview_records (filename, sources_archive) VALUES (?, ?)",
+            [
+                "M10_Overview_250115-1200",
+                ["/data/M10/Fichiers_Archive/M10_Archive_250115-1200.tdms"],
+            ],
+        )
+
+    # Same basename as the row seeded above, but discovered under a different path.
+    archive_path = tmp_path / "M10_Archive_250115-1200.tdms"
+
+    def fake_find_and_register(assembly, db_path, db_tz, dry_run, type_filter, records_base, pbsurv):
+        return [(archive_path, datetime(2025, 1, 15, 12, 0, 0), "Archive")]
+
+    def fake_process_archive_file(path, config):
+        raise AssertionError(
+            "process_archive_file should not be called for an already-covered archive file"
+        )
+
+    monkeypatch.setattr("magnetdb._tdms_find_and_register", fake_find_and_register)
+    monkeypatch.setattr(
+        "python_magnetrun.analysis.processing.process_archive_file", fake_process_archive_file
+    )
+
+    _run(monkeypatch, "populate", "overview-records-from-archive",
+         "--assembly", "ASSEMBLY_JSON_01", "--db", str(db))
+
+    assert _count(db, "overview_records") == 1
 
 
 # ---------------------------------------------------------------------------

@@ -369,6 +369,7 @@ def _build_page_content(
     selected_assembly=None,
     selected_housing=None,
     selected_year=None,
+    selected_status=None,
     assemblies_meta=None,
     db_path=None,
     table_start_date=None,
@@ -514,8 +515,10 @@ def _build_page_content(
 
     if selected_assembly and selected_assembly != selectors.ALL:
         assemblies_line = f"Assemblies: 1 selected of {total_assemblies}"
-    elif (selected_housing and selected_housing != selectors.ALL) or (
-        selected_year and selected_year != selectors.ALL
+    elif (
+        (selected_housing and selected_housing != selectors.ALL)
+        or (selected_year and selected_year != selectors.ALL)
+        or (selected_status and selected_status != selectors.ALL)
     ):
         assemblies_line = (
             f"Assemblies: {df['Assembly'].nunique()} selected of {total_assemblies}"
@@ -570,6 +573,11 @@ def layout(assembly=None, **kwargs):
                         "Assembly",
                         style={"width": "400px"},
                         value=assembly,
+                    ),
+                    selectors.aggregate_filter(
+                        "assembly-stats-status-filter",
+                        "Status",
+                        style={"width": "250px"},
                     ),
                 ],
                 style={"display": "flex", "gap": "30px", "marginBottom": "15px"},
@@ -681,6 +689,7 @@ def layout(assembly=None, **kwargs):
     Output("assembly-stats-assembly-filter", "options"),
     Output("assembly-stats-housing-filter", "options"),
     Output("assembly-stats-year-filter", "options"),
+    Output("assembly-stats-status-filter", "options"),
     Output("assembly-stats-missing-banner", "children"),
     Output("assembly-stats-overview-records", "children"),
     Output("assembly-stats-magnets", "children"),
@@ -688,6 +697,7 @@ def layout(assembly=None, **kwargs):
     Input("assembly-stats-housing-filter", "value"),
     Input("assembly-stats-year-filter", "value"),
     Input("assembly-stats-assembly-filter", "value"),
+    Input("assembly-stats-status-filter", "value"),
     Input("assembly-stats-table-date-filter", "start_date"),
     Input("assembly-stats-table-date-filter", "end_date"),
     Input("assembly-stats-overview-date-filter", "start_date"),
@@ -698,6 +708,7 @@ def update_assembly_stats(
     selected_housing,
     selected_year,
     selected_assembly,
+    selected_status,
     table_start_date,
     table_end_date,
     overview_start_date,
@@ -711,6 +722,7 @@ def update_assembly_stats(
             go.Figure(),
             {},
             go.Figure(),
+            [],
             [],
             [],
             [],
@@ -739,6 +751,13 @@ def update_assembly_stats(
     else:
         year_options = [selectors.ALL]
 
+    status_options = [selectors.ALL] + db.get_distinct_statuses("assemblies", selected_db)
+    assemblies_with_status = (
+        db.get_names_with_status("assemblies", selected_status, selected_db)
+        if selected_status and selected_status != selectors.ALL
+        else None
+    )
+
     assembly_options = [selectors.ALL] + [
         a
         for a in all_assemblies
@@ -748,6 +767,7 @@ def update_assembly_stats(
             or a.startswith(f"{selected_housing}_")
         )
         and (assemblies_in_year is None or a in assemblies_in_year)
+        and (assemblies_with_status is None or a in assemblies_with_status)
     ]
     housing_options = [selectors.ALL] + db.get_housings(selected_db)
     total_assemblies, assemblies_in_operation = load_assembly_summary(selected_db)
@@ -760,6 +780,8 @@ def update_assembly_stats(
         plot_df = plot_df[plot_df["Housing"] == selected_housing]
     if assemblies_in_year is not None:
         plot_df = plot_df[plot_df["Assembly"].isin(assemblies_in_year)]
+    if assemblies_with_status is not None:
+        plot_df = plot_df[plot_df["Assembly"].isin(assemblies_with_status)]
     if selected_assembly != selectors.ALL:
         plot_df = plot_df[plot_df["Assembly"] == selected_assembly]
     fig_per_assembly_style = (
@@ -775,6 +797,10 @@ def update_assembly_stats(
     if assemblies_in_year is not None:
         overview_plot_df = overview_plot_df[
             overview_plot_df["Assembly"].isin(assemblies_in_year)
+        ]
+    if assemblies_with_status is not None:
+        overview_plot_df = overview_plot_df[
+            overview_plot_df["Assembly"].isin(assemblies_with_status)
         ]
     if selected_assembly != selectors.ALL:
         overview_plot_df = overview_plot_df[
@@ -795,6 +821,7 @@ def update_assembly_stats(
         selected_assembly,
         selected_housing,
         selected_year,
+        selected_status,
         assemblies_meta,
         selected_db,
         table_start_date,
@@ -816,6 +843,7 @@ def update_assembly_stats(
         assembly_options,
         housing_options,
         year_options,
+        status_options,
         missing_banner,
         overview_records_section,
         magnets_section,

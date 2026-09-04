@@ -98,6 +98,8 @@ Invariants not shown above:
 - **Dead-part requirement**: `magnet update-status <name> --status dead`
   requires at least one `--dead-part PART` (repeatable) — each named part is
   set (or confirmed) dead in the same call, before the magnet itself.
+  `--dead-part ALL` (used alone) marks every part linked to the magnet dead.
+  Re-confirming a part that's already dead prints a warning.
 - **`status_history`**: every entity has an append-only JSON log
   (`status`, `date`, `description`, `attachments`) recording each status
   change, viewable via `part view`/`magnet view`/`assembly view`.

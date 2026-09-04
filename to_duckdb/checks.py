@@ -16,6 +16,7 @@ import copy
 import json
 from pathlib import Path
 
+from crud import load_geometry_json
 from enums import AssemblyStatus, LifecycleStatus, MagnetType, PartType
 from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE
 from populate import _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
@@ -31,8 +32,15 @@ _VALID_ASSEMBLY_STATUSES = {s.value for s in AssemblyStatus}
 # ---------------------------------------------------------------------------
 
 
-def check_parts(con, name: str | None = None) -> list[dict]:
-    """Check that every part has ``geometry``/``geometry_data`` set and a valid status."""
+def check_parts(con, name: str | None = None, fix: bool = False) -> list[dict]:
+    """Check that every part has ``geometry``/``geometry_data`` set and a valid status.
+
+    With ``fix=True``, a part that has a ``geometry`` file path but no cached
+    ``geometry_data`` has it loaded via :func:`crud.load_geometry_json` and
+    written back to the DB. A part with no ``geometry`` path, or whose file
+    fails to load, cannot be auto-fixed and is reported as an ordinary
+    problem instead.
+    """
     query = "SELECT name, geometry, geometry_data, status FROM parts"
     params: list = []
     if name:
@@ -46,7 +54,23 @@ def check_parts(con, name: str | None = None) -> list[dict]:
         if geometry is None:
             problems.append("geometry is not set")
         if geometry_data is None:
-            problems.append("geometry_data is not set")
+            if geometry is None:
+                problems.append("geometry_data is not set (no geometry path — cannot auto-fix)")
+            elif fix:
+                loaded = load_geometry_json(geometry)
+                if loaded is not None:
+                    con.execute(
+                        "UPDATE parts SET geometry_data = ? WHERE name = ?",
+                        [loaded, part_name],
+                    )
+                    print(f"  + part {part_name}: geometry_data loaded from '{geometry}'")
+                else:
+                    problems.append(
+                        f"geometry_data is not set and could not be auto-fixed "
+                        f"(failed to load '{geometry}')"
+                    )
+            else:
+                problems.append("geometry_data is not set")
         if status is not None and status not in _VALID_LIFECYCLE_STATUSES:
             problems.append(
                 f"status '{status}' is not a valid LifecycleStatus ({sorted(_VALID_LIFECYCLE_STATUSES)})"
@@ -421,7 +445,7 @@ def check_operationaldata(
 # ---------------------------------------------------------------------------
 
 _ENTITY_CHECKS = {
-    "part": lambda con, name, fix: check_parts(con, name),
+    "part": lambda con, name, fix: check_parts(con, name, fix=fix),
     "magnet": lambda con, name, fix: check_magnets(con, name, fix=fix),
     "assembly": lambda con, name, fix: check_assemblies(con, name),
     "experiment": lambda con, name, fix: check_experiments(con, name),
