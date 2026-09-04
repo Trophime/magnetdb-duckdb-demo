@@ -510,6 +510,75 @@ def test_cli_magnet_update_status_missing_db_exits(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# log view
+# ---------------------------------------------------------------------------
+
+
+def test_cli_log_view_shows_ok_row_after_magnet_add(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+    capsys.readouterr()
+    _run(monkeypatch, "log", "view", "--table", "magnets", "--db", str(db))
+    out = capsys.readouterr().out
+    assert "MAG_JSON" in out
+    assert "ok" in out
+
+
+def test_cli_log_view_status_error_after_failed_update_status(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+    with pytest.raises(SystemExit):
+        _run(monkeypatch, "magnet", "update-status", "MAG_JSON", "--status", "dead", "--db", str(db))
+    capsys.readouterr()
+    _run(monkeypatch, "log", "view", "--status", "error", "--db", str(db))
+    out = capsys.readouterr().out
+    assert "MAG_JSON" in out
+    assert "error" in out
+
+
+# ---------------------------------------------------------------------------
+# populate overview-records
+# ---------------------------------------------------------------------------
+
+
+def test_cli_populate_overview_records_logs_operation_log_row(tmp_path, monkeypatch):
+    """populate overview-records writes one operation_log row per processed file."""
+    db = _db_with_assembly(tmp_path)  # ASSEMBLY_JSON_01, housing M10, commissioned 2025-01-01
+
+    from python_magnetrun.analysis.loaders import FileSet
+    from python_magnetrun.analysis.processing import OverviewRecord
+
+    overview_path = tmp_path / "M10_Overview_250115-1200.tdms"
+
+    def fake_find_and_register(assembly, db_path, db_tz, dry_run, type_filter, records_base, pbsurv):
+        assert type_filter == ["Overview"]
+        return [(overview_path, datetime(2025, 1, 15, 12, 0, 0), "Overview")]
+
+    def fake_process_overview_file(path, config):
+        return OverviewRecord(
+            filename="M10_Overview_250115-1200",
+            housing="M10",
+            mode="Overview",
+            t0=datetime(2025, 1, 15, 12, 0, 0),
+            duration=1800.0,
+            sources=FileSet(overview=[str(path)]),
+        )
+
+    monkeypatch.setattr("magnetdb._tdms_find_and_register", fake_find_and_register)
+    monkeypatch.setattr(
+        "python_magnetrun.analysis.processing.process_overview_file", fake_process_overview_file
+    )
+
+    _run(monkeypatch, "populate", "overview-records",
+         "--assembly", "ASSEMBLY_JSON_01", "--db", str(db))
+
+    row = _fetch_one(
+        db, "SELECT operation, status FROM operation_log "
+        "WHERE table_name = 'overview_records' AND record_name = ?",
+        [overview_path.name],
+    )
+    assert row == ("populate", "ok")
+
+
+# ---------------------------------------------------------------------------
 # populate overview-records-from-archive
 # ---------------------------------------------------------------------------
 

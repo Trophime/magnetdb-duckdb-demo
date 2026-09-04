@@ -247,13 +247,19 @@ def find_and_register_pupitre(
     print(f"[OK]   {pupitre_dir}/  — {len(matches)} file(s) matched")
 
     if matches and not dry_run:
+        from crud import _log_operation
+
         with duckdb.connect(db_path) as con:
             ensure_schema(con)
             new_count = sum(
                 _insert_operationaldata(con, assembly["name"], fpath, "Pupitre", records_base)
                 for fpath, _ in matches
             )
-        skipped = len(matches) - new_count
+            skipped = len(matches) - new_count
+            _log_operation(
+                con, "populate", "operationaldata", assembly["name"],
+                details={"inserted": new_count, "skipped": skipped},
+            )
         print(
             f"\noperationaldata: inserted {new_count} new row(s)"
             + (f", {skipped} already present." if skipped else ".")
@@ -337,13 +343,19 @@ def find_and_register_tdms(
         matches.extend(found)
 
     if matches and not dry_run:
+        from crud import _log_operation
+
         with duckdb.connect(db_path) as con:
             ensure_schema(con)
             new_count = sum(
                 _insert_operationaldata(con, assembly["name"], fpath, file_type, records_base)
                 for fpath, _, file_type in matches
             )
-        skipped = len(matches) - new_count
+            skipped = len(matches) - new_count
+            _log_operation(
+                con, "populate", "operationaldata", assembly["name"],
+                details={"inserted": new_count, "skipped": skipped},
+            )
         print(
             f"\noperationaldata: inserted {new_count} new row(s)"
             + (f", {skipped} already present." if skipped else ".")

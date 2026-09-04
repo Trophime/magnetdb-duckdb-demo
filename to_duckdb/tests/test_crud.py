@@ -93,6 +93,15 @@ def test_insert_material_stores_null_for_missing_optional_fields(con):
     assert row[0] is None
 
 
+def test_insert_material_logs_ok_row(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    row = con.execute(
+        "SELECT operation, table_name, record_name, status FROM operation_log "
+        "WHERE table_name = 'materials' AND record_name = 'MAT_COPPER'"
+    ).fetchone()
+    assert row == ("insert", "materials", "MAT_COPPER", "ok")
+
+
 # ---------------------------------------------------------------------------
 # insert_part()
 # ---------------------------------------------------------------------------
@@ -811,6 +820,22 @@ def test_insert_experiments_skips_duplicate_file(con_populated):
     assert count == 1
 
 
+def test_insert_experiments_logs_aggregate_counts(con_populated):
+    records = [
+        {"name": "run_001.txt", "file": "run_001.txt"},
+        {"name": "run_002.txt", "file": "run_002.txt"},
+    ]
+    insert_experiments(con_populated, "ASSEMBLY_01", records, verbose=False)
+    insert_experiments(con_populated, "ASSEMBLY_01", records, verbose=False)
+    row = con_populated.execute(
+        "SELECT status, details FROM operation_log "
+        "WHERE table_name = 'experiments' AND record_name = 'ASSEMBLY_01' "
+        "ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row[0] == "ok"
+    assert json.loads(row[1]) == {"inserted": 0, "skipped": 2}
+
+
 # ---------------------------------------------------------------------------
 # update_part_from_json()
 # ---------------------------------------------------------------------------
@@ -917,6 +942,29 @@ def test_update_part_status_raises_for_invalid_status(con):
     insert_part(con, PART_HELIX, verbose=False)
     with pytest.raises(ValueError):
         update_part_status(con, "HELIX_01", "bogus", verbose=False)
+
+
+def test_update_part_status_logs_ok_row_with_old_and_new_status(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, PART_HELIX, verbose=False)
+    update_part_status(con, "HELIX_01", "retired", verbose=False)
+    row = con.execute(
+        "SELECT status, details FROM operation_log "
+        "WHERE table_name = 'parts' AND record_name = 'HELIX_01' AND operation = 'update_status'"
+    ).fetchone()
+    assert row[0] == "ok"
+    assert json.loads(row[1]) == {"old_status": "in_operation", "new_status": "retired"}
+
+
+def test_update_part_status_logs_error_row_for_unknown_part(con):
+    with pytest.raises(ValueError):
+        update_part_status(con, "NOPE", "retired", verbose=False)
+    row = con.execute(
+        "SELECT status, details FROM operation_log "
+        "WHERE table_name = 'parts' AND record_name = 'NOPE'"
+    ).fetchone()
+    assert row[0] == "error"
+    assert "not found" in json.loads(row[1])["error"]
 
 
 # ---------------------------------------------------------------------------

@@ -407,6 +407,21 @@ CREATE TABLE IF NOT EXISTS users (
     experiments_ids       INTEGER[],
     overview_records_ids  VARCHAR[]
 );
+
+-- ── Operation log ────────────────────────────────────────────────────────
+
+CREATE SEQUENCE IF NOT EXISTS operation_log_id_seq START 1;
+
+CREATE TABLE IF NOT EXISTS operation_log (
+    id          INTEGER PRIMARY KEY DEFAULT nextval('operation_log_id_seq'),
+    ts          TIMESTAMP DEFAULT current_timestamp,
+    operation   VARCHAR,
+    table_name  VARCHAR,
+    record_name VARCHAR,
+    username    VARCHAR,   -- getpass.getuser()
+    status      VARCHAR DEFAULT 'ok',
+    details     JSON       -- minimal: old/new status, aggregate counts, or {"error": "..."}
+);
 """
 
 

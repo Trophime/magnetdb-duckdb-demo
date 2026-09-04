@@ -48,8 +48,11 @@ insert_overview_record_from_dict(con, data, assembly_name, verbose, upsert)
 attach_assembly_to_overview_record(con, filename, assembly_name, verbose)
 infer_overview_record_fields(con, filename, db_tz, verbose)
 infer_operating_mode(df)
+
+view_operation_log(con, table_filter, operation_filter, record_name_filter, status_filter, from_ts, to_ts, limit)
 """
 
+import getpass
 import json
 import re
 from datetime import date, datetime, timedelta
@@ -148,6 +151,100 @@ def _append_status_history(
     con.execute(f"UPDATE {table} SET status_history = ? WHERE name = ?", [json.dumps(history), name])
 
 
+def _log_operation(
+    con,
+    operation: str,
+    table: str,
+    record_name: str,
+    status: str = "ok",
+    details: dict | None = None,
+) -> None:
+    """Append one audit row to ``operation_log``."""
+    con.execute(
+        "INSERT INTO operation_log (operation, table_name, record_name, username, status, details) "
+        "VALUES (?,?,?,?,?,?)",
+        [operation, table, record_name, getpass.getuser(), status, json.dumps(details) if details else None],
+    )
+
+
+def view_operation_log(
+    con,
+    table_filter: str | None = None,
+    operation_filter: str | None = None,
+    record_name_filter: str | None = None,
+    status_filter: str | None = None,
+    from_ts: str | None = None,
+    to_ts: str | None = None,
+    limit: int | None = None,
+) -> None:
+    conditions, params = [], []
+    if table_filter:
+        conditions.append("table_name = ?")
+        params.append(table_filter)
+    if operation_filter:
+        conditions.append("operation = ?")
+        params.append(operation_filter)
+    if record_name_filter:
+        conditions.append("record_name = ?")
+        params.append(record_name_filter)
+    if status_filter:
+        conditions.append("status = ?")
+        params.append(status_filter)
+    if from_ts:
+        conditions.append("ts >= CAST(? AS TIMESTAMP)")
+        params.append(from_ts)
+    if to_ts:
+        conditions.append("ts <= CAST(? AS TIMESTAMP)")
+        params.append(to_ts)
+
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    limit_sql = ""
+    if limit:
+        limit_sql = " LIMIT ?"
+        params.append(limit)
+
+    rows = con.execute(
+        f"SELECT id, ts, operation, table_name, record_name, username, status, details "
+        f"FROM operation_log {where} ORDER BY id DESC{limit_sql}",
+        params,
+    ).fetchall()
+
+    labels = []
+    if table_filter:
+        labels.append(f"table={table_filter}")
+    if operation_filter:
+        labels.append(f"operation={operation_filter}")
+    if record_name_filter:
+        labels.append(f"record={record_name_filter}")
+    if status_filter:
+        labels.append(f"status={status_filter}")
+    if from_ts:
+        labels.append(f"from={from_ts}")
+    if to_ts:
+        labels.append(f"to={to_ts}")
+    qualifier = "  " + "  ".join(labels) if labels else ""
+
+    if not rows:
+        print(f"No operation_log rows{qualifier}.")
+        return
+
+    print(f"operation_log{qualifier}  ({len(rows)} row(s))\n")
+    col_o = max((len(r[2] or "") for r in rows), default=10)
+    col_t = max((len(r[3] or "") for r in rows), default=10)
+    col_r = min(max((len(r[4] or "") for r in rows), default=20), 40)
+    col_u = max((len(r[5] or "") for r in rows), default=10)
+    print(
+        f"{'ID':<6} {'Timestamp':<20} {'Operation':<{col_o}} {'Table':<{col_t}} "
+        f"{'Record':<{col_r}} {'User':<{col_u}} {'Status':<7} Details"
+    )
+    print("-" * (6 + 20 + col_o + col_t + col_r + col_u + 30))
+    for id_, ts, op, table_, record, user, status, details in rows:
+        print(
+            f"{id_:<6} {str(ts):<20} {(op or ''):<{col_o}} {(table_ or ''):<{col_t}} "
+            f"{(record or '')[:col_r]:<{col_r}} {(user or ''):<{col_u}} {(status or ''):<7} {details or ''}"
+        )
+
+
 def load_geometry_json(geometry_path) -> str | None:
     """Serialise a geometry YAML via python_magnetgeo; returns None on failure.
 
@@ -207,31 +304,37 @@ def infer_magnet_type(parts: list[dict]) -> str:
 def insert_material(con, mat: dict, verbose: bool = True) -> None:
     """Insert a material row; skip silently if it already exists."""
     name = mat["name"]
-    if exists(con, "materials", name):
+    try:
+        if exists(con, "materials", name):
+            if verbose:
+                print(f"  ~ material  {name}  (already exists, skipped)")
+            _log_operation(con, "insert", "materials", name)
+            return
+        con.execute(
+            "INSERT INTO materials VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            [
+                name,
+                mat.get("description") or None,
+                mat.get("nuance") or None,
+                mat.get("t_ref"),
+                mat.get("volumic_mass"),
+                mat.get("specific_heat"),
+                mat.get("alpha"),
+                mat.get("electrical_conductivity"),
+                mat.get("thermal_conductivity"),
+                mat.get("magnet_permeability"),
+                mat.get("young"),
+                mat.get("poisson"),
+                mat.get("expansion_coefficient"),
+                mat.get("rpe"),
+            ],
+        )
         if verbose:
-            print(f"  ~ material  {name}  (already exists, skipped)")
-        return
-    con.execute(
-        "INSERT INTO materials VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-        [
-            name,
-            mat.get("description") or None,
-            mat.get("nuance") or None,
-            mat.get("t_ref"),
-            mat.get("volumic_mass"),
-            mat.get("specific_heat"),
-            mat.get("alpha"),
-            mat.get("electrical_conductivity"),
-            mat.get("thermal_conductivity"),
-            mat.get("magnet_permeability"),
-            mat.get("young"),
-            mat.get("poisson"),
-            mat.get("expansion_coefficient"),
-            mat.get("rpe"),
-        ],
-    )
-    if verbose:
-        print(f"  + material  {name}  [{mat.get('nuance', '?')}]")
+            print(f"  + material  {name}  [{mat.get('nuance', '?')}]")
+        _log_operation(con, "insert", "materials", name)
+    except Exception as exc:
+        _log_operation(con, "insert", "materials", name, status="error", details={"error": str(exc)})
+        raise
 
 
 def view_materials(con, nuance_filter: str | None = None) -> None:
@@ -276,17 +379,24 @@ def view_material(con, name: str) -> None:
 
 
 def delete_material(con, name: str) -> None:
-    if not exists(con, "materials", name):
-        print(f"Material '{name}' not found.")
-        return
-    ref = con.execute(
-        "SELECT name FROM parts WHERE material_name = ? LIMIT 1", [name]
-    ).fetchone()
-    if ref:
-        print(f"Error: material '{name}' is referenced by part '{ref[0]}'. Remove the part first.")
-        return
-    con.execute("DELETE FROM materials WHERE name = ?", [name])
-    print(f"Deleted material '{name}'.")
+    try:
+        if not exists(con, "materials", name):
+            print(f"Material '{name}' not found.")
+            _log_operation(con, "delete", "materials", name)
+            return
+        ref = con.execute(
+            "SELECT name FROM parts WHERE material_name = ? LIMIT 1", [name]
+        ).fetchone()
+        if ref:
+            print(f"Error: material '{name}' is referenced by part '{ref[0]}'. Remove the part first.")
+            _log_operation(con, "delete", "materials", name)
+            return
+        con.execute("DELETE FROM materials WHERE name = ?", [name])
+        print(f"Deleted material '{name}'.")
+        _log_operation(con, "delete", "materials", name)
+    except Exception as exc:
+        _log_operation(con, "delete", "materials", name, status="error", details={"error": str(exc)})
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -301,33 +411,39 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
     ``material.name`` dict (JSON-export format).
     """
     name = part["name"]
-    if exists(con, "parts", name):
+    try:
+        if exists(con, "parts", name):
+            if verbose:
+                print(f"  ~ part      {name}  (already exists, skipped)")
+            _log_operation(con, "insert", "parts", name)
+            return
+        material_name = part.get("material_name") or (part.get("material") or {}).get("name")
+        geometry_data = part.get("geometry_data") or load_geometry_json(part.get("geometry") or part.get("geometry_config"))
+        status = _valid_lifecycle_status(part.get("status") or LifecycleStatus.IN_STOCK.value)
+        con.execute(
+            """
+            INSERT INTO parts
+                (name, type, status, material_name, geometry, geometry_data, cad, design_office_reference, manufactured_at)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            """,
+            [
+                name,
+                part.get("type"),
+                status,
+                material_name,
+                part.get("geometry") or None,
+                geometry_data,
+                part.get("cad") or None,
+                part.get("design_office_reference") or None,
+                manufactured_at_from_name(name),
+            ],
+        )
         if verbose:
-            print(f"  ~ part      {name}  (already exists, skipped)")
-        return
-    material_name = part.get("material_name") or (part.get("material") or {}).get("name")
-    geometry_data = part.get("geometry_data") or load_geometry_json(part.get("geometry") or part.get("geometry_config"))
-    status = _valid_lifecycle_status(part.get("status") or LifecycleStatus.IN_STOCK.value)
-    con.execute(
-        """
-        INSERT INTO parts
-            (name, type, status, material_name, geometry, geometry_data, cad, design_office_reference, manufactured_at)
-        VALUES (?,?,?,?,?,?,?,?,?)
-        """,
-        [
-            name,
-            part.get("type"),
-            status,
-            material_name,
-            part.get("geometry") or None,
-            geometry_data,
-            part.get("cad") or None,
-            part.get("design_office_reference") or None,
-            manufactured_at_from_name(name),
-        ],
-    )
-    if verbose:
-        print(f"  + part      {name}  [{part.get('type', '?')}]  {status}")
+            print(f"  + part      {name}  [{part.get('type', '?')}]  {status}")
+        _log_operation(con, "insert", "parts", name)
+    except Exception as exc:
+        _log_operation(con, "insert", "parts", name, status="error", details={"error": str(exc)})
+        raise
 
 
 def update_part_from_json(con, data: dict, dry_run: bool = False, verbose: bool = True) -> None:
@@ -409,30 +525,36 @@ def update_part_from_json(con, data: dict, dry_run: bool = False, verbose: bool 
 def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> None:
     """Insert a magnet row; skip silently if it already exists."""
     name = data["name"]
-    if exists(con, "magnets", name):
+    try:
+        if exists(con, "magnets", name):
+            if verbose:
+                print(f"  ~ magnet    {name}  (already exists, skipped)")
+            _log_operation(con, "insert", "magnets", name)
+            return
+        geometry_data = data.get("geometry_data") or load_geometry_json(data.get("geometry") or data.get("geometry_config"))
+        status = _valid_lifecycle_status(data.get("status") or LifecycleStatus.IN_STOCK.value)
+        con.execute(
+            """
+            INSERT INTO magnets
+                (name, type, status, geometry, geometry_data, design_office_reference, assembled_at)
+            VALUES (?,?,?,?,?,?,?)
+            """,
+            [
+                name,
+                magnet_type,
+                status,
+                data.get("geometry") or None,
+                geometry_data,
+                data.get("design_office_reference") or None,
+                assembled_at_from_name(name),
+            ],
+        )
         if verbose:
-            print(f"  ~ magnet    {name}  (already exists, skipped)")
-        return
-    geometry_data = data.get("geometry_data") or load_geometry_json(data.get("geometry") or data.get("geometry_config"))
-    status = _valid_lifecycle_status(data.get("status") or LifecycleStatus.IN_STOCK.value)
-    con.execute(
-        """
-        INSERT INTO magnets
-            (name, type, status, geometry, geometry_data, design_office_reference, assembled_at)
-        VALUES (?,?,?,?,?,?,?)
-        """,
-        [
-            name,
-            magnet_type,
-            status,
-            data.get("geometry") or None,
-            geometry_data,
-            data.get("design_office_reference") or None,
-            assembled_at_from_name(name),
-        ],
-    )
-    if verbose:
-        print(f"  + magnet    {name}  [{magnet_type}]  {status}")
+            print(f"  + magnet    {name}  [{magnet_type}]  {status}")
+        _log_operation(con, "insert", "magnets", name)
+    except Exception as exc:
+        _log_operation(con, "insert", "magnets", name, status="error", details={"error": str(exc)})
+        raise
 
 
 def update_magnet_from_json(con, data: dict, dry_run: bool = False, verbose: bool = True) -> None:
@@ -903,50 +1025,56 @@ def insert_assembly(
         the same housing.
     """
     name = data["name"]
-    if exists(con, "assemblies", name):
-        if verbose:
-            print(f"  ~ assembly      {name}  (already exists, skipped)")
-        return
+    try:
+        if exists(con, "assemblies", name):
+            if verbose:
+                print(f"  ~ assembly      {name}  (already exists, skipped)")
+            _log_operation(con, "insert", "assemblies", name)
+            return
 
-    housing = data.get("housing") or None
-    if housing is not None and con.execute(
-        "SELECT 1 FROM housing_config WHERE name = ?", [housing]
-    ).fetchone() is None:
-        if create_housing:
-            insert_housing_config_from_magnetrun(con, housing, verbose=verbose)
+        housing = data.get("housing") or None
+        if housing is not None and con.execute(
+            "SELECT 1 FROM housing_config WHERE name = ?", [housing]
+        ).fetchone() is None:
+            if create_housing:
+                insert_housing_config_from_magnetrun(con, housing, verbose=verbose)
+            else:
+                raise ValueError(
+                    f"Housing config '{housing}' not found in housing_config table. "
+                    "Call insert_housing_config() first, or pass create_housing=True."
+                )
+
+        commissioned_at = parse_timestamp(data.get("commissioned_at"))
+        decommissioned_at = parse_timestamp(data.get("decommissioned_at"))
+        status = data.get("status")
+
+        if status == AssemblyStatus.IN_STUDY.value:
+            pass  # explicit opt-out: skip derivation/overlap/auto-close entirely
         else:
-            raise ValueError(
-                f"Housing config '{housing}' not found in housing_config table. "
-                "Call insert_housing_config() first, or pass create_housing=True."
+            status = (
+                AssemblyStatus.IN_OPERATION.value
+                if decommissioned_at is None
+                else AssemblyStatus.DISASSEMBLED.value
             )
+            if housing is not None:
+                _resolve_housing_overlap(
+                    con, housing, name, commissioned_at, decommissioned_at, verbose=verbose
+                )
 
-    commissioned_at = parse_timestamp(data.get("commissioned_at"))
-    decommissioned_at = parse_timestamp(data.get("decommissioned_at"))
-    status = data.get("status")
-
-    if status == AssemblyStatus.IN_STUDY.value:
-        pass  # explicit opt-out: skip derivation/overlap/auto-close entirely
-    else:
-        status = (
-            AssemblyStatus.IN_OPERATION.value
-            if decommissioned_at is None
-            else AssemblyStatus.DISASSEMBLED.value
+        con.execute(
+            """
+            INSERT INTO assemblies
+                (name, description, status, housing, commissioned_at, decommissioned_at)
+            VALUES (?,?,?,?,?,?)
+            """,
+            [name, data.get("description") or None, status, housing, commissioned_at, decommissioned_at],
         )
-        if housing is not None:
-            _resolve_housing_overlap(
-                con, housing, name, commissioned_at, decommissioned_at, verbose=verbose
-            )
-
-    con.execute(
-        """
-        INSERT INTO assemblies
-            (name, description, status, housing, commissioned_at, decommissioned_at)
-        VALUES (?,?,?,?,?,?)
-        """,
-        [name, data.get("description") or None, status, housing, commissioned_at, decommissioned_at],
-    )
-    if verbose:
-        print(f"  + assembly      {name}  [{housing or '?'}]  {status or ''}")
+        if verbose:
+            print(f"  + assembly      {name}  [{housing or '?'}]  {status or ''}")
+        _log_operation(con, "insert", "assemblies", name)
+    except Exception as exc:
+        _log_operation(con, "insert", "assemblies", name, status="error", details={"error": str(exc)})
+        raise
 
 
 def update_assembly_from_json(con, data: dict, dry_run: bool = False, verbose: bool = True) -> None:
@@ -1062,28 +1190,33 @@ def decommission_assembly(
     ValueError
         If the assembly does not exist.
     """
-    if not exists(con, "assemblies", name):
-        raise ValueError(f"Assembly '{name}' not found.")
+    try:
+        if not exists(con, "assemblies", name):
+            raise ValueError(f"Assembly '{name}' not found.")
 
-    existing = con.execute(
-        "SELECT decommissioned_at FROM assemblies WHERE name = ?", [name]
-    ).fetchone()[0]
-    decommissioned_at = (
-        parse_timestamp(existing) or parse_timestamp(decommissioned_at) or datetime.now().isoformat()
-    )
-    con.execute(
-        "UPDATE assemblies SET status = ?, decommissioned_at = COALESCE(decommissioned_at, CAST(? AS TIMESTAMP)) "
-        "WHERE name = ?",
-        [AssemblyStatus.DISASSEMBLED.value, decommissioned_at, name],
-    )
-    _append_status_history(
-        con, "assemblies", name, AssemblyStatus.DISASSEMBLED.value,
-        description=description, changed_at=decommissioned_at, attachments=attachments,
-    )
-    if verbose:
-        print(f"  ~ assembly  {name}  status → disassembled")
+        existing = con.execute(
+            "SELECT decommissioned_at FROM assemblies WHERE name = ?", [name]
+        ).fetchone()[0]
+        decommissioned_at = (
+            parse_timestamp(existing) or parse_timestamp(decommissioned_at) or datetime.now().isoformat()
+        )
+        con.execute(
+            "UPDATE assemblies SET status = ?, decommissioned_at = COALESCE(decommissioned_at, CAST(? AS TIMESTAMP)) "
+            "WHERE name = ?",
+            [AssemblyStatus.DISASSEMBLED.value, decommissioned_at, name],
+        )
+        _append_status_history(
+            con, "assemblies", name, AssemblyStatus.DISASSEMBLED.value,
+            description=description, changed_at=decommissioned_at, attachments=attachments,
+        )
+        if verbose:
+            print(f"  ~ assembly  {name}  status → disassembled")
 
-    _cascade_assembly_disassembly(con, name, decommissioned_at, verbose=verbose)
+        _cascade_assembly_disassembly(con, name, decommissioned_at, verbose=verbose)
+        _log_operation(con, "decommission", "assemblies", name)
+    except Exception as exc:
+        _log_operation(con, "decommission", "assemblies", name, status="error", details={"error": str(exc)})
+        raise
 
 
 def _magnet_entry_name(entry) -> str:
@@ -1111,6 +1244,23 @@ def insert_assembly_magnets(
     the magnet (and its parts) cascade from ``in_stock`` to ``in_operation``
     (the commissioning cascade).
     """
+    try:
+        _insert_assembly_magnets(con, assembly_name, magnet_entries, verbose=verbose)
+        _log_operation(
+            con, "insert", "assembly_magnets", assembly_name,
+            details={"count": len(magnet_entries)},
+        )
+    except Exception as exc:
+        _log_operation(
+            con, "insert", "assembly_magnets", assembly_name,
+            status="error", details={"error": str(exc)},
+        )
+        raise
+
+
+def _insert_assembly_magnets(
+    con, assembly_name: str, magnet_entries: list, verbose: bool = True
+) -> None:
     assembly_active = _assembly_is_active(con, assembly_name)
     assembly_row = con.execute(
         "SELECT commissioned_at FROM assemblies WHERE name = ?", [assembly_name]
@@ -1185,34 +1335,45 @@ def insert_experiments(
     con, assembly_name: str, records: list[dict], verbose: bool = True
 ) -> None:
     """Insert experiment/record rows for an assembly; skip duplicates by file name."""
-    row = con.execute("SELECT COALESCE(MAX(id), 0) FROM experiments").fetchone()
-    next_id = (row[0] or 0) + 1
-    inserted = 0
-    skipped = 0
+    try:
+        row = con.execute("SELECT COALESCE(MAX(id), 0) FROM experiments").fetchone()
+        next_id = (row[0] or 0) + 1
+        inserted = 0
+        skipped = 0
 
-    for i, rec in enumerate(records):
-        file_name = rec.get("file") or rec.get("name") or rec.get("record_file")
-        if con.execute(
-            "SELECT 1 FROM experiments WHERE assembly_name = ? AND file = ?",
-            [assembly_name, file_name],
-        ).fetchone():
-            skipped += 1
-            continue
+        for i, rec in enumerate(records):
+            file_name = rec.get("file") or rec.get("name") or rec.get("record_file")
+            if con.execute(
+                "SELECT 1 FROM experiments WHERE assembly_name = ? AND file = ?",
+                [assembly_name, file_name],
+            ).fetchone():
+                skipped += 1
+                continue
 
-        con.execute(
-            "INSERT INTO experiments VALUES (?,?,?,?,?,'pending')",
-            [
-                next_id + i,
-                rec.get("name") or file_name,
-                rec.get("description") or None,
-                file_name,
-                assembly_name,
-            ],
+            con.execute(
+                "INSERT INTO experiments VALUES (?,?,?,?,?,'pending')",
+                [
+                    next_id + i,
+                    rec.get("name") or file_name,
+                    rec.get("description") or None,
+                    file_name,
+                    assembly_name,
+                ],
+            )
+            inserted += 1
+
+        if verbose:
+            print(f"  + records   {inserted} inserted,  {skipped} already present")
+        _log_operation(
+            con, "insert", "experiments", assembly_name,
+            details={"inserted": inserted, "skipped": skipped},
         )
-        inserted += 1
-
-    if verbose:
-        print(f"  + records   {inserted} inserted,  {skipped} already present")
+    except Exception as exc:
+        _log_operation(
+            con, "insert", "experiments", assembly_name,
+            status="error", details={"error": str(exc)},
+        )
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -1254,13 +1415,22 @@ def update_part_status(
         If the part does not exist, or *status* is not a valid
         :class:`~enums.LifecycleStatus`.
     """
-    if not exists(con, "parts", name):
-        raise ValueError(f"Part '{name}' not found.")
-    _valid_lifecycle_status(status)
-    con.execute("UPDATE parts SET status = ? WHERE name = ?", [status, name])
-    _append_status_history(con, "parts", name, status, description, changed_at, attachments)
-    if verbose:
-        print(f"  ~ part      {name}  status → {status}")
+    try:
+        if not exists(con, "parts", name):
+            raise ValueError(f"Part '{name}' not found.")
+        _valid_lifecycle_status(status)
+        old_status = con.execute("SELECT status FROM parts WHERE name = ?", [name]).fetchone()[0]
+        con.execute("UPDATE parts SET status = ? WHERE name = ?", [status, name])
+        _append_status_history(con, "parts", name, status, description, changed_at, attachments)
+        if verbose:
+            print(f"  ~ part      {name}  status → {status}")
+        _log_operation(
+            con, "update_status", "parts", name,
+            details={"old_status": old_status, "new_status": status},
+        )
+    except Exception as exc:
+        _log_operation(con, "update_status", "parts", name, status="error", details={"error": str(exc)})
+        raise
 
 
 def update_magnet_status(
@@ -1311,6 +1481,32 @@ def update_magnet_status(
         status, ``"ALL"`` is combined with explicit part names, or ``"ALL"``
         is given but the magnet has no linked parts.
     """
+    try:
+        old_status = con.execute("SELECT status FROM magnets WHERE name = ?", [name]).fetchone()
+        old_status = old_status[0] if old_status else None
+        _update_magnet_status(
+            con, name, status, description=description, changed_at=changed_at,
+            attachments=attachments, dead_parts=dead_parts, verbose=verbose,
+        )
+        _log_operation(
+            con, "update_status", "magnets", name,
+            details={"old_status": old_status, "new_status": status},
+        )
+    except Exception as exc:
+        _log_operation(con, "update_status", "magnets", name, status="error", details={"error": str(exc)})
+        raise
+
+
+def _update_magnet_status(
+    con,
+    name: str,
+    status: str,
+    description: str = "",
+    changed_at=None,
+    attachments: list[dict] | None = None,
+    dead_parts: list[str] | None = None,
+    verbose: bool = True,
+) -> None:
     if not exists(con, "magnets", name):
         raise ValueError(f"Magnet '{name}' not found.")
     _valid_lifecycle_status(status)
@@ -1989,22 +2185,34 @@ def list_objects(con) -> dict[str, list[str]]:
 
 
 def delete_magnet(con, name: str) -> None:
-    if not exists(con, "magnets", name):
-        print(f"Magnet '{name}' not found.")
-        return
-    con.execute("DELETE FROM magnet_parts WHERE magnet_name = ?", [name])
-    con.execute("DELETE FROM magnets WHERE name = ?", [name])
-    print(f"Deleted magnet '{name}' and its part links.")
+    try:
+        if not exists(con, "magnets", name):
+            print(f"Magnet '{name}' not found.")
+            _log_operation(con, "delete", "magnets", name)
+            return
+        con.execute("DELETE FROM magnet_parts WHERE magnet_name = ?", [name])
+        con.execute("DELETE FROM magnets WHERE name = ?", [name])
+        print(f"Deleted magnet '{name}' and its part links.")
+        _log_operation(con, "delete", "magnets", name)
+    except Exception as exc:
+        _log_operation(con, "delete", "magnets", name, status="error", details={"error": str(exc)})
+        raise
 
 
 def delete_assembly(con, name: str) -> None:
-    if not exists(con, "assemblies", name):
-        print(f"Assembly '{name}' not found.")
-        return
-    con.execute("DELETE FROM experiments WHERE assembly_name = ?", [name])
-    con.execute("DELETE FROM assembly_magnets WHERE assembly_name = ?", [name])
-    con.execute("DELETE FROM assemblies WHERE name = ?", [name])
-    print(f"Deleted assembly '{name}', its magnet links, and its experiments.")
+    try:
+        if not exists(con, "assemblies", name):
+            print(f"Assembly '{name}' not found.")
+            _log_operation(con, "delete", "assemblies", name)
+            return
+        con.execute("DELETE FROM experiments WHERE assembly_name = ?", [name])
+        con.execute("DELETE FROM assembly_magnets WHERE assembly_name = ?", [name])
+        con.execute("DELETE FROM assemblies WHERE name = ?", [name])
+        print(f"Deleted assembly '{name}', its magnet links, and its experiments.")
+        _log_operation(con, "delete", "assemblies", name)
+    except Exception as exc:
+        _log_operation(con, "delete", "assemblies", name, status="error", details={"error": str(exc)})
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -2189,12 +2397,18 @@ def insert_housing_config_from_magnetrun(
     ValueError
         If no bundled JSON is found for *housing_name*.
     """
-    if exists(con, "housing_config", housing_name):
-        if verbose:
-            print(f"  ~ housing_config  {housing_name}  (already exists, skipped)")
-        return
-    data = _housing_config_data_from_magnetrun(housing_name)
-    insert_housing_config(con, data, verbose=verbose)
+    try:
+        if exists(con, "housing_config", housing_name):
+            if verbose:
+                print(f"  ~ housing_config  {housing_name}  (already exists, skipped)")
+            _log_operation(con, "insert", "housing_config", housing_name)
+            return
+        data = _housing_config_data_from_magnetrun(housing_name)
+        insert_housing_config(con, data, verbose=verbose)
+        _log_operation(con, "insert", "housing_config", housing_name)
+    except Exception as exc:
+        _log_operation(con, "insert", "housing_config", housing_name, status="error", details={"error": str(exc)})
+        raise
 
 
 def insert_housing_config(con, data: dict, verbose: bool = True) -> None:
@@ -3292,32 +3506,42 @@ def update_assembly_magnet(con, assembly_name: str, magnet_name: str, **kwargs) 
     decommissioned_at, metadata.  Only non-None values are updated.
     Raises ValueError if the (assembly_name, magnet_name) row does not exist.
     """
-    updates = {k: v for k, v in kwargs.items() if k in _ASSEMBLY_MAGNET_FIELDS and v is not None}
-    if not updates:
-        print("Nothing to update.")
-        return
+    record_name = f"{assembly_name}/{magnet_name}"
+    try:
+        updates = {k: v for k, v in kwargs.items() if k in _ASSEMBLY_MAGNET_FIELDS and v is not None}
+        if not updates:
+            print("Nothing to update.")
+            _log_operation(con, "update", "assembly_magnets", record_name)
+            return
 
-    if not con.execute(
-        "SELECT 1 FROM assembly_magnets WHERE assembly_name = ? AND magnet_name = ?",
-        [assembly_name, magnet_name],
-    ).fetchone():
-        raise ValueError(f"No link between assembly '{assembly_name}' and magnet '{magnet_name}'.")
+        if not con.execute(
+            "SELECT 1 FROM assembly_magnets WHERE assembly_name = ? AND magnet_name = ?",
+            [assembly_name, magnet_name],
+        ).fetchone():
+            raise ValueError(f"No link between assembly '{assembly_name}' and magnet '{magnet_name}'.")
 
-    set_clauses = []
-    values = []
-    for field, value in updates.items():
-        set_clauses.append(f"{field} = ?")
-        if field in _TIMESTAMP_FIELDS:
-            values.append(parse_timestamp(value))
-        elif field in _JSON_FIELDS:
-            values.append(json.dumps(value) if not isinstance(value, str) else value)
-        else:
-            values.append(float(value))
+        set_clauses = []
+        values = []
+        for field, value in updates.items():
+            set_clauses.append(f"{field} = ?")
+            if field in _TIMESTAMP_FIELDS:
+                values.append(parse_timestamp(value))
+            elif field in _JSON_FIELDS:
+                values.append(json.dumps(value) if not isinstance(value, str) else value)
+            else:
+                values.append(float(value))
 
-    values.extend([assembly_name, magnet_name])
-    con.execute(
-        f"UPDATE assembly_magnets SET {', '.join(set_clauses)} "
-        "WHERE assembly_name = ? AND magnet_name = ?",
-        values,
-    )
-    print(f"Updated assembly_magnets ({assembly_name}, {magnet_name}): {sorted(updates)}")
+        values.extend([assembly_name, magnet_name])
+        con.execute(
+            f"UPDATE assembly_magnets SET {', '.join(set_clauses)} "
+            "WHERE assembly_name = ? AND magnet_name = ?",
+            values,
+        )
+        print(f"Updated assembly_magnets ({assembly_name}, {magnet_name}): {sorted(updates)}")
+        _log_operation(
+            con, "update", "assembly_magnets", record_name,
+            details={"updated_fields": sorted(updates)},
+        )
+    except Exception as exc:
+        _log_operation(con, "update", "assembly_magnets", record_name, status="error", details={"error": str(exc)})
+        raise

@@ -43,6 +43,9 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py operationaldata view [--assembly <assembly>] [--type TYPE]
                                             [--magnet <magnet>] [--part <part>]
                                             [--from DATETIME] [--to DATETIME] [--db ...]
+    python magnetdb.py log view [--table TABLE] [--operation OP] [--record NAME]
+                                [--status ok|error] [--from DATETIME] [--to DATETIME]
+                                [--limit N] [--db ...]
     python magnetdb.py overview-records view [--assembly <assembly>] [--magnet <magnet>] [--part <part>]
                                              [--from DATETIME] [--to DATETIME] [--signatures] [--db ...]
 
@@ -87,6 +90,7 @@ import duckdb
 from checks import print_check_report, run_checks
 from config import DEFAULT_DB
 from crud import (
+    _log_operation,
     _resolve_source_path,
     check_geometry_data,
     decommission_assembly,
@@ -125,6 +129,7 @@ from crud import (
     view_magnets,
     view_material,
     view_materials,
+    view_operation_log,
     view_operationaldata,
     view_overview_records,
     view_part,
@@ -836,6 +841,29 @@ def cmd_operationaldata_view(args) -> None:
 
 
 # ---------------------------------------------------------------------------
+# log handlers
+# ---------------------------------------------------------------------------
+
+
+def cmd_log_view(args) -> None:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path), read_only=True) as con:
+        view_operation_log(
+            con,
+            table_filter=args.table,
+            operation_filter=args.operation,
+            record_name_filter=args.record,
+            status_filter=args.status,
+            from_ts=args.date_from,
+            to_ts=args.date_to,
+            limit=args.limit,
+        )
+
+
+# ---------------------------------------------------------------------------
 # overview-records handlers
 # ---------------------------------------------------------------------------
 
@@ -1153,8 +1181,15 @@ def cmd_populate_overview_records(args) -> None:
                 with duckdb.connect(db_path) as con:
                     ensure_schema(con)
                     insert_fn(con, record, assembly_name=assembly_name, verbose=True)
+                    _log_operation(con, "populate", "overview_records", fpath.name)
             except Exception as exc:
                 print(f"  [ERROR] {fpath.name}: {exc}")
+                with duckdb.connect(db_path) as log_con:
+                    ensure_schema(log_con)
+                    _log_operation(
+                        log_con, "populate", "overview_records", fpath.name,
+                        status="error", details={"error": str(exc)},
+                    )
 
 
 def cmd_populate_overview_records_from_archive(args) -> None:
@@ -1378,6 +1413,7 @@ _DISPATCH = {
     ("housing",           "view"):            cmd_housing_view,
     ("experiments",       "view"):            cmd_experiments_view,
     ("operationaldata",   "view"):            cmd_operationaldata_view,
+    ("log",                "view"):           cmd_log_view,
     ("overview-records",  "view"):            cmd_overview_records_view,
     ("populate",          "operationaldata"): cmd_populate_operationaldata,
     ("populate",          "experiments"):     cmd_populate_experiments,
@@ -1811,6 +1847,27 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Filter by part name (shows all assemblies that used this part)")
     _time_range_args(o_view)
     _db_arg(o_view)
+
+    # ── log ──────────────────────────────────────────────────────────────────
+    log_p = entity.add_parser("log", help="View the operation audit log.")
+    log_sub = log_p.add_subparsers(dest="action", required=True,
+                                   metavar="{view}")
+
+    l_view = log_sub.add_parser(
+        "view", help="List operation_log rows, optionally filtered."
+    )
+    l_view.add_argument("--table", default=None, metavar="TABLE",
+                        help="Filter by table name")
+    l_view.add_argument("--operation", default=None, metavar="OP",
+                        help="Filter by operation (e.g. insert, delete, update_status)")
+    l_view.add_argument("--record", default=None, metavar="NAME",
+                        help="Filter by record name")
+    l_view.add_argument("--status", default=None, choices=["ok", "error"],
+                        help="Filter by status")
+    _time_range_args(l_view)
+    l_view.add_argument("--limit", type=int, default=None, metavar="N",
+                        help="Limit to the N most recent rows")
+    _db_arg(l_view)
 
     # ── overview-records ──────────────────────────────────────────────────────
     ovr_p = entity.add_parser("overview-records", help="View overview_records.")

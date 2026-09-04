@@ -16,6 +16,8 @@ operationaldata      discovered archive files (TDMS/TXT) linked to a site, with 
 overview_records     processed overview file metadata (OverviewRecord, no raw data)
 users                one row per EXPERIENCES_LOG acronym, joined (fuzzy) with proposal
                      data: research area, call number, access mode, housing used
+operation_log        audit trail — one row per crud.py/populate.py mutating call, with
+                     status (ok/error) and minimal details (IDs via operation_log_id_seq)
 
 ── Operational statistics ───────────────────────────────────────────────────
 op_stats_processed   idempotency guard — which files have been ingested and with which bins
