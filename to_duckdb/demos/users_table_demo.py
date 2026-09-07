@@ -146,7 +146,7 @@ def load_log(
         reader = csv.DictReader(f)
         for lineno, row in enumerate(reader, start=2):
             n_total += 1
-            acronym = row["UserCode"].strip()
+            acronym = row["UserCode"].strip().upper()
             if not acronym:
                 raise ValueError(
                     f"{log_path}:{lineno}: empty UserCode (acronym) is not allowed"
@@ -208,7 +208,7 @@ def load_proposals(
         reader = csv.DictReader(f)
         for row in reader:
             n_total += 1
-            acronym = row["Acronym"].strip()
+            acronym = row["Acronym"].strip().upper()
             if not acronym:
                 n_ignored += 1
                 continue
@@ -241,11 +241,66 @@ def load_proposals(
     return acronym_rows, n_total, n_discarded, n_ignored, n_supra_excluded
 
 
+def _acronym_date_compatible(
+    rows: list[dict[str, str]],
+    session_records: list[tuple[str, str | None, datetime, datetime | None]],
+) -> bool:
+    """Return whether any of `rows` overlaps any of `session_records` in time.
+
+    Mirrors the date/year-overlap logic in
+    ``find_research_area_candidates.py``'s ``find_candidates()``: a row is
+    compatible if its ``Experiment Start/End Date`` overlaps one of the
+    *closed* (``hstop`` set) session ranges, or — when it only carries an
+    ``Experiment Year`` — that year is among the sessions' start years
+    (open or closed).
+
+    Parameters
+    ----------
+    rows : list[dict[str, str]]
+        Candidate proposal rows sharing one acronym.
+    session_records : list[tuple[str, str | None, datetime, datetime | None]]
+        This acronym's ``(housing, variant, hstart, hstop)`` sessions.
+
+    Returns
+    -------
+    bool
+        ``True`` if at least one row is date/year-compatible.
+    """
+    years = {hstart.year for _, _, hstart, _ in session_records}
+    ranges = [
+        (hstart.date(), hstop.date())
+        for _, _, hstart, hstop in session_records
+        if hstop is not None
+    ]
+    for row in rows:
+        start_str = row["Experiment Start Date"].strip()
+        end_str = row["Experiment End Date"].strip()
+        if start_str and end_str:
+            try:
+                start_date = datetime.fromisoformat(start_str).date()
+                end_date = datetime.fromisoformat(end_str).date()
+            except ValueError:
+                continue
+            if any(start_date <= e and end_date >= s for s, e in ranges):
+                return True
+        else:
+            year_str = row["Experiment Year"].strip()
+            if year_str:
+                try:
+                    if int(year_str) in years:
+                        return True
+                except ValueError:
+                    pass
+    return False
+
+
 def find_proposal_rows(
     acronym: str,
+    session_records: list[tuple[str, str | None, datetime, datetime | None]],
     acronym_rows: dict[str, list[dict[str, str]]],
     acronym_rows_lower: dict[str, str],
     fuzzy_cutoff: float,
+    fuzzy_candidates: int = 5,
 ) -> tuple[list[dict[str, str]] | None, str | None, str | None]:
     """Find the proposal rows matching a EXPERIENCES_LOG acronym.
 
@@ -253,12 +308,18 @@ def find_proposal_rows(
     ----------
     acronym : str
         The EXPERIENCES_LOG ``UserCode`` to look up.
+    session_records : list[tuple[str, str | None, datetime, datetime | None]]
+        This acronym's ``(housing, variant, hstart, hstop)`` sessions, used
+        to date-check fuzzy candidates (see `_acronym_date_compatible`).
     acronym_rows : dict[str, list[dict[str, str]]]
         Mapping from `load_proposals`.
     acronym_rows_lower : dict[str, str]
         Lower-cased acronym -> original-case acronym.
     fuzzy_cutoff : float
         `difflib.get_close_matches` similarity cutoff for typo matching.
+    fuzzy_candidates : int
+        Maximum number of close-match candidates (by string similarity) to
+        date-check before giving up.
 
     Returns
     -------
@@ -277,10 +338,19 @@ def find_proposal_rows(
         return acronym_rows[lower_match], lower_match, "exact"
 
     close = difflib.get_close_matches(
-        acronym, acronym_rows.keys(), n=1, cutoff=fuzzy_cutoff
+        acronym, acronym_rows.keys(), n=fuzzy_candidates, cutoff=fuzzy_cutoff
     )
+    for candidate in close:
+        rows = acronym_rows[candidate]
+        if _acronym_date_compatible(rows, session_records):
+            return rows, candidate, "fuzzy"
+
     if close:
-        return acronym_rows[close[0]], close[0], "fuzzy"
+        print(
+            f"WARNING: acronym '{acronym}' has fuzzy candidate(s) {close} by "
+            "text similarity, but none date-compatible with sessions; "
+            "treating as unmatched"
+        )
 
     return None, None, None
 
@@ -346,27 +416,30 @@ def resolve_proposal_row(
 
 
 def build_users(
-    log_path: Path,
-    proposals_path: Path,
-    cutoff: datetime | None,
+    sessions: dict[str, list[tuple[str, str | None, datetime, datetime | None]]],
+    timestamps: dict[str, list[datetime]],
+    acronym_rows: dict[str, list[dict[str, str]]],
     fuzzy_cutoff: float,
-    housing_filter: set[str] | None = None,
-) -> tuple[list[dict], Counter, dict]:
-    """Build the list of `users` rows to insert.
+) -> tuple[list[dict], Counter, int]:
+    """Build the list of `users` rows to insert from already-loaded sources.
+
+    Source-agnostic: `sessions`/`timestamps` and `acronym_rows` can come
+    from any loader (CSV today, MySQL/API in the future) as long as they
+    match the shapes `load_log`/`load_proposals` produce.
 
     Parameters
     ----------
-    log_path : :class:`~pathlib.Path`
-        Path to ``EXPERIENCES_LOG.csv``.
-    proposals_path : :class:`~pathlib.Path`
-        Path to the proposals CSV.
-    cutoff : datetime or None
-        Naive Europe/Paris datetime cutoff (see `parse_cutoff`).
+    sessions : dict[str, list[tuple[str, str | None, datetime, datetime | None]]]
+        Acronym -> list of ``(housing, variant, HStart, HStop)`` session
+        records, as returned by `load_log`.
+    timestamps : dict[str, list[datetime]]
+        Acronym -> list of session start timestamps, as returned by
+        `load_log`.
+    acronym_rows : dict[str, list[dict[str, str]]]
+        Acronym -> list of matching proposal rows, as returned by
+        `load_proposals`.
     fuzzy_cutoff : float
         `difflib.get_close_matches` similarity cutoff for typo matching.
-    housing_filter : set[str] or None
-        Upper-cased housing names to keep (see `load_log`). ``None``
-        includes every housing found in `log_path`.
 
     Returns
     -------
@@ -386,27 +459,16 @@ def build_users(
         deduplicated.
     match_counts : Counter
         Counts of ``"exact"``, ``"fuzzy"``, ``"unmatched"`` proposal matches.
-    stats : dict
-        Row counts read/discarded from both source files, plus
-        ``duplicates_removed``, for reporting.
+    n_duplicates_removed : int
+        Number of exact-duplicate rows dropped by the final dedup pass.
     """
-    sessions, timestamps, log_total, log_discarded, log_housing_excluded = load_log(
-        log_path, cutoff, housing_filter
-    )
-    (
-        acronym_rows,
-        proposals_total,
-        proposals_discarded,
-        proposals_ignored,
-        proposals_supra_excluded,
-    ) = load_proposals(proposals_path, cutoff)
     acronym_rows_lower = {a.lower(): a for a in acronym_rows}
 
     users = []
     match_counts: Counter = Counter()
     for acronym in sorted(sessions):
         rows, matched_acronym, match_type = find_proposal_rows(
-            acronym, acronym_rows, acronym_rows_lower, fuzzy_cutoff
+            acronym, sessions[acronym], acronym_rows, acronym_rows_lower, fuzzy_cutoff
         )
         if rows is None:
             match_counts["unmatched"] += 1
@@ -503,6 +565,61 @@ def build_users(
         seen.add(key)
         deduped_users.append(u)
     users = deduped_users
+
+    return users, match_counts, n_duplicates
+
+
+def build_users_from_csv(
+    log_path: Path,
+    proposals_path: Path,
+    cutoff: datetime | None,
+    fuzzy_cutoff: float,
+    housing_filter: set[str] | None = None,
+) -> tuple[list[dict], Counter, dict]:
+    """Build `users` rows from ``EXPERIENCES_LOG``/proposals CSV files.
+
+    Thin CSV-specific wrapper around `build_users`: loads both source
+    files, runs the source-agnostic core, and assembles the reporting
+    `stats` dict from the loaders' row counts plus the core's dedup count.
+
+    Parameters
+    ----------
+    log_path : :class:`~pathlib.Path`
+        Path to ``EXPERIENCES_LOG.csv``.
+    proposals_path : :class:`~pathlib.Path`
+        Path to the proposals CSV.
+    cutoff : datetime or None
+        Naive Europe/Paris datetime cutoff (see `parse_cutoff`).
+    fuzzy_cutoff : float
+        `difflib.get_close_matches` similarity cutoff for typo matching.
+    housing_filter : set[str] or None
+        Upper-cased housing names to keep (see `load_log`). ``None``
+        includes every housing found in `log_path`.
+
+    Returns
+    -------
+    users : list[dict]
+        See `build_users`.
+    match_counts : Counter
+        See `build_users`.
+    stats : dict
+        Row counts read/discarded from both source files, plus
+        ``duplicates_removed``, for reporting.
+    """
+    sessions, timestamps, log_total, log_discarded, log_housing_excluded = load_log(
+        log_path, cutoff, housing_filter
+    )
+    (
+        acronym_rows,
+        proposals_total,
+        proposals_discarded,
+        proposals_ignored,
+        proposals_supra_excluded,
+    ) = load_proposals(proposals_path, cutoff)
+
+    users, match_counts, n_duplicates = build_users(
+        sessions, timestamps, acronym_rows, fuzzy_cutoff
+    )
 
     stats = {
         "duplicates_removed": n_duplicates,
@@ -1341,7 +1458,7 @@ def main() -> None:
                     print("  (none)")
             if args.view is not None:
                 if args.view:
-                    view_user(con, args.view)
+                    view_user(con, args.view.upper())
                 else:
                     view_users(con)
         return
@@ -1364,7 +1481,7 @@ def main() -> None:
 
     cutoff = parse_cutoff(args.from_date) if args.from_date else None
 
-    users, match_counts, stats = build_users(
+    users, match_counts, stats = build_users_from_csv(
         args.log, args.proposals, cutoff, args.fuzzy_cutoff, housing_filter
     )
 
