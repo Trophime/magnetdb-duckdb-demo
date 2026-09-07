@@ -536,13 +536,14 @@ def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> No
         con.execute(
             """
             INSERT INTO magnets
-                (name, type, status, geometry, geometry_data, design_office_reference, assembled_at)
-            VALUES (?,?,?,?,?,?,?)
+                (name, type, status, description, geometry, geometry_data, design_office_reference, assembled_at)
+            VALUES (?,?,?,?,?,?,?,?)
             """,
             [
                 name,
                 magnet_type,
                 status,
+                data.get("description") or None,
                 data.get("geometry") or None,
                 geometry_data,
                 data.get("design_office_reference") or None,
@@ -571,8 +572,8 @@ def update_magnet_from_json(con, data: dict, dry_run: bool = False, verbose: boo
     con:
         Open DuckDB connection.
     data:
-        Magnet dict; only ``geometry``, ``geometry_data``, and
-        ``design_office_reference`` are consulted. ``geometry_data`` is
+        Magnet dict; only ``description``, ``geometry``, ``geometry_data``,
+        and ``design_office_reference`` are consulted. ``geometry_data`` is
         recomputed via :func:`load_geometry_json` when
         ``geometry``/``geometry_config`` is present but ``geometry_data``
         itself is not.
@@ -591,6 +592,8 @@ def update_magnet_from_json(con, data: dict, dry_run: bool = False, verbose: boo
         raise ValueError(f"Magnet '{name}' not found in DB — nothing to update.")
 
     fields: dict = {}
+    if "description" in data:
+        fields["description"] = data.get("description") or None
     if "geometry" in data:
         fields["geometry"] = data.get("geometry") or None
     if "geometry_data" in data:

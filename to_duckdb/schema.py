@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS magnets (
     name                    VARCHAR PRIMARY KEY,
     type                    VARCHAR,
     status                  VARCHAR,
+    description             VARCHAR,
     geometry                VARCHAR,
     geometry_data           JSON,
     design_office_reference VARCHAR
@@ -53,6 +54,9 @@ CREATE TABLE IF NOT EXISTS magnets (
 -- idempotent migrations for databases that predate geometry_data columns
 ALTER TABLE parts   ADD COLUMN IF NOT EXISTS geometry_data JSON;
 ALTER TABLE magnets ADD COLUMN IF NOT EXISTS geometry_data JSON;
+
+-- idempotent migration for databases that predate magnets.description
+ALTER TABLE magnets ADD COLUMN IF NOT EXISTS description VARCHAR;
 
 -- idempotent migrations for databases that predate status_history
 ALTER TABLE parts   ADD COLUMN IF NOT EXISTS status_history JSON DEFAULT '[]';
