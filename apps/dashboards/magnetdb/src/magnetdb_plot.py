@@ -12,7 +12,7 @@ from plotly.subplots import make_subplots
 from python_magnetrun.utils.downsampling import DownsampleConfig, downsample_dataframe
 from python_magnetrun.utils.files import classify_pigbrother_file
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
-from python_magnetrun.utils.timezone import local_to_utc_naive
+from python_magnetrun.utils.timezone import local_to_utc_naive, series_utc_to_local_naive
 
 logger = logging.getLogger(__name__)
 
@@ -448,6 +448,17 @@ def _apply_style(
 
     return kwargs
 
+
+def _display_x_series(df, x_col: str):
+    """Return df[x_col], converted from naive UTC to Europe/Paris local time for display.
+
+    The "timestamp" column is stored as naive UTC (see
+    :mod:`python_magnetrun.utils.timezone`); "t" (elapsed seconds) needs no
+    conversion.
+    """
+    return series_utc_to_local_naive(df[x_col]) if x_col == "timestamp" else df[x_col]
+
+
 def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", mrun=None, group_name: str = "") -> go.Figure:
     """
     Gère le sous-échantillonnage et génère la figure Plotly pour Pupitre ET PigBrother.
@@ -486,7 +497,7 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
             print(f"Erreur downsampling sur {filename}: {e}")
             df_plot = df
 
-    x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time'}
+    x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time (local)'}
     x_title = x_label_mapping.get(x_col, x_col)
 
     fig = go.Figure()
@@ -519,7 +530,7 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
                 if target_col and x_col in sub_df.columns:
                     y_values = convert_values_to_unit(sub_df[target_col], sensor_unit, target_unit)
                     fig.add_trace(go.Scattergl(
-                        x=sub_df[x_col],
+                        x=_display_x_series(sub_df, x_col),
                         y=y_values,
                         name=sensor,
                         **_apply_style(style, override, len(y_values)),
@@ -538,7 +549,7 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
             if target_col and x_col in df_plot.columns:
                 y_values = convert_values_to_unit(df_plot[target_col], sensor_unit, target_unit)
                 fig.add_trace(go.Scattergl(
-                    x=df_plot[x_col],
+                    x=_display_x_series(df_plot, x_col),
                     y=y_values,
                     name=sensor,
                     **_apply_style(style, override, len(y_values)),
@@ -770,9 +781,12 @@ def _add_incident_overlays(fig: go.Figure, event_files: list, x_col: str, record
 
     Positions come from the filename alone (never from loading the incident
     file's data): :func:`~python_magnetrun.utils.timestamps.parse_filename_timestamp`
-    for the local timestamp, converted to naive UTC via
-    :func:`~python_magnetrun.utils.timezone.local_to_utc_naive` to match the
-    (already-UTC) ``timestamp`` column of the loaded regular files.
+    for the local timestamp. In ``"timestamp"`` mode that local value is used
+    directly, matching the regular files' ``timestamp`` column (naive UTC,
+    converted to local for display — see :func:`_display_x_series`). In
+    ``"t"`` mode it's converted to naive UTC via
+    :func:`~python_magnetrun.utils.timezone.local_to_utc_naive` to subtract
+    against *record_t0_utc*, which is also naive UTC.
 
     Parameters
     ----------
@@ -799,7 +813,7 @@ def _add_incident_overlays(fig: go.Figure, event_files: list, x_col: str, record
         dt_utc = pd.Timestamp(local_to_utc_naive(dt_local, "Europe/Paris"))
 
         if x_col == "timestamp":
-            event_x = dt_utc.isoformat()
+            event_x = pd.Timestamp(dt_local).isoformat()
         elif x_col == "t" and record_t0_utc is not None:
             event_x = (dt_utc - pd.Timestamp(record_t0_utc)).total_seconds()
         else:
@@ -932,7 +946,7 @@ def create_annotated_plot(
             if not (target_col and x_col in sub_df.columns):
                 continue
 
-            x_data = sub_df[x_col]
+            x_data = _display_x_series(sub_df, x_col)
 
             sensor_unit = None
             if mrun_obj and target_unit is not None:
@@ -951,7 +965,7 @@ def create_annotated_plot(
     if event_files:
         _add_incident_overlays(fig, event_files, x_col, record_t0_utc)
 
-    x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time'}
+    x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time (local)'}
     fig.update_layout(
         title=group_name,
         template="plotly_white",

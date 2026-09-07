@@ -11,7 +11,7 @@ from dash.exceptions import PreventUpdate
 from plotly import graph_objects as go
 from python_magnetrun.utils.files import classify_pigbrother_file
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
-from python_magnetrun.utils.timezone import local_to_utc_naive
+from python_magnetrun.utils.timezone import local_to_utc_naive, utc_naive_to_local
 
 dash.register_page(__name__, path="/defaults-spikes", name="Defaults & Spikes", order=8)
 
@@ -145,13 +145,16 @@ def _incident_x_range(dt_utc, window_seconds, x_col, record_t0_utc):
     Returns
     -------
     list or None
-        ``[start, end]`` as ISO datetime strings for ``x_col="timestamp"``,
-        or as floats (elapsed seconds) for ``x_col="t"``. ``None`` if
+        For ``x_col="timestamp"``: ``[start, end]`` as ISO datetime strings,
+        converted from naive UTC to Europe/Paris local time to match the
+        plotted traces (see :func:`~magnetdb_plot._display_x_series`). For
+        ``x_col="t"``: as floats (elapsed seconds). ``None`` if
         *record_t0_utc* is unavailable in ``"t"`` mode.
     """
     window = pd.Timedelta(seconds=window_seconds)
     if x_col == "timestamp":
-        return [(dt_utc - window).isoformat(), (dt_utc + window).isoformat()]
+        start, end = dt_utc - window, dt_utc + window
+        return [utc_naive_to_local(start).isoformat(), utc_naive_to_local(end).isoformat()]
     if x_col == "t" and record_t0_utc is not None:
         incident_t = (dt_utc - pd.Timestamp(record_t0_utc)).total_seconds()
         return [incident_t - window_seconds, incident_t + window_seconds]

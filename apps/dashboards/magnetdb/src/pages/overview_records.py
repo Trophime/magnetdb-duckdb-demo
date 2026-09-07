@@ -8,7 +8,7 @@ from dash import ALL, Input, Output, Patch, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 from plotly import graph_objects as go
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
-from python_magnetrun.utils.timezone import local_to_utc_naive
+from python_magnetrun.utils.timezone import local_to_utc_naive, utc_naive_to_local
 
 dash.register_page(__name__, path="/overview-records", name="Overview records", order=7)
 
@@ -103,9 +103,12 @@ def _record_x_range(record_filename, db_path):
     Returns
     -------
     list or None
-        ``[t0, t0 + duration]`` as ISO datetime strings, or ``None`` if the
-        record has no ``sources_overview`` files or no usable ``t0``/
-        ``duration`` — callers should fall back to per-graph autorange.
+        ``[t0, t0 + duration]``, converted from naive UTC (as stored) to
+        Europe/Paris local time to match the plotted traces (see
+        :func:`~magnetdb_plot._display_x_series`), as ISO datetime strings.
+        ``None`` if the record has no ``sources_overview`` files or no
+        usable ``t0``/``duration`` — callers should fall back to per-graph
+        autorange.
     """
     info = db.get_overview_record_sources(record_filename, db_path)
     if info is None:
@@ -118,7 +121,8 @@ def _record_x_range(record_filename, db_path):
     if t0 is None or pd.isna(t0) or duration <= 0:
         return None
     t0 = pd.Timestamp(t0)
-    return [t0.isoformat(), (t0 + pd.Timedelta(seconds=duration)).isoformat()]
+    t1 = t0 + pd.Timedelta(seconds=duration)
+    return [utc_naive_to_local(t0).isoformat(), utc_naive_to_local(t1).isoformat()]
 
 
 def layout(assembly=None, record=None, **kwargs):
