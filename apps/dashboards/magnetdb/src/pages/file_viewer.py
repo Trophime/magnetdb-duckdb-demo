@@ -31,9 +31,7 @@ dash.register_page(__name__, path="/file_viewer", name="File viewer", order=6)
 def layout(assembly=None, file=None, **kwargs):
     return html.Div(
         [
-            dcc.Store(
-                id="pending-auto-plot", data=["Field"] if (assembly and file) else []
-            ),
+            dcc.Store(id="pending-auto-plot", data=["Field", "Champ_magn"]),
             html.Div(
                 [
                     html.H2(
@@ -302,9 +300,10 @@ def update_sensors_menus(
             if s_vals is not None
         }
 
-    # Sensors to auto-check on the first render after landing via a deep link
-    # (e.g. from the "Assembly stats" page). Consumed once, then cleared below,
-    # so it doesn't keep overriding the user's own choices on later file switches.
+    # Sensors to auto-check on the page's first file selection (whichever of
+    # "Field"/pupitre or "Champ_magn"/pigbrother the file actually has).
+    # Consumed once, then cleared below, so it doesn't keep overriding the
+    # user's own choices on later file switches.
     pending_auto_plot = pending_auto_plot or []
 
     menus_blocks = []

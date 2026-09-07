@@ -464,6 +464,15 @@ def update_groups(selected_record, selected_db, include_archive_value):
     blocks = []
     for group_name, entries in group_entries.items():
         options = [{"label": e["label"], "value": e["value"]} for e in entries]
+        default_checked = [
+            e["value"]
+            for e in entries
+            if group_name == "Magnetic_Field"
+            and (
+                e["channels"].get("pupitre", {}).get("channel") == "Field"
+                or e["channels"].get("pigbrother", {}).get("channel") == "Champ_magn"
+            )
+        ]
 
         blocks.append(
             html.Details(
@@ -487,7 +496,7 @@ def update_groups(selected_record, selected_db, include_archive_value):
                                 dcc.Checklist(
                                     id={"type": "ds-group-sensors-checklist", "index": group_name},
                                     options=options,
-                                    value=[],
+                                    value=default_checked,
                                     labelStyle={
                                         "display": "block",
                                         "marginLeft": "25px",
