@@ -731,9 +731,7 @@ def update_assembly_stats(
     else:
         year_options = [selectors.ALL]
 
-    status_options = [selectors.ALL] + db.get_distinct_statuses(
-        "assemblies", selected_db
-    )
+    status_options = [selectors.ALL] + db.get_distinct_statuses("assemblies")
     assemblies_with_status = (
         db.get_names_with_status("assemblies", selected_status, selected_db)
         if selected_status and selected_status != selectors.ALL

@@ -250,7 +250,7 @@ def update_filter_options(selected_db):
         else [selectors.ALL]
     )
 
-    status_options = [selectors.ALL] + db.get_distinct_statuses("assemblies", selected_db)
+    status_options = [selectors.ALL] + db.get_distinct_statuses("assemblies")
 
     return housing_options, year_options, status_options
 

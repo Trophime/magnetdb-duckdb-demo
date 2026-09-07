@@ -328,26 +328,30 @@ def get_files_for_assembly(assembly_name, table_name, db_path=None):
         return df["file"].tolist()
 
 
-def get_distinct_statuses(table_name, db_path=None):
-    """Return the distinct lifecycle statuses present in *table_name*.
+# Status vocabularies mirroring to_duckdb/enums.py's AssemblyStatus and
+# LifecycleStatus. Duplicated here (rather than imported) because this
+# dashboard is a separate deployable that doesn't depend on to_duckdb.
+ASSEMBLY_STATUSES = ["in_operation", "disassembled", "in_study"]
+LIFECYCLE_STATUSES = ["in_operation", "in_stock", "retired", "dead", "in_study"]
+
+
+def get_distinct_statuses(table_name):
+    """Return the defined status vocabulary for *table_name*.
 
     Parameters
     ----------
     table_name : str
-        Either ``"magnets"`` or ``"parts"`` -- both share the same
-        lifecycle-status vocabulary (``in_operation``, ``in_stock``,
-        ``in_study``, ``retired``, ``dead``).
-    db_path : str, optional
-        Path to the DuckDB database. Defaults to `DB_PATH`.
+        ``"assemblies"`` (:data:`ASSEMBLY_STATUSES`) or ``"magnets"``/
+        ``"parts"`` (:data:`LIFECYCLE_STATUSES`).
 
     Returns
     -------
     list of str
-        Distinct non-null ``status`` values, sorted alphabetically.
+        The full defined status values for *table_name*, in display order
+        -- independent of which statuses currently appear in the data, so
+        e.g. ``"retired"``/``"dead"`` are always offered for magnets/parts.
     """
-    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        query = f"SELECT DISTINCT status FROM {table_name} WHERE status IS NOT NULL ORDER BY status"
-        return conn.execute(query).df()["status"].tolist()
+    return ASSEMBLY_STATUSES if table_name == "assemblies" else LIFECYCLE_STATUSES
 
 
 def get_names_with_status(table_name, status, db_path=None):
