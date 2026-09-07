@@ -16,7 +16,7 @@ from experiment_links import (
 from plotly import graph_objects as go
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/magnet_stats", name="Magnet stats", order=3)
+dash.register_page(__name__, path="/magnet_stats", name="Magnets", order=4)
 
 
 J_TO_KWH = 3.6e6
@@ -198,7 +198,9 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
         A "no records" message if *overview_df* is empty, otherwise a
         `DataTable` of its rows (linked into ``/overview-records``).
     """
-    overview_df = selectors.filter_by_date_range(overview_df, "t0", start_date, end_date)
+    overview_df = selectors.filter_by_date_range(
+        overview_df, "t0", start_date, end_date
+    )
 
     if overview_df.empty:
         return html.Div(
@@ -313,7 +315,14 @@ def _parts_section(selected_magnet, db_path):
 
 
 def _build_page_content(
-    df, selected_magnet=None, db_path=None, table_start_date=None, table_end_date=None
+    df,
+    in_scope_magnets,
+    status_order,
+    n_overview_records,
+    selected_magnet=None,
+    db_path=None,
+    table_start_date=None,
+    table_end_date=None,
 ):
     """Build the figures, table rows, and summary text for a loaded (experiment, magnet) dataframe.
 
@@ -322,6 +331,14 @@ def _build_page_content(
     df : :class:`~pandas.DataFrame`
         Rows from :func:`load_data`, already filtered to the page's current
         magnet/status selection.
+    in_scope_magnets : list of str
+        Magnet names matching the page's current Status/Magnet filters (all
+        magnets when none are active).
+    status_order : list of str
+        Distinct magnet status values, for the status-breakdown line.
+    n_overview_records : int
+        Overview-record count matching the page's current filters, used for
+        the "Overview records: N selected of Total" summary line.
     selected_magnet : str, optional
         Magnet name from the page's filter dropdown.
     db_path : str, optional
@@ -367,22 +384,31 @@ def _build_page_content(
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
     counts = db.get_db_counts(db_path)
-    magnets_line = (
-        f"Magnets: 1 selected of {counts['magnets']}"
-        if selected_magnet and selected_magnet != selectors.ALL
-        else f"Magnets: {counts['magnets']}"
+    status_counts = db.get_status_counts("magnets", db_path, names=in_scope_magnets)
+
+    magnets_line = selectors.entity_count_line(
+        "Magnets", counts["magnets"], len(in_scope_magnets)
     )
+    status_line = selectors.status_breakdown_text(status_counts, status_order)
+    experiments_line = selectors.entity_count_line(
+        "Experiments", counts["experiments"], len(exp_df)
+    )
+    overview_records_line = selectors.entity_count_line(
+        "Overview records", counts["overview_records"], n_overview_records
+    )
+
     summary = [
         html.B(magnets_line),
         html.Br(),
-        html.B(f"Experiments: {len(exp_df)}"),
+        status_line,
+        html.Br(),
+        html.B(experiments_line),
         html.Br(),
         f"Processed: {(exp_df['Status'] == 'STATS DONE').sum()}",
         html.Br(),
-        html.B(
-            f"DB-wide: {counts['assemblies']} assemblies, {counts['parts']} parts, "
-            f"{counts['overview_records']} overview records"
-        ),
+        html.B(overview_records_line),
+        html.Br(),
+        html.B(f"DB-wide: {counts['assemblies']} assemblies, {counts['parts']} parts"),
     ]
 
     return (
@@ -395,7 +421,7 @@ def _build_page_content(
 def layout(magnet=None, **kwargs):
     return html.Div(
         [
-            html.H1("MagnetDB Dashboard"),
+            html.H1("Magnet Dashboard"),
             html.Div(
                 [
                     selectors.aggregate_filter(
@@ -421,7 +447,8 @@ def layout(magnet=None, **kwargs):
             dcc.Graph(id="magnet-stats-fig-field-on"),
             html.Br(),
             html.Details(
-                [
+                id="magnet-stats-assembly-history-details",
+                children=[
                     html.Summary(
                         "📁 Assembly history",
                         style={"fontWeight": "bold", "cursor": "pointer"},
@@ -438,7 +465,8 @@ def layout(magnet=None, **kwargs):
                 },
             ),
             html.Details(
-                [
+                id="magnet-stats-parts-details",
+                children=[
                     html.Summary(
                         "🔩 Parts", style={"fontWeight": "bold", "cursor": "pointer"}
                     ),
@@ -526,7 +554,9 @@ def layout(magnet=None, **kwargs):
     Output("magnet-stats-missing-banner", "children"),
     Output("magnet-stats-overview-records", "children"),
     Output("magnet-stats-assembly-history", "children"),
+    Output("magnet-stats-assembly-history-details", "style"),
     Output("magnet-stats-parts", "children"),
+    Output("magnet-stats-parts-details", "style"),
     Input("dd-database", "value"),
     Input("magnet-stats-magnet-filter", "value"),
     Input("magnet-stats-status-filter", "value"),
@@ -544,6 +574,8 @@ def update_magnet_stats(
     overview_start_date,
     overview_end_date,
 ):
+    hidden_style = {"display": "none"}
+
     if not selected_db:
         return (
             go.Figure(),
@@ -555,7 +587,9 @@ def update_magnet_stats(
             "",
             "",
             "",
+            hidden_style,
             "",
+            hidden_style,
         )
 
     df = load_data(selected_db)
@@ -582,12 +616,16 @@ def update_magnet_stats(
         plot_df = plot_df[plot_df["Magnet"].isin(names_with_status)]
     fig_field_on_style = {"display": "none"} if selected_magnet != selectors.ALL else {}
 
-    (
-        fig_field_on,
-        table_records,
-        summary,
-    ) = _build_page_content(
-        plot_df, selected_magnet, selected_db, table_start_date, table_end_date
+    magnet_selected = bool(selected_magnet) and selected_magnet != selectors.ALL
+    assembly_history_details_style = (
+        {"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "10px"}
+        if magnet_selected
+        else hidden_style
+    )
+    parts_details_style = (
+        {"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "20px"}
+        if magnet_selected
+        else hidden_style
     )
 
     assembly_history = (
@@ -616,6 +654,24 @@ def update_magnet_stats(
         overview_plot_df, overview_start_date, overview_end_date
     )
 
+    in_scope_magnets = [selected_magnet] if magnet_selected else magnet_options[1:]
+    status_order = status_options[1:]
+
+    (
+        fig_field_on,
+        table_records,
+        summary,
+    ) = _build_page_content(
+        plot_df,
+        in_scope_magnets,
+        status_order,
+        len(overview_plot_df),
+        selected_magnet,
+        selected_db,
+        table_start_date,
+        table_end_date,
+    )
+
     parts_section = _parts_section(selected_magnet, selected_db)
     return (
         fig_field_on,
@@ -627,5 +683,7 @@ def update_magnet_stats(
         missing_banner,
         overview_records_section,
         assembly_history_section,
+        assembly_history_details_style,
         parts_section,
+        parts_details_style,
     )

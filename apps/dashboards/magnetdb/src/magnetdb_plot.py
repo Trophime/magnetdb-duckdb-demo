@@ -11,6 +11,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from python_magnetrun.utils.downsampling import DownsampleConfig, downsample_dataframe
 from python_magnetrun.utils.files import classify_pigbrother_file
+from python_magnetrun.utils.timestamps import parse_filename_timestamp
+from python_magnetrun.utils.timezone import local_to_utc_naive
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +24,21 @@ _METHOD_MAP = {
 }
 _DEFAULT_N_OUT = 1000
 
+# Tags create_annotated_plot's incident-overlay shapes so overview_records.py's
+# cursor pin/clear callbacks can tell them apart from user-pinned cursor lines.
+INCIDENT_SHAPE_NAME = "ov-incident"
+
+# Human-readable text for the fault-subtype suffix carried by some "default"
+# incident filenames (e.g. "M10_Default_260120-135125_DefautNums.tdms"),
+# mirrors python_magnetrun.runlogs.pigbrother.DefautType.description. Suffixes
+# not listed here (e.g. "PontAzero") are shown as their raw code with no
+# description rather than guessing a translation.
+_DEFAULT_TYPE_DESCRIPTIONS: dict[str, str] = {
+    "DefautNums": "Défaut généré suite à un trigger matériel de l'installation (relais I_MAX)",
+    "SpikeAimant": "Spike de courant anormal détecté sur capteurs aimant (internes ou externes)",
+    "Courants50Hz": "Courant 50 Hz anormalement élevé (perturbation, bruit réseau, surtension)",
+}
+
 # Forces every field in a group onto one display/plot unit, so fields that are
 # recorded in different (but dimensionally compatible) native units - e.g.
 # "debitbrut" in m3/h vs. "FlowH"/"FlowB" in l/s, both in "Hydraulics" - don't
@@ -30,6 +47,7 @@ _DEFAULT_N_OUT = 1000
 # are left in their own unit rather than converted; see group_display_unit().
 GROUP_UNIT_OVERRIDES: dict[str, str] = {
     "Hydraulics": "liter / second",
+    "Magnetic_Field": "tesla",
 }
 
 
@@ -63,7 +81,7 @@ def resolve_sensor_unit(mrun, sensor: str, group_name: str = ""):
     return None, None
 
 
-def group_display_unit(mrun, group_name: str, sensor: str):
+def group_display_unit(mrun, group_name: str, sensor: str, native_group: str | None = None):
     """Return the (symbol, pint.Unit) to display for *sensor*, honoring :data:`GROUP_UNIT_OVERRIDES`.
 
     Parameters
@@ -71,9 +89,16 @@ def group_display_unit(mrun, group_name: str, sensor: str):
     mrun : MagnetRun
         Loaded run object to query for units.
     group_name : str
-        Group *sensor* belongs to.
+        Display block *sensor* belongs to — used to look up
+        :data:`GROUP_UNIT_OVERRIDES`.
     sensor : str
         Sensor/column name.
+    native_group : str, optional
+        *sensor*'s own format-native group, used instead of *group_name* to
+        resolve its unit when they differ (a cross-format-matched entry's
+        pigbrother side lives in its own tdms group, not the display block's
+        pupitre-named group — see :func:`magnetdb_analysis.get_overview_group_entries`).
+        Defaults to *group_name* when not given.
 
     Returns
     -------
@@ -83,7 +108,7 @@ def group_display_unit(mrun, group_name: str, sensor: str):
         overridden unit; otherwise it's the sensor's own native unit
         (or ``(None, None)`` if unresolvable).
     """
-    symbol, unit = resolve_sensor_unit(mrun, sensor, group_name)
+    symbol, unit = resolve_sensor_unit(mrun, sensor, native_group if native_group is not None else group_name)
     if unit is None:
         return symbol, unit
     target = GROUP_UNIT_OVERRIDES.get(group_name)
@@ -740,39 +765,118 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
     return fig
 
 
-def create_annotated_plot(files_data: list, x_col: str, method: str, group_name: str = "") -> go.Figure:
+def _add_incident_overlays(fig: go.Figure, event_files: list, x_col: str, record_t0_utc) -> None:
+    """Add one dashed full-height overlay line per incident file to *fig*, in place.
+
+    Positions come from the filename alone (never from loading the incident
+    file's data): :func:`~python_magnetrun.utils.timestamps.parse_filename_timestamp`
+    for the local timestamp, converted to naive UTC via
+    :func:`~python_magnetrun.utils.timezone.local_to_utc_naive` to match the
+    (already-UTC) ``timestamp`` column of the loaded regular files.
+
+    Parameters
+    ----------
+    fig : :class:`~plotly.graph_objects.Figure`
+        Figure to annotate, mutated in place.
+    event_files : list of str
+        Incident (default/spike) filenames.
+    x_col : str
+        ``"timestamp"`` or ``"t"``. In ``"t"`` mode, a line is only added
+        when *record_t0_utc* is available; unresolvable files are skipped
+        silently (the caller is responsible for surfacing one warning).
+    record_t0_utc : :class:`~pandas.Timestamp` or None
+        Naive-UTC ``t=0`` reference, required only for ``x_col="t"``.
+    """
+    event_counters: dict[str, int] = {}
+    for file in event_files:
+        file_type = classify_pigbrother_file(file)
+        if file_type not in ("default", "spike", "trigger"):
+            continue
+
+        dt_local = parse_filename_timestamp(file)
+        if dt_local is None:
+            continue
+        dt_utc = pd.Timestamp(local_to_utc_naive(dt_local, "Europe/Paris"))
+
+        if x_col == "timestamp":
+            event_x = dt_utc.isoformat()
+        elif x_col == "t" and record_t0_utc is not None:
+            event_x = (dt_utc - pd.Timestamp(record_t0_utc)).total_seconds()
+        else:
+            continue
+
+        event_counters[file_type] = event_counters.get(file_type, 0) + 1
+        label = f"{file_type.capitalize()} #{event_counters[file_type]}"
+        hover = label
+
+        if file_type == "default":
+            name_parts = os.path.splitext(os.path.basename(file))[0].split("_")
+            subtype = name_parts[3] if len(name_parts) > 3 and name_parts[3] else None
+            if subtype:
+                label += f" — {subtype}"
+                description = _DEFAULT_TYPE_DESCRIPTIONS.get(subtype)
+                if description:
+                    hover = f"{label}<br>{description}"
+                else:
+                    hover = label
+
+        style = _resolve_file_style(file)
+        color = style.color if style else "red"
+
+        fig.add_shape(
+            type="line", x0=event_x, x1=event_x, y0=0, y1=1,
+            xref="x", yref="paper", name=INCIDENT_SHAPE_NAME,
+            line={"color": color, "width": 1.5, "dash": "dash"},
+        )
+        fig.add_annotation(
+            x=event_x, y=1, yref="paper", yanchor="bottom",
+            text=label, showarrow=False,
+            hovertext=hover, captureevents=True,
+            font={"color": color, "size": 10},
+        )
+
+
+def create_annotated_plot(
+    files_data: list,
+    x_col: str,
+    method: str,
+    group_name: str = "",
+    event_files: list | None = None,
+    record_t0_utc=None,
+) -> go.Figure:
     """Single-subplot overlay of several files' data for one group.
 
-    Regular/pupitre/overview/archive files are drawn as line traces;
-    default/spike/trigger event files are drawn as a single marker+text
-    annotation at their peak absolute value instead of a line — same
-    classification (:func:`~python_magnetrun.utils.files.classify_pigbrother_file`)
-    and styling (`FILE_TYPE_STYLES`) as :func:`create_comparison_plot`, but
-    without its lag/sync correction and two-row raw/aligned layout: this is
-    a single shared-axis overlay for files that are already time-aligned to
-    a common wall-clock axis (``x_col="timestamp"``), as used by the
-    overview-records file-viewer page.
+    Regular/pupitre/overview/archive files are drawn as line traces. Incident
+    (default/spike) files are never loaded — they're drawn as dashed
+    full-height overlay lines positioned from their filename alone, via
+    *event_files* (see :func:`_add_incident_overlays`).
 
     Parameters
     ----------
     files_data : list of dict
-        One dict per file: ``{'file': str, 'df': pandas.DataFrame, 'sensors':
-        list[str], 'mrun': MagnetRun or None}``.
+        One dict per regular file: ``{'file': str, 'df': pandas.DataFrame,
+        'sensors': list[str], 'mrun': MagnetRun or None}``.
     x_col : str
         Column to use for the x-axis (``"timestamp"`` or ``"t"``).
     method : str
         Downsampling method name, or ``"raw data"``/``"none"`` to disable.
-        Event files are never downsampled, regardless of this value.
     group_name : str, optional
         Used as the figure title.
+    event_files : list of str, optional
+        Incident (default/spike) filenames to draw as overlay lines. Ignored
+        in ``x_col="t"`` mode when *record_t0_utc* is ``None``.
+    record_t0_utc : :class:`~pandas.Timestamp`, optional
+        Naive-UTC ``t=0`` reference for placing *event_files* when
+        ``x_col="t"``; unused for ``x_col="timestamp"``.
 
     Returns
     -------
     :class:`~plotly.graph_objects.Figure`
-        One line trace per non-event file/sensor, one marker+text trace per
-        event file/sensor. Empty figure if *files_data* is empty.
+        One line trace per regular file/sensor, plus one overlay line per
+        incident file. Empty figure if both *files_data* and *event_files*
+        are empty.
     """
-    if not files_data:
+    if not files_data and not event_files:
         return go.Figure()
 
     ylabel = "Value"
@@ -781,7 +885,9 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
         mrun_obj = item.get('mrun')
         sensors_list = item.get('sensors', [])
         if mrun_obj and sensors_list:
-            symbol, target_unit = group_display_unit(mrun_obj, group_name, sensors_list[0])
+            symbol, target_unit = group_display_unit(
+                mrun_obj, group_name, sensors_list[0], native_group=item.get('native_group')
+            )
 
             if symbol and target_unit is not None:
                 ylabel = f"{symbol} [{target_unit:~P}]"
@@ -792,7 +898,6 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
 
     fig = go.Figure()
     downsample_method = 'none' if (not method or method in ['raw data', 'raw', 'none']) else method
-    event_counters = {'default': 0, 'spike': 0, 'trigger': 0}
 
     for item in files_data:
         file = item['file']
@@ -805,15 +910,7 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
 
         style = _resolve_file_style(file)
 
-        file_type = classify_pigbrother_file(file)
-        is_event = file_type in ('default', 'spike', 'trigger')
-
-        event_label = ""
-        if is_event:
-            event_counters[file_type] += 1
-            event_label = f"#{file_type}{event_counters[file_type]}"
-
-        if is_event or downsample_method == 'none':
+        if downsample_method == 'none':
             df_plot = df_raw.copy()
         else:
             try:
@@ -839,52 +936,20 @@ def create_annotated_plot(files_data: list, x_col: str, method: str, group_name:
 
             sensor_unit = None
             if mrun_obj and target_unit is not None:
-                _, sensor_unit = resolve_sensor_unit(mrun_obj, sensor, group_name)
+                _, sensor_unit = resolve_sensor_unit(mrun_obj, sensor, item.get('native_group', group_name))
             y_data = np.asarray(convert_values_to_unit(sub_df[target_col], sensor_unit, target_unit))
 
-            if is_event:
-                max_idx = np.abs(y_data).argmax()
-                event_x = x_data.iloc[max_idx]
-                event_y = y_data[max_idx]
-                event_color = style.color if style else "red"
-                fig.add_trace(go.Scatter(
-                    x=[event_x],
-                    y=[event_y],
-                    mode='markers',
-                    marker={
-                        'size': 14,
-                        'symbol': 'x' if file_type == 'default' else 'star',
-                        'color': event_color,
-                        'line': {'width': 2, 'color': 'DarkSlateGrey'},
-                    },
-                    name=f"{file} - {sensor}",
-                    showlegend=False,
-                    hovertext=f"{event_label}<br>{file}<br>{sensor}: {event_y:.3g}",
-                    hovertemplate="%{hovertext}<extra></extra>",
-                ))
-                fig.add_annotation(
-                    x=event_x,
-                    y=event_y,
-                    text=event_label,
-                    showarrow=True,
-                    arrowhead=2,
-                    arrowcolor=event_color,
-                    ax=20,
-                    ay=-30,
-                    bgcolor="white",
-                    bordercolor=event_color,
-                    borderwidth=1,
-                    font={'color': event_color, 'size': 11, 'family': "Arial Black"},
-                )
-            else:
-                override = _resolve_field_override(group_name, sensor)
-                fig.add_trace(go.Scatter(
-                    x=x_data,
-                    y=y_data,
-                    name=f"{file} - {sensor}",
-                    legendgroup=file,
-                    **_apply_style(style, override, len(y_data)),
-                ))
+            override = _resolve_field_override(group_name, sensor)
+            fig.add_trace(go.Scatter(
+                x=x_data,
+                y=y_data,
+                name=f"{file} - {sensor}",
+                legendgroup=file,
+                **_apply_style(style, override, len(y_data)),
+            ))
+
+    if event_files:
+        _add_incident_overlays(fig, event_files, x_col, record_t0_utc)
 
     x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time'}
     fig.update_layout(

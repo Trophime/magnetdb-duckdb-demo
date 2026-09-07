@@ -1,3 +1,5 @@
+import os
+
 import dash
 import dash_selectors as selectors
 import magnetdb_analysis as db
@@ -7,10 +9,11 @@ import style_editor
 from dash import ALL, Input, Output, Patch, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 from plotly import graph_objects as go
+from python_magnetrun.utils.files import classify_pigbrother_file
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
 from python_magnetrun.utils.timezone import local_to_utc_naive
 
-dash.register_page(__name__, path="/overview-records", name="Overview records", order=7)
+dash.register_page(__name__, path="/defaults-spikes", name="Defaults & Spikes", order=8)
 
 
 _EMPTY_FIG = go.Figure()
@@ -31,38 +34,35 @@ _EMPTY_FIG.update_layout(
 )
 
 
-def _record_sources(record_filename, db_path, include_archive=False, include_incidents=False):
-    """Fetch one record's housing and its regular/event source-file lists.
+def _record_sources(record_filename, db_path, include_archive=False):
+    """Fetch one record's housing, regular source files, and default/spike incident files.
 
     Parameters
     ----------
     include_archive : bool, optional
-        When True, also include archive files — excluded by default since a
-        record can have dozens of them.
-    include_incidents : bool, optional
-        When True, also include incident (default/spike) event files —
-        excluded by default since a record can have dozens of them.
+        When True, also include archive files in the regular set — excluded
+        by default since a record can have dozens of them.
 
     Returns
     -------
     tuple
         ``(housing, regular_files, event_files)``, or ``(None, [], [])`` if
-        *record_filename* has no matching row.
+        *record_filename* has no matching row. ``event_files`` is always
+        ``sources_default + sources_spike`` — this page's purpose is
+        inspecting incidents, so it is never gated by a toggle.
     """
     info = db.get_overview_record_sources(record_filename, db_path)
     if info is None:
         return None, [], []
     regular_files = list(info["sources_overview"]) + list(info["sources_pupitre"])
-    event_files = []
     if include_archive:
         regular_files += list(info["sources_archive"])
-    if include_incidents:
-        event_files = list(info["sources_default"]) + list(info["sources_spike"])
+    event_files = list(info["sources_default"]) + list(info["sources_spike"])
     return info["housing"], regular_files, event_files
 
 
 def _resolve_t0_reference(info):
-    """Best-effort naive-UTC t=0 reference for elapsed-time (``t``) mode incident overlays.
+    """Best-effort naive-UTC t=0 reference for elapsed-time (``t``) mode.
 
     Tries the first ``sources_overview`` file, then ``sources_archive``, then
     ``sources_pupitre`` (first non-empty list wins), parsing only its filename
@@ -90,73 +90,136 @@ def _resolve_t0_reference(info):
     return None
 
 
-def _record_x_range(record_filename, db_path):
-    """Fixed timestamp-axis range spanning this record's sources_overview files.
+def _list_incidents(event_files):
+    """Parse *event_files* (default/spike) into sorted, timestamped incident entries.
 
     Parameters
     ----------
-    record_filename : str
-        ``overview_records.filename`` primary key.
-    db_path : str
-        Path to the DuckDB database.
+    event_files : list of str
+        Filenames from ``sources_default`` + ``sources_spike``.
+
+    Returns
+    -------
+    list of dict
+        Each entry has ``file``, ``type`` (``"default"`` or ``"spike"``),
+        ``subtype`` (fault-subtype suffix for "default" files, else None),
+        ``dt_local`` (naive local :class:`~datetime.datetime` from the
+        filename), and ``dt_utc`` (naive UTC :class:`~pandas.Timestamp`).
+        Sorted by ``dt_utc`` ascending; files that fail to classify or parse
+        are skipped.
+    """
+    incidents = []
+    for file in event_files:
+        file_type = classify_pigbrother_file(file)
+        if file_type not in ("default", "spike"):
+            continue
+        dt_local = parse_filename_timestamp(file)
+        if dt_local is None:
+            continue
+        dt_utc = pd.Timestamp(local_to_utc_naive(dt_local, "Europe/Paris"))
+        subtype = None
+        if file_type == "default":
+            name_parts = os.path.splitext(os.path.basename(file))[0].split("_")
+            subtype = name_parts[3] if len(name_parts) > 3 and name_parts[3] else None
+        incidents.append(
+            {"file": file, "type": file_type, "subtype": subtype, "dt_local": dt_local, "dt_utc": dt_utc}
+        )
+    incidents.sort(key=lambda e: e["dt_utc"])
+    return incidents
+
+
+def _incident_x_range(dt_utc, window_seconds, x_col, record_t0_utc):
+    """Fixed x-axis range ``[dt_utc - window, dt_utc + window]``, in *x_col*'s coordinate.
+
+    Parameters
+    ----------
+    dt_utc : :class:`~pandas.Timestamp`
+        Naive-UTC incident timestamp to center the range on.
+    window_seconds : float
+        Half-width of the range, in seconds.
+    x_col : str
+        ``"timestamp"`` or ``"t"``.
+    record_t0_utc : :class:`~pandas.Timestamp` or None
+        Naive-UTC ``t=0`` reference, required only for ``x_col="t"``.
 
     Returns
     -------
     list or None
-        ``[t0, t0 + duration]`` as ISO datetime strings, or ``None`` if the
-        record has no ``sources_overview`` files or no usable ``t0``/
-        ``duration`` — callers should fall back to per-graph autorange.
+        ``[start, end]`` as ISO datetime strings for ``x_col="timestamp"``,
+        or as floats (elapsed seconds) for ``x_col="t"``. ``None`` if
+        *record_t0_utc* is unavailable in ``"t"`` mode.
     """
-    info = db.get_overview_record_sources(record_filename, db_path)
-    if info is None:
-        return None
-    sources_overview = info.get("sources_overview")
-    if sources_overview is None or len(sources_overview) == 0:
-        return None
-    t0 = info.get("t0")
-    duration = info.get("duration") or 0.0
-    if t0 is None or pd.isna(t0) or duration <= 0:
-        return None
-    t0 = pd.Timestamp(t0)
-    return [t0.isoformat(), (t0 + pd.Timedelta(seconds=duration)).isoformat()]
+    window = pd.Timedelta(seconds=window_seconds)
+    if x_col == "timestamp":
+        return [(dt_utc - window).isoformat(), (dt_utc + window).isoformat()]
+    if x_col == "t" and record_t0_utc is not None:
+        incident_t = (dt_utc - pd.Timestamp(record_t0_utc)).total_seconds()
+        return [incident_t - window_seconds, incident_t + window_seconds]
+    return None
 
 
-def layout(assembly=None, record=None, **kwargs):
+def layout(assembly=None, record=None, incident=None, **kwargs):
     return html.Div(
         [
-            html.H2("Overview Record Viewer", style={"marginTop": "0px", "marginBottom": "20px"}),
+            html.H2("Defaults & Spikes Viewer", style={"marginTop": "0px", "marginBottom": "20px"}),
             html.Hr(),
             html.Div(
                 [
                     selectors.aggregate_filter(
-                        "overview-records-housing-filter", "Housing", style={"width": "200px"}
+                        "ds-housing-filter", "Housing", style={"width": "200px"}
                     ),
                     selectors.aggregate_filter(
-                        "overview-records-year-filter", "Year", style={"width": "150px"}
+                        "ds-year-filter", "Year", style={"width": "150px"}
                     ),
                     selectors.aggregate_filter(
-                        "overview-records-status-filter", "Status", style={"width": "200px"}
+                        "ds-status-filter", "Status", style={"width": "200px"}
                     ),
                 ],
                 style={"display": "flex", "gap": "30px", "marginBottom": "15px"},
             ),
-            selectors.cascading_selector("overview-records-assembly-filter", "Assembly", 1, value=assembly),
+            selectors.cascading_selector("ds-assembly-filter", "Assembly", 1, value=assembly),
             html.Br(),
-            html.Div(id="overview-records-magnets-table", style={"marginBottom": "10px"}),
+            html.Div(id="ds-magnets-table", style={"marginBottom": "10px"}),
             html.Br(),
             html.Label("2. Choose Overview Record :", style={"fontWeight": "bold"}),
             dcc.Dropdown(
-                id="overview-records-record-filter",
+                id="ds-record-filter",
                 options=[record] if record else [],
                 value=record,
                 placeholder="Choose an overview record...",
             ),
             html.Br(),
-            html.Div(id="overview-records-file-stats", style={"marginBottom": "10px"}),
-            html.Br(),
-            html.Label("3. Choose X-axis :", style={"fontWeight": "bold", "color": "#007bff"}),
+            html.Label(
+                "3. Choose Default/Spike incident :",
+                style={"fontWeight": "bold", "color": "#a94442"},
+            ),
             dcc.Dropdown(
-                id="overview-records-x-axis",
+                id="ds-incident-filter",
+                options=[incident] if incident else [],
+                value=incident,
+                placeholder="Choose a default or spike incident...",
+            ),
+            html.Br(),
+            html.Label(
+                "4. Time window — ± seconds around incident :",
+                style={"fontWeight": "bold"},
+            ),
+            dcc.Input(
+                id="ds-window-seconds",
+                type="number",
+                value=2,
+                min=0.1,
+                step=0.1,
+                style={"width": "100px"},
+            ),
+            html.Div(
+                id="ds-incident-warning",
+                style={"color": "#a94442", "fontWeight": "bold", "marginTop": "4px"},
+            ),
+            html.Br(),
+            html.Label("5. Choose X-axis :", style={"fontWeight": "bold", "color": "#007bff"}),
+            dcc.Dropdown(
+                id="ds-x-axis",
                 options=[
                     {"label": "Real Time (timestamp)", "value": "timestamp"},
                     {"label": "Elapsed Time (t)", "value": "t"},
@@ -165,56 +228,46 @@ def layout(assembly=None, record=None, **kwargs):
                 clearable=False,
             ),
             html.Br(),
-            html.Label("4. Downsampling Method:", style={"fontWeight": "bold"}),
+            html.Label("6. Downsampling Method:", style={"fontWeight": "bold"}),
             dcc.Dropdown(
-                id="overview-records-downsampling",
+                id="ds-downsampling",
                 options=["raw data", "LTTB", "minmax", "M4", "naive"],
-                value="LTTB",
+                value="raw data",
                 clearable=False,
             ),
             html.Br(),
-            html.Label("5. Data scope:", style={"fontWeight": "bold"}),
+            html.Label("7. Data scope:", style={"fontWeight": "bold"}),
             dcc.Checklist(
-                id="overview-records-include-archive",
+                id="ds-include-archive",
                 options=[{"label": " Include archive files (slower)", "value": "archive"}],
-                value=[],
+                value=["archive"],
                 style={"marginTop": "4px"},
-            ),
-            dcc.Checklist(
-                id="overview-records-include-incidents",
-                options=[{"label": " Include incident files (slower)", "value": "incidents"}],
-                value=[],
-                style={"marginTop": "4px"},
-            ),
-            html.Div(
-                id="overview-records-incident-warning",
-                style={"color": "#a94442", "fontWeight": "bold", "marginTop": "4px"},
             ),
             html.Br(),
-            html.Label("6. Cursor sync:", style={"fontWeight": "bold"}),
+            html.Label("8. Cursor sync:", style={"fontWeight": "bold"}),
             html.Div(
                 [
                     dcc.Checklist(
-                        id="overview-records-sync-cursor-toggle",
+                        id="ds-sync-cursor-toggle",
                         options=[{"label": " Sync cursor across graphs", "value": "sync"}],
                         value=["sync"],
                         style={"display": "inline-block", "marginRight": "15px"},
                     ),
-                    html.Button("Clear cursors", id="overview-records-clear-cursors-btn", n_clicks=0),
+                    html.Button("Clear cursors", id="ds-clear-cursors-btn", n_clicks=0),
                 ],
                 style={"marginTop": "4px"},
             ),
             html.Br(),
-            dcc.Store(id="overview-records-group-entries"),
-            style_editor.modal_component("ov"),
+            dcc.Store(id="ds-group-entries"),
+            style_editor.modal_component("ds"),
             dcc.Loading(
                 [
                     html.Div(
-                        id="overview-records-missing-banner",
+                        id="ds-missing-banner",
                         style={"color": "#a94442", "fontWeight": "bold"},
                     ),
                     html.Div(
-                        id="overview-records-groups-container",
+                        id="ds-groups-container",
                         children=[],
                         style={"marginTop": "10px"},
                     ),
@@ -227,9 +280,9 @@ def layout(assembly=None, record=None, **kwargs):
 
 
 @dash.callback(
-    Output("overview-records-housing-filter", "options"),
-    Output("overview-records-year-filter", "options"),
-    Output("overview-records-status-filter", "options"),
+    Output("ds-housing-filter", "options"),
+    Output("ds-year-filter", "options"),
+    Output("ds-status-filter", "options"),
     Input("dd-database", "value"),
 )
 def update_filter_options(selected_db):
@@ -252,13 +305,13 @@ def update_filter_options(selected_db):
 
 
 @dash.callback(
-    Output("overview-records-assembly-filter", "options"),
-    Output("overview-records-assembly-filter", "value"),
+    Output("ds-assembly-filter", "options"),
+    Output("ds-assembly-filter", "value"),
     Input("dd-database", "value"),
-    Input("overview-records-housing-filter", "value"),
-    Input("overview-records-year-filter", "value"),
-    Input("overview-records-status-filter", "value"),
-    State("overview-records-assembly-filter", "value"),
+    Input("ds-housing-filter", "value"),
+    Input("ds-year-filter", "value"),
+    Input("ds-status-filter", "value"),
+    State("ds-assembly-filter", "value"),
 )
 def update_assembly_options(selected_db, selected_housing, selected_year, selected_status, current_assembly):
     if not selected_db:
@@ -295,8 +348,8 @@ def update_assembly_options(selected_db, selected_housing, selected_year, select
 
 
 @dash.callback(
-    Output("overview-records-magnets-table", "children"),
-    Input("overview-records-assembly-filter", "value"),
+    Output("ds-magnets-table", "children"),
+    Input("ds-assembly-filter", "value"),
     Input("dd-database", "value"),
 )
 def update_magnets_table(selected_assembly, selected_db):
@@ -304,8 +357,8 @@ def update_magnets_table(selected_assembly, selected_db):
 
 
 @dash.callback(
-    Output("overview-records-include-archive", "options"),
-    Input("overview-records-record-filter", "value"),
+    Output("ds-include-archive", "options"),
+    Input("ds-record-filter", "value"),
     Input("dd-database", "value"),
 )
 def update_include_archive_label(selected_record, selected_db):
@@ -323,30 +376,11 @@ def update_include_archive_label(selected_record, selected_db):
 
 
 @dash.callback(
-    Output("overview-records-include-incidents", "options"),
-    Input("overview-records-record-filter", "value"),
+    Output("ds-record-filter", "options"),
+    Output("ds-record-filter", "value"),
+    Input("ds-assembly-filter", "value"),
     Input("dd-database", "value"),
-)
-def update_include_incidents_label(selected_record, selected_db):
-    default_label = " Include incident files (slower)"
-    if not selected_record or not selected_db:
-        return [{"label": default_label, "value": "incidents"}]
-
-    info = db.get_overview_record_sources(selected_record, selected_db)
-    if info is None:
-        return [{"label": default_label, "value": "incidents"}]
-
-    n_incident = len(info["sources_default"]) + len(info["sources_spike"])
-    label = f" Include incident files — {n_incident} incidents (slower)"
-    return [{"label": label, "value": "incidents"}]
-
-
-@dash.callback(
-    Output("overview-records-record-filter", "options"),
-    Output("overview-records-record-filter", "value"),
-    Input("overview-records-assembly-filter", "value"),
-    Input("dd-database", "value"),
-    State("overview-records-record-filter", "value"),
+    State("ds-record-filter", "value"),
 )
 def update_record_options(selected_assembly, selected_db, current_record):
     if not selected_assembly or not selected_db:
@@ -367,52 +401,54 @@ def update_record_options(selected_assembly, selected_db, current_record):
 
 
 @dash.callback(
-    Output("overview-records-file-stats", "children"),
-    Input("overview-records-record-filter", "value"),
+    Output("ds-incident-filter", "options"),
+    Output("ds-incident-filter", "value"),
+    Input("ds-record-filter", "value"),
     Input("dd-database", "value"),
-    Input("overview-records-include-archive", "value"),
+    State("ds-incident-filter", "value"),
 )
-def update_file_stats(selected_record, selected_db, include_archive_value):
-    if not selected_record:
-        return selectors.file_stats_banner(None, None)
+def update_incident_options(selected_record, selected_db, current_incident):
+    if not selected_record or not selected_db:
+        return [], None
 
     info = db.get_overview_record_sources(selected_record, selected_db)
     if info is None:
-        return selectors.file_stats_banner(None, None)
+        return [], None
 
-    include_archive = bool(include_archive_value)
-    housing, regular_files, _event_files = _record_sources(selected_record, selected_db, include_archive)
-    mruns = [m for m in (db.load_mrun_object(f, housing) for f in regular_files) if m is not None]
-    field_stats = db.get_field_column_stats(mruns) if mruns else None
+    event_files = list(info["sources_default"]) + list(info["sources_spike"])
+    incidents = _list_incidents(event_files)
+    if not incidents:
+        return [], None
 
-    duration = info.get("duration")
-    duration = float(duration) if duration is not None and not pd.isna(duration) else None
+    options = []
+    for entry in incidents:
+        subtype_suffix = f" ({entry['subtype']})" if entry["subtype"] else ""
+        label = (
+            f"{entry['dt_local']:%Y-%m-%d %H:%M:%S} — {entry['type'].capitalize()}"
+            f"{subtype_suffix} — {os.path.basename(entry['file'])}"
+        )
+        options.append({"label": label, "value": entry["file"]})
 
-    pupitre_files = list(info["sources_pupitre"])
-
-    return selectors.file_stats_banner(
-        duration, field_stats, pupitre_files, assembly_name=info["assembly_name"]
-    )
+    values = [entry["file"] for entry in incidents]
+    if current_incident in values:
+        return options, dash.no_update
+    return options, values[0]
 
 
 @dash.callback(
-    Output("overview-records-groups-container", "children"),
-    Output("overview-records-missing-banner", "children"),
-    Output("overview-records-group-entries", "data"),
-    Input("overview-records-record-filter", "value"),
+    Output("ds-groups-container", "children"),
+    Output("ds-missing-banner", "children"),
+    Output("ds-group-entries", "data"),
+    Input("ds-record-filter", "value"),
     Input("dd-database", "value"),
-    Input("overview-records-include-archive", "value"),
-    Input("overview-records-include-incidents", "value"),
+    Input("ds-include-archive", "value"),
 )
-def update_groups(selected_record, selected_db, include_archive_value, include_incidents_value):
+def update_groups(selected_record, selected_db, include_archive_value):
     if not selected_record:
         return [], "", {}
 
     include_archive = bool(include_archive_value)
-    include_incidents = bool(include_incidents_value)
-    housing, regular_files, _event_files = _record_sources(
-        selected_record, selected_db, include_archive, include_incidents
-    )
+    housing, regular_files, _event_files = _record_sources(selected_record, selected_db, include_archive)
     if housing is None:
         return [], "This overview record was not found.", {}
     if not regular_files:
@@ -441,12 +477,12 @@ def update_groups(selected_record, selected_db, include_archive_value, include_i
                             "fontSize": "16px",
                         },
                     ),
-                    style_editor.gear_button("ov", group_name),
+                    style_editor.gear_button("ds", group_name),
                     html.Div(
                         [
                             html.Div(
                                 dcc.Checklist(
-                                    id={"type": "ov-group-sensors-checklist", "index": group_name},
+                                    id={"type": "ds-group-sensors-checklist", "index": group_name},
                                     options=options,
                                     value=[],
                                     labelStyle={
@@ -465,7 +501,7 @@ def update_groups(selected_record, selected_db, include_archive_value, include_i
                             ),
                             html.Div(
                                 dcc.Graph(
-                                    id={"type": "ov-dynamic-graph", "index": group_name},
+                                    id={"type": "ds-dynamic-graph", "index": group_name},
                                     figure=_EMPTY_FIG,
                                     style={"height": "350px"},
                                 ),
@@ -492,29 +528,31 @@ def update_groups(selected_record, selected_db, include_archive_value, include_i
 
 
 @dash.callback(
-    Output({"type": "ov-dynamic-graph", "index": ALL}, "figure"),
-    Output("overview-records-incident-warning", "children"),
-    Input("overview-records-record-filter", "value"),
-    Input("overview-records-x-axis", "value"),
-    Input({"type": "ov-group-sensors-checklist", "index": ALL}, "value"),
-    Input({"type": "ov-group-sensors-checklist", "index": ALL}, "id"),
-    Input("overview-records-downsampling", "value"),
+    Output({"type": "ds-dynamic-graph", "index": ALL}, "figure"),
+    Output("ds-incident-warning", "children"),
+    Input("ds-record-filter", "value"),
+    Input("ds-incident-filter", "value"),
+    Input("ds-window-seconds", "value"),
+    Input("ds-x-axis", "value"),
+    Input({"type": "ds-group-sensors-checklist", "index": ALL}, "value"),
+    Input({"type": "ds-group-sensors-checklist", "index": ALL}, "id"),
+    Input("ds-downsampling", "value"),
     Input("dd-database", "value"),
-    Input("overview-records-include-archive", "value"),
-    Input("overview-records-include-incidents", "value"),
-    Input("ov-style-version", "data"),
-    State("overview-records-group-entries", "data"),
-    State({"type": "ov-dynamic-graph", "index": ALL}, "relayoutData"),
+    Input("ds-include-archive", "value"),
+    Input("ds-style-version", "data"),
+    State("ds-group-entries", "data"),
+    State({"type": "ds-dynamic-graph", "index": ALL}, "relayoutData"),
 )
 def update_graphs(
     selected_record,
+    selected_incident,
+    window_seconds,
     selected_x,
     all_sensor_values,
     all_sensor_ids,
     selected_algo,
     selected_db,
     include_archive_value,
-    include_incidents_value,
     _style_version,
     group_entries,
     all_relayout_data,
@@ -522,23 +560,46 @@ def update_graphs(
     if not selected_record or not all_sensor_ids:
         return [_EMPTY_FIG for _ in all_sensor_ids], ""
 
-    # Only checklist/downsampling/include-archive/include-incidents/style-save toggles
-    # keep the current zoom (they refine the existing view); picking a different
-    # record, x-axis, or database is a new view, so it autoscales instead.
+    # Only checklist/downsampling/include-archive/style-save toggles keep the
+    # current zoom (they refine the existing view); picking a different
+    # record, incident, window, x-axis, or database re-centers instead.
     maintain_zoom = False
     triggered_id = ctx.triggered_id
     if triggered_id in (
-        "overview-records-downsampling",
-        "overview-records-include-archive",
-        "overview-records-include-incidents",
-        "ov-style-version",
+        "ds-downsampling",
+        "ds-include-archive",
+        "ds-style-version",
     ) or (
         isinstance(triggered_id, dict)
-        and triggered_id.get("type") == "ov-group-sensors-checklist"
+        and triggered_id.get("type") == "ds-group-sensors-checklist"
     ):
         maintain_zoom = True
 
-    x_range = _record_x_range(selected_record, selected_db) if selected_x == "timestamp" else None
+    include_archive = bool(include_archive_value)
+    housing, regular_files, event_files = _record_sources(selected_record, selected_db, include_archive)
+    if housing is None:
+        return [_EMPTY_FIG for _ in all_sensor_ids], ""
+
+    record_t0_utc = None
+    if selected_x == "t":
+        info = db.get_overview_record_sources(selected_record, selected_db)
+        record_t0_utc = _resolve_t0_reference(info) if info else None
+
+    x_range = None
+    if selected_incident:
+        dt_local = parse_filename_timestamp(selected_incident)
+        if dt_local is not None:
+            incident_dt_utc = pd.Timestamp(local_to_utc_naive(dt_local, "Europe/Paris"))
+            window = float(window_seconds) if window_seconds else 2.0
+            x_range = _incident_x_range(incident_dt_utc, window, selected_x, record_t0_utc)
+
+    incident_warning = ""
+    if selected_x == "t" and record_t0_utc is None and event_files:
+        incident_warning = (
+            "No overview, archive, or pupitre source file available to "
+            "anchor elapsed time (t) — incidents and time window are not shown."
+        )
+
     if maintain_zoom and all_relayout_data:
         for relayout in all_relayout_data:
             if relayout:
@@ -549,30 +610,9 @@ def update_graphs(
                     x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
                     break
 
-    include_archive = bool(include_archive_value)
-    include_incidents = bool(include_incidents_value)
-    housing, regular_files, event_files = _record_sources(
-        selected_record, selected_db, include_archive, include_incidents
-    )
-    if housing is None:
-        return [_EMPTY_FIG for _ in all_sensor_ids], ""
-
-    # Event/incident files are never loaded — their overlay lines are placed
-    # from their filenames alone (see create_annotated_plot's event_files arg).
     mruns = {filename: db.load_mrun_object(filename, housing) for filename in regular_files}
     group_entries = group_entries or {}
     figures = []
-
-    incident_warning = ""
-    record_t0_utc = None
-    if event_files and selected_x == "t":
-        info = db.get_overview_record_sources(selected_record, selected_db)
-        record_t0_utc = _resolve_t0_reference(info) if info else None
-        if record_t0_utc is None:
-            incident_warning = (
-                "No overview, archive, or pupitre source file available to "
-                "anchor elapsed time (t) — incidents are not shown."
-            )
 
     for sensor_id, sensor_values in zip(all_sensor_ids, all_sensor_values):
         group_name = sensor_id["index"]
@@ -603,14 +643,15 @@ def update_graphs(
 
 
 # Live cross-graph zoom sync: propagates one plot's zoom/pan/autoscale to all
-# the others without rebuilding any figure (mirrors file_viewer's sync_zoom_home).
+# the others without rebuilding any figure (mirrors overview_records.py's
+# sync_zoom_overview).
 @dash.callback(
-    Output({"type": "ov-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
-    Input({"type": "ov-dynamic-graph", "index": ALL}, "relayoutData"),
-    State({"type": "ov-dynamic-graph", "index": ALL}, "id"),
+    Output({"type": "ds-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
+    Input({"type": "ds-dynamic-graph", "index": ALL}, "relayoutData"),
+    State({"type": "ds-dynamic-graph", "index": ALL}, "id"),
     prevent_initial_call=True,
 )
-def sync_zoom_overview(relayout_data_list, graph_ids):
+def sync_zoom_defaults_spikes(relayout_data_list, graph_ids):
     triggered_id = ctx.triggered_id
     if not triggered_id:
         raise PreventUpdate
@@ -671,18 +712,18 @@ def _cursor_x_distance(a, b, x_mode):
     return abs(float(a) - float(b))
 
 
-# Pin/remove a cursor line on one or all graphs, mirroring sync_zoom_overview's
-# pattern-matching id lookup.
+# Pin/remove a cursor line on one or all graphs, mirroring
+# sync_zoom_defaults_spikes's pattern-matching id lookup.
 @dash.callback(
-    Output({"type": "ov-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
-    Input({"type": "ov-dynamic-graph", "index": ALL}, "clickData"),
-    State({"type": "ov-dynamic-graph", "index": ALL}, "id"),
-    State({"type": "ov-dynamic-graph", "index": ALL}, "figure"),
-    State("overview-records-sync-cursor-toggle", "value"),
-    State("overview-records-x-axis", "value"),
+    Output({"type": "ds-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
+    Input({"type": "ds-dynamic-graph", "index": ALL}, "clickData"),
+    State({"type": "ds-dynamic-graph", "index": ALL}, "id"),
+    State({"type": "ds-dynamic-graph", "index": ALL}, "figure"),
+    State("ds-sync-cursor-toggle", "value"),
+    State("ds-x-axis", "value"),
     prevent_initial_call=True,
 )
-def pin_cursor_overview(click_data_list, graph_ids, figures, sync_toggle, x_mode):
+def pin_cursor_defaults_spikes(click_data_list, graph_ids, figures, sync_toggle, x_mode):
     triggered_id = ctx.triggered_id
     if not triggered_id:
         raise PreventUpdate
@@ -729,12 +770,12 @@ def pin_cursor_overview(click_data_list, graph_ids, figures, sync_toggle, x_mode
 
 
 @dash.callback(
-    Output({"type": "ov-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
-    Input("overview-records-clear-cursors-btn", "n_clicks"),
-    State({"type": "ov-dynamic-graph", "index": ALL}, "figure"),
+    Output({"type": "ds-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
+    Input("ds-clear-cursors-btn", "n_clicks"),
+    State({"type": "ds-dynamic-graph", "index": ALL}, "figure"),
     prevent_initial_call=True,
 )
-def clear_cursors_overview(n_clicks, figures):
+def clear_cursors_defaults_spikes(n_clicks, figures):
     patches = []
     for figure in figures:
         current_shapes = (figure.get("layout") or {}).get("shapes") or []
@@ -750,10 +791,9 @@ def _style_context_fn(group_name, selected_record, selected_db, include_archive_
     """Resolve this group's raw sensor names + source-type keys for the style-editor modal.
 
     Only the regular (pupitre/overview/archive) files are considered — event
-    files (default/spike/trigger) render as overlay lines, not styleable
-    data traces, so they're excluded from both the field rows and the
-    opacity-by-source section. Incident inclusion is irrelevant here since it
-    only affects event files.
+    files (default/spike) render as overlay lines, not styleable data traces,
+    so they're excluded from both the field rows and the opacity-by-source
+    section.
     """
     if not selected_record:
         return [], []
@@ -767,12 +807,12 @@ def _style_context_fn(group_name, selected_record, selected_db, include_archive_
 
 
 style_editor.register_callbacks(
-    "ov",
+    "ds",
     context_fn=_style_context_fn,
     extra_states=[
-        State("overview-records-record-filter", "value"),
+        State("ds-record-filter", "value"),
         State("dd-database", "value"),
-        State("overview-records-include-archive", "value"),
-        State("overview-records-group-entries", "data"),
+        State("ds-include-archive", "value"),
+        State("ds-group-entries", "data"),
     ],
 )

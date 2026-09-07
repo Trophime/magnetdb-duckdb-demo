@@ -3,6 +3,24 @@ from urllib.parse import quote
 import pandas as pd
 
 
+def file_viewer_href(assembly_name, filename):
+    """Build a ``/file_viewer`` URL pre-loaded with *assembly_name* and *filename*.
+
+    Parameters
+    ----------
+    assembly_name : str
+        Assembly owning *filename*.
+    filename : str
+        Source filename to preselect.
+
+    Returns
+    -------
+    str
+        ``/file_viewer?assembly=...&file=...`` URL, query-escaped.
+    """
+    return f"/file_viewer?assembly={quote(str(assembly_name), safe='')}&file={quote(str(filename), safe='')}"
+
+
 def experiment_link(row):
     """Render an Experiment cell as a markdown link pre-loading Home with this row's assembly/file.
 

@@ -53,6 +53,33 @@ def test_group_display_unit_applies_override():
     assert unit == ureg.Unit("liter / second")
 
 
+def test_group_display_unit_applies_override_magnetic_field():
+    ureg = pint.UnitRegistry()
+    mrun = _FakeMrun({"Champ_magn": ("B", ureg.Unit("millitesla"))})
+    symbol, unit = plot.group_display_unit(mrun, "Magnetic_Field", "Champ_magn")
+    assert symbol == "B"
+    assert unit == ureg.Unit("tesla")
+
+
+def test_group_display_unit_uses_native_group_for_cross_format_match():
+    """Regression test: a cross-format-matched sensor (e.g. Champ_magn) is
+    keyed under its own native tdms group ("Courants_Alimentations/Champ_magn"),
+    not the display block's pupitre-named group ("Magnetic_Field/Champ_magn").
+    Without native_group, resolution must fail (reproducing the "0 to 30000 T"
+    bug); with it, the override must still apply correctly."""
+    ureg = pint.UnitRegistry()
+    mrun = _FakeMrun({"Courants_Alimentations/Champ_magn": ("B", ureg.Unit("millitesla"))})
+
+    symbol, unit = plot.group_display_unit(mrun, "Magnetic_Field", "Champ_magn")
+    assert (symbol, unit) == (None, None)
+
+    symbol, unit = plot.group_display_unit(
+        mrun, "Magnetic_Field", "Champ_magn", native_group="Courants_Alimentations"
+    )
+    assert symbol == "B"
+    assert unit == ureg.Unit("tesla")
+
+
 def test_group_display_unit_no_override_keeps_native_unit():
     ureg = pint.UnitRegistry()
     native_unit = ureg.Unit("bar")

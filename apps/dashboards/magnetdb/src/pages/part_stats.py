@@ -17,7 +17,7 @@ from plotly import graph_objects as go
 from python_magnetrun.utils.downsampling import DownsampleConfig, downsample_dataframe
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/part_stats", name="Part stats", order=4)
+dash.register_page(__name__, path="/part_stats", name="Parts", order=5)
 
 
 S_TO_H = 3600
@@ -162,9 +162,11 @@ TABLE_COLUMNS = [
     (
         {"name": c, "id": c, "presentation": "markdown"}
         if c in _TABLE_MARKDOWN_COLUMNS
-        else {"name": "Magnet Time (h)", "id": c}
-        if c == "Time (h)"
-        else {"name": c, "id": c}
+        else (
+            {"name": "Magnet Time (h)", "id": c}
+            if c == "Time (h)"
+            else {"name": c, "id": c}
+        )
     )
     for c in EXP_PART_BIN_STATS_COLUMNS
     if c not in ("File", "Peak hoop stress proxy (A^2)")
@@ -244,7 +246,9 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
         A "no records" message if *overview_df* is empty, otherwise a
         `DataTable` of its rows (linked into ``/overview-records``).
     """
-    overview_df = selectors.filter_by_date_range(overview_df, "t0", start_date, end_date)
+    overview_df = selectors.filter_by_date_range(
+        overview_df, "t0", start_date, end_date
+    )
 
     if overview_df.empty:
         return html.Div(
@@ -508,12 +512,31 @@ def _fatigue_section(selected_part, db_path):
 
 
 def _build_page_content(
-    df, selected_part=None, db_path=None, table_start_date=None, table_end_date=None
+    df,
+    total_parts,
+    in_scope_parts,
+    status_order,
+    n_overview_records,
+    selected_part=None,
+    db_path=None,
+    table_start_date=None,
+    table_end_date=None,
 ):
     """Build the figures, table rows, and summary text for a loaded (experiment, part) dataframe.
 
     Parameters
     ----------
+    total_parts : int
+        Count of parts in scope for this page (types in :data:`PART_TYPES`),
+        regardless of filters.
+    in_scope_parts : list of str
+        Part names matching the page's current Status/Part filters (all
+        parts when none are active).
+    status_order : list of str
+        Distinct part status values, for the status-breakdown line.
+    n_overview_records : int
+        Overview-record count matching the page's current filters, used for
+        the "Overview records: N selected of Total" summary line.
     table_start_date, table_end_date : str, optional
         Inclusive ``Experiment`` date bounds (``"YYYY-MM-DD"``) from the
         Experiments table's date-range picker. Only the returned table rows
@@ -553,21 +576,30 @@ def _build_page_content(
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
     counts = db.get_db_counts(db_path)
-    parts_line = (
-        f"Parts: 1 selected of {counts['parts']}"
-        if selected_part and selected_part != selectors.ALL
-        else f"Parts: {counts['parts']}"
+    status_counts = db.get_status_counts("parts", db_path, names=in_scope_parts)
+
+    parts_line = selectors.entity_count_line("Parts", total_parts, len(in_scope_parts))
+    status_line = selectors.status_breakdown_text(status_counts, status_order)
+    experiments_line = selectors.entity_count_line(
+        "Experiments", counts["experiments"], len(exp_df)
     )
+    overview_records_line = selectors.entity_count_line(
+        "Overview records", counts["overview_records"], n_overview_records
+    )
+
     summary = [
         html.B(parts_line),
         html.Br(),
-        html.B(f"Experiments: {len(exp_df)}"),
+        status_line,
+        html.Br(),
+        html.B(experiments_line),
         html.Br(),
         f"Processed: {(exp_df['Status'] == 'STATS DONE').sum()}",
         html.Br(),
+        html.B(overview_records_line),
+        html.Br(),
         html.B(
-            f"DB-wide: {counts['assemblies']} assemblies, {counts['magnets']} magnets, "
-            f"{counts['overview_records']} overview records"
+            f"DB-wide: {counts['assemblies']} assemblies, {counts['magnets']} magnets"
         ),
     ]
 
@@ -581,7 +613,7 @@ def _build_page_content(
 def layout(part=None, **kwargs):
     return html.Div(
         [
-            html.H1("MagnetDB Dashboard"),
+            html.H1("Part Dashboard"),
             html.Div(
                 [
                     selectors.aggregate_filter(
@@ -604,27 +636,36 @@ def layout(part=None, **kwargs):
             ),
             html.Div(id="part-stats-summary"),
             html.Br(),
+            dcc.Graph(id="part-stats-fig-magnet-time"),
+            html.Br(),
             html.Details(
-                [
+                id="part-stats-hoop-stress-details",
+                children=[
                     html.Summary(
                         "📈 Hoop stress history",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
-                    html.Div(
-                        [
-                            html.Div(id="part-stats-hoop-stress-banner"),
-                            DataTable(
-                                id="part-stats-hoop-stress-table",
-                                columns=HOOP_STRESS_SUMMARY_COLUMNS,
-                                data=[],
-                                style_table={"overflowX": "auto"},
-                                style_cell={"textAlign": "center", "padding": "6px"},
-                                style_header={"fontWeight": "bold"},
-                            ),
-                            dcc.Graph(id="part-stats-hoop-stress-fig"),
-                            dcc.Graph(id="part-stats-hoop-stress-history-fig"),
-                        ],
-                        style={"padding": "10px"},
+                    dcc.Loading(
+                        html.Div(
+                            [
+                                html.Div(id="part-stats-hoop-stress-banner"),
+                                DataTable(
+                                    id="part-stats-hoop-stress-table",
+                                    columns=HOOP_STRESS_SUMMARY_COLUMNS,
+                                    data=[],
+                                    style_table={"overflowX": "auto"},
+                                    style_cell={
+                                        "textAlign": "center",
+                                        "padding": "6px",
+                                    },
+                                    style_header={"fontWeight": "bold"},
+                                ),
+                                dcc.Graph(id="part-stats-hoop-stress-fig"),
+                                dcc.Graph(id="part-stats-hoop-stress-history-fig"),
+                            ],
+                            style={"padding": "10px"},
+                        ),
+                        type="circle",
                     ),
                 ],
                 open=False,
@@ -636,7 +677,8 @@ def layout(part=None, **kwargs):
             ),
             html.Br(),
             html.Details(
-                [
+                id="part-stats-fatigue-details",
+                children=[
                     html.Summary(
                         "🔧 Fatigue results",
                         style={"fontWeight": "bold", "cursor": "pointer"},
@@ -668,7 +710,40 @@ def layout(part=None, **kwargs):
                 },
             ),
             html.Br(),
-            dcc.Graph(id="part-stats-fig-magnet-time"),
+            html.Details(
+                id="part-stats-magnet-history-details",
+                children=[
+                    html.Summary(
+                        "📁 Magnet history",
+                        style={"fontWeight": "bold", "cursor": "pointer"},
+                    ),
+                    html.Div(id="part-stats-magnet-history", style={"padding": "10px"}),
+                ],
+                open=False,
+                style={
+                    "border": "1px solid #ddd",
+                    "borderRadius": "8px",
+                    "marginBottom": "10px",
+                },
+            ),
+            html.Details(
+                id="part-stats-assembly-history-details",
+                children=[
+                    html.Summary(
+                        "📁 Assembly history",
+                        style={"fontWeight": "bold", "cursor": "pointer"},
+                    ),
+                    html.Div(
+                        id="part-stats-assembly-history", style={"padding": "10px"}
+                    ),
+                ],
+                open=False,
+                style={
+                    "border": "1px solid #ddd",
+                    "borderRadius": "8px",
+                    "marginBottom": "10px",
+                },
+            ),
             html.Br(),
             html.Details(
                 [
@@ -686,39 +761,6 @@ def layout(part=None, **kwargs):
                             html.Div(id="part-stats-overview-records"),
                         ],
                         style={"padding": "10px"},
-                    ),
-                ],
-                open=False,
-                style={
-                    "border": "1px solid #ddd",
-                    "borderRadius": "8px",
-                    "marginBottom": "10px",
-                },
-            ),
-            html.Br(),
-            html.Details(
-                [
-                    html.Summary(
-                        "📁 Magnet history",
-                        style={"fontWeight": "bold", "cursor": "pointer"},
-                    ),
-                    html.Div(id="part-stats-magnet-history", style={"padding": "10px"}),
-                ],
-                open=False,
-                style={
-                    "border": "1px solid #ddd",
-                    "borderRadius": "8px",
-                    "marginBottom": "10px",
-                },
-            ),
-            html.Details(
-                [
-                    html.Summary(
-                        "📁 Assembly history",
-                        style={"fontWeight": "bold", "cursor": "pointer"},
-                    ),
-                    html.Div(
-                        id="part-stats-assembly-history", style={"padding": "10px"}
                     ),
                 ],
                 open=False,
@@ -777,15 +819,19 @@ def layout(part=None, **kwargs):
     Output("part-stats-missing-banner", "children"),
     Output("part-stats-overview-records", "children"),
     Output("part-stats-magnet-history", "children"),
+    Output("part-stats-magnet-history-details", "style"),
     Output("part-stats-assembly-history", "children"),
+    Output("part-stats-assembly-history-details", "style"),
     Output("part-stats-hoop-stress-banner", "children"),
     Output("part-stats-hoop-stress-table", "data"),
     Output("part-stats-hoop-stress-fig", "figure"),
     Output("part-stats-hoop-stress-history-fig", "figure"),
+    Output("part-stats-hoop-stress-details", "style"),
     Output("part-stats-fatigue-banner", "children"),
     Output("part-stats-fatigue-table", "data"),
     Output("part-stats-fatigue-cycles-fig", "figure"),
     Output("part-stats-fatigue-range3-fig", "figure"),
+    Output("part-stats-fatigue-details", "style"),
     Input("dd-database", "value"),
     Input("part-stats-part-filter", "value"),
     Input("part-stats-status-filter", "value"),
@@ -803,6 +849,8 @@ def update_part_stats(
     overview_start_date,
     overview_end_date,
 ):
+    hidden_style = {"display": "none"}
+
     if not selected_db:
         return (
             go.Figure(),
@@ -814,15 +862,19 @@ def update_part_stats(
             "",
             "",
             "",
+            hidden_style,
             "",
-            "",
-            [],
-            go.Figure(),
-            go.Figure(),
+            hidden_style,
             "",
             [],
             go.Figure(),
             go.Figure(),
+            hidden_style,
+            "",
+            [],
+            go.Figure(),
+            go.Figure(),
+            hidden_style,
         )
 
     df = load_data(selected_db)
@@ -836,10 +888,10 @@ def update_part_stats(
         if selected_status and selected_status != selectors.ALL
         else None
     )
+    all_parts = db.get_all_parts(selected_db, types=PART_TYPES)
+    total_parts = len(all_parts)
     part_options = [selectors.ALL] + [
-        p
-        for p in db.get_all_parts(selected_db, types=PART_TYPES)
-        if names_with_status is None or p in names_with_status
+        p for p in all_parts if names_with_status is None or p in names_with_status
     ]
 
     plot_df = df[df["Part"] == selected_part] if selected_part != selectors.ALL else df
@@ -849,12 +901,17 @@ def update_part_stats(
         {"display": "none"} if selected_part != selectors.ALL else {}
     )
 
-    (
-        fig_magnet_time,
-        table_records,
-        summary,
-    ) = _build_page_content(
-        plot_df, selected_part, selected_db, table_start_date, table_end_date
+    part_selected = bool(selected_part) and selected_part != selectors.ALL
+    hoop_stress_details_style = (
+        {"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "20px"}
+        if part_selected
+        else hidden_style
+    )
+    fatigue_details_style = hoop_stress_details_style
+    history_details_style = (
+        {"border": "1px solid #ddd", "borderRadius": "8px", "marginBottom": "10px"}
+        if part_selected
+        else hidden_style
     )
 
     magnet_history_section = _magnet_history_section(selected_part, selected_db)
@@ -885,6 +942,25 @@ def update_part_stats(
         overview_plot_df, overview_start_date, overview_end_date
     )
 
+    in_scope_parts = [selected_part] if part_selected else part_options[1:]
+    status_order = status_options[1:]
+
+    (
+        fig_magnet_time,
+        table_records,
+        summary,
+    ) = _build_page_content(
+        plot_df,
+        total_parts,
+        in_scope_parts,
+        status_order,
+        len(overview_plot_df),
+        selected_part,
+        selected_db,
+        table_start_date,
+        table_end_date,
+    )
+
     (
         hoop_stress_banner,
         hoop_stress_table,
@@ -909,13 +985,17 @@ def update_part_stats(
         missing_banner,
         overview_records_section,
         magnet_history_section,
+        history_details_style,
         assembly_history_section,
+        history_details_style,
         hoop_stress_banner,
         hoop_stress_table,
         hoop_stress_fig,
         hoop_stress_history_fig,
+        hoop_stress_details_style,
         fatigue_banner,
         fatigue_table,
         fatigue_cycles_fig,
         fatigue_range3_fig,
+        fatigue_details_style,
     )

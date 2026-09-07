@@ -9,13 +9,12 @@ from dash.dash_table import DataTable
 from experiment_links import (
     assembly_link,
     experiment_link,
-    magnet_link,
     overview_record_link,
 )
 from plotly import graph_objects as go
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/assembly_stats", name="Assembly stats", order=2)
+dash.register_page(__name__, path="/assembly_stats", name="Assemblys", order=3)
 
 
 J_TO_KWH = 3.6e6
@@ -158,7 +157,7 @@ def load_overview_records(db_path=None):
 
 
 def load_assembly_summary(db_path=None):
-    """Count total assemblies and assemblies currently in operation.
+    """Count total assemblies.
 
     Parameters
     ----------
@@ -167,16 +166,14 @@ def load_assembly_summary(db_path=None):
 
     Returns
     -------
-    tuple of int
-        ``(total_assemblies, assemblies_in_operation)``.
+    int
+        Total assembly count.
     """
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
-    total_assemblies, assemblies_in_operation = con.execute(
-        "SELECT COUNT(*), SUM(CASE WHEN status = 'in_operation' THEN 1 ELSE 0 END) FROM assemblies"
-    ).fetchone()
+    total_assemblies = con.execute("SELECT COUNT(*) FROM assemblies").fetchone()[0]
     con.close()
-    return total_assemblies, assemblies_in_operation or 0
+    return total_assemblies
 
 
 def load_field_bin_stats(experiment_ids, db_path=None):
@@ -200,7 +197,9 @@ def load_field_bin_stats(experiment_ids, db_path=None):
         its "Magnet Time (h)" (``duration_field_on_s``, threshold 0.1 T).
         Empty if *experiment_ids* is empty or the table doesn't exist.
     """
-    empty = pd.DataFrame(columns=["Assembly", "field_bin_low", "field_bin_high", "Time (h)"])
+    empty = pd.DataFrame(
+        columns=["Assembly", "field_bin_low", "field_bin_high", "Time (h)"]
+    )
     if not experiment_ids:
         return empty
 
@@ -279,7 +278,9 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
         A "no records" message if *overview_df* is empty, otherwise a
         `DataTable` of its rows (linked into ``/overview-records``).
     """
-    overview_df = selectors.filter_by_date_range(overview_df, "t0", start_date, end_date)
+    overview_df = selectors.filter_by_date_range(
+        overview_df, "t0", start_date, end_date
+    )
 
     if overview_df.empty:
         return html.Div(
@@ -302,16 +303,6 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
     )
 
 
-MAGNET_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c == "Magnet"
-        else {"name": c, "id": c}
-    )
-    for c in ("Magnet", "Type", "Status", "Assembled")
-]
-
-
 def _magnets_section(selected_assembly, db_path):
     """Build the "Magnets" accordion content for the selected assembly.
 
@@ -325,51 +316,20 @@ def _magnets_section(selected_assembly, db_path):
     Returns
     -------
     :class:`~dash.html.Div` or :class:`dash.dash_table.DataTable`
-        Placeholder text if no assembly is selected, a "no magnets" message
-        if the assembly has none, or a `DataTable` of its magnets.
+        See :func:`dash_selectors.magnets_table_section`.
     """
-    if not selected_assembly or selected_assembly == selectors.ALL:
-        return html.Div(
-            "Select an assembly above to see its magnets.",
-            style={"color": "#888", "fontStyle": "italic"},
-        )
-
-    magnets = db.get_magnets_for_assembly(selected_assembly, db_path)
-    if not magnets:
-        return html.Div(
-            f"No magnets found for {selected_assembly}.",
-            style={"color": "#888", "fontStyle": "italic"},
-        )
-
-    table_df = pd.DataFrame(magnets).rename(
-        columns={
-            "name": "Magnet",
-            "type": "Type",
-            "status": "Status",
-            "assembled_at": "Assembled",
-        }
-    )
-    table_df["Magnet"] = table_df.apply(magnet_link, axis=1)
-
-    return DataTable(
-        columns=MAGNET_COLUMNS,
-        data=table_df.to_dict("records"),
-        page_size=10,
-        sort_action="native",
-        style_table={"overflowX": "auto"},
-        style_cell={"textAlign": "center", "padding": "6px"},
-        style_header={"fontWeight": "bold"},
-    )
+    return selectors.magnets_table_section(selected_assembly, db_path)
 
 
 def _build_page_content(
     df,
     total_assemblies,
-    assemblies_in_operation,
+    total_housings,
+    in_scope_assemblies,
+    status_order,
+    n_overview_records,
     selected_assembly=None,
-    selected_housing=None,
     selected_year=None,
-    selected_status=None,
     assemblies_meta=None,
     db_path=None,
     table_start_date=None,
@@ -379,6 +339,16 @@ def _build_page_content(
 
     Parameters
     ----------
+    total_housings : int
+        DB-wide housing count.
+    in_scope_assemblies : list of str
+        Assembly names matching the page's current Housing/Year/Status/
+        Assembly filters (all assemblies when none are active).
+    status_order : list of str
+        Distinct assembly status values, for the status-breakdown line.
+    n_overview_records : int
+        Overview-record count matching the page's current filters, used for
+        the "Overview records: N selected of Total" summary line.
     table_start_date, table_end_date : str, optional
         Inclusive ``Experiment`` date bounds (``"YYYY-MM-DD"``) from the
         Experiments table's date-range picker. Only the returned table rows
@@ -469,7 +439,9 @@ def _build_page_content(
     else:
         field_bin_df["Field bin"] = [
             f"{low:g}-{high:g} T"
-            for low, high in zip(field_bin_df["field_bin_low"], field_bin_df["field_bin_high"])
+            for low, high in zip(
+                field_bin_df["field_bin_low"], field_bin_df["field_bin_high"]
+            )
         ]
         bin_order = (
             field_bin_df[["field_bin_low", "Field bin"]]
@@ -513,32 +485,40 @@ def _build_page_content(
     table_df["Experiment"] = table_source_df.apply(experiment_link, axis=1)
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
-    if selected_assembly and selected_assembly != selectors.ALL:
-        assemblies_line = f"Assemblies: 1 selected of {total_assemblies}"
-    elif (
-        (selected_housing and selected_housing != selectors.ALL)
-        or (selected_year and selected_year != selectors.ALL)
-        or (selected_status and selected_status != selectors.ALL)
-    ):
-        assemblies_line = (
-            f"Assemblies: {df['Assembly'].nunique()} selected of {total_assemblies}"
-        )
-    else:
-        assemblies_line = f"Assemblies: {total_assemblies}"
     counts = db.get_db_counts(db_path)
+    status_counts = db.get_status_counts(
+        "assemblies", db_path, names=in_scope_assemblies
+    )
+    in_scope_housings = {a.split("_")[0] for a in in_scope_assemblies}
+
+    assemblies_line = selectors.entity_count_line(
+        "Assemblies", total_assemblies, len(in_scope_assemblies)
+    )
+    housings_line = selectors.entity_count_line(
+        "Housings", total_housings, len(in_scope_housings)
+    )
+    status_line = selectors.status_breakdown_text(status_counts, status_order)
+    experiments_line = selectors.entity_count_line(
+        "Experiments", counts["experiments"], len(df)
+    )
+    overview_records_line = selectors.entity_count_line(
+        "Overview records", counts["overview_records"], n_overview_records
+    )
+
     summary = [
         html.B(assemblies_line),
         html.Br(),
-        f"In operation: {assemblies_in_operation}",
+        housings_line,
         html.Br(),
-        html.B(f"Experiments: {len(df)}"),
+        status_line,
+        html.Br(),
+        html.B(experiments_line),
         html.Br(),
         f"Processed: {(df['Status'] == 'STATS DONE').sum()}",
         html.Br(),
-        html.B(
-            f"DB-wide: {counts['magnets']} magnets, {counts['parts']} parts, "
-            f"{counts['overview_records']} overview records"
-        ),
+        html.B(overview_records_line),
+        html.Br(),
+        html.B(f"DB-wide: {counts['magnets']} magnets, {counts['parts']} parts"),
     ]
 
     return (
@@ -554,7 +534,7 @@ def _build_page_content(
 def layout(assembly=None, **kwargs):
     return html.Div(
         [
-            html.H1("MagnetDB Dashboard"),
+            html.H1("Assembly Dashboard"),
             html.Div(
                 [
                     selectors.aggregate_filter(
@@ -751,7 +731,9 @@ def update_assembly_stats(
     else:
         year_options = [selectors.ALL]
 
-    status_options = [selectors.ALL] + db.get_distinct_statuses("assemblies", selected_db)
+    status_options = [selectors.ALL] + db.get_distinct_statuses(
+        "assemblies", selected_db
+    )
     assemblies_with_status = (
         db.get_names_with_status("assemblies", selected_status, selected_db)
         if selected_status and selected_status != selectors.ALL
@@ -770,7 +752,13 @@ def update_assembly_stats(
         and (assemblies_with_status is None or a in assemblies_with_status)
     ]
     housing_options = [selectors.ALL] + db.get_housings(selected_db)
-    total_assemblies, assemblies_in_operation = load_assembly_summary(selected_db)
+    total_assemblies = load_assembly_summary(selected_db)
+    total_housings = len(housing_options) - 1
+    status_order = status_options[1:]
+    assembly_selected = bool(selected_assembly) and selected_assembly != selectors.ALL
+    in_scope_assemblies = (
+        [selected_assembly] if assembly_selected else assembly_options[1:]
+    )
     missing_banner = (
         "" if not df.empty else "No experiment data found for this database."
     )
@@ -817,11 +805,12 @@ def update_assembly_stats(
     ) = _build_page_content(
         plot_df,
         total_assemblies,
-        assemblies_in_operation,
+        total_housings,
+        in_scope_assemblies,
+        status_order,
+        len(overview_plot_df),
         selected_assembly,
-        selected_housing,
         selected_year,
-        selected_status,
         assemblies_meta,
         selected_db,
         table_start_date,

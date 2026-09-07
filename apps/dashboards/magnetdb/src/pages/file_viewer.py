@@ -20,6 +20,7 @@ from plotly import graph_objects as go
 
 dash.register_page(__name__, path="/file_viewer", name="File viewer", order=6)
 
+
 # `assembly`/`file` are populated by Dash Pages from the URL's query string (e.g. the
 # links generated on the "Assembly stats" page: /file_viewer?assembly=...&file=...), so the
 # dropdowns get their initial value at first render instead of via a callback
@@ -30,15 +31,39 @@ dash.register_page(__name__, path="/file_viewer", name="File viewer", order=6)
 def layout(assembly=None, file=None, **kwargs):
     return html.Div(
         [
-            dcc.Store(id="pending-auto-plot", data=["Field"] if (assembly and file) else []),
+            dcc.Store(
+                id="pending-auto-plot", data=["Field"] if (assembly and file) else []
+            ),
             html.Div(
                 [
                     html.H2(
-                        "Magnetdb Dashboard",
+                        "Pupitre Dashboard",
                         style={"marginTop": "0px", "marginBottom": "20px"},
                     ),
                     html.Hr(),
-                    selectors.cascading_selector("dd-assembly", "Assembly", 1, value=assembly),
+                    html.Div(
+                        [
+                            selectors.aggregate_filter(
+                                "fv-housing-filter", "Housing", style={"width": "200px"}
+                            ),
+                            selectors.aggregate_filter(
+                                "fv-year-filter", "Year", style={"width": "150px"}
+                            ),
+                            selectors.aggregate_filter(
+                                "fv-status-filter", "Status", style={"width": "200px"}
+                            ),
+                        ],
+                        style={
+                            "display": "flex",
+                            "gap": "30px",
+                            "marginBottom": "15px",
+                        },
+                    ),
+                    selectors.cascading_selector(
+                        "dd-assembly", "Assembly", 1, value=assembly
+                    ),
+                    html.Br(),
+                    html.Div(id="fv-magnets-table", style={"marginBottom": "10px"}),
                     html.Br(),
                     html.Label("2. Choose File :", style={"fontWeight": "bold"}),
                     dcc.Dropdown(
@@ -47,6 +72,8 @@ def layout(assembly=None, file=None, **kwargs):
                         value=file,
                         placeholder="Choose a file...",
                     ),
+                    html.Br(),
+                    html.Div(id="fv-file-stats", style={"marginBottom": "10px"}),
                     html.Br(),
                     html.Label(
                         "3. Choose X-axis :",
@@ -64,10 +91,13 @@ def layout(assembly=None, file=None, **kwargs):
                     html.Br(),
                     html.Label("4. Choose Sensors :", style={"fontWeight": "bold"}),
                     # C'est ce conteneur unique qui contiendra tout (Groupes + Checklist + Graphiques associés)
-                    html.Div(
-                        id="sensors-selectors-container",
-                        children=[],
-                        style={"marginTop": "10px"},
+                    dcc.Loading(
+                        html.Div(
+                            id="sensors-selectors-container",
+                            children=[],
+                            style={"marginTop": "10px"},
+                        ),
+                        type="circle",
                     ),
                     style_editor.modal_component("fv"),
                     html.Br(),
@@ -76,11 +106,21 @@ def layout(assembly=None, file=None, **kwargs):
                         [
                             dcc.Checklist(
                                 id="fv-sync-cursor-toggle",
-                                options=[{"label": " Sync cursor across graphs", "value": "sync"}],
+                                options=[
+                                    {
+                                        "label": " Sync cursor across graphs",
+                                        "value": "sync",
+                                    }
+                                ],
                                 value=["sync"],
-                                style={"display": "inline-block", "marginRight": "15px"},
+                                style={
+                                    "display": "inline-block",
+                                    "marginRight": "15px",
+                                },
                             ),
-                            html.Button("Clear cursors", id="fv-clear-cursors-btn", n_clicks=0),
+                            html.Button(
+                                "Clear cursors", id="fv-clear-cursors-btn", n_clicks=0
+                            ),
                         ],
                         style={"marginTop": "4px"},
                     ),
@@ -98,17 +138,84 @@ def layout(assembly=None, file=None, **kwargs):
                     "backgroundColor": "#f8f9fa",
                     "minHeight": "100vh",
                 },
-            )
+            ),
         ]
     )
 
 
-# CALLBACK 0 : Met à jour la liste des assemblies en fonction de la Database sélectionnée
-@dash.callback(Output("dd-assembly", "options"), Input("dd-database", "value"))
-def update_assembly_dropdown(selected_db):
+@dash.callback(
+    Output("fv-housing-filter", "options"),
+    Output("fv-year-filter", "options"),
+    Output("fv-status-filter", "options"),
+    Input("dd-database", "value"),
+)
+def update_filter_options(selected_db):
     if not selected_db:
-        return []
-    return db.get_all_assemblies(selected_db)
+        return [selectors.ALL], [selectors.ALL], [selectors.ALL]
+
+    housing_options = [selectors.ALL] + db.get_housings(selected_db)
+
+    assemblies_meta = db.load_assemblies_meta(selected_db)
+    year_range = db.assemblies_year_range(assemblies_meta)
+    year_options = (
+        [selectors.ALL] + [str(y) for y in range(year_range[0], year_range[1] + 1)]
+        if year_range is not None
+        else [selectors.ALL]
+    )
+
+    status_options = [selectors.ALL] + db.get_distinct_statuses(
+        "assemblies", selected_db
+    )
+
+    return housing_options, year_options, status_options
+
+
+# CALLBACK 0 : Met à jour la liste des assemblies en fonction de la Database sélectionnée et des filtres
+@dash.callback(
+    Output("dd-assembly", "options"),
+    Output("dd-assembly", "value"),
+    Input("dd-database", "value"),
+    Input("fv-housing-filter", "value"),
+    Input("fv-year-filter", "value"),
+    Input("fv-status-filter", "value"),
+    State("dd-assembly", "value"),
+)
+def update_assembly_dropdown(
+    selected_db, selected_housing, selected_year, selected_status, current_assembly
+):
+    if not selected_db:
+        return [], None
+
+    all_assemblies = db.get_all_assemblies(selected_db)
+
+    assemblies_in_year = None
+    if selected_year and selected_year != selectors.ALL:
+        assemblies_meta = db.load_assemblies_meta(selected_db)
+        assemblies_in_year = db.assemblies_active_in_year(
+            assemblies_meta, int(selected_year)
+        )
+
+    assemblies_with_status = (
+        db.get_names_with_status("assemblies", selected_status, selected_db)
+        if selected_status and selected_status != selectors.ALL
+        else None
+    )
+
+    assemblies = [
+        a
+        for a in all_assemblies
+        if (
+            not selected_housing
+            or selected_housing == selectors.ALL
+            or a.startswith(f"{selected_housing}_")
+        )
+        and (assemblies_in_year is None or a in assemblies_in_year)
+        and (assemblies_with_status is None or a in assemblies_with_status)
+    ]
+
+    if current_assembly in assemblies:
+        return assemblies, dash.no_update
+    return assemblies, (assemblies[0] if assemblies else None)
 
 
 # CALLBACK 1 : Met à jour la liste des fichiers en fonction du Assembly
@@ -122,10 +229,40 @@ def update_file_dropdown(selected_assembly, selected_db):
         return []
 
     magnet_types = db.get_magnet_types_for_assembly(selected_assembly, selected_db)
-    print(f"[file_viewer.py] selected_assembly={selected_assembly!r} magnet_types={magnet_types}")
+    print(
+        f"[file_viewer.py] selected_assembly={selected_assembly!r} magnet_types={magnet_types}"
+    )
 
     files = db.get_files_for_assembly(selected_assembly, "experiments", selected_db)
     return [{"label": f, "value": f} for f in files]
+
+
+@dash.callback(
+    Output("fv-magnets-table", "children"),
+    Input("dd-assembly", "value"),
+    Input("dd-database", "value"),
+)
+def update_magnets_table(selected_assembly, selected_db):
+    return selectors.magnets_table_section(selected_assembly, selected_db)
+
+
+@dash.callback(
+    Output("fv-file-stats", "children"),
+    Input("dd-file", "value"),
+    Input("dd-assembly", "value"),
+)
+def update_file_stats(selected_file, selected_assembly):
+    if not selected_file or not selected_assembly:
+        return selectors.file_stats_banner(None, None)
+
+    housing = selected_assembly.split("_")[0]
+    mrun = db.load_mrun_object(selected_file, housing)
+    if mrun is None:
+        return selectors.file_stats_banner(None, None)
+
+    duration = mrun.MagnetData.getDuration()
+    field_stats = db.get_field_column_stats([mrun])
+    return selectors.file_stats_banner(duration, field_stats)
 
 
 @dash.callback(
@@ -186,7 +323,9 @@ def update_sensors_menus(
         options = []
         for s in sensors:
             symbol, unit = plot.group_display_unit(mrun, group_name, s)
-            options.append({"label": plot.format_sensor_label(s, symbol, unit), "value": s})
+            options.append(
+                {"label": plot.format_sensor_label(s, symbol, unit), "value": s}
+            )
 
         saved_values_for_this_group = saved_state_map.get(group_name, [])
         for target in pending_auto_plot:
@@ -263,7 +402,7 @@ def update_sensors_menus(
                         },
                     ),
                 ],
-                open=True,
+                open=(group_name == "Magnetic_Field"),
                 style={
                     "border": "1px solid #007bff",
                     "borderRadius": "8px",
@@ -472,8 +611,14 @@ _CURSOR_MATCH_THRESHOLD = {"timestamp": 2.0, "t": 0.5}  # seconds
 
 def _cursor_line_shape(x):
     return {
-        "type": "line", "x0": x, "x1": x, "y0": 0, "y1": 1,
-        "xref": "x", "yref": "paper", "line": _CURSOR_LINE_STYLE,
+        "type": "line",
+        "x0": x,
+        "x1": x,
+        "y0": 0,
+        "y1": 1,
+        "xref": "x",
+        "yref": "paper",
+        "line": _CURSOR_LINE_STYLE,
     }
 
 
@@ -507,11 +652,15 @@ def pin_cursor_home(click_data_list, graph_ids, figures, sync_toggle, x_mode):
     threshold = _CURSOR_MATCH_THRESHOLD.get(x_mode, _CURSOR_MATCH_THRESHOLD["t"])
     current_shapes = (figures[trigger_index].get("layout") or {}).get("shapes") or []
     match_idx = next(
-        (i for i, s in enumerate(current_shapes) if _cursor_x_distance(s["x0"], clicked_x, x_mode) <= threshold),
+        (
+            i
+            for i, s in enumerate(current_shapes)
+            if _cursor_x_distance(s["x0"], clicked_x, x_mode) <= threshold
+        ),
         None,
     )
     if match_idx is not None:
-        new_shapes = current_shapes[:match_idx] + current_shapes[match_idx + 1:]
+        new_shapes = current_shapes[:match_idx] + current_shapes[match_idx + 1 :]
     else:
         new_shapes = current_shapes + [_cursor_line_shape(clicked_x)]
 
@@ -576,7 +725,8 @@ def _style_context_fn(group_name, selected_file, selected_assembly):
         return [], []
 
     sensors = [
-        c for c in mrun.MagnetData.get_group_data(group_name).columns
+        c
+        for c in mrun.MagnetData.get_group_data(group_name).columns
         if c not in ("t", "timestamp")
     ]
     source_key = plot.resolve_file_type_key(selected_file)

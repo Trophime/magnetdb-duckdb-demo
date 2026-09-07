@@ -8,7 +8,7 @@ from dash.dash_table import DataTable
 from experiment_links import assembly_link, experiment_link, overview_record_link
 from plotly import graph_objects as go
 
-dash.register_page(__name__, path="/research-area", name="Research areas", order=7)
+dash.register_page(__name__, path="/research-area", name="Manips", order=1)
 
 RA_STATS_COLUMNS = [
     {"name": c, "id": c}
@@ -181,7 +181,7 @@ def _housing_summary():
 
 layout = html.Div(
     [
-        html.H2("Research Area Statistics"),
+        html.H2("Manip Dashboard"),
         html.Br(),
         html.Div(
             [
@@ -317,7 +317,9 @@ def update(research_area, housing, year, user):
         housing=housing, year=year, research_area=research_area, user=user
     )
     by_year_df["year"] = by_year_df["year"].astype(int).astype(str)
-    by_year_df = by_year_df.rename(columns={"total_field_time_s": "total_field_time_h"})
+    by_year_df = by_year_df.rename(
+        columns={"total_field_time_s": "total_field_time_h", "n_users": "n_manips"}
+    )
     by_year_df["total_field_time_h"] = by_year_df["total_field_time_h"] / 3600
 
     fig_exp = px.bar(

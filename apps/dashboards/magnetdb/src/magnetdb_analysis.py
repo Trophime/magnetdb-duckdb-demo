@@ -12,6 +12,7 @@ import duckdb
 import magnetdb_plot as plot
 import numpy as np
 import pandas as pd
+import pint
 import scipy.signal as sg
 from natsort import natsorted
 from python_magnetrun.field_defs import (
@@ -19,6 +20,7 @@ from python_magnetrun.field_defs import (
     match_channels_across_formats,
     resolve_defs_file,
 )
+from python_magnetrun.housing_config import get_housing_config
 from python_magnetrun.magnetdata_base import DataType
 from python_magnetrun.MagnetRun import load_mrun
 
@@ -226,12 +228,12 @@ def get_magnets_for_assembly(assembly_name, db_path=None):
     Returns
     -------
     list of dict
-        One entry per magnet, with ``name``, ``type``, ``status``, and
-        ``assembled_at``, ordered by name.
+        One entry per magnet, with ``name``, ``type``, ``status``,
+        ``description``, and ``assembled_at``, ordered by name.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
-            SELECT m.name, m.type, m.status, m.assembled_at
+            SELECT m.name, m.type, m.status, m.description, m.assembled_at
             FROM assembly_magnets AS sm
             JOIN magnets AS m ON m.name = sm.magnet_name
             WHERE sm.assembly_name = ?
@@ -240,6 +242,49 @@ def get_magnets_for_assembly(assembly_name, db_path=None):
         df = conn.execute(query, [assembly_name]).df()
     df["assembled_at"] = to_display_tz(df["assembled_at"])
     return df.to_dict("records")
+
+
+_COIL_PART_TYPES = ("helix", "bitter", "supra")
+
+
+def get_magnet_part_composition(magnet_names, db_path=None):
+    """Count each magnet's helix/bitter/supra parts.
+
+    Parameters
+    ----------
+    magnet_names : list of str
+        ``magnets.name`` values to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    dict
+        ``{magnet_name: "N type[, N type...]"}`` (e.g. ``"4 helix"``),
+        counting only parts whose ``type`` is ``helix``, ``bitter``, or
+        ``supra``. Magnets with no such part, or not in *magnet_names*,
+        are absent from the result.
+    """
+    if not magnet_names:
+        return {}
+
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT mp.magnet_name, p.type, COUNT(*) AS n
+            FROM magnet_parts AS mp
+            JOIN parts AS p ON p.name = mp.part_name
+            WHERE mp.magnet_name = ANY(?) AND p.type = ANY(?)
+            GROUP BY mp.magnet_name, p.type
+            ORDER BY mp.magnet_name, p.type
+        """
+        df = conn.execute(query, [list(magnet_names), list(_COIL_PART_TYPES)]).df()
+
+    composition = {}
+    for magnet_name, group in df.groupby("magnet_name"):
+        composition[magnet_name] = ", ".join(
+            f"{row.n} {row.type}" for row in group.itertuples()
+        )
+    return composition
 
 
 def get_parts_for_magnet(magnet_name, db_path=None):
@@ -325,6 +370,37 @@ def get_names_with_status(table_name, status, db_path=None):
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = f"SELECT name FROM {table_name} WHERE status = ?"
         return conn.execute(query, [status]).df()["name"].tolist()
+
+
+def get_status_counts(table_name, db_path=None, names=None):
+    """Count rows in *table_name* grouped by lifecycle status.
+
+    Parameters
+    ----------
+    table_name : str
+        Any table with a ``status`` column -- ``"assemblies"``,
+        ``"magnets"``, or ``"parts"``.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+    names : collection of str, optional
+        Restrict to these ``name`` values only. Defaults to all rows.
+
+    Returns
+    -------
+    dict of str -> int
+        ``status`` -> row count, for statuses present in the (optionally
+        restricted) rows.
+    """
+    query = f"SELECT status, COUNT(*) AS n FROM {table_name}"
+    params = []
+    if names is not None:
+        query += " WHERE name = ANY(?)"
+        params = [list(names)]
+    query += " GROUP BY status"
+
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        df = conn.execute(query, params).df()
+    return dict(zip(df["status"], df["n"].astype(int)))
 
 
 def get_assembly_names_for_magnets(magnet_names, db_path=None):
@@ -720,6 +796,79 @@ def get_group_dataframe(filename, housing, group_name):
     return mrun.MagnetData.get_group_data(group_name)
 
 
+_FIELD_COLUMN_CANDIDATES = ("Field", "Champ_magn")
+
+
+def get_field_column_stats(mruns):
+    """Aggregate min/mean/max/std of the magnetic-field column across MagnetRun objects.
+
+    Looks for whichever of ``"Field"`` (pupitre) or ``"Champ_magn"``
+    (pigbrother/tdms) is present in each :class:`~python_magnetrun.MagnetRun.MagnetRun`'s
+    columns — matched either bare (pupitre) or as the suffix of a
+    ``"Group/Channel"`` key (tdms, e.g. ``"Courants_Alimentations/Champ_magn"``).
+    Values are converted to tesla before being combined across *mruns*,
+    since ``"Field"`` is natively tesla and ``"Champ_magn"`` is natively
+    millitesla — used to summarize a single file (one-element list) or a
+    whole overview record's source files.
+
+    Parameters
+    ----------
+    mruns : list of :class:`~python_magnetrun.MagnetRun.MagnetRun`
+        Loaded MagnetRun objects to search.
+
+    Returns
+    -------
+    dict or None
+        Keys ``column`` (``"Field"`` or ``"Champ_magn"``, whichever was
+        found first), ``unit`` (str, ``"tesla"`` when resolvable, else
+        ``None``), ``min``, ``mean``, ``max``, ``std`` [tesla]. ``None`` if
+        none of *mruns* has either column, or no non-null values were found.
+    """
+    values = []
+    column_found = None
+    target_unit = None
+    for mrun in mruns:
+        keys = mrun.MagnetData.getKeys()
+        key = next(
+            (
+                k for k in keys
+                if k in _FIELD_COLUMN_CANDIDATES or k.split("/")[-1] in _FIELD_COLUMN_CANDIDATES
+            ),
+            None,
+        )
+        if key is None:
+            continue
+        column = key.split("/")[-1]
+        column_data = mrun.MagnetData.getData(key)[column].dropna()
+        if column_data.empty:
+            continue
+        try:
+            _, column_unit = mrun.MagnetData.getUnitKey(key)
+        except (KeyError, RuntimeError):
+            column_unit = None
+        if target_unit is None and column_unit is not None:
+            try:
+                target_unit = (1 * column_unit).to("tesla").units
+            except pint.errors.DimensionalityError:
+                target_unit = column_unit
+        if column_found is None:
+            column_found = column
+        values.append(pd.Series(plot.convert_values_to_unit(column_data, column_unit, target_unit)))
+
+    if column_found is None or not values:
+        return None
+
+    combined = pd.concat(values)
+    return {
+        "column": column_found,
+        "unit": str(target_unit) if target_unit is not None else None,
+        "min": float(combined.min()),
+        "mean": float(combined.mean()),
+        "max": float(combined.max()),
+        "std": float(combined.std()),
+    }
+
+
 def parse_magnet_filename(filename):
     """
     Extracts the datetime from a Pupitre or PigBrother filename.
@@ -871,10 +1020,19 @@ def get_overview_group_entries(regular_files, housing):
     -------
     dict
         ``{group_name: [{"label": str, "value": str, "channels": {fmt:
-        name}}]}``. Groups left empty by exclusions are dropped; the
-        remaining keys are ordered per :func:`order_groups` (configured
-        order first, then any unlisted groups keeping their pupitre-first,
-        alphabetical-within-format position).
+        {"group": str, "channel": str}}}]}``. Each format's entry carries its
+        own native group name — the pigbrother side of a matched entry keeps
+        its own tdms group (e.g. ``Courants_Alimentations``) rather than the
+        pupitre block's group (e.g. ``Magnetic_Field``), since callers must
+        query each file under its own format's group, not the block's key.
+        Groups left empty by exclusions are dropped; the remaining keys are
+        ordered per :func:`order_groups` (configured order first, then any
+        unlisted groups keeping their pupitre-first, alphabetical-within-format
+        position). GR-role currents (e.g. ``IH``/``IB``) have no fixed
+        ``defs.json`` alias — which GR1/GR2 role they play is housing-dependent
+        (see :mod:`python_magnetrun.housing_config`) — so they are matched to
+        ``Courant_GR1``/``Courant_GR2`` via :func:`~python_magnetrun.housing_config.get_housing_config`
+        instead.
     """
     pupitre_columns = {}
     tdms_columns = {}
@@ -907,6 +1065,16 @@ def get_overview_group_entries(regular_files, housing):
     entries = {}
     consumed_tdms = set()
 
+    gr_current_alias = {}
+    if pupitre_columns:
+        cfg = get_housing_config(housing)
+        for role_channel, tchan in (
+            (cfg.reference_gr1_current, "Courant_GR1"),
+            (cfg.reference_gr2_current, "Courant_GR2"),
+        ):
+            if role_channel:
+                gr_current_alias[role_channel] = ("Courants_Alimentations", tchan)
+
     for group_name in sorted(pupitre_columns):
         excluded = _GROUP_CHANNEL_EXCLUSIONS.get(group_name, set())
         group_entries = []
@@ -922,19 +1090,26 @@ def get_overview_group_entries(regular_files, housing):
                 tgroup, tchan = alias.split("/", 1)
                 if tchan in tdms_columns.get(tgroup, set()):
                     matched = (tgroup, tchan)
+            elif channel in gr_current_alias:
+                tgroup, tchan = gr_current_alias[channel]
+                if tchan in tdms_columns.get(tgroup, set()):
+                    matched = (tgroup, tchan)
             if matched:
                 tgroup, tchan = matched
                 consumed_tdms.add(matched)
                 group_entries.append({
                     "label": plot.format_sensor_label(f"{channel} / {tchan}", symbol, unit),
                     "value": f"{group_name}::{channel}::pigbrother::{tchan}",
-                    "channels": {"pupitre": channel, "pigbrother": tchan},
+                    "channels": {
+                        "pupitre": {"group": group_name, "channel": channel},
+                        "pigbrother": {"group": tgroup, "channel": tchan},
+                    },
                 })
             else:
                 group_entries.append({
                     "label": plot.format_sensor_label(channel, symbol, unit),
                     "value": f"{group_name}::{channel}",
-                    "channels": {"pupitre": channel},
+                    "channels": {"pupitre": {"group": group_name, "channel": channel}},
                 })
         entries[group_name] = group_entries
 
@@ -952,11 +1127,153 @@ def get_overview_group_entries(regular_files, housing):
             group_entries.append({
                 "label": plot.format_sensor_label(channel, symbol, unit),
                 "value": f"{tgroup}::pigbrother::{channel}",
-                "channels": {"pigbrother": channel},
+                "channels": {"pigbrother": {"group": tgroup, "channel": channel}},
             })
 
     entries = {g: e for g, e in entries.items() if e}
     return {g: entries[g] for g in order_groups(list(entries.keys()))}
+
+
+def collect_group_files_data(mruns, housing, group_name, selected_values, group_entries):
+    """Resolve per-file (dataframe, sensors) for a display block's checked channels.
+
+    A display block is keyed by its pupitre-side group name, but a
+    cross-format-matched channel's pigbrother data lives under its own,
+    differently-named tdms group (see :func:`get_overview_group_entries`).
+    Each file is therefore queried under whichever native group its own
+    format's ``channels`` entry names, not under *group_name* itself. The
+    match is done per-format (not just per-group-name) because a pupitre
+    group and a pigbrother group can coincidentally share the same name
+    (e.g. ``Courants_Alimentations`` is both a native pupitre group and the
+    tdms group backing ``Magnetic_Field``'s ``Champ_magn``) while holding
+    unrelated columns.
+
+    Parameters
+    ----------
+    mruns : dict
+        ``{filename: MagnetRun or None}`` for every regular file of the record.
+    housing : str
+        Housing identifier, forwarded to :func:`get_group_dataframe`.
+    group_name : str
+        The display block's key (as used in *group_entries*).
+    selected_values : list of str
+        Checklist ``"value"`` strings currently checked for this block.
+    group_entries : dict
+        Full ``{group_name: [...]}`` mapping from :func:`get_overview_group_entries`.
+
+    Returns
+    -------
+    list of dict
+        ``[{"file": str, "df": DataFrame, "sensors": list of str, "mrun":
+        MagnetRun, "native_group": str}, ...]``, ready for
+        :func:`magnetdb_plot.create_annotated_plot`. ``native_group`` is the
+        sensors' own format-native group (e.g. ``Courants_Alimentations`` for
+        Champ_magn), which can differ from *group_name* — callers must
+        resolve units against it, not *group_name*, or a cross-format match's
+        unit lookup silently fails (see :func:`magnetdb_plot.group_display_unit`).
+    """
+    channels_by_value = {e["value"]: e["channels"] for e in group_entries.get(group_name, [])}
+    selected_channels = [
+        (fmt, info)
+        for value in selected_values
+        for fmt, info in channels_by_value.get(value, {}).items()
+    ]
+
+    files_data = []
+    for filename, mrun in mruns.items():
+        if mrun is None:
+            continue
+        fmt = _DEFS_FORMAT_BY_DATATYPE.get(mrun.MagnetData.Type)
+        mrun_groups = set(mrun.MagnetData.list_groups())
+        sensors_by_native_group = {}
+        for info_fmt, info in selected_channels:
+            if info_fmt == fmt and info["group"] in mrun_groups:
+                sensors_by_native_group.setdefault(info["group"], []).append(info["channel"])
+
+        for native_group, sensor_names in sensors_by_native_group.items():
+            try:
+                df = get_group_dataframe(filename, housing, native_group)
+            except KeyError:
+                continue
+            file_sensors = [s for s in sensor_names if s in df.columns]
+            if not file_sensors:
+                continue
+            files_data.append({
+                "file": filename, "df": df, "sensors": file_sensors, "mrun": mrun,
+                "native_group": native_group,
+            })
+    return files_data
+
+
+def collect_group_field_rows(regular_files, housing, group_name, group_entries):
+    """Resolve every raw sensor name + source-type key in a display block, across formats.
+
+    Used by the style-editor modal to list all styleable sensors for a block,
+    regardless of current checklist selection. Only the exact channels named
+    by this block's own entries are considered (not every column of whatever
+    native group happens to back one of them): a pigbrother group backing one
+    matched channel here can hold other channels that belong to a different
+    display block entirely (e.g. ``Champ_magn`` and ``Courant_A1`` are both
+    native to the pigbrother ``Courants_Alimentations`` group, but only
+    ``Champ_magn`` belongs to the ``Magnetic_Field`` block — ``Courant_A1``
+    belongs to the ``Courants_Alimentations`` block instead).
+
+    Parameters
+    ----------
+    regular_files : list of str
+        Overview + archive + pupitre source filenames for one overview record.
+    housing : str
+        Housing identifier, forwarded to :func:`load_mrun_object`.
+    group_name : str
+        The display block's key (as used in *group_entries*).
+    group_entries : dict
+        Full ``{group_name: [...]}`` mapping from :func:`get_overview_group_entries`.
+
+    Returns
+    -------
+    tuple
+        ``(field_rows, source_keys)`` — *field_rows* is a list of
+        ``(sensor, source_key)`` tuples (one per distinct sensor, first source
+        seen wins); *source_keys* is the list of distinct source-type keys
+        encountered, in first-seen order.
+    """
+    channels_by_fmt = {}
+    for entry in group_entries.get(group_name, []):
+        for fmt, info in entry["channels"].items():
+            channels_by_fmt.setdefault(fmt, {}).setdefault(info["group"], set()).add(info["channel"])
+
+    field_rows = []
+    seen_sensors = set()
+    source_keys = []
+    seen_sources = set()
+    for filename in regular_files:
+        mrun = load_mrun_object(filename, housing)
+        if mrun is None:
+            continue
+        fmt = _DEFS_FORMAT_BY_DATATYPE.get(mrun.MagnetData.Type)
+        groups_for_fmt = channels_by_fmt.get(fmt, {})
+        mrun_groups = set(mrun.MagnetData.list_groups())
+
+        source_key = plot.resolve_file_type_key(filename)
+        matched_any = False
+        for native_group, channel_names in groups_for_fmt.items():
+            if native_group not in mrun_groups:
+                continue
+            try:
+                df = get_group_dataframe(filename, housing, native_group)
+            except KeyError:
+                continue
+            matched_any = True
+            for sensor in channel_names:
+                if sensor not in df.columns or sensor in seen_sensors:
+                    continue
+                seen_sensors.add(sensor)
+                field_rows.append((sensor, source_key))
+        if matched_any and source_key and source_key not in seen_sources:
+            seen_sources.add(source_key)
+            source_keys.append(source_key)
+
+    return field_rows, source_keys
 
 
 def get_comparable_pairs_for_group(group_name, selected_files, housing):
@@ -1048,13 +1365,15 @@ def get_housings(db_path=None):
     return natsorted(names)
 
 
-def get_housing_file_summary(db_path=None):
+def get_housing_file_summary(db_path=None, assembly_names=None):
     """Return per-housing experiment/overview-record counts and time ranges.
 
     Parameters
     ----------
     db_path : str or :class:`~pathlib.Path`, optional
         Path to the DuckDB database. Defaults to `DB_PATH`.
+    assembly_names : collection of str, optional
+        Restrict to these assemblies only. Defaults to all assemblies.
 
     Returns
     -------
@@ -1066,17 +1385,21 @@ def get_housing_file_summary(db_path=None):
         ``overview_records_start``, ``overview_records_end`` (from live
         ``overview_records.t0``, i.e. ``merged_into IS NULL``).
     """
+    exp_query = """
+        SELECT a.housing AS housing, e.name AS experiment
+        FROM experiments AS e
+        JOIN assemblies AS a ON a.name = e.assembly_name
+    """
+    ov_query = "SELECT housing, t0 FROM overview_records WHERE merged_into IS NULL"
+    params = []
+    if assembly_names is not None:
+        exp_query += " WHERE a.name = ANY(?)"
+        ov_query += " AND assembly_name = ANY(?)"
+        params = [list(assembly_names)]
+
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        experiments_df = conn.execute(
-            """
-                SELECT a.housing AS housing, e.name AS experiment
-                FROM experiments AS e
-                JOIN assemblies AS a ON a.name = e.assembly_name
-            """
-        ).df()
-        overview_df = conn.execute(
-            "SELECT housing, t0 FROM overview_records WHERE merged_into IS NULL"
-        ).df()
+        experiments_df = conn.execute(exp_query, params).df()
+        overview_df = conn.execute(ov_query, params).df()
 
     experiments_df["experiment"] = pd.to_datetime(experiments_df["experiment"], errors="coerce")
     exp_summary = experiments_df.groupby("housing").agg(
