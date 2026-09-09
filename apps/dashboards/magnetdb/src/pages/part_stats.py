@@ -882,7 +882,7 @@ def update_part_stats(
         "" if not df.empty else "No experiment data found for this database."
     )
 
-    status_options = [selectors.ALL] + db.get_distinct_statuses("parts", selected_db)
+    status_options = [selectors.ALL] + db.get_distinct_statuses("parts")
     names_with_status = (
         db.get_names_with_status("parts", selected_status, selected_db)
         if selected_status and selected_status != selectors.ALL

@@ -25,6 +25,34 @@ def test_get_status_counts_empty_names_returns_empty_dict():
     assert db.get_status_counts("assemblies", DB_PATH, names=[]) == {}
 
 
+def test_get_distinct_statuses_assemblies():
+    assert db.get_distinct_statuses("assemblies") == [
+        "in_operation",
+        "disassembled",
+        "in_study",
+    ]
+
+
+def test_get_distinct_statuses_magnets():
+    assert db.get_distinct_statuses("magnets") == [
+        "in_operation",
+        "in_stock",
+        "retired",
+        "dead",
+        "in_study",
+    ]
+
+
+def test_get_distinct_statuses_parts():
+    assert db.get_distinct_statuses("parts") == [
+        "in_operation",
+        "in_stock",
+        "retired",
+        "dead",
+        "in_study",
+    ]
+
+
 def test_get_housing_file_summary_unfiltered_covers_all_housings():
     summary_df = db.get_housing_file_summary(DB_PATH)
     assert set(summary_df["housing"]) == {"M9", "M10"}
