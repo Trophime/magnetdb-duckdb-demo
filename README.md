@@ -40,5 +40,27 @@ source .venv/bin/activate
 ```
 
 For the database CLI and schema reference, see
-[to_duckdb/README.md](to_duckdb/README.md). For the dashboard, see
+[to_duckdb/README.md](to_duckdb/README.md).
+
+## Running the dashboard
+
+Recommended (production-style): build and run via Docker from the repo root,
+since the image needs the `python_magnetrun`/`python_magnetcooling`
+submodules alongside it:
+
+```bash
+docker build -f apps/dashboards/magnetdb/Dockerfile -t magnetdb-dashboard .
+docker run \
+    -e MAGNETDB_DB_PATH=/data/duckdb/test-magnetdb.duckdb \
+    -e MAGNETDB_DB_DIR=/data/duckdb \
+    -e MAGNETDB_RECORDS_DIR=/data/records \
+    -v /path/to/to_duckdb:/data/duckdb \
+    -v /path/to/records:/data/records \
+    -p 8050:8050 \
+    magnetdb-dashboard
+```
+
+Then open `http://localhost:8050/`.
+
+For interactive development instead (Debian/WSL only), see
 [apps/dashboards/magnetdb/README.md](apps/dashboards/magnetdb/README.md).
