@@ -802,8 +802,79 @@ def get_group_dataframe(filename, housing, group_name):
 
 _FIELD_COLUMN_CANDIDATES = ("Field", "Champ_magn")
 
+# Total-power channel to time-integrate for Energy, keyed by data format:
+# pupitre exposes "Ptot" [MW] directly; TDMS/pigbrother exposes
+# "Puissance_Alims" [W] under the "Puissances" group.
+_POWER_KEY_BY_TYPE = {
+    DataType.PUPITRE: "Ptot",
+    DataType.TDMS: "Puissances/Puissance_Alims",
+}
 
-def get_field_column_stats(mruns):
+_J_TO_MWH = 3.6e9  # J -> MWh
+
+
+def _get_column_with_time(mrun, key):
+    """Return a DataFrame with *key*'s column plus its ``"t"``/``"timestamp"`` columns.
+
+    ``getData(key)`` alone drops the time columns for TDMS data (a
+    ``"Group/Channel"`` request returns only that channel), so TDMS runs are
+    read a full group at a time instead; pupitre/ensight runs are one flat
+    table and can request the columns directly.
+
+    Parameters
+    ----------
+    mrun : :class:`~python_magnetrun.MagnetRun.MagnetRun`
+        Loaded run to read from.
+    key : str
+        Bare column name (pupitre/ensight) or ``"Group/Channel"`` (tdms).
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        *key*'s column (short name) plus whichever of ``"t"``/``"timestamp"``
+        are present.
+    """
+    column = key.split("/")[-1]
+    if mrun.MagnetData.Type == DataType.TDMS:
+        group = key.split("/")[0]
+        df = mrun.MagnetData.get_group_data(group)
+        return df[[c for c in (column, "t", "timestamp") if c in df.columns]]
+    keys = mrun.MagnetData.getKeys()
+    cols = [column] + [c for c in ("t", "timestamp") if c in keys]
+    return mrun.MagnetData.getData(cols)
+
+
+def _filter_by_x_range(df, x_col, x_range):
+    """Restrict *df* to rows within *x_range* (inclusive) along *x_col*.
+
+    Parameters
+    ----------
+    df : :class:`~pandas.DataFrame`
+    x_col : str
+        ``"timestamp"`` or ``"t"``.
+    x_range : list or None
+        ``[start, end]`` in *x_col* units, or ``None`` to return *df* unchanged.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        *df* unchanged if *x_range* is ``None``; filtered rows if *x_col* is
+        present; an empty slice if *x_col* is missing from *df* (the run has
+        no usable time axis to filter by).
+    """
+    if x_range is None:
+        return df
+    if x_col not in df.columns:
+        return df.iloc[0:0]
+    lo, hi = x_range
+    if x_col == "timestamp":
+        lo, hi = pd.Timestamp(lo), pd.Timestamp(hi)
+    else:
+        lo, hi = float(lo), float(hi)
+    return df[(df[x_col] >= lo) & (df[x_col] <= hi)]
+
+
+def get_field_column_stats(mruns, x_range=None, x_col="timestamp"):
     """Aggregate min/mean/max/std of the magnetic-field column across MagnetRun objects.
 
     Looks for whichever of ``"Field"`` (pupitre) or ``"Champ_magn"``
@@ -819,14 +890,21 @@ def get_field_column_stats(mruns):
     ----------
     mruns : list of :class:`~python_magnetrun.MagnetRun.MagnetRun`
         Loaded MagnetRun objects to search.
+    x_range : list, optional
+        ``[start, end]`` in *x_col* units to restrict the aggregation to
+        (e.g. a graph's current zoom); ``None`` uses each run's full data.
+    x_col : str, optional
+        ``"timestamp"`` or ``"t"`` — which column *x_range* is expressed in.
 
     Returns
     -------
     dict or None
         Keys ``column`` (``"Field"`` or ``"Champ_magn"``, whichever was
         found first), ``unit`` (str, ``"tesla"`` when resolvable, else
-        ``None``), ``min``, ``mean``, ``max``, ``std`` [tesla]. ``None`` if
-        none of *mruns* has either column, or no non-null values were found.
+        ``None``), ``min``, ``mean``, ``max``, ``std`` [tesla], ``values``
+        (:class:`~numpy.ndarray`, the combined tesla values feeding the
+        stats — for building a histogram). ``None`` if none of *mruns* has
+        either column, or no non-null values were found in range.
     """
     values = []
     column_found = None
@@ -843,7 +921,8 @@ def get_field_column_stats(mruns):
         if key is None:
             continue
         column = key.split("/")[-1]
-        column_data = mrun.MagnetData.getData(key)[column].dropna()
+        df = _filter_by_x_range(_get_column_with_time(mrun, key), x_col, x_range)
+        column_data = df[column].dropna() if column in df.columns else pd.Series(dtype=float)
         if column_data.empty:
             continue
         try:
@@ -870,7 +949,62 @@ def get_field_column_stats(mruns):
         "mean": float(combined.mean()),
         "max": float(combined.max()),
         "std": float(combined.std()),
+        "values": combined.to_numpy(),
     }
+
+
+def get_energy_stats(mruns, x_range=None, x_col="timestamp"):
+    """Time-integrate each MagnetRun's total-power channel and sum the result.
+
+    Uses ``"Ptot"`` [MW] for pupitre-format runs and
+    ``"Puissances/Puissance_Alims"`` [W] for TDMS/pigbrother-format runs
+    (see :data:`_POWER_KEY_BY_TYPE`) — whichever applies to each run in
+    *mruns*. Runs of another format, or missing the relevant channel, are
+    skipped. Integration always uses each run's ``"t"`` (elapsed seconds)
+    column, regardless of *x_col*, so the result reflects real elapsed time
+    even when *x_col* is ``"timestamp"``.
+
+    Parameters
+    ----------
+    mruns : list of :class:`~python_magnetrun.MagnetRun.MagnetRun`
+        Loaded MagnetRun objects to sum energy across.
+    x_range : list, optional
+        ``[start, end]`` in *x_col* units to restrict the integration to
+        (e.g. a graph's current zoom); ``None`` integrates each run's full data.
+    x_col : str, optional
+        ``"timestamp"`` or ``"t"`` — which column *x_range* is expressed in.
+
+    Returns
+    -------
+    dict or None
+        Keys ``energy_mwh`` (float) and ``n_included`` (int, number of
+        *mruns* that contributed). ``None`` if no run had a usable power
+        channel in range.
+    """
+    total_j = 0.0
+    n_included = 0
+    for mrun in mruns:
+        key = _POWER_KEY_BY_TYPE.get(mrun.MagnetData.Type)
+        if key is None or key not in mrun.MagnetData.getKeys():
+            continue
+        column = key.split("/")[-1]
+        df = _filter_by_x_range(_get_column_with_time(mrun, key), x_col, x_range)
+        if column not in df.columns or "t" not in df.columns:
+            continue
+        df = df[[column, "t"]].dropna().sort_values("t")
+        if len(df) < 2:
+            continue
+        try:
+            _, unit = mrun.MagnetData.getUnitKey(key)
+            power_w = (df[column].to_numpy() * unit).to("watt").magnitude
+        except (KeyError, RuntimeError, pint.errors.DimensionalityError):
+            continue
+        total_j += float(np.trapezoid(power_w, df["t"].to_numpy()))
+        n_included += 1
+
+    if n_included == 0:
+        return None
+    return {"energy_mwh": total_j / _J_TO_MWH, "n_included": n_included}
 
 
 def parse_magnet_filename(filename):

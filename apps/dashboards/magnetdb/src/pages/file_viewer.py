@@ -17,6 +17,7 @@ from dash import (
 )
 from dash.exceptions import PreventUpdate
 from plotly import graph_objects as go
+from python_magnetrun.utils.timezone import local_to_utc_naive
 
 dash.register_page(__name__, path="/file_viewer", name="File viewer", order=6)
 
@@ -72,6 +73,11 @@ def layout(assembly=None, file=None, **kwargs):
                     ),
                     html.Br(),
                     html.Div(id="fv-file-stats", style={"marginBottom": "10px"}),
+                    dcc.Graph(
+                        id="fv-field-histogram",
+                        figure=plot.field_histogram_figure(None),
+                        style={"height": "250px"},
+                    ),
                     html.Br(),
                     html.Label(
                         "3. Choose X-axis :",
@@ -244,21 +250,62 @@ def update_magnets_table(selected_assembly, selected_db):
 
 @dash.callback(
     Output("fv-file-stats", "children"),
+    Output("fv-field-histogram", "figure"),
     Input("dd-file", "value"),
     Input("dd-assembly", "value"),
+    Input("dd-x-axis", "value"),
+    Input({"type": "dynamic-graph", "index": ALL}, "relayoutData"),
 )
-def update_file_stats(selected_file, selected_assembly):
+def update_file_stats(selected_file, selected_assembly, x_mode, all_relayout_data):
+    empty = selectors.file_stats_banner(None, None), plot.field_histogram_figure(None)
     if not selected_file or not selected_assembly:
-        return selectors.file_stats_banner(None, None)
+        return empty
 
     housing = selected_assembly.split("_")[0]
     mrun = db.load_mrun_object(selected_file, housing)
     if mrun is None:
-        return selectors.file_stats_banner(None, None)
+        return empty
 
-    duration = mrun.MagnetData.getDuration()
-    field_stats = db.get_field_column_stats([mrun])
-    return selectors.file_stats_banner(duration, field_stats)
+    # Same zoom-range extraction as update_outputs: any currently zoomed/panned
+    # graph narrows the summary to that time window; switching file/assembly/
+    # x-axis always resets to the full file.
+    triggered_id = ctx.triggered_id
+    x_range = None
+    if triggered_id not in ("dd-file", "dd-assembly", "dd-x-axis") and all_relayout_data:
+        for relayout in all_relayout_data:
+            if relayout:
+                if "xaxis.range[0]" in relayout:
+                    x_range = [relayout["xaxis.range[0]"], relayout["xaxis.range[1]"]]
+                    break
+                elif "xaxis.range" in relayout:
+                    x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
+                    break
+
+    analysis_range = x_range
+    if x_range is not None and x_mode == "timestamp":
+        # relayoutData holds the displayed local time (see
+        # magnetdb_plot._display_x_series); the "timestamp" column is stored
+        # as naive UTC, so the range needs converting back before filtering.
+        analysis_range = [
+            local_to_utc_naive(pd.Timestamp(x_range[0]), "Europe/Paris"),
+            local_to_utc_naive(pd.Timestamp(x_range[1]), "Europe/Paris"),
+        ]
+
+    if x_range is not None:
+        if x_mode == "timestamp":
+            duration = (pd.Timestamp(x_range[1]) - pd.Timestamp(x_range[0])).total_seconds()
+        else:
+            duration = float(x_range[1]) - float(x_range[0])
+    else:
+        duration = mrun.MagnetData.getDuration()
+
+    field_stats = db.get_field_column_stats([mrun], x_range=analysis_range, x_col=x_mode)
+    energy_stats = db.get_energy_stats([mrun], x_range=analysis_range, x_col=x_mode)
+
+    banner = selectors.file_stats_banner(
+        duration, field_stats, energy_stats=energy_stats, zoomed=x_range is not None
+    )
+    return banner, plot.field_histogram_figure(field_stats)
 
 
 @dash.callback(

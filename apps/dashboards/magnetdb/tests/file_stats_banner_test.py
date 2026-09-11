@@ -41,6 +41,18 @@ def test_file_stats_banner_empty_when_everything_missing():
     assert banner.children is None
 
 
+def test_file_stats_banner_includes_energy_segment():
+    banner = selectors.file_stats_banner(
+        12.5, None, energy_stats={"energy_mwh": 0.0034, "n_included": 1}
+    )
+    assert "Energy: 0.0034 MWh" in banner.children
+
+
+def test_file_stats_banner_marks_zoomed_range():
+    banner = selectors.file_stats_banner(5.0, None, zoomed=True)
+    assert "(zoomed range)" in banner.children
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

@@ -174,6 +174,53 @@ def format_sensor_label(base_label: str, symbol: str | None, unit) -> str:
     return base_label
 
 
+def field_histogram_figure(field_stats):
+    """Build a small histogram figure of the Field/Champ_magn values in *field_stats*.
+
+    Parameters
+    ----------
+    field_stats : dict or None
+        Result of :func:`magnetdb_analysis.get_field_column_stats`. ``None``
+        yields an empty placeholder figure.
+
+    Returns
+    -------
+    :class:`~plotly.graph_objects.Figure`
+        A single-trace histogram figure, or an empty placeholder if
+        *field_stats* is ``None``.
+    """
+    if field_stats is None:
+        fig = go.Figure()
+        fig.update_layout(
+            annotations=[
+                {
+                    "text": "No Field/Champ_magn data",
+                    "xref": "paper",
+                    "yref": "paper",
+                    "showarrow": False,
+                    "font": {"color": "#888888"},
+                }
+            ],
+            xaxis={"visible": False},
+            yaxis={"visible": False},
+            template="plotly_white",
+            margin={"l": 20, "r": 20, "t": 30, "b": 20},
+        )
+        return fig
+
+    unit_suffix = f" [{field_stats['unit']}]" if field_stats["unit"] else ""
+    fig = go.Figure(go.Histogram(x=field_stats["values"], marker={"color": "#1f77b4"}))
+    fig.update_layout(
+        title=f"{field_stats['column']} histogram",
+        template="plotly_white",
+        margin={"l": 40, "r": 20, "t": 40, "b": 40},
+        xaxis={"title": f"{field_stats['column']}{unit_suffix}"},
+        yaxis={"title": "Count"},
+        bargap=0.02,
+    )
+    return fig
+
+
 @dataclass
 class TraceStyle:
     """Plotly line style for one data-file type (matplotlib-like: color/dash/width/alpha)."""

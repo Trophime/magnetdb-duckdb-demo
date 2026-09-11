@@ -157,6 +157,11 @@ def layout(assembly=None, record=None, **kwargs):
             ),
             html.Br(),
             html.Div(id="overview-records-file-stats", style={"marginBottom": "10px"}),
+            dcc.Graph(
+                id="overview-records-field-histogram",
+                figure=plot.field_histogram_figure(None),
+                style={"height": "250px"},
+            ),
             html.Br(),
             html.Label("3. Choose X-axis :", style={"fontWeight": "bold", "color": "#007bff"}),
             dcc.Dropdown(
@@ -372,31 +377,85 @@ def update_record_options(selected_assembly, selected_db, current_record):
 
 @dash.callback(
     Output("overview-records-file-stats", "children"),
+    Output("overview-records-field-histogram", "figure"),
     Input("overview-records-record-filter", "value"),
     Input("dd-database", "value"),
     Input("overview-records-include-archive", "value"),
+    Input("overview-records-x-axis", "value"),
+    Input({"type": "ov-dynamic-graph", "index": ALL}, "relayoutData"),
 )
-def update_file_stats(selected_record, selected_db, include_archive_value):
+def update_file_stats(
+    selected_record, selected_db, include_archive_value, x_mode, all_relayout_data
+):
+    empty = selectors.file_stats_banner(None, None), plot.field_histogram_figure(None)
     if not selected_record:
-        return selectors.file_stats_banner(None, None)
+        return empty
 
     info = db.get_overview_record_sources(selected_record, selected_db)
     if info is None:
-        return selectors.file_stats_banner(None, None)
+        return empty
 
     include_archive = bool(include_archive_value)
     housing, regular_files, _event_files = _record_sources(selected_record, selected_db, include_archive)
     mruns = [m for m in (db.load_mrun_object(f, housing) for f in regular_files) if m is not None]
-    field_stats = db.get_field_column_stats(mruns) if mruns else None
 
-    duration = info.get("duration")
-    duration = float(duration) if duration is not None and not pd.isna(duration) else None
+    # Same zoom-range extraction as update_graphs: any currently zoomed/panned
+    # graph narrows the summary to that time window; switching record/database/
+    # archive-scope/x-axis always resets to the full record.
+    triggered_id = ctx.triggered_id
+    x_range = None
+    if triggered_id not in (
+        "overview-records-record-filter",
+        "dd-database",
+        "overview-records-include-archive",
+        "overview-records-x-axis",
+    ) and all_relayout_data:
+        for relayout in all_relayout_data:
+            if relayout:
+                if "xaxis.range[0]" in relayout:
+                    x_range = [relayout["xaxis.range[0]"], relayout["xaxis.range[1]"]]
+                    break
+                elif "xaxis.range" in relayout:
+                    x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
+                    break
+
+    analysis_range = x_range
+    if x_range is not None and x_mode == "timestamp":
+        # relayoutData holds the displayed local time (see
+        # magnetdb_plot._display_x_series); the "timestamp" column is stored
+        # as naive UTC, so the range needs converting back before filtering.
+        analysis_range = [
+            local_to_utc_naive(pd.Timestamp(x_range[0]), "Europe/Paris"),
+            local_to_utc_naive(pd.Timestamp(x_range[1]), "Europe/Paris"),
+        ]
+
+    if x_range is not None:
+        if x_mode == "timestamp":
+            duration = (pd.Timestamp(x_range[1]) - pd.Timestamp(x_range[0])).total_seconds()
+        else:
+            duration = float(x_range[1]) - float(x_range[0])
+    else:
+        duration = info.get("duration")
+        duration = float(duration) if duration is not None and not pd.isna(duration) else None
+
+    field_stats = (
+        db.get_field_column_stats(mruns, x_range=analysis_range, x_col=x_mode) if mruns else None
+    )
+    energy_stats = (
+        db.get_energy_stats(mruns, x_range=analysis_range, x_col=x_mode) if mruns else None
+    )
 
     pupitre_files = list(info["sources_pupitre"])
 
-    return selectors.file_stats_banner(
-        duration, field_stats, pupitre_files, assembly_name=info["assembly_name"]
+    banner = selectors.file_stats_banner(
+        duration,
+        field_stats,
+        pupitre_files,
+        assembly_name=info["assembly_name"],
+        energy_stats=energy_stats,
+        zoomed=x_range is not None,
     )
+    return banner, plot.field_histogram_figure(field_stats)
 
 
 @dash.callback(

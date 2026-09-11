@@ -258,8 +258,15 @@ def magnets_table_section(assembly_name, db_path=None):
     )
 
 
-def file_stats_banner(duration_seconds, field_stats, pupitre_files=None, assembly_name=None):
-    """Build a one-line duration + Field/Champ_magn stats + pupitre-sources summary.
+def file_stats_banner(
+    duration_seconds,
+    field_stats,
+    pupitre_files=None,
+    assembly_name=None,
+    energy_stats=None,
+    zoomed=False,
+):
+    """Build a one-line duration + Field/Champ_magn stats + Energy + pupitre-sources summary.
 
     Parameters
     ----------
@@ -276,14 +283,27 @@ def file_stats_banner(duration_seconds, field_stats, pupitre_files=None, assembl
         ``/file_viewer`` pre-loaded with that file (see
         :func:`experiment_links.file_viewer_href`). Filenames render as
         plain text (no link) when not given.
+    energy_stats : dict, optional
+        Result of :func:`magnetdb_analysis.get_energy_stats`, or ``None`` if
+        no power channel was found. Omitted from the summary when ``None``.
+    zoomed : bool, optional
+        When ``True``, *duration_seconds*/*field_stats*/*energy_stats* are
+        understood to cover the current graph zoom rather than the whole
+        file/record, and the banner is suffixed accordingly.
 
     Returns
     -------
     :class:`~dash.html.Div`
-        A styled one-line summary, or an empty ``Div`` if *duration_seconds*
-        and *field_stats* are ``None`` and *pupitre_files* is empty.
+        A styled one-line summary, or an empty ``Div`` if *duration_seconds*,
+        *field_stats* and *energy_stats* are all ``None`` and *pupitre_files*
+        is empty.
     """
-    if duration_seconds is None and field_stats is None and not pupitre_files:
+    if (
+        duration_seconds is None
+        and field_stats is None
+        and energy_stats is None
+        and not pupitre_files
+    ):
         return html.Div()
 
     segments = []
@@ -298,6 +318,10 @@ def file_stats_banner(duration_seconds, field_stats, pupitre_files=None, assembl
             f"max={field_stats['max']:.3g}{unit_suffix}, "
             f"std={field_stats['std']:.3g}{unit_suffix}"
         )
+    if energy_stats is not None:
+        segments.append(f"Energy: {energy_stats['energy_mwh']:.3g} MWh")
+    if zoomed:
+        segments.append("(zoomed range)")
     if pupitre_files:
         pupitre_children = ["Pupitre sources: "]
         for i, fname in enumerate(pupitre_files):
