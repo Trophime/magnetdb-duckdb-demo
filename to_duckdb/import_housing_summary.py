@@ -59,6 +59,8 @@ for file in sorted(DATA_DIR.glob("*_summary-*.json")):
 
     for col in PATH_COLUMNS:
         df[col] = df[col].apply(lambda x: Path(x).name if x else x)
+    if "stats" in df.columns:
+        df["stats"] = df["stats"].apply(lambda x: Path(x).name if x else x)
 
     df["housing"] = housing
     df["year"] = year

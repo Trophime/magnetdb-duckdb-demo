@@ -2110,12 +2110,10 @@ def view_overview_records(
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
     distinct = "DISTINCT " if (magnet_name or part_name) else ""
 
+    source_cols_sql = ", ".join(f"ovr.{c}" for c in _OVERVIEW_SOURCE_LIST_COLUMNS)
     rows = con.execute(
         f"SELECT {distinct}ovr.filename, ovr.housing, ovr.mode, ovr.t0, ovr.duration, ovr.teb, ovr.bp, "
-        f"len(ovr.sources_overview) + len(ovr.sources_archive) + len(ovr.sources_pupitre) "
-        f"+ len(ovr.sources_default) + len(ovr.sources_trigger) + len(ovr.sources_spike) "
-        f"+ len(ovr.sources_hybrid_kHz) + len(ovr.sources_hybrid_rms) + len(ovr.sources_hybrid_trigger) "
-        f"  AS n_sources, "
+        f"{source_cols_sql}, "
         f"ovr.signatures, ovr.sync_info "
         f"FROM overview_records ovr {join_sql} {where} ORDER BY ovr.t0 NULLS LAST, ovr.filename",
         params,
@@ -2143,17 +2141,30 @@ def view_overview_records(
     col_f = max((len(r[0]) for r in rows), default=20)
     col_m = max((len(r[2] or "") for r in rows), default=4)
     print(
-        f"{'Filename':<{col_f}}  {'t0':<19}  {'Duration':<8}  {'Mode':<{col_m}}  teb    bp   n_src"
+        f"{'Filename':<{col_f}}  {'t0':<19}  {'Duration':<8}  {'Mode':<{col_m}}  teb    bp"
     )
-    print("-" * (col_f + col_m + 65))
+    print("-" * (col_f + col_m + 58))
 
-    for filename, housing, mode, t0, duration, teb, bp, n_src, sigs, sync in rows:
+    n_source_cols = len(_OVERVIEW_SOURCE_LIST_COLUMNS)
+    for row in rows:
+        filename, housing, mode, t0, duration, teb, bp = row[:7]
+        source_lists = row[7:7 + n_source_cols]
+        sigs, sync = row[7 + n_source_cols:]
+
         t0_str = str(t0)[:19] if t0 else "—"
         dur_str = _duration_str(duration)
         print(
             f"{filename:<{col_f}}  {t0_str:<19}  {dur_str:<8}  {(mode or ''):<{col_m}}"
-            f"  {teb or 0:5.1f}  {bp or 0:5.1f}  {n_src or 0}"
+            f"  {teb or 0:5.1f}  {bp or 0:5.1f}"
         )
+
+        counts = [
+            (col.removeprefix("sources_"), len(src))
+            for col, src in zip(_OVERVIEW_SOURCE_LIST_COLUMNS, source_lists)
+            if src
+        ]
+        if counts:
+            print("    sources: " + " ".join(f"{name}={n}" for name, n in counts))
 
         if show_signatures and sigs:
             if isinstance(sigs, str):
@@ -2485,7 +2496,7 @@ def _fileset_lists(sources) -> dict[str, list[str]]:
     if sources is None:
         empty: list[str] = []
         return {k: empty for k in (
-            "overview", "archive", "pupitre", "default", "trigger", "spike",
+            "overview", "archive", "pupitre", "default", "trigger", "spike", "stats",
             "hybrid_kHz", "hybrid_rms", "hybrid_trigger", "hybrid_vprocess",
             "pigbrother_runlog", "pupitre_runlog",
         )}
@@ -2496,6 +2507,7 @@ def _fileset_lists(sources) -> dict[str, list[str]]:
         "default":            list(getattr(sources, "default", []) or []),
         "trigger":            list(getattr(sources, "trigger", []) or []),
         "spike":              list(getattr(sources, "spike", []) or []),
+        "stats":              list(getattr(sources, "stats", []) or []),
         "hybrid_kHz":         list(getattr(sources, "hybrid_kHz", []) or []),
         "hybrid_rms":         list(getattr(sources, "hybrid_rms", []) or []),
         "hybrid_trigger":     list(getattr(sources, "hybrid_trigger", []) or []),
@@ -2507,7 +2519,7 @@ def _fileset_lists(sources) -> dict[str, list[str]]:
 
 _OVERVIEW_SOURCE_LIST_COLUMNS = [
     "sources_overview", "sources_archive", "sources_pupitre",
-    "sources_default", "sources_trigger", "sources_spike",
+    "sources_default", "sources_trigger", "sources_spike", "sources_stats",
     "sources_hybrid_kHz", "sources_hybrid_rms", "sources_hybrid_trigger",
     "sources_hybrid_vprocess", "sources_pigbrother_runlog", "sources_pupitre_runlog",
 ]
@@ -2609,6 +2621,7 @@ def _overview_record_to_columns(record, assembly_name: str | None) -> dict:
         "sources_default": src["default"],
         "sources_trigger": src["trigger"],
         "sources_spike": src["spike"],
+        "sources_stats": src["stats"],
         "sources_hybrid_kHz": src["hybrid_kHz"],
         "sources_hybrid_rms": src["hybrid_rms"],
         "sources_hybrid_trigger": src["hybrid_trigger"],
@@ -2731,7 +2744,7 @@ def insert_overview_record_from_dict(
         return [Path(x).name for x in items]
 
     _source_keys = [
-        "overview", "archive", "pupitre", "default", "trigger", "spike",
+        "overview", "archive", "pupitre", "default", "trigger", "spike", "stats",
         "hybrid_kHz", "hybrid_rms", "hybrid_trigger", "hybrid_vprocess",
         "pigbrother_runlog", "pupitre_runlog",
     ]

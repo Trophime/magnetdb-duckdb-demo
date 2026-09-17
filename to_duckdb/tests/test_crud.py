@@ -1461,17 +1461,19 @@ def test_insert_overview_record_from_dict_reduces_sources_to_basename(con):
                 "/mnt/LNCMIG-Data/records/pbsurv/M10/Fichiers_Archive/M10_Archive_250127-2105.tdms"
             ),
             "pupitre": ["/mnt/LNCMIG-Data/records/srv-data-install/M10/2025.01.27 - 15:39:29.txt"],
+            "stats": "/mnt/LNCMIG-Data/records/pbsurv/M10/Fichiers_Stats/M10_Stats_250127-1605.tdms",
         },
         verbose=False,
     )
     row = con.execute(
-        "SELECT sources_overview, sources_archive, sources_pupitre FROM overview_records "
+        "SELECT sources_overview, sources_archive, sources_pupitre, sources_stats FROM overview_records "
         "WHERE filename = 'M10_Overview_250127-1605'"
     ).fetchone()
     assert row == (
         ["M10_Overview_250127-1605.tdms"],
         ["M10_Archive_250127-1605.tdms", "M10_Archive_250127-2105.tdms"],
         ["2025.01.27 - 15:39:29.txt"],
+        ["M10_Stats_250127-1605.tdms"],
     )
 
 
@@ -1842,6 +1844,19 @@ def test_view_overview_records_excludes_merged_rows(con, capsys):
     out = capsys.readouterr().out
     assert "M9_Overview_220127-1700" in out
     assert "M9_Overview_220127-1702" not in out
+
+
+def test_view_overview_records_prints_per_source_type_counts(con, capsys):
+    _insert_overview(
+        con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
+        ["p1.tdms", "p2.tdms"], assembly_name="M9_ASSEMBLY_A",
+        sources_stats=[],
+    )
+
+    view_overview_records(con)
+    out = capsys.readouterr().out
+    assert "sources: pupitre=2" in out
+    assert "stats=" not in out
 
 
 # ---------------------------------------------------------------------------

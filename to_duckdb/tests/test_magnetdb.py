@@ -606,7 +606,11 @@ def test_cli_populate_overview_records_from_archive_writes_thin_row(tmp_path, mo
             mode="Archive",
             t0=datetime(2025, 1, 15, 12, 0, 0),
             duration=1800.0,
-            sources=FileSet(archive=[str(path)], pupitre=["2025.01.15 - 12:00:00.txt"]),
+            sources=FileSet(
+                archive=[str(path)],
+                pupitre=["2025.01.15 - 12:00:00.txt"],
+                stats=["M10_Stats_250115-1200.tdms"],
+            ),
         )
 
     monkeypatch.setattr("magnetdb._tdms_find_and_register", fake_find_and_register)
@@ -619,14 +623,15 @@ def test_cli_populate_overview_records_from_archive_writes_thin_row(tmp_path, mo
 
     row = _fetch_one(
         db, "SELECT housing, assembly_name, sources_overview, sources_archive, sources_pupitre, "
-        "duration FROM overview_records WHERE filename = 'M10_Archive_250115-1200'"
+        "sources_stats, duration FROM overview_records WHERE filename = 'M10_Archive_250115-1200'"
     )
     assert row[0] == "M10"
     assert row[1] == "ASSEMBLY_JSON_01"
     assert row[2] == []
     assert row[3] == [str(archive_path)]
     assert row[4] == ["2025.01.15 - 12:00:00.txt"]
-    assert row[5] == 1800.0
+    assert row[5] == ["M10_Stats_250115-1200.tdms"]
+    assert row[6] == 1800.0
 
 
 def test_cli_populate_overview_records_from_archive_skips_already_covered(tmp_path, monkeypatch):
@@ -682,6 +687,7 @@ def _summary_json_record(filename, **extra):
         "default": "",
         "trigger": "",
         "spike": "",
+        "stats": "",
         "hybrid_kHz": "",
         "hybrid_rms": "",
         "hybrid_trigger": "",

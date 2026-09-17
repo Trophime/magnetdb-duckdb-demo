@@ -162,6 +162,7 @@ CREATE TABLE IF NOT EXISTS overview_records (
     sources_default           VARCHAR[],
     sources_trigger           VARCHAR[],
     sources_spike             VARCHAR[],
+    sources_stats             VARCHAR[],
     sources_hybrid_kHz        VARCHAR[],
     sources_hybrid_rms        VARCHAR[],
     sources_hybrid_trigger    VARCHAR[],
@@ -184,6 +185,8 @@ ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS plateaux JSON DEFAULT '{}'
 -- idempotent migration for databases that predate merged_into (dedup tombstone:
 -- NULL = live row; non-NULL = filename of the row this one was merged into)
 ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS merged_into VARCHAR;
+-- idempotent migration for databases that predate sources_stats
+ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS sources_stats VARCHAR[];
 
 -- ── Operational statistics tables ────────────────────────────────────────────
 

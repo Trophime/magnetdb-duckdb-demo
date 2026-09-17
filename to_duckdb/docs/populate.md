@@ -133,6 +133,7 @@ The file must contain a top-level JSON array. Each element is a dict with the fo
 | `sources_default` | list\[str\] \| csv | Default incident file path(s) |
 | `sources_trigger` | list\[str\] \| csv | Trigger incident file path(s) |
 | `sources_spike` | list\[str\] \| csv | Spike incident file path(s) |
+| `sources_stats` | list\[str\] \| csv | Stats TDMS file path(s) (4800 Hz data reduced to 1 Hz) |
 | `sources_hybrid_kHz` | list\[str\] \| csv | Hybrid kHz file path(s) |
 | `sources_hybrid_rms` | list\[str\] \| csv | Hybrid RMS file path(s) |
 | `sources_hybrid_trigger` | list\[str\] \| csv | Hybrid trigger file path(s) |
@@ -341,16 +342,21 @@ python magnetdb.py overview-records view \
 ```
 overview_records  assembly=M10_M19071101_13  (2 row(s))
 
-Filename              t0                   Duration  Mode  teb    bp   n_src
+Filename              t0                   Duration  Mode  teb    bp
 ----------------------------------------------------------------------------------------------
-M10_261105-1530       2026-11-05 15:30:00  03:02     HP    14.2   9.8  3
-M10_261106-0910       2026-11-06 09:10:00  01:24     HP    13.8   9.6  3
+M10_261105-1530       2026-11-05 15:30:00  03:02     HP    14.2   9.8
+    sources: overview=1 archive=1 pupitre=1
+M10_261106-0910       2026-11-06 09:10:00  01:24     HP    13.8   9.6
+    sources: overview=1 archive=1 pupitre=1
 ```
 
-With `--signatures`, each row is followed by per-channel min/max/mean statistics and sync timeshift (if available):
+Each row is followed by a `sources:` line listing the non-empty `sources_*` columns and their file counts (columns with zero files are omitted).
+
+With `--signatures`, each row is also followed by per-channel min/max/mean statistics and sync timeshift (if available):
 
 ```
-M10_261105-1530       2026-11-05 15:30:00  03:02     HP    14.2   9.8  3
+M10_261105-1530       2026-11-05 15:30:00  03:02     HP    14.2   9.8
+    sources: overview=1 archive=1 pupitre=1
     Courant_GR1: min=0.00  max=26100.00  mean=25980.30
     sync timeshift: 0.012 s
 ```
@@ -365,4 +371,4 @@ M10_261105-1530       2026-11-05 15:30:00  03:02     HP    14.2   9.8  3
 | `Mode` | Measurement mode (e.g. `HP`, `HP+Bitter`) |
 | `teb` | Inlet water temperature (°C) |
 | `bp` | Water pressure (bar) |
-| `n_src` | Total number of source files across all `sources_*` columns |
+| `sources:` | Per-`sources_*`-column file counts (zero-count columns omitted) |
