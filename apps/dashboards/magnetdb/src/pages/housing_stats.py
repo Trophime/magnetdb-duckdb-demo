@@ -429,7 +429,8 @@ def _field_activity_strip(housing, db_path=None, assembly_names=None, year=None)
     One cell per month (or, when *year* is given, per week within that
     year): green = at least one experiment or overview record occurred that
     period, blank = none. A red bar marks a period an assembly was
-    commissioned; a black bar marks a year boundary (month mode only).
+    commissioned; a black bar marks a year boundary (month mode only), with
+    the ending year labelled underneath it.
     """
     history = db.get_field_bin_history(
         housing, db_path, assembly_names=assembly_names, year=year
@@ -440,7 +441,12 @@ def _field_activity_strip(housing, db_path=None, assembly_names=None, year=None)
             style={"color": "#888", "fontStyle": "italic"},
         )
 
+    CELL_WIDTH_PX = 11  # 10px cell (border-box, border drawn inside) + 1px margin
+    MARKER_WIDTH_PX = 4  # 3px bar + 1px margin
+
     cells = []
+    year_marks = []
+    x_offset = 0
     for row in history:
         start, end = row["period_start"], row["period_end"]
         color, label = (
@@ -465,6 +471,7 @@ def _field_activity_strip(housing, db_path=None, assembly_names=None, year=None)
                 },
             )
         )
+        x_offset += CELL_WIDTH_PX
         if row["commissioned"]:
             cells.append(
                 html.Div(
@@ -478,6 +485,7 @@ def _field_activity_strip(housing, db_path=None, assembly_names=None, year=None)
                     },
                 )
             )
+            x_offset += MARKER_WIDTH_PX
         if year is None and start.month == 12:
             cells.append(
                 html.Div(
@@ -490,9 +498,38 @@ def _field_activity_strip(housing, db_path=None, assembly_names=None, year=None)
                     },
                 )
             )
+            year_marks.append((x_offset + 1.5, start.year))
+            x_offset += MARKER_WIDTH_PX
+
+    rows = [
+        html.Div(
+            cells,
+            style={"whiteSpace": "nowrap"},
+        )
+    ]
+    if year_marks:
+        rows.append(
+            html.Div(
+                [
+                    html.Span(
+                        str(mark_year),
+                        style={
+                            "position": "absolute",
+                            "left": f"{x}px",
+                            "transform": "translateX(-50%)",
+                            "fontSize": "9px",
+                            "color": "#555",
+                            "whiteSpace": "nowrap",
+                        },
+                    )
+                    for x, mark_year in year_marks
+                ],
+                style={"position": "relative", "height": "12px"},
+            )
+        )
     return html.Div(
-        cells,
-        style={"whiteSpace": "nowrap", "overflowX": "auto", "padding": "4px 0"},
+        rows,
+        style={"overflowX": "auto", "padding": "4px 0"},
     )
 
 
@@ -544,7 +581,7 @@ def _housing_section(
             html.Br(),
             dcc.Link("View all assemblies →", href="/assembly_stats"),
         ],
-        title=housing,
+        title=html.Span(["🏠 ", html.B(housing)]),
         item_id=housing,
     )
 
@@ -569,6 +606,7 @@ def layout(**kwargs):
             html.Br(),
             dcc.Graph(id="housing-stats-field-bins-year-fig"),
             html.Br(),
+            html.H3("Housing Details"),
             html.Div(id="housing-stats-sections"),
         ],
         style={"padding": "20px"},
@@ -643,12 +681,7 @@ def update_housing_stats(selected_db, selected_year):
         ]
     """
 
-    top_summary = [
-        selectors.database_summary_banner(
-            db.get_database_summary(selected_db, assembly_names=assemblies_in_year)
-        ),
-        *per_housing_lines,
-    ]
+    top_summary = per_housing_lines
 
     year_suffix = f" ({year_filter})" if year_filter is not None else ""
 
