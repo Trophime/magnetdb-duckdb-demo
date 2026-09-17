@@ -1037,7 +1037,7 @@ def _get_column_with_time(mrun, key):
     return mrun.MagnetData.getData(cols)
 
 
-def _filter_by_x_range(df, x_col, x_range):
+def filter_by_x_range(df, x_col, x_range):
     """Restrict *df* to rows within *x_range* (inclusive) along *x_col*.
 
     Parameters
@@ -1114,7 +1114,7 @@ def get_field_column_stats(mruns, x_range=None, x_col="timestamp"):
         if key is None:
             continue
         column = key.split("/")[-1]
-        df = _filter_by_x_range(_get_column_with_time(mrun, key), x_col, x_range)
+        df = filter_by_x_range(_get_column_with_time(mrun, key), x_col, x_range)
         column_data = df[column].dropna() if column in df.columns else pd.Series(dtype=float)
         if column_data.empty:
             continue
@@ -1181,7 +1181,7 @@ def get_energy_stats(mruns, x_range=None, x_col="timestamp"):
         if key is None or key not in mrun.MagnetData.getKeys():
             continue
         column = key.split("/")[-1]
-        df = _filter_by_x_range(_get_column_with_time(mrun, key), x_col, x_range)
+        df = filter_by_x_range(_get_column_with_time(mrun, key), x_col, x_range)
         if column not in df.columns or "t" not in df.columns:
             continue
         df = df[[column, "t"]].dropna().sort_values("t")

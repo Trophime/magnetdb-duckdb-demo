@@ -216,6 +216,7 @@ def layout(assembly=None, record=None, **kwargs):
             html.Br(),
             dcc.Store(id="overview-records-group-entries"),
             style_editor.modal_component("ov"),
+            style_editor.download_store("ov"),
             dcc.Loading(
                 [
                     html.Div(
@@ -516,6 +517,7 @@ def update_groups(selected_record, selected_db, include_archive_value, include_i
                         },
                     ),
                     style_editor.gear_button("ov", group_name),
+                    style_editor.download_button("ov", group_name),
                     html.Div(
                         [
                             html.Div(
@@ -695,6 +697,125 @@ def update_graphs(
         figures.append(fig)
 
     return figures, incident_warning
+
+
+@dash.callback(
+    Output("ov-download-data", "data"),
+    Input({"type": "ov-download-btn", "index": ALL}, "n_clicks"),
+    State("overview-records-record-filter", "value"),
+    State("overview-records-x-axis", "value"),
+    State("dd-database", "value"),
+    State("overview-records-include-archive", "value"),
+    State("overview-records-include-incidents", "value"),
+    State("overview-records-group-entries", "data"),
+    State({"type": "ov-group-sensors-checklist", "index": ALL}, "value"),
+    State({"type": "ov-group-sensors-checklist", "index": ALL}, "id"),
+    State({"type": "ov-dynamic-graph", "index": ALL}, "relayoutData"),
+    State({"type": "ov-dynamic-graph", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def download_group_csv_overview(
+    all_clicks,
+    selected_record,
+    selected_x,
+    selected_db,
+    include_archive_value,
+    include_incidents_value,
+    group_entries,
+    all_sensor_values,
+    all_sensor_ids,
+    all_relayout_data,
+    all_graph_ids,
+):
+    triggered_id = ctx.triggered_id
+    if not isinstance(triggered_id, dict) or not ctx.triggered or not ctx.triggered[0]["value"]:
+        raise PreventUpdate
+    group_name = triggered_id["index"]
+
+    if not selected_record:
+        raise PreventUpdate
+
+    sensors_map = {
+        sensor_id["index"]: sensor_values
+        for sensor_id, sensor_values in zip(all_sensor_ids, all_sensor_values)
+    }
+    selected_values = sensors_map.get(group_name) or []
+    if not selected_values:
+        raise PreventUpdate
+
+    include_archive = bool(include_archive_value)
+    include_incidents = bool(include_incidents_value)
+    housing, regular_files, event_files = _record_sources(
+        selected_record, selected_db, include_archive, include_incidents
+    )
+    if housing is None:
+        raise PreventUpdate
+
+    mruns = {filename: db.load_mrun_object(filename, housing) for filename in regular_files}
+    group_entries = group_entries or {}
+
+    # SUPERVISION data is sliced to the whole record's [t0, t0+duration] span,
+    # same as update_graphs.
+    info = db.get_overview_record_sources(selected_record, selected_db)
+    supervision_window = None
+    if info is not None:
+        t0, duration = info.get("t0"), info.get("duration")
+        if t0 is not None and duration is not None and not pd.isna(t0) and not pd.isna(duration) and duration > 0:
+            sup_start = pd.Timestamp(t0)
+            supervision_window = (sup_start, sup_start + pd.Timedelta(seconds=float(duration)))
+
+    files_data = db.collect_group_files_data(mruns, housing, group_name, selected_values, group_entries)
+    if supervision_window is not None:
+        files_data = files_data + db.collect_supervision_files_data(
+            group_name, selected_values, group_entries, *supervision_window
+        )
+    if not files_data:
+        raise PreventUpdate
+
+    # Zoom-range extraction, scoped to this group's own graph (cross-graph
+    # zoom sync keeps them all equal anyway, see sync_zoom_overview below).
+    relayout_by_group = {
+        graph_id["index"]: relayout
+        for graph_id, relayout in zip(all_graph_ids, all_relayout_data)
+    }
+    relayout = relayout_by_group.get(group_name)
+    x_range = None
+    if relayout:
+        if "xaxis.range[0]" in relayout:
+            x_range = [relayout["xaxis.range[0]"], relayout["xaxis.range[1]"]]
+        elif "xaxis.range" in relayout:
+            x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
+
+    analysis_range = x_range
+    if x_range is not None and selected_x == "timestamp":
+        analysis_range = [
+            local_to_utc_naive(pd.Timestamp(x_range[0]), "Europe/Paris"),
+            local_to_utc_naive(pd.Timestamp(x_range[1]), "Europe/Paris"),
+        ]
+
+    tidy_frames = []
+    for entry in files_data:
+        df = entry["df"]
+        if selected_x not in df.columns:
+            continue
+        df = db.filter_by_x_range(df, selected_x, analysis_range)
+        for sensor in entry["sensors"]:
+            if sensor not in df.columns:
+                continue
+            is_supervision = sensor.startswith("supervision:")
+            label = sensor[len("supervision:"):] if is_supervision else sensor
+            tidy_frames.append(pd.DataFrame({
+                selected_x: df[selected_x],
+                "file": entry["file"],
+                "sensor": f"{label} [SUPERVISION]" if is_supervision else label,
+                "value": df[sensor],
+            }))
+
+    if not tidy_frames:
+        raise PreventUpdate
+
+    csv_df = pd.concat(tidy_frames, ignore_index=True)
+    return dcc.send_data_frame(csv_df.to_csv, f"{group_name}.csv", index=False)
 
 
 # Live cross-graph zoom sync: propagates one plot's zoom/pan/autoscale to all

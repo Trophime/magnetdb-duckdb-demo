@@ -74,6 +74,46 @@ def gear_button(id_prefix: str, group_name: str):
     )
 
 
+def download_button(id_prefix: str, group_name: str):
+    """Small download icon, absolutely positioned beside :func:`gear_button`.
+
+    Parameters
+    ----------
+    id_prefix : str
+        Page-specific id prefix (e.g. ``"fv"``, ``"ov"``).
+    group_name : str
+        The group this button downloads CSV data for.
+
+    Returns
+    -------
+    :class:`~dash.html.Button`
+        Not nested inside the group's `Summary` — see the caller's Details
+        block, which must add ``position: relative`` so this anchors over it.
+    """
+    return html.Button(
+        "⬇",
+        id={"type": f"{id_prefix}-download-btn", "index": group_name},
+        n_clicks=0,
+        title="Download this group's data as CSV",
+        style={
+            "position": "absolute",
+            "top": "8px",
+            "right": "40px",
+            "zIndex": 2,
+            "border": "none",
+            "background": "transparent",
+            "cursor": "pointer",
+            "fontSize": "18px",
+            "lineHeight": "1",
+        },
+    )
+
+
+def download_store(id_prefix: str):
+    """The `dcc.Download` target for :func:`download_button`. Place once in the page's `layout()`."""
+    return dcc.Download(id=f"{id_prefix}-download-data")
+
+
 def modal_component(id_prefix: str):
     """Modal + supporting stores for one page. Place once in the page's `layout()`."""
     return html.Div(

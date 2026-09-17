@@ -104,6 +104,7 @@ def layout(assembly=None, file=None, **kwargs):
                         type="circle",
                     ),
                     style_editor.modal_component("fv"),
+                    style_editor.download_store("fv"),
                     html.Br(),
                     html.Label("5. Cursor sync:", style={"fontWeight": "bold"}),
                     html.Div(
@@ -326,6 +327,7 @@ def _sensor_group_block(group_name, options, saved_values, open_by_default=False
                 },
             ),
             style_editor.gear_button("fv", group_name),
+            style_editor.download_button("fv", group_name),
             # 2. CONTENU : Les deux colonnes (Checklist et Graphique)
             html.Div(
                 [
@@ -660,6 +662,120 @@ def update_outputs(
         outputs_figures.append(fig)
 
     return outputs_figures
+
+
+@dash.callback(
+    Output("fv-download-data", "data"),
+    Input({"type": "fv-download-btn", "index": ALL}, "n_clicks"),
+    State("dd-file", "value"),
+    State("dd-assembly", "value"),
+    State("dd-x-axis", "value"),
+    State({"type": "group-sensors-checklist", "index": ALL}, "value"),
+    State({"type": "group-sensors-checklist", "index": ALL}, "id"),
+    State({"type": "dynamic-graph", "index": ALL}, "relayoutData"),
+    State({"type": "dynamic-graph", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def download_group_csv(
+    all_clicks,
+    selected_file,
+    selected_assembly,
+    selected_x,
+    all_sensors_lists,
+    all_sensors_ids,
+    all_relayout_data,
+    all_graph_ids,
+):
+    triggered_id = ctx.triggered_id
+    if not isinstance(triggered_id, dict) or not ctx.triggered or not ctx.triggered[0]["value"]:
+        raise PreventUpdate
+    group_name = triggered_id["index"]
+
+    if not selected_file or not selected_assembly:
+        raise PreventUpdate
+
+    sensors_map = {
+        sensor_id["index"]: sensor_values
+        for sensor_id, sensor_values in zip(all_sensors_ids, all_sensors_lists)
+        if sensor_values is not None
+    }
+    sensors_in_this_group = sensors_map.get(group_name, [])
+    if not sensors_in_this_group:
+        raise PreventUpdate
+
+    housing = selected_assembly.split("_")[0]
+    mrun = db.load_mrun_object(selected_file, housing)
+    if mrun is None:
+        raise PreventUpdate
+
+    # Same zoom-range extraction as update_outputs/update_file_stats, but
+    # scoped to this group's own graph (cross-graph zoom sync keeps them all
+    # equal anyway, see sync_zoom_home below).
+    relayout_by_group = {
+        graph_id["index"]: relayout
+        for graph_id, relayout in zip(all_graph_ids, all_relayout_data)
+    }
+    relayout = relayout_by_group.get(group_name)
+    x_range = None
+    if relayout:
+        if "xaxis.range[0]" in relayout:
+            x_range = [relayout["xaxis.range[0]"], relayout["xaxis.range[1]"]]
+        elif "xaxis.range" in relayout:
+            x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
+
+    analysis_range = x_range
+    if x_range is not None and selected_x == "timestamp":
+        # relayoutData holds the displayed local time; the "timestamp" column
+        # is stored as naive UTC, so the range needs converting back first.
+        analysis_range = [
+            local_to_utc_naive(pd.Timestamp(x_range[0]), "Europe/Paris"),
+            local_to_utc_naive(pd.Timestamp(x_range[1]), "Europe/Paris"),
+        ]
+
+    native_sensors = [s for s in sensors_in_this_group if not s.startswith("supervision:")]
+    supervision_values = [s for s in sensors_in_this_group if s.startswith("supervision:")]
+
+    tidy_frames = []
+
+    if native_sensors and group_name in mrun.MagnetData.list_groups():
+        try:
+            group_df = mrun.MagnetData.get_group_data(group_name)
+        except KeyError:
+            group_df = None
+        if isinstance(group_df, pd.DataFrame) and selected_x in group_df.columns:
+            group_df = db.filter_by_x_range(group_df, selected_x, analysis_range)
+            for sensor in native_sensors:
+                if sensor in group_df.columns:
+                    tidy_frames.append(pd.DataFrame({
+                        selected_x: group_df[selected_x],
+                        "file": selected_file,
+                        "sensor": sensor,
+                        "value": group_df[sensor],
+                    }))
+
+    supervision_groups = db.supervision_field_groups()
+    if supervision_values and group_name in supervision_groups:
+        start, end = mrun.MagnetData.get_time_range()
+        bare_fields = [s[len("supervision:"):] for s in supervision_values]
+        supervision_df = db.load_supervision_bdd(start, end).rename(
+            columns={f: s for f, s in zip(bare_fields, supervision_values)}
+        )
+        if selected_x in supervision_df.columns:
+            supervision_df = db.filter_by_x_range(supervision_df, selected_x, analysis_range)
+            for sensor, bare in zip(supervision_values, bare_fields):
+                if sensor in supervision_df.columns:
+                    tidy_frames.append(pd.DataFrame({
+                        selected_x: supervision_df[selected_x],
+                        "file": "SUPERVISION",
+                        "sensor": f"{bare} [SUPERVISION]",
+                        "value": supervision_df[sensor],
+                    }))
+
+    if not tidy_frames:
+        raise PreventUpdate
+
+    csv_df = pd.concat(tidy_frames, ignore_index=True)
+    return dcc.send_data_frame(csv_df.to_csv, f"{selected_file}_{group_name}.csv", index=False)
 
 
 # CALLBACK 5 : Synchronisation du zoom entre tous les graphiques de la page Home
