@@ -1968,6 +1968,80 @@ def get_database_summary(db_path=None, assembly_names=None):
     }
 
 
+def get_operation_log(db_path=None, table_name=None, operation=None, status=None):
+    """Load ``operation_log`` audit rows, most recent first.
+
+    Parameters
+    ----------
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+    table_name : str, optional
+        Restrict to this ``operation_log.table_name`` value. Defaults to no
+        restriction.
+    operation : str, optional
+        Restrict to this ``operation_log.operation`` value. Defaults to no
+        restriction.
+    status : str, optional
+        Restrict to this ``operation_log.status`` value. Defaults to no
+        restriction.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        Columns ``ID``, ``Timestamp``, ``Operation``, ``Table``, ``Record``,
+        ``User``, ``Status``, ``Details`` (``Details`` as raw JSON text),
+        ordered by ``id`` descending.
+    """
+    conditions, params = [], []
+    if table_name:
+        conditions.append("table_name = ?")
+        params.append(table_name)
+    if operation:
+        conditions.append("operation = ?")
+        params.append(operation)
+    if status:
+        conditions.append("status = ?")
+        params.append(status)
+    where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        return conn.execute(
+            f"""
+            SELECT
+                id AS "ID", ts AS "Timestamp", operation AS "Operation",
+                table_name AS "Table", record_name AS "Record",
+                username AS "User", status AS "Status", details AS "Details"
+            FROM operation_log
+            {where}
+            ORDER BY id DESC
+            """,
+            params,
+        ).df()
+
+
+def get_operation_log_values(column, db_path=None):
+    """Return distinct, sorted ``operation_log.<column>`` values.
+
+    Parameters
+    ----------
+    column : str
+        ``"table_name"``, ``"operation"``, or ``"status"``.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Non-null distinct values, ascending.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = (
+            f"SELECT DISTINCT {column} FROM operation_log "
+            f"WHERE {column} IS NOT NULL ORDER BY {column}"
+        )
+        return conn.execute(query).df()[column].tolist()
+
+
 def load_assemblies_meta(db_path=None):
     """Load every assembly's name, housing, and commissioning window.
 

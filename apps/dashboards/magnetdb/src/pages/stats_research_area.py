@@ -172,7 +172,6 @@ layout = html.Div(
             ],
             style={"display": "flex", "gap": "30px", "marginBottom": "30px"},
         ),
-        html.Div(id="ra-summary"),
         html.Br(),
         dcc.Graph(id="ra-exp"),
         dcc.Graph(id="ra-time"),
@@ -253,7 +252,6 @@ layout = html.Div(
     Output("ra-experiments-content", "children"),
     Output("ra-overview-records", "style"),
     Output("ra-overview-records-content", "children"),
-    Output("ra-summary", "children"),
     Input("ra-research-area", "value"),
     Input("ra-housing", "value"),
     Input("ra-year", "value"),
@@ -366,17 +364,9 @@ def update(research_area, housing, year, user):
         section_style = {**section_style, "display": "block"}
         exp_content = _experiments_section(exp_df)
         ov_content = _overview_records_section(ov_df)
-        scope_assembly_names = set(exp_df["assembly_name"].dropna()) | set(
-            ov_df["assembly_name"].dropna()
-        )
     else:
         section_style = {**section_style, "display": "none"}
         exp_content = ov_content = None
-        scope_assembly_names = None
-
-    summary = selectors.database_summary_banner(
-        db.get_database_summary(assembly_names=scope_assembly_names)
-    )
 
     return (
         df.to_dict("records"),
@@ -388,5 +378,4 @@ def update(research_area, housing, year, user):
         exp_content,
         section_style,
         ov_content,
-        summary,
     )

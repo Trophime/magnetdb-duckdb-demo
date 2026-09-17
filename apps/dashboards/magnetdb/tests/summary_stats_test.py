@@ -163,6 +163,25 @@ def test_get_housing_file_summary_assembly_names_restricts_counts():
     assert by_housing.loc["M10", "n_experiments"] == 0
 
 
+def test_get_operation_log_empty_db_returns_expected_columns():
+    log_df = db.get_operation_log(DB_PATH)
+    assert list(log_df.columns) == [
+        "ID",
+        "Timestamp",
+        "Operation",
+        "Table",
+        "Record",
+        "User",
+        "Status",
+        "Details",
+    ]
+    assert log_df.empty
+
+
+def test_get_operation_log_values_empty_db_returns_empty_list():
+    assert db.get_operation_log_values("status", DB_PATH) == []
+
+
 def test_get_field_column_stats_returns_values_array_for_histogram(monkeypatch):
     monkeypatch.chdir(Path(__file__).resolve().parent)
     mrun = db.load_mrun_object(_PUPITRE_FILE, _HOUSING)

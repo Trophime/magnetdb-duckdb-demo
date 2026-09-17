@@ -379,12 +379,7 @@ def _build_page_content(
     table_df["Magnet"] = table_source_df.apply(magnet_link, axis=1)
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
-    summary = [
-        selectors.database_summary_banner(
-            db.get_database_summary(db_path, assembly_names=scope_assembly_names)
-        ),
-        f"Processed: {(exp_df['Status'] == 'STATS DONE').sum()}",
-    ]
+    summary = [f"Processed: {(exp_df['Status'] == 'STATS DONE').sum()}"]
 
     return (
         fig_field_on,
