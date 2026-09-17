@@ -3,8 +3,9 @@ import os
 
 import dash
 import dash_bootstrap_components as dbc
+import dash_selectors as selectors
 import magnetdb_analysis as db
-from dash import Dash, dcc, html
+from dash import Dash, Input, Output, dcc, html
 
 app = Dash(
     __name__,
@@ -82,10 +83,21 @@ app.layout = html.Div(
             ],
             style={"display": "flex", "gap": "15px", "marginBottom": "20px"},
         ),
+        html.Div(id="db-summary-banner"),
         # C'est ici que le contenu des pages sera affiché, selon la page sélectionnée
         dash.page_container,
     ]
 )
+
+@dash.callback(
+    Output("db-summary-banner", "children"),
+    Input("dd-database", "value"),
+)
+def update_db_summary_banner(selected_db):
+    if not selected_db:
+        return []
+    return selectors.database_summary_banner(db.get_database_summary(selected_db))
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

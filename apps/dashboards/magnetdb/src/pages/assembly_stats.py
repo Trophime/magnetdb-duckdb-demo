@@ -113,7 +113,7 @@ def load_data(db_path=None):
     df["Housing"] = df["Assembly"].str.extract(r"^(M\d+)")
     df = (
         df.assign(_housing_n=_housing_sort_key(df))
-        .sort_values(["_housing_n", "Assembly", "Experiment"])
+        .pipe(db.sort_by_file_timestamp, group_columns=["_housing_n", "Assembly"], file_column="File")
         .drop(columns="_housing_n")
     )
 
@@ -155,26 +155,6 @@ def load_overview_records(db_path=None):
     con.close()
 
     return df
-
-
-def load_assembly_summary(db_path=None):
-    """Count total assemblies.
-
-    Parameters
-    ----------
-    db_path : str, optional
-        Path to the DuckDB database. Defaults to :data:`db.DB_PATH`.
-
-    Returns
-    -------
-    int
-        Total assembly count.
-    """
-    db_path = db_path or db.DB_PATH
-    con = duckdb.connect(db_path, read_only=True)
-    total_assemblies = con.execute("SELECT COUNT(*) FROM assemblies").fetchone()[0]
-    con.close()
-    return total_assemblies
 
 
 def load_field_bin_stats(experiment_ids, db_path=None):
@@ -248,7 +228,7 @@ TABLE_COLUMNS = [
         else {"name": c, "id": c}
     )
     for c in EXP_RUN_SCALARS_COLUMNS
-    if c != "File"
+    if c not in ("File", "ID")
 ]
 
 OVERVIEW_RECORD_COLUMNS = [
@@ -324,11 +304,7 @@ def _magnets_section(selected_assembly, db_path):
 
 def _build_page_content(
     df,
-    total_assemblies,
-    total_housings,
-    in_scope_assemblies,
-    status_order,
-    n_overview_records,
+    scope_assembly_names,
     selected_assembly=None,
     selected_year=None,
     assemblies_meta=None,
@@ -340,16 +316,10 @@ def _build_page_content(
 
     Parameters
     ----------
-    total_housings : int
-        DB-wide housing count.
-    in_scope_assemblies : list of str
+    scope_assembly_names : list of str or None
         Assembly names matching the page's current Housing/Year/Status/
-        Assembly filters (all assemblies when none are active).
-    status_order : list of str
-        Distinct assembly status values, for the status-breakdown line.
-    n_overview_records : int
-        Overview-record count matching the page's current filters, used for
-        the "Overview records: N selected of Total" summary line.
+        Assembly filters, for :func:`magnetdb_analysis.get_database_summary`.
+        ``None`` when unfiltered.
     table_start_date, table_end_date : str, optional
         Inclusive ``Experiment`` date bounds (``"YYYY-MM-DD"``) from the
         Experiments table's date-range picker. Only the returned table rows
@@ -486,40 +456,11 @@ def _build_page_content(
     table_df["Experiment"] = table_source_df.apply(experiment_link, axis=1)
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
-    counts = db.get_db_counts(db_path)
-    status_counts = db.get_status_counts(
-        "assemblies", db_path, names=in_scope_assemblies
-    )
-    in_scope_housings = {a.split("_")[0] for a in in_scope_assemblies}
-
-    assemblies_line = selectors.entity_count_line(
-        "Assemblies", total_assemblies, len(in_scope_assemblies)
-    )
-    housings_line = selectors.entity_count_line(
-        "Housings", total_housings, len(in_scope_housings)
-    )
-    status_line = selectors.status_breakdown_text(status_counts, status_order)
-    experiments_line = selectors.entity_count_line(
-        "Experiments", counts["experiments"], len(df)
-    )
-    overview_records_line = selectors.entity_count_line(
-        "Overview records", counts["overview_records"], n_overview_records
-    )
-
     summary = [
-        html.B(assemblies_line),
-        html.Br(),
-        housings_line,
-        html.Br(),
-        status_line,
-        html.Br(),
-        html.B(experiments_line),
-        html.Br(),
+        selectors.database_summary_banner(
+            db.get_database_summary(db_path, assembly_names=scope_assembly_names)
+        ),
         f"Processed: {(df['Status'] == 'STATS DONE').sum()}",
-        html.Br(),
-        html.B(overview_records_line),
-        html.Br(),
-        html.B(f"DB-wide: {counts['magnets']} magnets, {counts['parts']} parts"),
     ]
 
     return (
@@ -550,15 +491,15 @@ def layout(assembly=None, **kwargs):
                         style={"width": "150px"},
                     ),
                     selectors.aggregate_filter(
+                        "assembly-stats-status-filter",
+                        "Status",
+                        style={"width": "250px"},
+                    ),
+                    selectors.aggregate_filter(
                         "assembly-stats-assembly-filter",
                         "Assembly",
                         style={"width": "400px"},
                         value=assembly,
-                    ),
-                    selectors.aggregate_filter(
-                        "assembly-stats-status-filter",
-                        "Status",
-                        style={"width": "250px"},
                     ),
                 ],
                 style={"display": "flex", "gap": "30px", "marginBottom": "15px"},
@@ -751,9 +692,6 @@ def update_assembly_stats(
         and (assemblies_with_status is None or a in assemblies_with_status)
     ]
     housing_options = [selectors.ALL] + db.get_housings(selected_db)
-    total_assemblies = load_assembly_summary(selected_db)
-    total_housings = len(housing_options) - 1
-    status_order = status_options[1:]
     assembly_selected = bool(selected_assembly) and selected_assembly != selectors.ALL
     in_scope_assemblies = (
         [selected_assembly] if assembly_selected else assembly_options[1:]
@@ -794,6 +732,14 @@ def update_assembly_stats(
             overview_plot_df["Assembly"] == selected_assembly
         ]
 
+    filters_active = (
+        (selected_housing and selected_housing != selectors.ALL)
+        or (selected_year and selected_year != selectors.ALL)
+        or assembly_selected
+        or (selected_status and selected_status != selectors.ALL)
+    )
+    scope_assembly_names = in_scope_assemblies if filters_active else None
+
     (
         fig_per_exp,
         fig_per_assembly,
@@ -803,11 +749,7 @@ def update_assembly_stats(
         summary,
     ) = _build_page_content(
         plot_df,
-        total_assemblies,
-        total_housings,
-        in_scope_assemblies,
-        status_order,
-        len(overview_plot_df),
+        scope_assembly_names,
         selected_assembly,
         selected_year,
         assemblies_meta,

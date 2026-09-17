@@ -58,6 +58,107 @@ def status_breakdown_text(status_counts, order):
     return ", ".join(f"{status}: {status_counts.get(status, 0)}" for status in order)
 
 
+def _year_housing_pivot_table(by_year_housing):
+    """Build a `DataTable` for a year x housing pivot, or a placeholder if empty.
+
+    Parameters
+    ----------
+    by_year_housing : :class:`~pandas.DataFrame`
+        Indexed by year, one column per housing, as returned by
+        :func:`magnetdb_analysis.get_database_summary`.
+
+    Returns
+    -------
+    :class:`~dash.html.Div` or :class:`dash.dash_table.DataTable`
+    """
+    if by_year_housing.empty:
+        return html.Div(
+            "No dated records for the current scope.",
+            style={"color": "#888", "fontStyle": "italic"},
+        )
+    table_df = by_year_housing.reset_index().rename(columns={"year": "Year"})
+    return DataTable(
+        columns=[{"name": c, "id": c} for c in table_df.columns],
+        data=table_df.to_dict("records"),
+        sort_action="native",
+        style_table={"overflowX": "auto"},
+        style_cell={"textAlign": "center", "padding": "6px"},
+        style_header={"fontWeight": "bold"},
+    )
+
+
+def database_summary_banner(summary):
+    """Render the shared DB-wide (or assembly-scoped) counts summary.
+
+    Parameters
+    ----------
+    summary : dict
+        Result of :func:`magnetdb_analysis.get_database_summary`.
+
+    Returns
+    -------
+    :class:`~dash.html.Div`
+        One line per category (housings, assemblies, magnets, parts,
+        manips), plus a collapsed `html.Details` per category (experiments,
+        overview records) holding a year x housing pivot `DataTable`.
+    """
+    housings, assemblies, magnets, parts = (
+        summary["housings"],
+        summary["assemblies"],
+        summary["magnets"],
+        summary["parts"],
+    )
+    lines = [
+        html.Div(f"Housings: {housings['total']} ({', '.join(housings['names'])})"),
+        html.Div(
+            [
+                f"Assemblies: {assemblies['total']} (",
+                status_breakdown_text(assemblies["by_status"], db.get_distinct_statuses("assemblies")),
+                ")",
+            ]
+        ),
+        html.Div(
+            [
+                f"Magnets: {magnets['total']} (",
+                status_breakdown_text(magnets["by_status"], db.get_distinct_statuses("magnets")),
+                ")",
+            ]
+        ),
+        html.Div(
+            [
+                f"Parts: {parts['total']} (helix/bitter/supra: {parts['coil_total']} - ",
+                status_breakdown_text(parts["by_status"], db.get_distinct_statuses("parts")),
+                ")",
+            ]
+        ),
+    ]
+
+    for label, key in (("Experiments", "experiments"), ("Overview records", "overview_records")):
+        category = summary[key]
+        lines.append(
+            html.Details(
+                [
+                    html.Summary(f"{label}: {category['total']}"),
+                    _year_housing_pivot_table(category["by_year_housing"]),
+                ],
+                open=False,
+            )
+        )
+
+    manips = summary["manips"]
+    if manips["from_date"] is None:
+        lines.append(html.Div(f"Manips: {manips['total']}"))
+    else:
+        lines.append(
+            html.Div(
+                f"Manips: {manips['total']} unique users "
+                f"({manips['from_date']:%Y-%m-%d} → {manips['to_date']:%Y-%m-%d})"
+            )
+        )
+
+    return html.Div(lines)
+
+
 def cascading_selector(id, label, step_n, value=None):
     """Build a required, cascading-selection dropdown (e.g. Assembly -> Record/File).
 

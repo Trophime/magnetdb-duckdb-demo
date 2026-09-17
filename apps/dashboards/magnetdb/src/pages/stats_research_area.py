@@ -21,7 +21,7 @@ EXPERIMENTS_COLUMNS = [
         if c in ("Experiment", "Assembly")
         else {"name": c, "id": c}
     )
-    for c in ("ID", "Experiment", "Assembly", "Housing", "Status")
+    for c in ("Experiment", "Assembly", "Housing", "Status")
 ]
 
 OVERVIEW_RECORD_COLUMNS = [
@@ -45,7 +45,6 @@ def _experiments_section(exp_df):
         return _no_data_message("No experiments found for the current filters.")
     source_df = exp_df.rename(
         columns={
-            "id": "ID",
             "name": "Experiment",
             "file": "File",
             "assembly_name": "Assembly",
@@ -58,7 +57,7 @@ def _experiments_section(exp_df):
     table_df = source_df.drop(columns=["File"])
     table_df["Experiment"] = source_df.apply(experiment_link, axis=1)
     table_df["Assembly"] = source_df.apply(assembly_link, axis=1)
-    table_df = table_df[["ID", "Experiment", "Assembly", "Housing", "Status"]]
+    table_df = table_df[["Experiment", "Assembly", "Housing", "Status"]]
 
     return DataTable(
         columns=EXPERIMENTS_COLUMNS,
@@ -143,43 +142,6 @@ def _add_field_bin_columns(df, percent_group_cols):
     return bin_order, bin_colors
 
 
-def _file_range_text(label, count, start, end):
-    """One summary line: "<label>: <count> (<start> -> <end>)", or "none"/no-range fallback."""
-    if not count:
-        return f"{label}: none"
-    if pd.isna(start):
-        return f"{label}: {count}"
-    return f"{label}: {count} ({start:%Y-%m-%d} → {end:%Y-%m-%d})"
-
-
-def _housing_summary():
-    """Build the per-housing experiments/overview-records summary banner."""
-    summary_df = db.get_housing_file_summary()
-    lines = []
-    for row in summary_df.itertuples():
-        lines.append(html.B(row.housing))
-        lines.append(html.Br())
-        lines.append(
-            _file_range_text(
-                "  Experiments",
-                row.n_experiments,
-                row.experiments_start,
-                row.experiments_end,
-            )
-        )
-        lines.append(html.Br())
-        lines.append(
-            _file_range_text(
-                "  Overview records",
-                row.n_overview_records,
-                row.overview_records_start,
-                row.overview_records_end,
-            )
-        )
-        lines.append(html.Br())
-    return lines
-
-
 layout = html.Div(
     [
         html.H2("Manip Dashboard"),
@@ -210,7 +172,7 @@ layout = html.Div(
             ],
             style={"display": "flex", "gap": "30px", "marginBottom": "30px"},
         ),
-        html.Div(_housing_summary(), id="ra-summary"),
+        html.Div(id="ra-summary"),
         html.Br(),
         dcc.Graph(id="ra-exp"),
         dcc.Graph(id="ra-time"),
@@ -291,6 +253,7 @@ layout = html.Div(
     Output("ra-experiments-content", "children"),
     Output("ra-overview-records", "style"),
     Output("ra-overview-records-content", "children"),
+    Output("ra-summary", "children"),
     Input("ra-research-area", "value"),
     Input("ra-housing", "value"),
     Input("ra-year", "value"),
@@ -403,9 +366,17 @@ def update(research_area, housing, year, user):
         section_style = {**section_style, "display": "block"}
         exp_content = _experiments_section(exp_df)
         ov_content = _overview_records_section(ov_df)
+        scope_assembly_names = set(exp_df["assembly_name"].dropna()) | set(
+            ov_df["assembly_name"].dropna()
+        )
     else:
         section_style = {**section_style, "display": "none"}
         exp_content = ov_content = None
+        scope_assembly_names = None
+
+    summary = selectors.database_summary_banner(
+        db.get_database_summary(assembly_names=scope_assembly_names)
+    )
 
     return (
         df.to_dict("records"),
@@ -417,4 +388,5 @@ def update(research_area, housing, year, user):
         exp_content,
         section_style,
         ov_content,
+        summary,
     )

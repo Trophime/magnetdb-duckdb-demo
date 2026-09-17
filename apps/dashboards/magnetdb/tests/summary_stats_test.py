@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import magnetdb_analysis as db
 import magnetdb_plot as plot
+import pandas as pd
 
 DB_PATH = str(Path(__file__).resolve().parents[4] / "to_duckdb" / "test-magnetdb.duckdb")
 
@@ -56,6 +57,95 @@ def test_get_distinct_statuses_parts():
         "dead",
         "in_study",
     ]
+
+
+def test_sort_by_file_timestamp_mixed_pupitre_and_pigbrother():
+    """String order on ``file`` alone is wrong once Pupitre and PigBrother
+    names are mixed: "2025..." < "M9_..." lexicographically, even though the
+    PigBrother row here is chronologically earlier."""
+    df = pd.DataFrame(
+        {
+            "label": ["pupitre_2025", "pigbrother_2024", "pupitre_2023"],
+            "file": [
+                "2025.01.24 - 10:30:29.txt",
+                "M9_Archive_240115-0800.tdms",
+                "2023.06.01 - 09:00:00.txt",
+            ],
+        }
+    )
+    sorted_df = db.sort_by_file_timestamp(df)
+    assert sorted_df["label"].tolist() == [
+        "pupitre_2023",
+        "pigbrother_2024",
+        "pupitre_2025",
+    ]
+
+
+def test_sort_by_file_timestamp_respects_group_columns():
+    df = pd.DataFrame(
+        {
+            "group": ["B", "A", "B", "A"],
+            "file": [
+                "2020.01.02 - 00:00:00.txt",
+                "2020.01.02 - 00:00:00.txt",
+                "2020.01.01 - 00:00:00.txt",
+                "2020.01.01 - 00:00:00.txt",
+            ],
+        }
+    )
+    sorted_df = db.sort_by_file_timestamp(df, group_columns=["group"])
+    assert sorted_df["group"].tolist() == ["A", "A", "B", "B"]
+    assert sorted_df["file"].tolist() == [
+        "2020.01.01 - 00:00:00.txt",
+        "2020.01.02 - 00:00:00.txt",
+        "2020.01.01 - 00:00:00.txt",
+        "2020.01.02 - 00:00:00.txt",
+    ]
+
+
+def test_get_database_summary_unfiltered():
+    summary = db.get_database_summary(DB_PATH)
+
+    assert summary["housings"] == {"total": 2, "names": ["M9", "M10"]}
+    assert summary["assemblies"] == {
+        "total": 49,
+        "by_status": {"in_operation": 2, "disassembled": 47},
+    }
+    assert summary["magnets"] == {
+        "total": 17,
+        "by_status": {"in_operation": 7, "in_stock": 10},
+    }
+    assert summary["parts"]["total"] == 166
+    assert summary["parts"]["coil_total"] == 112
+    assert summary["parts"]["by_status"] == {
+        "in_operation": 40,
+        "in_stock": 66,
+        "in_study": 6,
+    }
+
+    exp_pivot = summary["experiments"]["by_year_housing"]
+    assert summary["experiments"]["total"] == 5419
+    assert exp_pivot.to_numpy().sum() == 5419
+    assert exp_pivot.loc[2018, "M10"] == 403
+
+    ov_pivot = summary["overview_records"]["by_year_housing"]
+    assert summary["overview_records"]["total"] == 1801
+    assert ov_pivot.to_numpy().sum() == 1764
+    assert ov_pivot.loc[2022, "M9"] == 220
+
+    manips = summary["manips"]
+    assert manips["total"] == 363
+    assert manips["from_date"] == pd.Timestamp("2018-02-21 10:18:00")
+    assert manips["to_date"] == pd.Timestamp("2026-07-21 10:57:00")
+
+
+def test_get_database_summary_restricts_to_assembly_names():
+    summary = db.get_database_summary(DB_PATH, assembly_names=["M10_A180220_00"])
+
+    manips = summary["manips"]
+    assert manips["total"] == 9
+    assert manips["from_date"] == pd.Timestamp("2018-02-21 10:18:00")
+    assert manips["to_date"] == pd.Timestamp("2018-05-18 16:56:00")
 
 
 def test_get_housing_file_summary_unfiltered_covers_all_housings():

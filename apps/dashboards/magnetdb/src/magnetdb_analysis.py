@@ -683,9 +683,10 @@ def get_hoop_stress_fatigue_for_part(part_name, db_path=None):
         One row per contributing experiment, with ``ID``, ``Experiment``
         (:class:`~pandas.Timestamp`), ``Assembly``, ``File``, ``Cycles``
         (``n_cycles``), and ``Fatigue proxy (MPa^3)`` (``sum_range3``),
-        ascending by ``Experiment``. Column names match the page's main
-        experiments table so :func:`experiment_links.experiment_link` can be
-        reused as-is. Empty if the part has no recorded fatigue data.
+        ascending by the timestamp parsed from ``File``. Column names match
+        the page's main experiments table so
+        :func:`experiment_links.experiment_link` can be reused as-is. Empty
+        if the part has no recorded fatigue data.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         df = conn.execute(
@@ -701,7 +702,7 @@ def get_hoop_stress_fatigue_for_part(part_name, db_path=None):
             [part_name],
         ).df()
     df["Experiment"] = pd.to_datetime(df["Experiment"])
-    return df
+    return sort_by_file_timestamp(df, file_column="File")
 
 
 def load_hoop_stress_history_for_part(part_name, db_path=None):
@@ -1223,6 +1224,39 @@ def parse_magnet_filename(filename):
             return datetime(year, int(month), int(day), int(hour), int(minute))
 
     return None
+
+
+def sort_by_file_timestamp(df, group_columns=None, file_column="file"):
+    """Sort *df* by *group_columns* then by the timestamp parsed from *file_column*.
+
+    Row order by ``name``/``file`` string alone is unreliable in general:
+    Pupitre filenames happen to sort correctly as strings, but PigBrother
+    filenames don't share that format, so mixing sources requires parsing
+    the embedded timestamp via :func:`parse_magnet_filename`.
+
+    Parameters
+    ----------
+    df : :class:`~pandas.DataFrame`
+        Rows to sort; must have *file_column*.
+    group_columns : list of str, optional
+        Outer sort keys applied before the parsed timestamp (e.g.
+        ``["Magnet"]``). Defaults to none.
+    file_column : str, optional
+        Column holding the Pupitre/PigBrother filename. Defaults to
+        ``"file"``.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        *df* sorted ascending; rows whose filename doesn't parse sort first
+        (matching :func:`get_all_experiments`'s existing convention).
+    """
+    sort_key = df[file_column].apply(lambda f: parse_magnet_filename(f) or datetime.min)
+    return (
+        df.assign(_file_dt=sort_key)
+        .sort_values(list(group_columns or []) + ["_file_dt"])
+        .drop(columns="_file_dt")
+    )
 
 
 def check_same_date(file_pupitre, file_pigbrother, tol=5):
@@ -1754,6 +1788,186 @@ def get_housing_file_summary(db_path=None, assembly_names=None):
     return summary
 
 
+def get_database_summary(db_path=None, assembly_names=None):
+    """Aggregate DB-wide (or assembly-scoped) counts across every entity table.
+
+    Parameters
+    ----------
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+    assembly_names : collection of str, optional
+        Restrict every category to rows reachable from this set of
+        ``assemblies.name`` values. Defaults to no restriction (DB-wide).
+
+    Returns
+    -------
+    dict
+        ``housings`` : dict with ``total``, ``names`` (natsorted).
+        ``assemblies`` : dict with ``total``, ``by_status``.
+        ``magnets`` : dict with ``total``, ``by_status``.
+        ``parts`` : dict with ``total`` (all part types), ``coil_total``,
+        ``by_status`` (the latter two restricted to :data:`_COIL_PART_TYPES`).
+        ``experiments`` : dict with ``total``, ``by_year_housing`` (a
+        :class:`~pandas.DataFrame` indexed by year, one column per housing,
+        parsed from ``experiments.file`` via :func:`parse_magnet_filename`).
+        ``overview_records`` : same shape as ``experiments``, live rows
+        only (``merged_into IS NULL``).
+        ``manips`` : dict with ``total`` (unique ``users.acronym`` reachable
+        via an in-scope linked experiment or overview record), ``from_date``,
+        ``to_date`` (``None`` if nothing matches).
+    """
+    scoped = assembly_names is not None
+
+    if not scoped:
+        housing_names = get_housings(db_path)
+    else:
+        with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+            housing_names = natsorted(
+                conn.execute(
+                    "SELECT DISTINCT housing FROM assemblies "
+                    "WHERE name = ANY(?) AND housing IS NOT NULL",
+                    [list(assembly_names)],
+                ).df()["housing"].tolist()
+            )
+    housings = {"total": len(housing_names), "names": housing_names}
+
+    if not scoped:
+        assemblies = {
+            "total": get_db_counts(db_path)["assemblies"],
+            "by_status": get_status_counts("assemblies", db_path),
+        }
+    else:
+        assemblies = {
+            "total": len(assembly_names),
+            "by_status": get_status_counts("assemblies", db_path, names=assembly_names),
+        }
+
+    if not scoped:
+        magnets = {
+            "total": get_db_counts(db_path)["magnets"],
+            "by_status": get_status_counts("magnets", db_path),
+        }
+    else:
+        with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+            magnet_names = conn.execute(
+                "SELECT DISTINCT magnet_name FROM assembly_magnets WHERE assembly_name = ANY(?)",
+                [list(assembly_names)],
+            ).df()["magnet_name"].tolist()
+        magnets = {
+            "total": len(magnet_names),
+            "by_status": get_status_counts("magnets", db_path, names=magnet_names),
+        }
+
+    if not scoped:
+        coil_names = get_all_parts(db_path, types=_COIL_PART_TYPES)
+        parts = {
+            "total": get_db_counts(db_path)["parts"],
+            "coil_total": len(coil_names),
+            "by_status": get_status_counts("parts", db_path, names=coil_names),
+        }
+    else:
+        with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+            part_rows = conn.execute(
+                """
+                SELECT DISTINCT p.name, p.type
+                FROM assembly_magnets AS sm
+                JOIN magnet_parts AS mp ON mp.magnet_name = sm.magnet_name
+                JOIN parts AS p ON p.name = mp.part_name
+                WHERE sm.assembly_name = ANY(?)
+                """,
+                [list(assembly_names)],
+            ).df()
+        coil_names = part_rows.loc[part_rows["type"].isin(_COIL_PART_TYPES), "name"].tolist()
+        parts = {
+            "total": len(part_rows),
+            "coil_total": len(coil_names),
+            "by_status": get_status_counts("parts", db_path, names=coil_names),
+        }
+
+    exp_query = """
+        SELECT a.housing AS housing, e.file AS file
+        FROM experiments AS e
+        JOIN assemblies AS a ON a.name = e.assembly_name
+    """
+    exp_params = []
+    if scoped:
+        exp_query += " WHERE a.name = ANY(?)"
+        exp_params = [list(assembly_names)]
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        exp_df = conn.execute(exp_query, exp_params).df()
+    exp_total = len(exp_df)
+    exp_dates = exp_df["file"].apply(parse_magnet_filename)
+    exp_df["year"] = exp_dates.apply(lambda d: d.year if d is not None else None)
+    exp_pivot_df = exp_df.dropna(subset=["year"])
+    if exp_pivot_df.empty:
+        exp_by_year_housing = pd.DataFrame()
+    else:
+        exp_pivot_df = exp_pivot_df.assign(year=exp_pivot_df["year"].astype(int))
+        exp_by_year_housing = exp_pivot_df.groupby(["year", "housing"]).size().unstack(fill_value=0)
+    experiments = {"total": exp_total, "by_year_housing": exp_by_year_housing}
+
+    ov_query = "SELECT housing, EXTRACT(YEAR FROM t0) AS year FROM overview_records WHERE merged_into IS NULL"
+    ov_params = []
+    if scoped:
+        ov_query += " AND assembly_name = ANY(?)"
+        ov_params = [list(assembly_names)]
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        ov_df = conn.execute(ov_query, ov_params).df()
+    ov_total = len(ov_df)
+    ov_pivot_df = ov_df.dropna(subset=["year", "housing"])
+    if ov_pivot_df.empty:
+        ov_by_year_housing = pd.DataFrame()
+    else:
+        ov_pivot_df = ov_pivot_df.assign(year=ov_pivot_df["year"].astype(int))
+        ov_by_year_housing = ov_pivot_df.groupby(["year", "housing"]).size().unstack(fill_value=0)
+    overview_records = {"total": ov_total, "by_year_housing": ov_by_year_housing}
+
+    exp_link_query = """
+        SELECT u.acronym, e.file
+        FROM users AS u, UNNEST(u.experiments_ids) AS t(eid)
+        JOIN experiments AS e ON e.id = t.eid
+    """
+    exp_link_params = []
+    if scoped:
+        exp_link_query += " WHERE e.assembly_name = ANY(?)"
+        exp_link_params = [list(assembly_names)]
+
+    ov_link_query = """
+        SELECT u.acronym, o.t0
+        FROM users AS u, UNNEST(u.overview_records_ids) AS t(ovid)
+        JOIN overview_records AS o ON o.filename = t.ovid AND o.merged_into IS NULL
+    """
+    ov_link_params = []
+    if scoped:
+        ov_link_query += " AND o.assembly_name = ANY(?)"
+        ov_link_params = [list(assembly_names)]
+
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        exp_link_df = conn.execute(exp_link_query, exp_link_params).df()
+        ov_link_df = conn.execute(ov_link_query, ov_link_params).df()
+
+    exp_link_dates = pd.to_datetime(exp_link_df["file"].apply(parse_magnet_filename)).dropna()
+    ov_link_dates = ov_link_df["t0"].dropna()
+    manip_date_parts = [s for s in (exp_link_dates, ov_link_dates) if not s.empty]
+    manip_dates = pd.concat(manip_date_parts) if manip_date_parts else pd.Series(dtype="datetime64[ns]")
+    manip_acronyms = set(exp_link_df["acronym"]) | set(ov_link_df["acronym"])
+    manips = {
+        "total": len(manip_acronyms),
+        "from_date": manip_dates.min() if not manip_dates.empty else None,
+        "to_date": manip_dates.max() if not manip_dates.empty else None,
+    }
+
+    return {
+        "housings": housings,
+        "assemblies": assemblies,
+        "magnets": magnets,
+        "parts": parts,
+        "experiments": experiments,
+        "overview_records": overview_records,
+        "manips": manips,
+    }
+
+
 def load_assemblies_meta(db_path=None):
     """Load every assembly's name, housing, and commissioning window.
 
@@ -2209,7 +2423,8 @@ def get_experiments_for_filters(housing=None, year=None, research_area=None, use
     :class:`~pandas.DataFrame`
         One row per distinct experiment linked to a matching ``users``
         session, with columns ``id``, ``name``, ``description``, ``file``,
-        ``assembly_name`` and ``status``.
+        ``assembly_name`` and ``status``, ascending by the timestamp parsed
+        from ``file``.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
@@ -2228,7 +2443,8 @@ def get_experiments_for_filters(housing=None, year=None, research_area=None, use
         """
         year = None if year is None else int(year)
         params = [housing, housing, year, year, research_area, research_area, user, user]
-        return conn.execute(query, params).df()
+        df = conn.execute(query, params).df()
+    return sort_by_file_timestamp(df, file_column="file")
 
 
 def get_overview_records_for_filters(housing=None, year=None, research_area=None, user=None, db_path=None):

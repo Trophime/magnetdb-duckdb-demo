@@ -103,6 +103,7 @@ def load_data(db_path=None):
 
     df["Experiment"] = pd.to_datetime(df["Experiment"])
     df["Housing"] = df["Assembly"].str.extract(r"^(M\d+)")
+    df = db.sort_by_file_timestamp(df, group_columns=["Magnet"], file_column="File")
 
     con.close()
 
@@ -153,7 +154,7 @@ TABLE_COLUMNS = [
         else {"name": c, "id": c}
     )
     for c in EXP_RUN_SCALARS_COLUMNS
-    if c != "File"
+    if c not in ("File", "ID")
 ]
 
 OVERVIEW_RECORD_COLUMNS = [
@@ -317,9 +318,7 @@ def _parts_section(selected_magnet, db_path):
 
 def _build_page_content(
     df,
-    in_scope_magnets,
-    status_order,
-    n_overview_records,
+    scope_assembly_names,
     selected_magnet=None,
     db_path=None,
     table_start_date=None,
@@ -332,14 +331,10 @@ def _build_page_content(
     df : :class:`~pandas.DataFrame`
         Rows from :func:`load_data`, already filtered to the page's current
         magnet/status selection.
-    in_scope_magnets : list of str
-        Magnet names matching the page's current Status/Magnet filters (all
-        magnets when none are active).
-    status_order : list of str
-        Distinct magnet status values, for the status-breakdown line.
-    n_overview_records : int
-        Overview-record count matching the page's current filters, used for
-        the "Overview records: N selected of Total" summary line.
+    scope_assembly_names : list of str or None
+        Assembly names reachable from the page's current Status/Magnet
+        filters, for :func:`magnetdb_analysis.get_database_summary`.
+        ``None`` when unfiltered.
     selected_magnet : str, optional
         Magnet name from the page's filter dropdown.
     db_path : str, optional
@@ -384,32 +379,11 @@ def _build_page_content(
     table_df["Magnet"] = table_source_df.apply(magnet_link, axis=1)
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
-    counts = db.get_db_counts(db_path)
-    status_counts = db.get_status_counts("magnets", db_path, names=in_scope_magnets)
-
-    magnets_line = selectors.entity_count_line(
-        "Magnets", counts["magnets"], len(in_scope_magnets)
-    )
-    status_line = selectors.status_breakdown_text(status_counts, status_order)
-    experiments_line = selectors.entity_count_line(
-        "Experiments", counts["experiments"], len(exp_df)
-    )
-    overview_records_line = selectors.entity_count_line(
-        "Overview records", counts["overview_records"], n_overview_records
-    )
-
     summary = [
-        html.B(magnets_line),
-        html.Br(),
-        status_line,
-        html.Br(),
-        html.B(experiments_line),
-        html.Br(),
+        selectors.database_summary_banner(
+            db.get_database_summary(db_path, assembly_names=scope_assembly_names)
+        ),
         f"Processed: {(exp_df['Status'] == 'STATS DONE').sum()}",
-        html.Br(),
-        html.B(overview_records_line),
-        html.Br(),
-        html.B(f"DB-wide: {counts['assemblies']} assemblies, {counts['parts']} parts"),
     ]
 
     return (
@@ -656,7 +630,11 @@ def update_magnet_stats(
     )
 
     in_scope_magnets = [selected_magnet] if magnet_selected else magnet_options[1:]
-    status_order = status_options[1:]
+    scope_assembly_names = (
+        None
+        if (not selected_status or selected_status == selectors.ALL) and not magnet_selected
+        else db.get_assembly_names_for_magnets(in_scope_magnets, selected_db)
+    )
 
     (
         fig_field_on,
@@ -664,9 +642,7 @@ def update_magnet_stats(
         summary,
     ) = _build_page_content(
         plot_df,
-        in_scope_magnets,
-        status_order,
-        len(overview_plot_df),
+        scope_assembly_names,
         selected_magnet,
         selected_db,
         table_start_date,

@@ -116,6 +116,7 @@ def load_data(db_path=None):
 
     df["Experiment"] = pd.to_datetime(df["Experiment"])
     df["Housing"] = df["Assembly"].str.extract(r"^(M\d+)")
+    df = db.sort_by_file_timestamp(df, group_columns=["Part"], file_column="File")
 
     con.close()
 
@@ -170,7 +171,7 @@ TABLE_COLUMNS = [
         )
     )
     for c in EXP_PART_BIN_STATS_COLUMNS
-    if c not in ("File", "Peak hoop stress proxy (A^2)")
+    if c not in ("File", "ID", "Peak hoop stress proxy (A^2)")
 ]
 
 OVERVIEW_RECORD_COLUMNS = [
@@ -225,7 +226,7 @@ FATIGUE_TABLE_COLUMNS = [
         if c in ("Experiment", "Assembly")
         else {"name": c, "id": c}
     )
-    for c in ("ID", "Experiment", "Assembly", "Cycles", "Fatigue proxy (MPa^3)")
+    for c in ("Experiment", "Assembly", "Cycles", "Fatigue proxy (MPa^3)")
 ]
 
 
@@ -514,10 +515,7 @@ def _fatigue_section(selected_part, db_path):
 
 def _build_page_content(
     df,
-    total_parts,
-    in_scope_parts,
-    status_order,
-    n_overview_records,
+    scope_assembly_names,
     selected_part=None,
     db_path=None,
     table_start_date=None,
@@ -527,17 +525,10 @@ def _build_page_content(
 
     Parameters
     ----------
-    total_parts : int
-        Count of parts in scope for this page (types in :data:`PART_TYPES`),
-        regardless of filters.
-    in_scope_parts : list of str
-        Part names matching the page's current Status/Part filters (all
-        parts when none are active).
-    status_order : list of str
-        Distinct part status values, for the status-breakdown line.
-    n_overview_records : int
-        Overview-record count matching the page's current filters, used for
-        the "Overview records: N selected of Total" summary line.
+    scope_assembly_names : list of str or None
+        Assembly names reachable from the page's current Status/Part
+        filters, for :func:`magnetdb_analysis.get_database_summary`.
+        ``None`` when unfiltered.
     table_start_date, table_end_date : str, optional
         Inclusive ``Experiment`` date bounds (``"YYYY-MM-DD"``) from the
         Experiments table's date-range picker. Only the returned table rows
@@ -576,32 +567,11 @@ def _build_page_content(
     table_df["Magnet"] = table_source_df.apply(magnet_link, axis=1)
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
-    counts = db.get_db_counts(db_path)
-    status_counts = db.get_status_counts("parts", db_path, names=in_scope_parts)
-
-    parts_line = selectors.entity_count_line("Parts", total_parts, len(in_scope_parts))
-    status_line = selectors.status_breakdown_text(status_counts, status_order)
-    experiments_line = selectors.entity_count_line(
-        "Experiments", counts["experiments"], len(exp_df)
-    )
-    overview_records_line = selectors.entity_count_line(
-        "Overview records", counts["overview_records"], n_overview_records
-    )
-
     summary = [
-        html.B(parts_line),
-        html.Br(),
-        status_line,
-        html.Br(),
-        html.B(experiments_line),
-        html.Br(),
-        f"Processed: {(exp_df['Status'] == 'STATS DONE').sum()}",
-        html.Br(),
-        html.B(overview_records_line),
-        html.Br(),
-        html.B(
-            f"DB-wide: {counts['assemblies']} assemblies, {counts['magnets']} magnets"
+        selectors.database_summary_banner(
+            db.get_database_summary(db_path, assembly_names=scope_assembly_names)
         ),
+        f"Processed: {(exp_df['Status'] == 'STATS DONE').sum()}",
     ]
 
     return (
@@ -890,7 +860,6 @@ def update_part_stats(
         else None
     )
     all_parts = db.get_all_parts(selected_db, types=PART_TYPES)
-    total_parts = len(all_parts)
     part_options = [selectors.ALL] + [
         p for p in all_parts if names_with_status is None or p in names_with_status
     ]
@@ -944,7 +913,11 @@ def update_part_stats(
     )
 
     in_scope_parts = [selected_part] if part_selected else part_options[1:]
-    status_order = status_options[1:]
+    scope_assembly_names = (
+        None
+        if (not selected_status or selected_status == selectors.ALL) and not part_selected
+        else db.get_assembly_names_for_parts(in_scope_parts, selected_db)
+    )
 
     (
         fig_magnet_time,
@@ -952,10 +925,7 @@ def update_part_stats(
         summary,
     ) = _build_page_content(
         plot_df,
-        total_parts,
-        in_scope_parts,
-        status_order,
-        len(overview_plot_df),
+        scope_assembly_names,
         selected_part,
         selected_db,
         table_start_date,

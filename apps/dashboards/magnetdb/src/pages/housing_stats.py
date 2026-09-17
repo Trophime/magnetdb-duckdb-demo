@@ -602,7 +602,6 @@ def update_housing_stats(selected_db, selected_year):
 
     summary_df = load_housing_summary(selected_db)
     summary_by_year_df = load_housing_summary_by_year(selected_db)
-    counts = db.get_db_counts(selected_db)
     housing_order = natsorted(summary_df["Housing"].dropna().unique())
 
     assemblies_meta = db.load_assemblies_meta(selected_db)
@@ -627,10 +626,11 @@ def update_housing_stats(selected_db, selected_year):
     )
     commissioning = load_commissioning_history(selected_db, assemblies_in_year)
 
+    per_housing_lines = []
+    """
     housing_file_summary_df = db.get_housing_file_summary(
         selected_db, assembly_names=assemblies_in_year
     )
-    per_housing_lines = []
     for row in housing_file_summary_df.itertuples():
         per_housing_lines += [
             html.Br(),
@@ -641,19 +641,12 @@ def update_housing_stats(selected_db, selected_year):
             html.Br(),
             f"Overview records: {row.n_overview_records}",
         ]
+    """
 
     top_summary = [
-        html.B(f"Housings: {counts['housings']}"),
-        html.Br(),
-        html.B(f"Assemblies: {counts['assemblies']}"),
-        html.Br(),
-        html.B(f"Magnets: {counts['magnets']}"),
-        html.Br(),
-        html.B(f"Parts: {counts['parts']}"),
-        html.Br(),
-        html.B(f"Experiments: {counts['experiments']}"),
-        html.Br(),
-        html.B(f"Overview records: {counts['overview_records']}"),
+        selectors.database_summary_banner(
+            db.get_database_summary(selected_db, assembly_names=assemblies_in_year)
+        ),
         *per_housing_lines,
     ]
 
