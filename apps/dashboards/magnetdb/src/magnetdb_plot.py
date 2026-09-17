@@ -243,6 +243,7 @@ class FileTypeStyles:
     default: TraceStyle = field(default_factory=lambda: TraceStyle("#9467bd", "dot", 1.5, 0.8))
     spike: TraceStyle = field(default_factory=lambda: TraceStyle("#d62728", "dash", 1.5, 0.9))
     trigger: TraceStyle = field(default_factory=lambda: TraceStyle("#8c564b", "dashdot", 1.5, 0.8))
+    supervision: TraceStyle = field(default_factory=lambda: TraceStyle("#17becf", "solid", 2, 1.0))
 
     def get(self, file_type: str | None) -> TraceStyle | None:
         """Return the TraceStyle for *file_type*, or None if unset/unrecognised."""
@@ -412,10 +413,14 @@ def resolve_file_type_key(filename: str) -> str | None:
     Returns
     -------
     str or None
+        ``'supervision'`` for the synthetic ``"SUPERVISION"`` filename used
+        for SUPERVISION-sourced traces (see ``pages/file_viewer.py``),
         ``'pupitre'`` for a ``.txt`` file, the normalized
         :func:`~python_magnetrun.utils.files.classify_pigbrother_file` mode
         for a ``.tdms`` file, or ``None`` if unresolved.
     """
+    if filename == 'SUPERVISION':
+        return 'supervision'
     if filename.endswith('.txt'):
         return 'pupitre'
     return classify_pigbrother_file(filename)

@@ -1,6 +1,7 @@
-# Plan: SUPERVISION `bdd` data in file_viewer.py and overview_records.py
+# Plan: SUPERVISION `bdd` data in file_viewer.py, overview_records.py and defaults_spikes.py
 
-Status: pending approval (not yet implemented)
+Status: visualization and editable per-field styling implemented for all
+three pages.
 
 **Goal.** Add a new `supervision-bdd-defs.json`, grouped like
 `pupitre-defs.json` (via a `"group"` key):
@@ -134,9 +135,33 @@ for Pupitre and Pigbrother files.
   no host/credentials exist anywhere in this repo/environment yet (see
   `to_duckdb/PLAN_users_multi_source.md`, Phase 2, still blocked).
 
+### Styling — implemented
+
+`file_viewer.py`'s SUPERVISION curves now have both a distinct base style and
+full per-field editability via the existing gear-icon modal:
+
+- `style.json` / `magnetdb_plot.FileTypeStyles` gained a `supervision` entry
+  (`#17becf`, solid, width 2); `resolve_file_type_key("SUPERVISION")` →
+  `"supervision"`.
+- `update_outputs` keeps sensor names `"supervision:"`-prefixed all the way
+  through the supervision `create_plot()` call (renaming the DataFrame's
+  columns to match beforehand), so `_resolve_field_override`'s lookup uses a
+  collision-free key even when a SUPERVISION field shares its bare name with
+  a native sensor in the same group (e.g. pupitre's own `teb` vs.
+  SUPERVISION's `teb`). Legend labels are cleaned up afterward
+  (`"supervision:teb"` → `"teb [SUPERVISION]"`).
+- `_style_context_fn` always appends SUPERVISION field rows (prefixed, tagged
+  `"supervision"`) on top of whatever native rows exist, instead of bailing
+  out empty for groups with no native match.
+
+Verified end-to-end: a saved override on `supervision:teb` and one on native
+`teb` in the same "Refroidissement" group applied independently to the
+correct trace, and an un-overridden SUPERVISION trace correctly fell back to
+the new base `supervision` style.
+
 ---
 
-## Plan addition: same groups in `overview_records.py`
+## Plan addition: same groups in `overview_records.py` — implemented
 
 `overview_records.py` is architecturally better-suited for this than
 `file_viewer.py`. It already overlays multiple source files on one graph via
@@ -223,21 +248,110 @@ time against `bdd.csv` rows) before/during implementation.
 
 ---
 
-## Future note: `defaults_spikes.py`
+## `defaults_spikes.py` — implemented
 
-Not planned in detail yet — noted for eventual follow-up.
-`apps/dashboards/magnetdb/src/pages/defaults_spikes.py` uses the same
+Confirmed identical architecture to `overview_records.py` (same
 `db.get_overview_group_entries` / `db.collect_group_files_data` /
-`plot.create_annotated_plot` `group_entries`/`files_data` pattern as
-`overview_records.py` (confirmed: same three calls, same shapes, in its own
-`update_groups`/`update_graphs` callbacks). So the overview_records.py
-approach above — `merge_supervision_group_entries` +
-`collect_supervision_files_data`, appended to the existing `files_data` list
-before the unmodified `create_annotated_plot` call — should carry over
-directly, reusing the same two helper functions with no changes needed to
-them. The one thing to re-check when this is actually planned: which time
-window this page anchors incidents to (`_resolve_t0_reference`/
-`_incident_x_range` suggest it may be keyed off a specific incident's
-timestamp rather than the whole record's `[t0, t0+duration]` span used by
-overview_records.py) — that determines what `start`/`end` to pass into
-`load_supervision_bdd`.
+`plot.create_annotated_plot` calls, same `group_entries`/`files_data` shapes,
+in its own `update_groups`/`update_graphs` callbacks), so the same two
+helpers — `merge_supervision_group_entries` in `update_groups`,
+`collect_supervision_files_data` appended to `files_data` in `update_graphs`
+— carry over unchanged, no new functions needed.
+
+The previously-open question (which time window this page anchors to) is
+resolved: `_resolve_t0_reference`/`_incident_x_range`/the incident+window
+picker only affect the **displayed** x-axis zoom range, applied identically
+to native and SUPERVISION traces via the same post-hoc
+`fig.update_layout(xaxis={"range": x_range, ...})` step both pages already
+use. The underlying *data* is still the whole record's regular files — so
+SUPERVISION data uses the same whole-record `[t0, t0+duration]` window as
+`overview_records.py`, not a narrower per-incident window.
+
+Verified the same way: `merge_supervision_group_entries` produces
+non-colliding entries (`Refroidissement` merged natively, `Water_Resistivity`/
+`Nitrogen_Level` fresh), and `update_graphs` produces correct traces for
+fields present in `bdd.csv`'s current window and empty-but-no-crash figures
+otherwise.
+
+---
+
+## Plan addition: editable styling for `overview_records.py` and `defaults_spikes.py`
+
+Status: implemented.
+
+**Goal.** Same two things `file_viewer.py` already has: a distinct base style
+for SUPERVISION curves, and full per-field editability via each page's
+existing gear-icon modal — on both `overview_records.py` and
+`defaults_spikes.py`.
+
+**Base style is already working, no changes needed.** Both pages' single
+`create_annotated_plot(files_data, ...)` call already does
+`style = _resolve_file_style(item['file'])` per `files_data` entry, and
+`collect_supervision_files_data` already sets `"file": "SUPERVISION"` on its
+entry — so `resolve_file_type_key`/`FileTypeStyles.supervision` (added for
+`file_viewer.py`) already apply here too. Confirmed while testing the
+visualization work above (`SUPERVISION - teb` traces already pick up the
+`supervision` base style automatically).
+
+**Per-field editability needs the same collision fix `file_viewer.py`
+needed, applied here.** `create_annotated_plot` calls
+`_resolve_field_override(group_name, sensor)` using the **bare** sensor name
+from each `files_data` item — and `collect_supervision_files_data` currently
+puts bare field names (`"teb"`, not `"supervision:teb"`) in its `"sensors"`
+list. Since one `create_annotated_plot` call covers a whole block's
+`files_data` (native items *and* the SUPERVISION item together, same
+`group_name`), a saved override for native `teb` in `"Refroidissement"` would
+silently also apply to SUPERVISION's `teb` trace — same root cause as the
+`file_viewer.py` fix, just not yet applied here since this page's
+`collect_supervision_files_data` was written before that fix existed.
+
+**Files affected**
+
+- `apps/dashboards/magnetdb/src/magnetdb_analysis.py` — **edit**
+  `collect_supervision_files_data`: keep `"supervision:"`-prefixed names in
+  `"sensors"` (not bare), and rename the returned `df`'s data columns to
+  match beforehand (`{field: f"supervision:{field}"}`) — mirrors
+  `file_viewer.py`'s `update_outputs` fix exactly, and makes
+  `_resolve_field_override`'s lookup collision-free with no changes to
+  `create_annotated_plot`/`_resolve_field_override` themselves. Side effect:
+  `create_annotated_plot`'s trace name (`f"{file} - {sensor}"`) becomes
+  `"SUPERVISION - supervision:teb"` — redundant but not broken; each page's
+  `update_graphs` can strip the `"supervision:"` remnant from
+  `fig.data[i].name` in a small post-hoc loop after the `create_annotated_plot`
+  call, the same spot `file_viewer.py` already does its own trace-name
+  cleanup.
+
+- `apps/dashboards/magnetdb/src/pages/overview_records.py` and
+  `apps/dashboards/magnetdb/src/pages/defaults_spikes.py` — **edit**, same
+  change in both `_style_context_fn`s: currently each calls
+  `db.collect_group_field_rows(regular_files, housing, group_name,
+  group_entries or {})` and returns its result directly. Restructure to
+  always additionally append `(f"supervision:{f}", "supervision")` for every
+  `f` in `db.supervision_field_groups().get(group_name, [])`, and add
+  `"supervision"` to `source_keys` when present — regardless of whether the
+  native lookup found anything, so `Water_Resistivity`/`Nitrogen_Level`
+  (and `Refroidissement` on records with no Pupitre source) are no longer
+  empty modals. Structurally identical to `file_viewer.py`'s
+  `_style_context_fn` fix from the previous plan section.
+
+**Verification**
+
+1. `collect_supervision_files_data`'s returned `df` has prefixed column
+   names matching its `"sensors"` list; `_resolve_field_override` with those
+   names round-trips through a saved `StyleConfig`.
+2. On a record with a native `Refroidissement` group: save a color override
+   on native `teb` and a *different* color on `supervision:teb` → re-render
+   → confirm each trace gets its own color (not the other's).
+3. Open the gear icon on `Water_Resistivity`/`Nitrogen_Level` on both pages
+   → modal is no longer empty, shows their fields plus a `supervision`
+   opacity row.
+4. Trace names read `"SUPERVISION - teb"` (not `"SUPERVISION -
+   supervision:teb"`) after the cleanup step.
+
+**Assumptions & open questions**
+
+- Whether the trace-name cleanup belongs as a shared helper (e.g. in
+  `magnetdb_plot.py`) instead of being duplicated across `file_viewer.py`,
+  `overview_records.py`, and `defaults_spikes.py` — currently each page does
+  its own small rename loop; worth a light dedup pass if a fourth page ever
+  needs the same pattern, but not worth it for three.

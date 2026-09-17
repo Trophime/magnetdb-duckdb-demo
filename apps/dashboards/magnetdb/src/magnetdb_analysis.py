@@ -36,6 +36,13 @@ DB_PATH = os.environ.get(
 # Répertoire scanné pour lister les bases sélectionnables dans le dropdown
 DB_DIR = os.environ.get("MAGNETDB_DB_DIR", os.path.dirname(DB_PATH))
 
+# SUPERVISION 'bdd' table CSV export (site-level cooling/utility channels,
+# not tied to a single magnet/housing) — surchargable via variable d'environnement.
+SUPERVISION_BDD_CSV = os.environ.get(
+    "MAGNETDB_SUPERVISION_BDD_CSV",
+    str(Path(__file__).resolve().parents[4] / "Data" / "bdd.csv"),
+)
+
 # Timestamps are stored in the database as naive UTC (see to_duckdb/populate.py's
 # --db-tz, defaulting to UTC). DISPLAY_TZ is the timezone they are converted to
 # for display in the dashboard; override via MAGNETDB_DISPLAY_TZ for deployments
@@ -798,6 +805,192 @@ def get_group_dataframe(filename, housing, group_name):
     """
     mrun = load_mrun_object(filename, housing)
     return mrun.MagnetData.get_group_data(group_name)
+
+
+@functools.lru_cache(maxsize=1)
+def supervision_field_groups() -> dict[str, list[str]]:
+    """Group SUPERVISION ``bdd`` fields by their defs-file ``"group"`` key.
+
+    Mirrors :meth:`~python_magnetrun.magnetdata_pandas.PandasMagnetData._build_groups`,
+    applied to ``supervision-bdd-defs.json`` — every field defined there is
+    included regardless of whether it's present in the current
+    ``Data/bdd.csv`` export; callers filter that separately.
+
+    Returns
+    -------
+    dict
+        ``{group_name: [field_key, ...]}``.
+    """
+    groups: dict[str, list[str]] = {}
+    for key, entry in load_defs("supervision-bdd-defs.json").items():
+        if key.startswith("_"):
+            continue
+        group = entry.get("group")
+        if group:
+            groups.setdefault(group, []).append(key)
+    return groups
+
+
+@functools.lru_cache(maxsize=64)
+def load_supervision_bdd(start, end) -> pd.DataFrame:
+    """Load SUPERVISION ``bdd`` site-level channels for one time window.
+
+    Reads ``Data/bdd.csv`` (or ``SUPERVISION_BDD_CSV``), filtered to rows
+    within ``[start, end]``, via DuckDB so the multi-million-row CSV is
+    filtered on read rather than loaded fully into memory.
+
+    Parameters
+    ----------
+    start : :class:`~datetime.datetime` or :class:`~pandas.Timestamp`
+        Naive-UTC window start (matches ``bdd.csv``'s own ``timestamp``
+        column and :class:`~python_magnetrun.MagnetRun.MagnetRun`'s
+        ``start_timestamp``/``end_timestamp`` convention).
+    end : :class:`~datetime.datetime` or :class:`~pandas.Timestamp`
+        Naive-UTC window end.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        Columns ``timestamp``, ``t`` [s] (elapsed from *start*), plus
+        whichever ``supervision-bdd-defs.json`` fields are present in the
+        CSV. Empty (just ``timestamp``/``t``) if the CSV is missing or has
+        no rows in range.
+    """
+    try:
+        with duckdb.connect() as conn:
+            df = conn.execute(
+                "SELECT * FROM read_csv_auto(?) WHERE timestamp BETWEEN ? AND ? "
+                "ORDER BY timestamp",
+                [SUPERVISION_BDD_CSV, start, end],
+            ).df()
+    except duckdb.Error:
+        return pd.DataFrame(
+            {"timestamp": pd.Series(dtype="datetime64[ns]"), "t": pd.Series(dtype="float64")}
+        )
+
+    fields = [k for k in load_defs("supervision-bdd-defs.json") if not k.startswith("_")]
+    df = df[["timestamp"] + [f for f in fields if f in df.columns]]
+    df["t"] = (df["timestamp"] - pd.Timestamp(start)).dt.total_seconds()
+    return df
+
+
+def supervision_field_options(group_name: str) -> list[dict]:
+    """Build Dash checklist options for one SUPERVISION ``bdd`` group.
+
+    Each option's ``"value"`` is prefixed ``"supervision:"`` so it can't
+    collide with a same-named native sensor value in a merged checklist
+    (see ``pages/file_viewer.py``'s ``update_sensors_menus``).
+
+    Parameters
+    ----------
+    group_name : str
+        A key of :func:`supervision_field_groups`.
+
+    Returns
+    -------
+    list of dict
+        ``[{"label": str, "value": str}, ...]``.
+    """
+    defs = load_defs("supervision-bdd-defs.json")
+    options = []
+    for field in supervision_field_groups().get(group_name, []):
+        entry = defs[field]
+        symbol = entry.get("symbol")
+        unit = entry.get("unit")
+        if symbol and unit:
+            suffix = f" ({symbol} [{unit}])"
+        elif symbol:
+            suffix = f" ({symbol})"
+        else:
+            suffix = ""
+        options.append(
+            {"label": f"{field} [SUPERVISION]{suffix}", "value": f"supervision:{field}"}
+        )
+    return options
+
+
+def merge_supervision_group_entries(group_entries: dict) -> dict:
+    """Add SUPERVISION ``bdd`` fields to an ``overview_records``/``defaults_spikes``-style group-entries map.
+
+    Merges into a same-named native group's entry list when one already
+    exists (e.g. ``"Refroidissement"``), or adds a fresh group otherwise
+    (``"Water_Resistivity"``/``"Nitrogen_Level"`` never have a native
+    counterpart in either format).
+
+    Parameters
+    ----------
+    group_entries : dict
+        Result of :func:`get_overview_group_entries`.
+
+    Returns
+    -------
+    dict
+        A new dict — *group_entries* plus one entry per SUPERVISION field,
+        shaped like a native entry (``{"label", "value", "channels"}``) but
+        under the pseudo-format ``"supervision"`` in ``"channels"``, so
+        :func:`collect_supervision_files_data` can resolve it later.
+    """
+    merged = dict(group_entries)
+    for group_name, fields in supervision_field_groups().items():
+        new_entries = [
+            {**option, "channels": {"supervision": {"group": group_name, "channel": field}}}
+            for field, option in zip(fields, supervision_field_options(group_name))
+        ]
+        merged[group_name] = list(merged.get(group_name, [])) + new_entries
+    return merged
+
+
+def collect_supervision_files_data(
+    group_name: str, selected_values: list, group_entries: dict, start, end
+) -> list[dict]:
+    """Resolve a SUPERVISION-sourced ``files_data`` entry for a display block's checked channels.
+
+    Mirrors :func:`collect_group_files_data`'s per-file entry shape for the
+    ``"supervision"`` pseudo-format, so the result can be appended to its
+    output and passed straight into :func:`magnetdb_plot.create_annotated_plot`.
+
+    Parameters
+    ----------
+    group_name : str
+        The display block's key (as used in *group_entries*).
+    selected_values : list of str
+        Checklist ``"value"`` strings currently checked for this block.
+    group_entries : dict
+        Full ``{group_name: [...]}`` mapping, as returned by
+        :func:`merge_supervision_group_entries`.
+    start : :class:`~datetime.datetime` or :class:`~pandas.Timestamp`
+        Naive-UTC window start.
+    end : :class:`~datetime.datetime` or :class:`~pandas.Timestamp`
+        Naive-UTC window end.
+
+    Returns
+    -------
+    list of dict
+        ``[{"file": "SUPERVISION", "df": DataFrame, "sensors":
+        ["supervision:field", ...], "mrun": None, "native_group":
+        group_name}]`` if any *selected_values* has a ``"supervision"``
+        channel, else ``[]``. ``"sensors"`` stays ``"supervision:"``-prefixed
+        (the ``df``'s data columns are renamed to match) rather than the bare
+        field name, so :func:`~magnetdb_plot.create_annotated_plot`'s
+        ``_resolve_field_override(group_name, sensor)`` lookup is
+        collision-free even when a field shares its bare name with a native
+        sensor in this same group (e.g. pupitre's own ``"teb"`` vs.
+        SUPERVISION's ``"teb"``) — mirrors ``pages/file_viewer.py``'s
+        ``update_outputs``.
+    """
+    channels_by_value = {e["value"]: e["channels"] for e in group_entries.get(group_name, [])}
+    fields = [
+        channels_by_value[v]["supervision"]["channel"]
+        for v in selected_values
+        if "supervision" in channels_by_value.get(v, {})
+    ]
+    if not fields:
+        return []
+    prefixed = [f"supervision:{f}" for f in fields]
+    df = load_supervision_bdd(start, end).rename(columns=dict(zip(fields, prefixed)))
+    return [
+        {"file": "SUPERVISION", "df": df, "sensors": prefixed, "mrun": None, "native_group": group_name}
+    ]
 
 
 _FIELD_COLUMN_CANDIDATES = ("Field", "Champ_magn")
@@ -2064,8 +2257,8 @@ def get_overview_records_for_filters(housing=None, year=None, research_area=None
     :class:`~pandas.DataFrame`
         One row per distinct live (``merged_into IS NULL``) overview record
         linked to a matching ``users`` session, with columns ``filename``,
-        ``assembly_name``, ``housing``, ``mode``, ``t0`` and ``duration``
-        [s].
+        ``assembly_name``, ``housing``, ``mode``, ``t0``, ``duration``
+        [s] and ``stats`` (comma-joined ``sources_stats`` filenames).
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
@@ -2077,7 +2270,8 @@ def get_overview_records_for_filters(housing=None, year=None, research_area=None
                     AND (? IS NULL OR COALESCE(research_area, 'Undefined') = ?)
                     AND (? IS NULL OR acronym = ?)
             )
-            SELECT DISTINCT o.filename, o.assembly_name, o.housing, o.mode, o.t0, o.duration
+            SELECT DISTINCT o.filename, o.assembly_name, o.housing, o.mode, o.t0, o.duration,
+                array_to_string(COALESCE(o.sources_stats, []), ', ') AS stats
             FROM filtered_users AS u, UNNEST(u.overview_records_ids) AS t(ovid)
             JOIN overview_records AS o ON o.filename = t.ovid AND o.merged_into IS NULL
             ORDER BY o.t0

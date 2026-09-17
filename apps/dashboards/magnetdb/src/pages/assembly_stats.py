@@ -14,7 +14,7 @@ from experiment_links import (
 from plotly import graph_objects as go
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/assembly_stats", name="Assemblys", order=3)
+dash.register_page(__name__, path="/assembly_stats", name="Assemblies", order=3)
 
 
 J_TO_KWH = 3.6e6
@@ -134,7 +134,7 @@ def load_overview_records(db_path=None):
     -------
     :class:`~pandas.DataFrame`
         One row per overview record, with ``Overview Record``, ``Assembly``,
-        ``Housing``, ``Mode``, and ``t0`` columns.
+        ``Housing``, ``Mode``, ``t0``, and ``Stats`` columns.
     """
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
@@ -145,7 +145,8 @@ def load_overview_records(db_path=None):
                 assembly_name AS Assembly,
                 housing AS Housing,
                 mode AS Mode,
-                t0
+                t0,
+                array_to_string(COALESCE(sources_stats, []), ', ') AS "Stats"
             FROM overview_records
             WHERE merged_into IS NULL
             ORDER BY t0 NULLS LAST, filename
@@ -256,7 +257,7 @@ OVERVIEW_RECORD_COLUMNS = [
         if c in ("Overview Record", "Assembly")
         else {"name": c, "id": c}
     )
-    for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0")
+    for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats")
 ]
 
 

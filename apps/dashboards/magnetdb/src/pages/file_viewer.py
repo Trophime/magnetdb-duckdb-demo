@@ -308,6 +308,90 @@ def update_file_stats(selected_file, selected_assembly, x_mode, all_relayout_dat
     return banner, plot.field_histogram_figure(field_stats)
 
 
+def _sensor_group_block(group_name, options, saved_values, open_by_default=False):
+    """Build one collapsible checklist+graph block for the sensor-selector panel."""
+    return html.Details(
+        [
+            # 1. EN-TÊTE : Le titre cliquable qui contrôle TOUT le bloc
+            html.Summary(
+                f"📂 {group_name}",
+                style={
+                    "fontWeight": "bold",
+                    "cursor": "pointer",
+                    "padding": "10px 15px",
+                    "backgroundColor": "#e9ecef",
+                    "borderBottom": "1px solid #ddd",
+                    "outline": "none",
+                    "fontSize": "16px",
+                },
+            ),
+            style_editor.gear_button("fv", group_name),
+            # 2. CONTENU : Les deux colonnes (Checklist et Graphique)
+            html.Div(
+                [
+                    # --- PARTIE GAUCHE : Les cases à cocher ---
+                    html.Div(
+                        [
+                            dcc.Checklist(
+                                id={
+                                    "type": "group-sensors-checklist",
+                                    "index": group_name,
+                                },
+                                options=options,
+                                value=saved_values,
+                                labelStyle={
+                                    "display": "block",
+                                    "marginLeft": "25px",
+                                    "marginBottom": "4px",
+                                },
+                            )
+                        ],
+                        style={
+                            "width": "250px",
+                            "flexShrink": 0,
+                            "padding": "10px",
+                            "borderRight": "1px solid #ddd",
+                            "backgroundColor": "#ffffff",
+                        },
+                    ),
+                    # --- PARTIE DROITE : Le conteneur du Graphique ---
+                    html.Div(
+                        children=[
+                            dcc.Graph(
+                                id={
+                                    "type": "dynamic-graph",
+                                    "index": group_name,
+                                },
+                                style={"height": "350px"},
+                            )
+                        ],
+                        style={
+                            "flexGrow": 1,
+                            "minWidth": "0",
+                            "padding": "10px",
+                        },
+                    ),
+                ],
+                style={
+                    "display": "flex",
+                    "flexDirection": "row",
+                    "backgroundColor": "#f8f9fa",
+                },
+            ),
+        ],
+        open=open_by_default,
+        style={
+            "border": "1px solid #007bff",
+            "borderRadius": "8px",
+            "marginBottom": "20px",
+            "boxShadow": "0 2px 4px rgba(0,0,0,0.05)",
+            "overflow": "hidden",
+            "backgroundColor": "#ffffff",
+            "position": "relative",
+        },
+    )
+
+
 @dash.callback(
     Output("sensors-selectors-container", "children"),
     Output("pending-auto-plot", "data"),
@@ -352,6 +436,8 @@ def update_sensors_menus(
     pending_auto_plot = pending_auto_plot or []
 
     menus_blocks = []
+    supervision_groups = db.supervision_field_groups()
+    covered_supervision_groups = set()
 
     # On boucle sur TOUS les groupes existants dans le fichier
     for group_name in db.order_groups(mrun.MagnetData.list_groups()):
@@ -371,91 +457,38 @@ def update_sensors_menus(
                 {"label": plot.format_sensor_label(s, symbol, unit), "value": s}
             )
 
+        # A native group can double as a SUPERVISION group (currently only
+        # "Refroidissement", which pupitre already uses for its own cooling
+        # temperatures) — its checklist/graph then carries both sources.
+        if group_name in supervision_groups:
+            options += db.supervision_field_options(group_name)
+            covered_supervision_groups.add(group_name)
+
         saved_values_for_this_group = saved_state_map.get(group_name, [])
         for target in pending_auto_plot:
             if target in sensors and target not in saved_values_for_this_group:
                 saved_values_for_this_group = saved_values_for_this_group + [target]
 
         menus_blocks.append(
-            html.Details(
-                [
-                    # 1. EN-TÊTE : Le titre cliquable qui contrôle TOUT le bloc
-                    html.Summary(
-                        f"📂 {group_name}",
-                        style={
-                            "fontWeight": "bold",
-                            "cursor": "pointer",
-                            "padding": "10px 15px",
-                            "backgroundColor": "#e9ecef",
-                            "borderBottom": "1px solid #ddd",
-                            "outline": "none",
-                            "fontSize": "16px",
-                        },
-                    ),
-                    style_editor.gear_button("fv", group_name),
-                    # 2. CONTENU : Les deux colonnes (Checklist et Graphique)
-                    html.Div(
-                        [
-                            # --- PARTIE GAUCHE : Les cases à cocher ---
-                            html.Div(
-                                [
-                                    dcc.Checklist(
-                                        id={
-                                            "type": "group-sensors-checklist",
-                                            "index": group_name,
-                                        },
-                                        options=options,
-                                        value=saved_values_for_this_group,
-                                        labelStyle={
-                                            "display": "block",
-                                            "marginLeft": "25px",
-                                            "marginBottom": "4px",
-                                        },
-                                    )
-                                ],
-                                style={
-                                    "width": "250px",
-                                    "flexShrink": 0,
-                                    "padding": "10px",
-                                    "borderRight": "1px solid #ddd",
-                                    "backgroundColor": "#ffffff",
-                                },
-                            ),
-                            # --- PARTIE DROITE : Le conteneur du Graphique ---
-                            html.Div(
-                                children=[
-                                    dcc.Graph(
-                                        id={
-                                            "type": "dynamic-graph",
-                                            "index": group_name,
-                                        },
-                                        style={"height": "350px"},
-                                    )
-                                ],
-                                style={
-                                    "flexGrow": 1,
-                                    "minWidth": "0",
-                                    "padding": "10px",
-                                },
-                            ),
-                        ],
-                        style={
-                            "display": "flex",
-                            "flexDirection": "row",
-                            "backgroundColor": "#f8f9fa",
-                        },
-                    ),
-                ],
-                open=(group_name == "Magnetic_Field"),
-                style={
-                    "border": "1px solid #007bff",
-                    "borderRadius": "8px",
-                    "marginBottom": "20px",
-                    "boxShadow": "0 2px 4px rgba(0,0,0,0.05)",
-                    "overflow": "hidden",
-                    "backgroundColor": "#ffffff",
-                    "position": "relative",
-                },
+            _sensor_group_block(
+                group_name,
+                options,
+                saved_values_for_this_group,
+                open_by_default=(group_name == "Magnetic_Field"),
+            )
+        )
+
+    # SUPERVISION groups with no native counterpart in this file (e.g. a
+    # Pigbrother file has no "Refroidissement" group; "Water_Resistivity" and
+    # "Nitrogen_Level" never have one in any format) get their own fresh block.
+    for group_name in supervision_groups:
+        if group_name in covered_supervision_groups:
+            continue
+        menus_blocks.append(
+            _sensor_group_block(
+                group_name,
+                db.supervision_field_options(group_name),
+                saved_state_map.get(group_name, []),
             )
         )
 
@@ -545,41 +578,80 @@ def update_outputs(
         if sensor_values is not None
     }
 
+    supervision_groups = db.supervision_field_groups()
     outputs_figures = []
 
     for sensor_id in all_sensors_ids:
         group_name = sensor_id["index"]
 
-        if group_name == "Infos" or group_name not in mrun.MagnetData.list_groups():
+        if group_name == "Infos":
             outputs_figures.append(empty_fig)
             continue
 
         sensors_in_this_group = sensors_map.get(group_name, [])
-
         if not sensors_in_this_group:
             outputs_figures.append(empty_fig)
             continue
 
-        try:
-            df = mrun.MagnetData.get_group_data(group_name)
-        except KeyError:
-            outputs_figures.append(empty_fig)
-            continue
+        # Checked sensors are either native (mrun's own column names) or
+        # SUPERVISION-sourced ("supervision:"-prefixed, see update_sensors_menus).
+        native_sensors = [
+            s for s in sensors_in_this_group if not s.startswith("supervision:")
+        ]
+        supervision_values = [
+            s for s in sensors_in_this_group if s.startswith("supervision:")
+        ]
 
-        if not isinstance(df, pd.DataFrame):
-            outputs_figures.append(empty_fig)
-            continue
+        fig = None
 
-        # Creation du plot normal
-        fig = plot.create_plot(
-            df,
-            selected_x,
-            sensors_in_this_group,
-            selected_algo,
-            filename=selected_file,
-            mrun=mrun,
-            group_name=group_name,
-        )
+        if native_sensors and group_name in mrun.MagnetData.list_groups():
+            try:
+                df = mrun.MagnetData.get_group_data(group_name)
+            except KeyError:
+                df = None
+            if isinstance(df, pd.DataFrame):
+                # Creation du plot normal
+                fig = plot.create_plot(
+                    df,
+                    selected_x,
+                    native_sensors,
+                    selected_algo,
+                    filename=selected_file,
+                    mrun=mrun,
+                    group_name=group_name,
+                )
+
+        if supervision_values and group_name in supervision_groups:
+            start, end = mrun.MagnetData.get_time_range()
+            bare_fields = [s[len("supervision:"):] for s in supervision_values]
+            # Columns stay "supervision:"-prefixed through create_plot() (not
+            # just the checklist value) so its df-column lookup, style-override
+            # lookup, and trace name all resolve against a collision-free key
+            # even when a field shares its bare name with a native sensor in
+            # this same group (e.g. pupitre's own "teb" vs. SUPERVISION's "teb").
+            supervision_df = db.load_supervision_bdd(start, end).rename(
+                columns={f: s for f, s in zip(bare_fields, supervision_values)}
+            )
+            supervision_fig = plot.create_plot(
+                supervision_df,
+                selected_x,
+                supervision_values,
+                selected_algo,
+                filename="SUPERVISION",
+                mrun=None,
+                group_name=group_name,
+            )
+            # Legend label: "supervision:teb" -> "teb [SUPERVISION]".
+            for trace in supervision_fig.data:
+                trace.name = f"{trace.name[len('supervision:'):]} [SUPERVISION]"
+
+            if fig is None:
+                fig = supervision_fig
+            else:
+                fig.add_traces(supervision_fig.data)
+
+        if fig is None:
+            fig = empty_fig
 
         # --- ETAPE 3 : INJECTER LE ZOOM DANS LA NOUVELLE FIGURE ---
         if x_range is not None:
@@ -763,19 +835,32 @@ def _style_context_fn(group_name, selected_file, selected_assembly):
     if not selected_file or not selected_assembly:
         return [], []
 
+    field_rows = []
+    source_keys = []
+
     housing = selected_assembly.split("_")[0]
     mrun = db.load_mrun_object(selected_file, housing)
-    if mrun is None or group_name not in mrun.MagnetData.list_groups():
-        return [], []
+    if mrun is not None and group_name in mrun.MagnetData.list_groups():
+        sensors = [
+            c
+            for c in mrun.MagnetData.get_group_data(group_name).columns
+            if c not in ("t", "timestamp")
+        ]
+        source_key = plot.resolve_file_type_key(selected_file)
+        field_rows = [(s, source_key) for s in sensors]
+        if source_key:
+            source_keys = [source_key]
 
-    sensors = [
-        c
-        for c in mrun.MagnetData.get_group_data(group_name).columns
-        if c not in ("t", "timestamp")
-    ]
-    source_key = plot.resolve_file_type_key(selected_file)
-    field_rows = [(s, source_key) for s in sensors]
-    source_keys = [source_key] if source_key else []
+    # SUPERVISION fields for this group (if any), regardless of whether a
+    # native group matched above — see update_outputs for the "supervision:"
+    # prefix convention this mirrors.
+    supervision_fields = db.supervision_field_groups().get(group_name, [])
+    if supervision_fields:
+        field_rows = field_rows + [
+            (f"supervision:{f}", "supervision") for f in supervision_fields
+        ]
+        source_keys = source_keys + ["supervision"]
+
     return field_rows, source_keys
 
 

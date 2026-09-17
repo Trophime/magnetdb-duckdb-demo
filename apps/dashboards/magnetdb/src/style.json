@@ -34,5 +34,11 @@
     "dash": "dashdot",
     "width": 1.5,
     "opacity": 0.8
+  },
+  "supervision": {
+    "color": "#17becf",
+    "dash": "solid",
+    "width": 2,
+    "opacity": 1.0
   }
 }

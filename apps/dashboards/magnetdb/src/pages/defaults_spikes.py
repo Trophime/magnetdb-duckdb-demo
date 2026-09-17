@@ -461,6 +461,8 @@ def update_groups(selected_record, selected_db, include_archive_value):
     if not group_entries:
         return [], "No data group found for this record's source files.", {}
 
+    group_entries = db.merge_supervision_group_entries(group_entries)
+
     blocks = []
     for group_name, entries in group_entries.items():
         options = [{"label": e["label"], "value": e["value"]} for e in entries]
@@ -592,10 +594,28 @@ def update_graphs(
     if housing is None:
         return [_EMPTY_FIG for _ in all_sensor_ids], ""
 
+    info = db.get_overview_record_sources(selected_record, selected_db)
+
     record_t0_utc = None
     if selected_x == "t":
-        info = db.get_overview_record_sources(selected_record, selected_db)
         record_t0_utc = _resolve_t0_reference(info) if info else None
+
+    # SUPERVISION data is sliced to the whole record's [t0, t0+duration] span
+    # (naive UTC, as stored), same as its native regular-file data — the
+    # incident/window controls below only affect the *displayed* x_range,
+    # applied identically to native and SUPERVISION traces further down.
+    supervision_window = None
+    if info is not None:
+        sup_t0, sup_duration = info.get("t0"), info.get("duration")
+        if (
+            sup_t0 is not None
+            and sup_duration is not None
+            and not pd.isna(sup_t0)
+            and not pd.isna(sup_duration)
+            and sup_duration > 0
+        ):
+            sup_start = pd.Timestamp(sup_t0)
+            supervision_window = (sup_start, sup_start + pd.Timedelta(seconds=float(sup_duration)))
 
     x_range = None
     if selected_incident:
@@ -636,6 +656,10 @@ def update_graphs(
         files_data = db.collect_group_files_data(
             mruns, housing, group_name, selected_values, group_entries
         )
+        if supervision_window is not None:
+            files_data = files_data + db.collect_supervision_files_data(
+                group_name, selected_values, group_entries, *supervision_window
+            )
 
         fig = plot.create_annotated_plot(
             files_data,
@@ -645,6 +669,13 @@ def update_graphs(
             event_files=event_files,
             record_t0_utc=record_t0_utc,
         )
+
+        # Trace names read "SUPERVISION - supervision:teb" (create_annotated_plot's
+        # f"{file} - {sensor}"), since sensor names stay "supervision:"-prefixed for
+        # collision-free style-override lookup — clean up for display.
+        for trace in fig.data:
+            if "supervision:" in trace.name:
+                trace.name = trace.name.replace("supervision:", "")
 
         if x_range is not None:
             fig.update_layout(xaxis={"range": x_range, "autorange": False})
@@ -807,15 +838,29 @@ def _style_context_fn(group_name, selected_record, selected_db, include_archive_
     so they're excluded from both the field rows and the opacity-by-source
     section.
     """
-    if not selected_record:
-        return [], []
+    field_rows, source_keys = [], []
 
-    include_archive = bool(include_archive_value)
-    housing, regular_files, _event_files = _record_sources(selected_record, selected_db, include_archive)
-    if housing is None:
-        return [], []
+    if selected_record:
+        include_archive = bool(include_archive_value)
+        housing, regular_files, _event_files = _record_sources(
+            selected_record, selected_db, include_archive
+        )
+        if housing is not None:
+            field_rows, source_keys = db.collect_group_field_rows(
+                regular_files, housing, group_name, group_entries or {}
+            )
 
-    return db.collect_group_field_rows(regular_files, housing, group_name, group_entries or {})
+    # SUPERVISION fields for this group (if any), regardless of whether any
+    # native rows were found above — see collect_supervision_files_data for
+    # the "supervision:" prefix convention this mirrors.
+    supervision_fields = db.supervision_field_groups().get(group_name, [])
+    if supervision_fields:
+        field_rows = list(field_rows) + [
+            (f"supervision:{f}", "supervision") for f in supervision_fields
+        ]
+        source_keys = list(source_keys) + ["supervision"]
+
+    return field_rows, source_keys
 
 
 style_editor.register_callbacks(
