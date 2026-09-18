@@ -482,6 +482,34 @@ def get_overview_records_for_assembly(assembly_name, db_path=None):
     return df.to_dict("records")
 
 
+def get_stats_files_for_assembly(assembly_name, db_path=None):
+    """Return the Pigbrother Stats TDMS filenames attached to an assembly's overview records.
+
+    Flattens ``overview_records.sources_stats`` (one array per row) across
+    every live (``merged_into IS NULL``) record for *assembly_name*.
+
+    Parameters
+    ----------
+    assembly_name : str
+        ``assemblies.name`` to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Distinct Stats filenames, sorted.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT DISTINCT stats
+            FROM overview_records, UNNEST(sources_stats) AS t(stats)
+            WHERE assembly_name = ? AND merged_into IS NULL
+            ORDER BY stats
+        """
+        return conn.execute(query, [assembly_name]).df()["stats"].tolist()
+
+
 def get_assembly_history_for_magnet(magnet_name, db_path=None):
     """Return every assembly a magnet has been linked to, ordered by commissioning date.
 

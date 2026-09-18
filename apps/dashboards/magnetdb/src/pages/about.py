@@ -6,7 +6,7 @@ from dash import Input, Output, html
 from dash.dash_table import DataTable
 
 dash.register_page(
-    __name__, path="/about", name="About", order=9, title=lambda: i18n._("About")
+    __name__, path="/about", name="About", order=10, title=lambda: i18n._("About")
 )
 
 
