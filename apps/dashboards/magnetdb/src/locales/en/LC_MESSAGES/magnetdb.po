@@ -1,0 +1,746 @@
+# English translations for magnetdb-dashboard.
+# Copyright (C) 2026 ORGANIZATION
+# This file is distributed under the same license as the magnetdb-dashboard
+# project.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: magnetdb-dashboard VERSION\n"
+"Report-Msgid-Bugs-To: EMAIL@ADDRESS\n"
+"POT-Creation-Date: 2026-09-18 07:48+0200\n"
+"PO-Revision-Date: 2026-09-18 07:48+0200\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: en\n"
+"Language-Team: en <LL@li.org>\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.17.0\n"
+
+#: src/dash_selectors.py:99
+msgid "No dated records for the current scope."
+msgstr ""
+
+#: src/dash_selectors.py:143
+#, python-brace-format
+msgid "Housings: {n} ({names})"
+msgstr ""
+
+#: src/dash_selectors.py:149
+#, python-brace-format
+msgid "Assemblies: {n} ("
+msgstr ""
+
+#: src/dash_selectors.py:156
+#, python-brace-format
+msgid "Magnets: {n} ("
+msgstr ""
+
+#: src/dash_selectors.py:163
+#, python-brace-format
+msgid "Parts: {n} (helix/bitter/supra: {coil_total} - "
+msgstr ""
+
+#: src/dash_selectors.py:173
+msgid "Experiments"
+msgstr ""
+
+#: src/dash_selectors.py:174 src/pages/assembly_stats.py:552
+#: src/pages/magnet_stats.py:483 src/pages/part_stats.py:767
+msgid "Overview records"
+msgstr ""
+
+#: src/dash_selectors.py:189
+#, python-brace-format
+msgid "Manips: {n}"
+msgstr ""
+
+#: src/dash_selectors.py:193
+#, python-brace-format
+msgid "Manips: {n} unique users ({from_date} → {to_date})"
+msgstr ""
+
+#: src/dash_selectors.py:232
+#, python-brace-format
+msgid "Choose {label}..."
+msgstr ""
+
+#: src/dash_selectors.py:367
+msgid "Select an assembly above to see its magnets."
+msgstr ""
+
+#: src/dash_selectors.py:374
+#, python-brace-format
+msgid "No magnets found for {assembly}."
+msgstr ""
+
+#: src/dash_selectors.py:455
+#, python-brace-format
+msgid "Duration: {value:.1f} s"
+msgstr ""
+
+#: src/dash_selectors.py:467
+#, python-brace-format
+msgid "Energy: {value:.3g} MWh"
+msgstr ""
+
+#: src/dash_selectors.py:470
+msgid "(zoomed range)"
+msgstr ""
+
+#: src/dash_selectors.py:472
+msgid "Pupitre sources: "
+msgstr ""
+
+#: src/magnetdb_app.py:112
+msgid "Dashboard MagnetDB - LNCMI monitoring"
+msgstr ""
+
+#: src/magnetdb_app.py:117
+msgid "Database :"
+msgstr ""
+
+#: src/magnetdb_app.py:143
+msgid "name"
+msgstr ""
+
+#: src/magnetdb_plot.py:215
+msgid "histogram"
+msgstr ""
+
+#: src/magnetdb_plot.py:219
+msgid "Count"
+msgstr ""
+
+#: src/pages/about.py:21
+msgid "About"
+msgstr ""
+
+#: src/pages/about.py:24
+msgid "Operation log"
+msgstr ""
+
+#: src/pages/about.py:28
+msgid "Table"
+msgstr ""
+
+#: src/pages/about.py:32
+msgid "Operation"
+msgstr ""
+
+#: src/pages/about.py:37 src/pages/assembly_stats.py:507
+#: src/pages/defaults_spikes.py:185 src/pages/file_viewer.py:56
+#: src/pages/magnet_stats.py:426 src/pages/overview_records.py:154
+#: src/pages/part_stats.py:637
+msgid "Status"
+msgstr ""
+
+#: src/pages/about.py:42
+msgid "Filter by date"
+msgstr ""
+
+#: src/pages/assembly_stats.py:283 src/pages/magnet_stats.py:226
+#: src/pages/part_stats.py:285 src/pages/stats_research_area.py:88
+msgid "No overview records found for the current filters."
+msgstr ""
+
+#: src/pages/assembly_stats.py:354
+msgid "Energy per Experiment"
+msgstr ""
+
+#: src/pages/assembly_stats.py:381
+msgid "Experiment Date"
+msgstr ""
+
+#: src/pages/assembly_stats.py:401
+msgid "Energy per Assembly"
+msgstr ""
+
+#: src/pages/assembly_stats.py:420
+msgid "Magnet Time per Assembly (h)"
+msgstr ""
+
+#: src/pages/assembly_stats.py:459
+msgid "Magnet Time per Assembly by Field Bin (h)"
+msgstr ""
+
+#: src/pages/assembly_stats.py:464 src/pages/housing_stats.py:733
+#: src/pages/housing_stats.py:850 src/pages/stats_research_area.py:360
+msgid "h"
+msgstr ""
+
+#: src/pages/assembly_stats.py:465
+msgid "of assembly total"
+msgstr ""
+
+#: src/pages/assembly_stats.py:476 src/pages/magnet_stats.py:408
+#: src/pages/part_stats.py:619
+#, python-brace-format
+msgid "Processed: {n}"
+msgstr ""
+
+#: src/pages/assembly_stats.py:491
+msgid "Assembly Dashboard"
+msgstr ""
+
+#: src/pages/assembly_stats.py:496 src/pages/defaults_spikes.py:179
+#: src/pages/file_viewer.py:48 src/pages/overview_records.py:144
+#: src/pages/stats_research_area.py:173
+msgid "Housing"
+msgstr ""
+
+#: src/pages/assembly_stats.py:502 src/pages/defaults_spikes.py:182
+#: src/pages/file_viewer.py:52 src/pages/housing_stats.py:609
+#: src/pages/housing_stats.py:813 src/pages/housing_stats.py:825
+#: src/pages/housing_stats.py:845 src/pages/overview_records.py:149
+#: src/pages/stats_research_area.py:179
+msgid "Year"
+msgstr ""
+
+#: src/pages/assembly_stats.py:512 src/pages/defaults_spikes.py:191
+#: src/pages/file_viewer.py:67 src/pages/overview_records.py:161
+msgid "Assembly"
+msgstr ""
+
+#: src/pages/assembly_stats.py:536
+msgid "Magnets"
+msgstr ""
+
+#: src/pages/assembly_stats.py:559 src/pages/magnet_stats.py:490
+#: src/pages/part_stats.py:774
+msgid "Filter by record date (t0)"
+msgstr ""
+
+#: src/pages/assembly_stats.py:578 src/pages/magnet_stats.py:508
+#: src/pages/part_stats.py:792
+msgid "Experiments table"
+msgstr ""
+
+#: src/pages/assembly_stats.py:585 src/pages/magnet_stats.py:515
+#: src/pages/part_stats.py:799
+msgid "Filter by experiment date"
+msgstr ""
+
+#: src/pages/assembly_stats.py:712 src/pages/magnet_stats.py:594
+#: src/pages/part_stats.py:898
+msgid "No experiment data found for this database."
+msgstr ""
+
+#: src/pages/defaults_spikes.py:26 src/pages/file_viewer.py:533
+#: src/pages/overview_records.py:23
+msgid "Check a sensor to display its curve"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:172
+msgid "Defaults & Spikes Viewer"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:196 src/pages/overview_records.py:166
+msgid "2. Choose Overview Record :"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:201 src/pages/overview_records.py:171
+msgid "Choose an overview record..."
+msgstr ""
+
+#: src/pages/defaults_spikes.py:205
+msgid "3. Choose Default/Spike incident :"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:212
+msgid "Choose a default or spike incident..."
+msgstr ""
+
+#: src/pages/defaults_spikes.py:216
+msgid "4. Time window — ± seconds around incident :"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:233
+msgid "5. Choose X-axis :"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:238 src/pages/file_viewer.py:94
+#: src/pages/overview_records.py:188
+msgid "Real Time (timestamp)"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:239 src/pages/file_viewer.py:95
+#: src/pages/overview_records.py:189
+msgid "Elapsed Time (t)"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:245 src/pages/file_viewer.py:139
+msgid "6. Downsampling Method:"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:253
+msgid "7. Data scope:"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:257 src/pages/defaults_spikes.py:384
+#: src/pages/overview_records.py:207 src/pages/overview_records.py:350
+msgid " Include archive files (slower)"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:263
+msgid "8. Cursor sync:"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:269 src/pages/file_viewer.py:121
+#: src/pages/overview_records.py:231
+msgid " Sync cursor across graphs"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:274 src/pages/file_viewer.py:132
+#: src/pages/overview_records.py:237
+msgid "Clear cursors"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:393 src/pages/overview_records.py:359
+#, python-brace-format
+msgid " Include archive files — {n} archives (slower)"
+msgstr ""
+
+#: src/pages/defaults_spikes.py:472 src/pages/overview_records.py:509
+msgid "This overview record was not found."
+msgstr ""
+
+#: src/pages/defaults_spikes.py:476 src/pages/overview_records.py:513
+msgid "No overview/archive/pupitre files are attached to this record."
+msgstr ""
+
+#: src/pages/defaults_spikes.py:482 src/pages/overview_records.py:519
+msgid "No data group found for this record's source files."
+msgstr ""
+
+#: src/pages/defaults_spikes.py:652
+msgid ""
+"No overview, archive, or pupitre source file available to anchor elapsed "
+"time (t) — incidents and time window are not shown."
+msgstr ""
+
+#: src/pages/file_viewer.py:40
+msgid "Pupitre Dashboard"
+msgstr ""
+
+#: src/pages/file_viewer.py:72
+msgid "2. Choose File :"
+msgstr ""
+
+#: src/pages/file_viewer.py:77
+msgid "Choose a file..."
+msgstr ""
+
+#: src/pages/file_viewer.py:88 src/pages/overview_records.py:182
+msgid "3. Choose X-axis :"
+msgstr ""
+
+#: src/pages/file_viewer.py:101
+msgid "4. Choose Sensors :"
+msgstr ""
+
+#: src/pages/file_viewer.py:114
+msgid "5. Cursor sync:"
+msgstr ""
+
+#: src/pages/housing_stats.py:444
+msgid "No commissioning history yet."
+msgstr ""
+
+#: src/pages/housing_stats.py:457
+msgid "activity"
+msgstr ""
+
+#: src/pages/housing_stats.py:459
+msgid "no activity"
+msgstr ""
+
+#: src/pages/housing_stats.py:482
+#, python-brace-format
+msgid "Commissioned: {names}"
+msgstr ""
+
+#: src/pages/housing_stats.py:561
+#, python-brace-format
+msgid "Energy: {value} kWh"
+msgstr ""
+
+#: src/pages/housing_stats.py:567
+#, python-brace-format
+msgid "Magnet time: {value} h"
+msgstr ""
+
+#: src/pages/housing_stats.py:573
+#, python-brace-format
+msgid "Assemblies: {n} ({in_operation} in operation)"
+msgstr ""
+
+#: src/pages/housing_stats.py:581
+msgid "Commissioning activity by month:"
+msgstr ""
+
+#: src/pages/housing_stats.py:596
+msgid "View all assemblies →"
+msgstr ""
+
+#: src/pages/housing_stats.py:606
+msgid "Housing Dashboard"
+msgstr ""
+
+#: src/pages/housing_stats.py:623
+msgid "Housing Details"
+msgstr ""
+
+#: src/pages/housing_stats.py:709
+msgid "Total Energy per Housing"
+msgstr ""
+
+#: src/pages/housing_stats.py:728
+msgid "Magnet Time per Housing by Field Bin (h)"
+msgstr ""
+
+#: src/pages/housing_stats.py:734 src/pages/housing_stats.py:851
+msgid "of housing total"
+msgstr ""
+
+#: src/pages/housing_stats.py:749
+msgid "Energy per Housing per Month"
+msgstr ""
+
+#: src/pages/housing_stats.py:755 src/pages/housing_stats.py:772
+#: src/pages/housing_stats.py:800
+msgid "Month"
+msgstr ""
+
+#: src/pages/housing_stats.py:766
+msgid "Magnet Time per Housing per Month (h)"
+msgstr ""
+
+#: src/pages/housing_stats.py:793
+msgid "Magnet Time per Housing per Month by Field Bin (h)"
+msgstr ""
+
+#: src/pages/housing_stats.py:811
+msgid "Energy per Housing per Year"
+msgstr ""
+
+#: src/pages/housing_stats.py:823
+msgid "Magnet Time per Housing per Year (h)"
+msgstr ""
+
+#: src/pages/housing_stats.py:843
+msgid "Magnet Time per Housing per Year by Field Bin (h)"
+msgstr ""
+
+#: src/pages/magnet_stats.py:250
+msgid "Select a magnet above to see its assembly history."
+msgstr ""
+
+#: src/pages/magnet_stats.py:256
+#, python-brace-format
+msgid "No assembly history found for {magnet}."
+msgstr ""
+
+#: src/pages/magnet_stats.py:310
+msgid "Select a magnet above to see its parts."
+msgstr ""
+
+#: src/pages/magnet_stats.py:317
+#, python-brace-format
+msgid "No parts found for {magnet}."
+msgstr ""
+
+#: src/pages/magnet_stats.py:396
+msgid "Magnet Time (h)"
+msgstr ""
+
+#: src/pages/magnet_stats.py:421
+msgid "Magnet Dashboard"
+msgstr ""
+
+#: src/pages/magnet_stats.py:431
+msgid "Magnet"
+msgstr ""
+
+#: src/pages/magnet_stats.py:450 src/pages/part_stats.py:749
+msgid "Assembly history"
+msgstr ""
+
+#: src/pages/magnet_stats.py:468
+msgid "Parts"
+msgstr ""
+
+#: src/pages/overview_records.py:136
+msgid "Overview Record Viewer"
+msgstr ""
+
+#: src/pages/overview_records.py:195
+msgid "4. Downsampling Method:"
+msgstr ""
+
+#: src/pages/overview_records.py:203
+msgid "5. Data scope:"
+msgstr ""
+
+#: src/pages/overview_records.py:215 src/pages/overview_records.py:369
+msgid " Include incident files (slower)"
+msgstr ""
+
+#: src/pages/overview_records.py:225
+msgid "6. Cursor sync:"
+msgstr ""
+
+#: src/pages/overview_records.py:378
+#, python-brace-format
+msgid " Include incident files — {n} incidents (slower)"
+msgstr ""
+
+#: src/pages/overview_records.py:682
+msgid ""
+"No overview, archive, or pupitre source file available to anchor elapsed "
+"time (t) — incidents are not shown."
+msgstr ""
+
+#: src/pages/part_stats.py:309
+msgid "Select a part above to see its magnet history."
+msgstr ""
+
+#: src/pages/part_stats.py:316
+#, python-brace-format
+msgid "No magnet history found for {part}."
+msgstr ""
+
+#: src/pages/part_stats.py:344
+msgid "Select a part above to see its assembly history."
+msgstr ""
+
+#: src/pages/part_stats.py:350
+#, python-brace-format
+msgid "No assembly history found for {part}."
+msgstr ""
+
+#: src/pages/part_stats.py:394
+msgid "Select a part above to see its hoop-stress history."
+msgstr ""
+
+#: src/pages/part_stats.py:405
+#, python-brace-format
+msgid ""
+"No hoop-stress data computed for {part}. Run, for its assembly:\n"
+"to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py hoop-"
+"stress compute <ASSEMBLY_NAME> --db {db_path}"
+msgstr ""
+
+#: src/pages/part_stats.py:451 src/pages/part_stats.py:485
+msgid "Hoop stress (MPa)"
+msgstr ""
+
+#: src/pages/part_stats.py:452
+msgid "Time at stress level (h)"
+msgstr ""
+
+#: src/pages/part_stats.py:454
+#, python-brace-format
+msgid "Hoop Stress Distribution — {part}"
+msgstr ""
+
+#: src/pages/part_stats.py:462
+#, python-brace-format
+msgid ""
+"Raw hoop-stress history not built yet for {part}. Run:\n"
+"to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py hoop-"
+"stress part-history {part} --db {db_path}"
+msgstr ""
+
+#: src/pages/part_stats.py:483
+#, python-brace-format
+msgid "Hoop Stress History — {part}"
+msgstr ""
+
+#: src/pages/part_stats.py:484
+msgid "Time"
+msgstr ""
+
+#: src/pages/part_stats.py:505
+msgid "Select a part above to see its fatigue results."
+msgstr ""
+
+#: src/pages/part_stats.py:516
+#, python-brace-format
+msgid ""
+"No fatigue data computed for {part}. Run, for its assembly:\n"
+"to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py hoop-"
+"stress compute <ASSEMBLY_NAME> --db {db_path}"
+msgstr ""
+
+#: src/pages/part_stats.py:542
+#, python-brace-format
+msgid "Rainflow Cycles per Experiment — {part}"
+msgstr ""
+
+#: src/pages/part_stats.py:543 src/pages/part_stats.py:552
+msgid "Experiment"
+msgstr ""
+
+#: src/pages/part_stats.py:543
+msgid "Cycles"
+msgstr ""
+
+#: src/pages/part_stats.py:550
+#, python-brace-format
+msgid "Fatigue Proxy per Experiment — {part}"
+msgstr ""
+
+#: src/pages/part_stats.py:553
+msgid "Fatigue proxy (MPa³)"
+msgstr ""
+
+#: src/pages/part_stats.py:606
+msgid "Magnet Time per Part (h)"
+msgstr ""
+
+#: src/pages/part_stats.py:632
+msgid "Part Dashboard"
+msgstr ""
+
+#: src/pages/part_stats.py:642
+msgid "Part"
+msgstr ""
+
+#: src/pages/part_stats.py:661
+msgid "Hoop stress history"
+msgstr ""
+
+#: src/pages/part_stats.py:699
+msgid "Fatigue results"
+msgstr ""
+
+#: src/pages/part_stats.py:733
+msgid "Magnet history"
+msgstr ""
+
+#: src/pages/stats_research_area.py:57
+msgid "No experiments found for the current filters."
+msgstr ""
+
+#: src/pages/stats_research_area.py:161
+msgid "Manip Dashboard"
+msgstr ""
+
+#: src/pages/stats_research_area.py:167
+msgid "Research area"
+msgstr ""
+
+#: src/pages/stats_research_area.py:185
+msgid "Manip"
+msgstr ""
+
+#: src/pages/stats_research_area.py:200
+msgid "Statistics"
+msgstr ""
+
+#: src/pages/stats_research_area.py:227
+msgid "Matching experiments"
+msgstr ""
+
+#: src/pages/stats_research_area.py:244
+msgid "Matching overview records"
+msgstr ""
+
+#: src/pages/stats_research_area.py:311
+msgid "Experiments per research area"
+msgstr ""
+
+#: src/pages/stats_research_area.py:320
+msgid "Manips per research area"
+msgstr ""
+
+#: src/pages/stats_research_area.py:329
+msgid "Total field time (h)"
+msgstr ""
+
+#: src/pages/stats_research_area.py:355
+msgid "Total field time per research area per year by field bin (h)"
+msgstr ""
+
+#: src/pages/stats_research_area.py:361
+msgid "of research area total"
+msgstr ""
+
+#. not statically extractable
+#: ⁨src/pages/housing_stats.py (register_page name=)⁩
+msgid "Housings"
+msgstr ""
+
+#. not statically extractable
+#: ⁨src/pages/assembly_stats.py (register_page name=)⁩
+msgid "Assemblies"
+msgstr ""
+
+#. not statically extractable
+#: ⁨src/pages/file_viewer.py (register_page name=)⁩
+msgid "File viewer"
+msgstr ""
+
+#. not statically extractable
+#: ⁨src/pages/stats_research_area.py (register_page name=)⁩
+msgid "Manips"
+msgstr ""
+
+#. not statically extractable
+#: ⁨src/pages/defaults_spikes.py (register_page name=)⁩
+msgid "Defaults & Spikes"
+msgstr ""
+
+#. not statically extractable
+#: ⁨group name (pigbrother-defs.json)⁩
+msgid "Courants_Alimentations"
+msgstr ""
+
+#. not statically extractable
+#: ⁨group name (pigbrother-defs.json)⁩
+msgid "Courants_ponts"
+msgstr ""
+
+#. not statically extractable
+#: ⁨group name (pigbrother-defs.json)⁩
+msgid "Haute_Tension"
+msgstr ""
+
+#. not statically extractable
+#: ⁨group name (pigbrother-defs.json)⁩
+msgid "HT_Courant"
+msgstr ""
+
+#. not statically extractable
+#: ⁨group name (pigbrother-defs.json)⁩
+msgid "HT_frequence"
+msgstr ""
+
+#. not statically extractable
+#: ⁨group name (pigbrother-defs.json)⁩
+msgid "Tensions_Aimant"
+msgstr ""
+
+#. not statically extractable
+#: ⁨group name (pigbrother-defs.json)⁩
+msgid "Tensions_Alimentations"
+msgstr ""
+
+#. not statically extractable
+#: ⁨group name (pigbrother-defs.json)⁩
+msgid "Moy"
+msgstr ""
+
+#. not statically extractable
+#: ⁨group name (pigbrother-defs.json)⁩
+msgid "Puissances"
+msgstr ""
+
+#. not statically extractable
+#: ⁨group name (supervision-bdd-defs.json)⁩
+msgid "Refroidissement"
+msgstr ""
+
