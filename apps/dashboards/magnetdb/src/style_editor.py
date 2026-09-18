@@ -10,6 +10,7 @@ relevant to a given group in that page's current state.
 
 import dash
 import dash_bootstrap_components as dbc
+import i18n
 import magnetdb_plot as plot
 from dash import ALL, MATCH, Input, Output, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
@@ -261,7 +262,7 @@ def _build_modal_body(id_prefix: str, group_name: str, field_rows, source_keys):
         style={"display": "flex", "gap": "8px", "marginBottom": "8px"},
     )
     rows = [_field_row(id_prefix, group_name, sensor, source_key) for sensor, source_key in field_rows]
-    sections = [html.H6(f"Field styles — {group_name}"), header, *rows]
+    sections = [html.H6(f"Field styles — {i18n._(group_name)}"), header, *rows]
 
     if source_keys:
         sections += [
@@ -314,7 +315,7 @@ def register_callbacks(id_prefix: str, context_fn, extra_states: list | None = N
         group_name = triggered["index"]
         field_rows, source_keys = context_fn(group_name, *extra_values)
         body = _build_modal_body(id_prefix, group_name, field_rows, source_keys)
-        return True, group_name, body, f"Style — {group_name}"
+        return True, group_name, body, f"Style — {i18n._(group_name)}"
 
     @dash.callback(
         Output({"type": f"{id_prefix}-field-color", "sensor": MATCH}, "value"),

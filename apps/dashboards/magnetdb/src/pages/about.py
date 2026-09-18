@@ -1,44 +1,55 @@
 import dash
 import dash_selectors as selectors
+import i18n
 import magnetdb_analysis as db
 from dash import Input, Output, html
 from dash.dash_table import DataTable
 
-dash.register_page(__name__, path="/about", name="About", order=9)
+dash.register_page(
+    __name__, path="/about", name="About", order=9, title=lambda: i18n._("About")
+)
 
-LOG_TABLE_COLUMNS = [
-    {"name": c, "id": c}
-    for c in ("ID", "Timestamp", "Operation", "Table", "Record", "User", "Status", "Details")
-]
+
+def log_table_columns():
+    return [
+        {"name": c, "id": c}
+        for c in ("ID", "Timestamp", "Operation", "Table", "Record", "User", "Status", "Details")
+    ]
 
 
 def layout(**kwargs):
     return html.Div(
         [
-            html.H1("About"),
+            html.H1(i18n._("About")),
             html.Div(id="about-summary"),
             html.Br(),
-            html.H3("Operation log"),
+            html.H3(i18n._("Operation log")),
             html.Div(
                 [
                     selectors.aggregate_filter(
-                        "about-log-table-filter", "Table", style={"width": "250px"}
+                        "about-log-table-filter", i18n._("Table"), style={"width": "250px"}
                     ),
                     selectors.aggregate_filter(
-                        "about-log-operation-filter", "Operation", style={"width": "250px"}
+                        "about-log-operation-filter",
+                        i18n._("Operation"),
+                        style={"width": "250px"},
                     ),
                     selectors.aggregate_filter(
-                        "about-log-status-filter", "Status", style={"width": "150px"}
+                        "about-log-status-filter",
+                        i18n._("Status"),
+                        style={"width": "150px"},
                     ),
                     selectors.date_range_filter(
-                        "about-log-date-filter", "Filter by date", style={"width": "300px"}
+                        "about-log-date-filter",
+                        i18n._("Filter by date"),
+                        style={"width": "300px"},
                     ),
                 ],
                 style={"display": "flex", "gap": "30px", "marginBottom": "15px"},
             ),
             DataTable(
                 id="about-log-table",
-                columns=LOG_TABLE_COLUMNS,
+                columns=log_table_columns(),
                 data=[],
                 page_size=20,
                 sort_action="native",
@@ -90,6 +101,7 @@ def update_about(
         status=status_filter,
     )
     log_df = selectors.filter_by_date_range(log_df, "Timestamp", start_date, end_date)
+    log_df["Timestamp"] = log_df["Timestamp"].apply(i18n.format_datetime)
 
     table_options = [selectors.ALL] + db.get_operation_log_values("table_name", selected_db)
     operation_options = [selectors.ALL] + db.get_operation_log_values("operation", selected_db)

@@ -1,5 +1,6 @@
 import dash
 import dash_selectors as selectors
+import i18n
 import magnetdb_analysis as db
 import magnetdb_plot as plot
 import pandas as pd
@@ -10,25 +11,34 @@ from plotly import graph_objects as go
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
 from python_magnetrun.utils.timezone import local_to_utc_naive, utc_naive_to_local
 
-dash.register_page(__name__, path="/overview-records", name="Overview records", order=7)
-
-
-_EMPTY_FIG = go.Figure()
-_EMPTY_FIG.update_layout(
-    annotations=[
-        {
-            "text": "Check a sensor to display its curve",
-            "xref": "paper",
-            "yref": "paper",
-            "showarrow": False,
-            "font": {"color": "#888888"},
-        }
-    ],
-    xaxis={"visible": False},
-    yaxis={"visible": False},
-    template="plotly_white",
-    margin={"l": 20, "r": 20, "t": 30, "b": 20},
+dash.register_page(
+    __name__,
+    path="/overview-records",
+    name="Overview records",
+    order=7,
+    title=lambda: i18n._("Overview records"),
 )
+
+
+def _empty_fig():
+    """Placeholder figure, rebuilt on every call so its text tracks the request's language."""
+    fig = go.Figure()
+    fig.update_layout(
+        annotations=[
+            {
+                "text": i18n._("Check a sensor to display its curve"),
+                "xref": "paper",
+                "yref": "paper",
+                "showarrow": False,
+                "font": {"color": "#888888"},
+            }
+        ],
+        xaxis={"visible": False},
+        yaxis={"visible": False},
+        template="plotly_white",
+        margin={"l": 20, "r": 20, "t": 30, "b": 20},
+    )
+    return fig
 
 
 def _record_sources(record_filename, db_path, include_archive=False, include_incidents=False):
@@ -128,53 +138,67 @@ def _record_x_range(record_filename, db_path):
 def layout(assembly=None, record=None, **kwargs):
     return html.Div(
         [
-            html.H2("Overview Record Viewer", style={"marginTop": "0px", "marginBottom": "20px"}),
+            html.H2(
+                i18n._("Overview Record Viewer"),
+                style={"marginTop": "0px", "marginBottom": "20px"},
+            ),
             html.Hr(),
             html.Div(
                 [
                     selectors.aggregate_filter(
-                        "overview-records-housing-filter", "Housing", style={"width": "200px"}
+                        "overview-records-housing-filter",
+                        i18n._("Housing"),
+                        style={"width": "200px"},
                     ),
                     selectors.aggregate_filter(
-                        "overview-records-year-filter", "Year", style={"width": "150px"}
+                        "overview-records-year-filter",
+                        i18n._("Year"),
+                        style={"width": "150px"},
                     ),
                     selectors.aggregate_filter(
-                        "overview-records-status-filter", "Status", style={"width": "200px"}
+                        "overview-records-status-filter",
+                        i18n._("Status"),
+                        style={"width": "200px"},
                     ),
                 ],
                 style={"display": "flex", "gap": "30px", "marginBottom": "15px"},
             ),
-            selectors.cascading_selector("overview-records-assembly-filter", "Assembly", 1, value=assembly),
+            selectors.cascading_selector(
+                "overview-records-assembly-filter", i18n._("Assembly"), 1, value=assembly
+            ),
             html.Br(),
             html.Div(id="overview-records-magnets-table", style={"marginBottom": "10px"}),
             html.Br(),
-            html.Label("2. Choose Overview Record :", style={"fontWeight": "bold"}),
+            html.Label(i18n._("2. Choose Overview Record :"), style={"fontWeight": "bold"}),
             dcc.Dropdown(
                 id="overview-records-record-filter",
                 options=[record] if record else [],
                 value=record,
-                placeholder="Choose an overview record...",
+                placeholder=i18n._("Choose an overview record..."),
             ),
             html.Br(),
             html.Div(id="overview-records-file-stats", style={"marginBottom": "10px"}),
-            dcc.Graph(
+            selectors.graph(
                 id="overview-records-field-histogram",
                 figure=plot.field_histogram_figure(None),
                 style={"height": "250px"},
             ),
             html.Br(),
-            html.Label("3. Choose X-axis :", style={"fontWeight": "bold", "color": "#007bff"}),
+            html.Label(
+                i18n._("3. Choose X-axis :"),
+                style={"fontWeight": "bold", "color": "#007bff"},
+            ),
             dcc.Dropdown(
                 id="overview-records-x-axis",
                 options=[
-                    {"label": "Real Time (timestamp)", "value": "timestamp"},
-                    {"label": "Elapsed Time (t)", "value": "t"},
+                    {"label": i18n._("Real Time (timestamp)"), "value": "timestamp"},
+                    {"label": i18n._("Elapsed Time (t)"), "value": "t"},
                 ],
                 value="timestamp",
                 clearable=False,
             ),
             html.Br(),
-            html.Label("4. Downsampling Method:", style={"fontWeight": "bold"}),
+            html.Label(i18n._("4. Downsampling Method:"), style={"fontWeight": "bold"}),
             dcc.Dropdown(
                 id="overview-records-downsampling",
                 options=["raw data", "LTTB", "minmax", "M4", "naive"],
@@ -182,16 +206,20 @@ def layout(assembly=None, record=None, **kwargs):
                 clearable=False,
             ),
             html.Br(),
-            html.Label("5. Data scope:", style={"fontWeight": "bold"}),
+            html.Label(i18n._("5. Data scope:"), style={"fontWeight": "bold"}),
             dcc.Checklist(
                 id="overview-records-include-archive",
-                options=[{"label": " Include archive files (slower)", "value": "archive"}],
+                options=[
+                    {"label": i18n._(" Include archive files (slower)"), "value": "archive"}
+                ],
                 value=[],
                 style={"marginTop": "4px"},
             ),
             dcc.Checklist(
                 id="overview-records-include-incidents",
-                options=[{"label": " Include incident files (slower)", "value": "incidents"}],
+                options=[
+                    {"label": i18n._(" Include incident files (slower)"), "value": "incidents"}
+                ],
                 value=[],
                 style={"marginTop": "4px"},
             ),
@@ -200,16 +228,22 @@ def layout(assembly=None, record=None, **kwargs):
                 style={"color": "#a94442", "fontWeight": "bold", "marginTop": "4px"},
             ),
             html.Br(),
-            html.Label("6. Cursor sync:", style={"fontWeight": "bold"}),
+            html.Label(i18n._("6. Cursor sync:"), style={"fontWeight": "bold"}),
             html.Div(
                 [
                     dcc.Checklist(
                         id="overview-records-sync-cursor-toggle",
-                        options=[{"label": " Sync cursor across graphs", "value": "sync"}],
+                        options=[
+                            {"label": i18n._(" Sync cursor across graphs"), "value": "sync"}
+                        ],
                         value=["sync"],
                         style={"display": "inline-block", "marginRight": "15px"},
                     ),
-                    html.Button("Clear cursors", id="overview-records-clear-cursors-btn", n_clicks=0),
+                    html.Button(
+                        i18n._("Clear cursors"),
+                        id="overview-records-clear-cursors-btn",
+                        n_clicks=0,
+                    ),
                 ],
                 style={"marginTop": "4px"},
             ),
@@ -319,7 +353,7 @@ def update_magnets_table(selected_assembly, selected_db):
     Input("dd-database", "value"),
 )
 def update_include_archive_label(selected_record, selected_db):
-    default_label = " Include archive files (slower)"
+    default_label = i18n._(" Include archive files (slower)")
     if not selected_record or not selected_db:
         return [{"label": default_label, "value": "archive"}]
 
@@ -328,7 +362,7 @@ def update_include_archive_label(selected_record, selected_db):
         return [{"label": default_label, "value": "archive"}]
 
     n_archive = len(info["sources_archive"])
-    label = f" Include archive files — {n_archive} archives (slower)"
+    label = i18n._(" Include archive files — {n} archives (slower)").format(n=n_archive)
     return [{"label": label, "value": "archive"}]
 
 
@@ -338,7 +372,7 @@ def update_include_archive_label(selected_record, selected_db):
     Input("dd-database", "value"),
 )
 def update_include_incidents_label(selected_record, selected_db):
-    default_label = " Include incident files (slower)"
+    default_label = i18n._(" Include incident files (slower)")
     if not selected_record or not selected_db:
         return [{"label": default_label, "value": "incidents"}]
 
@@ -347,7 +381,7 @@ def update_include_incidents_label(selected_record, selected_db):
         return [{"label": default_label, "value": "incidents"}]
 
     n_incident = len(info["sources_default"]) + len(info["sources_spike"])
-    label = f" Include incident files — {n_incident} incidents (slower)"
+    label = i18n._(" Include incident files — {n} incidents (slower)").format(n=n_incident)
     return [{"label": label, "value": "incidents"}]
 
 
@@ -478,13 +512,17 @@ def update_groups(selected_record, selected_db, include_archive_value, include_i
         selected_record, selected_db, include_archive, include_incidents
     )
     if housing is None:
-        return [], "This overview record was not found.", {}
+        return [], i18n._("This overview record was not found."), {}
     if not regular_files:
-        return [], "No overview/archive/pupitre files are attached to this record.", {}
+        return (
+            [],
+            i18n._("No overview/archive/pupitre files are attached to this record."),
+            {},
+        )
 
     group_entries = db.get_overview_group_entries(regular_files, housing)
     if not group_entries:
-        return [], "No data group found for this record's source files.", {}
+        return [], i18n._("No data group found for this record's source files."), {}
 
     group_entries = db.merge_supervision_group_entries(group_entries)
 
@@ -505,7 +543,7 @@ def update_groups(selected_record, selected_db, include_archive_value, include_i
             html.Details(
                 [
                     html.Summary(
-                        f"📂 {group_name}",
+                        f"📂 {i18n._(group_name)}",
                         style={
                             "fontWeight": "bold",
                             "cursor": "pointer",
@@ -540,9 +578,9 @@ def update_groups(selected_record, selected_db, include_archive_value, include_i
                                 },
                             ),
                             html.Div(
-                                dcc.Graph(
+                                selectors.graph(
                                     id={"type": "ov-dynamic-graph", "index": group_name},
-                                    figure=_EMPTY_FIG,
+                                    figure=_empty_fig(),
                                     style={"height": "350px"},
                                 ),
                                 style={"flexGrow": 1, "minWidth": "0", "padding": "10px"},
@@ -596,7 +634,7 @@ def update_graphs(
     all_relayout_data,
 ):
     if not selected_record or not all_sensor_ids:
-        return [_EMPTY_FIG for _ in all_sensor_ids], ""
+        return [_empty_fig() for _ in all_sensor_ids], ""
 
     # Only checklist/downsampling/include-archive/include-incidents/style-save toggles
     # keep the current zoom (they refine the existing view); picking a different
@@ -631,7 +669,7 @@ def update_graphs(
         selected_record, selected_db, include_archive, include_incidents
     )
     if housing is None:
-        return [_EMPTY_FIG for _ in all_sensor_ids], ""
+        return [_empty_fig() for _ in all_sensor_ids], ""
 
     # Event/incident files are never loaded — their overlay lines are placed
     # from their filenames alone (see create_annotated_plot's event_files arg).
@@ -646,7 +684,7 @@ def update_graphs(
     if event_files and selected_x == "t":
         record_t0_utc = _resolve_t0_reference(info) if info else None
         if record_t0_utc is None:
-            incident_warning = (
+            incident_warning = i18n._(
                 "No overview, archive, or pupitre source file available to "
                 "anchor elapsed time (t) — incidents are not shown."
             )
@@ -664,7 +702,7 @@ def update_graphs(
         group_name = sensor_id["index"]
         selected_values = sensor_values or []
         if not selected_values:
-            figures.append(_EMPTY_FIG)
+            figures.append(_empty_fig())
             continue
 
         files_data = db.collect_group_files_data(

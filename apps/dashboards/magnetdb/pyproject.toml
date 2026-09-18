@@ -29,9 +29,11 @@
 #   .devcontainer/setup-basic.sh) rather than declared here, so their extras
 #   (e.g. python_magnetrun[signal,dash]) stay defined in one place.
 #
-# werkzeug ships as a Flask/Dash dependency already, but is pinned explicitly
-# below because magnetdb_app.py imports werkzeug.middleware.profiler directly
-# (MAGNETDB_PROFILE=1 opt-in profiling — see PROFILING.md).
+# werkzeug and Flask ship as Flask/Dash dependencies already, but are pinned
+# explicitly below because magnetdb_app.py imports werkzeug.middleware.profiler
+# directly (MAGNETDB_PROFILE=1 opt-in profiling — see PROFILING.md), and
+# i18n.py/magnetdb_app.py import flask directly for the per-request language
+# cookie (flask.g / server.before_request / response.set_cookie).
 
 [build-system]
 requires = ["setuptools>=61.0", "wheel"]
@@ -50,11 +52,13 @@ dependencies = [
     "dash-bootstrap-components>=1.6,<2.0",
     "plotly>=5.0,<7.0",
     "werkzeug>=3.0,<4.0",
+    "Flask>=3.0,<4.0",
     "duckdb>=1.1.0,<2.0.0",
     "numpy>=1.26.0,<3.0.0",
     "pandas>=2.1.0,<4.0.0",
     "pyarrow>=14.0.0,<25.0.0",
     "pyyaml>=6.0.1,<7.0.0",
+    "Babel>=2.14,<3.0",
 ]
 
 [project.optional-dependencies]

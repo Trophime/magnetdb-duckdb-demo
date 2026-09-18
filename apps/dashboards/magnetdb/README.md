@@ -80,7 +80,13 @@ each file's format.
 When running in Docker, `~/.config/magnetdb/` resolves inside the
 container (the app user's home there), so a host override only takes
 effect if you mount it in, e.g.
-`-v ~/.config/magnetdb:/home/jovyan/.config/magnetdb`.
+`-v ~/.config/magnetdb:/home/jovyan/.config/magnetdb` — see the `docker run`
+example below, which includes this mount. Without it, style/group-order
+changes made through the dashboard's UI are lost whenever the container is
+recreated.
+
+The language preference is different: it lives in a browser cookie, not a
+file, so it needs no volume mount and persists per visitor.
 
 ### Launch
 
@@ -143,9 +149,14 @@ docker run \
     -e MAGNETDB_RECORDS_DIR=/data/records \
     -v /path/to/to_duckdb:/data/duckdb \
     -v /path/to/records:/data/records \
+    -v ~/.config/magnetdb:/home/jovyan/.config/magnetdb \
     -p 8050:8050 \
     magnetdb-dashboard
 ```
+
+The last `-v` is optional but recommended — without it, style/group-order
+overrides made through the dashboard's UI (see above) don't survive the
+container being recreated.
 
 The container serves the app with gunicorn, tunable at `docker run` time
 via `-e` (defaults shown):

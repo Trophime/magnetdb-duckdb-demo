@@ -1,10 +1,11 @@
 import dash
 import dash_selectors as selectors
 import duckdb
+import i18n
 import magnetdb_analysis as db
 import pandas as pd
 import plotly.express as px
-from dash import Input, Output, dcc, html
+from dash import Input, Output, html
 from dash.dash_table import DataTable
 from experiment_links import (
     assembly_link,
@@ -16,7 +17,13 @@ from experiment_links import (
 from plotly import graph_objects as go
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/magnet_stats", name="Magnets", order=4)
+dash.register_page(
+    __name__,
+    path="/magnet_stats",
+    name="Magnets",
+    order=4,
+    title=lambda: i18n._("Magnets"),
+)
 
 
 J_TO_KWH = 3.6e6
@@ -146,40 +153,56 @@ def load_overview_records(db_path=None):
 
 
 _TABLE_MARKDOWN_COLUMNS = {"Experiment", "Magnet", "Assembly"}
+_TABLE_NUMERIC_COLUMNS = {
+    "Energy (kWh)",
+    "Extracted heat (kWh)",
+    "Duration (s)",
+    "Magnet Time (s)",
+}
 
-TABLE_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c in _TABLE_MARKDOWN_COLUMNS
-        else {"name": c, "id": c}
-    )
-    for c in EXP_RUN_SCALARS_COLUMNS
-    if c not in ("File", "ID")
-]
 
-OVERVIEW_RECORD_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c in ("Overview Record", "Assembly")
-        else {"name": c, "id": c}
-    )
-    for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats")
-]
+def table_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c in _TABLE_MARKDOWN_COLUMNS
+            else (
+                {"name": c, "id": c, "type": "numeric", "format": i18n.localized_number_format()}
+                if c in _TABLE_NUMERIC_COLUMNS
+                else {"name": c, "id": c}
+            )
+        )
+        for c in EXP_RUN_SCALARS_COLUMNS
+        if c not in ("File", "ID")
+    ]
 
-ASSEMBLY_HISTORY_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c == "assembly_name"
-        else {"name": c, "id": c}
-    )
-    for c in (
-        "assembly_name",
-        "housing",
-        "status",
-        "commissioned_at",
-        "decommissioned_at",
-    )
-]
+
+def overview_record_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c in ("Overview Record", "Assembly")
+            else {"name": c, "id": c}
+        )
+        for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats")
+    ]
+
+
+def assembly_history_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c == "assembly_name"
+            else {"name": c, "id": c}
+        )
+        for c in (
+            "assembly_name",
+            "housing",
+            "status",
+            "commissioned_at",
+            "decommissioned_at",
+        )
+    ]
 
 
 def _overview_records_section(overview_df, start_date=None, end_date=None):
@@ -206,16 +229,17 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
 
     if overview_df.empty:
         return html.Div(
-            "No overview records found for the current filters.",
+            i18n._("No overview records found for the current filters."),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
     table_df = overview_df.copy()
     table_df["Overview Record"] = table_df.apply(overview_record_link, axis=1)
     table_df["Assembly"] = table_df.apply(assembly_link, axis=1)
+    table_df["t0"] = table_df["t0"].apply(i18n.format_date)
 
     return DataTable(
-        columns=OVERVIEW_RECORD_COLUMNS,
+        columns=overview_record_columns(),
         data=table_df.to_dict("records"),
         page_size=10,
         sort_action="native",
@@ -229,23 +253,28 @@ def _assembly_history_section(selected_magnet, history):
     """Build the "Assembly history" accordion for the selected magnet, ascending by commissioning date."""
     if not selected_magnet or selected_magnet == selectors.ALL:
         return html.Div(
-            "Select a magnet above to see its assembly history.",
+            i18n._("Select a magnet above to see its assembly history."),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
     if not history:
         return html.Div(
-            f"No assembly history found for {selected_magnet}.",
+            i18n._("No assembly history found for {magnet}.").format(magnet=selected_magnet),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
     history = [
-        {**h, "assembly_name": assembly_link({"Assembly": h["assembly_name"]})}
+        {
+            **h,
+            "assembly_name": assembly_link({"Assembly": h["assembly_name"]}),
+            "commissioned_at": i18n.format_date(h["commissioned_at"]),
+            "decommissioned_at": i18n.format_date(h["decommissioned_at"]),
+        }
         for h in history
     ]
 
     return DataTable(
-        columns=ASSEMBLY_HISTORY_COLUMNS,
+        columns=assembly_history_columns(),
         data=history,
         page_size=10,
         sort_action="native",
@@ -255,14 +284,15 @@ def _assembly_history_section(selected_magnet, history):
     )
 
 
-PART_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c == "Part"
-        else {"name": c, "id": c}
-    )
-    for c in ("Part", "Type", "Status", "Material", "Manufactured")
-]
+def part_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c == "Part"
+            else {"name": c, "id": c}
+        )
+        for c in ("Part", "Type", "Status", "Material", "Manufactured")
+    ]
 
 
 def _parts_section(selected_magnet, db_path):
@@ -283,14 +313,14 @@ def _parts_section(selected_magnet, db_path):
     """
     if not selected_magnet or selected_magnet == selectors.ALL:
         return html.Div(
-            "Select a magnet above to see its parts.",
+            i18n._("Select a magnet above to see its parts."),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
     parts = db.get_parts_for_magnet(selected_magnet, db_path)
     if not parts:
         return html.Div(
-            f"No parts found for {selected_magnet}.",
+            i18n._("No parts found for {magnet}.").format(magnet=selected_magnet),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
@@ -304,9 +334,10 @@ def _parts_section(selected_magnet, db_path):
         }
     )
     table_df["Part"] = table_df.apply(part_link, axis=1)
+    table_df["Manufactured"] = table_df["Manufactured"].apply(i18n.format_date)
 
     return DataTable(
-        columns=PART_COLUMNS,
+        columns=part_columns(),
         data=table_df.to_dict("records"),
         page_size=10,
         sort_action="native",
@@ -368,7 +399,7 @@ def _build_page_content(
         color_discrete_map={"M9": "red", "M10": "blue"},
         category_orders={"Magnet": magnet_order},
         barmode="group",
-        title="Magnet Time (h)",
+        title=i18n._("Magnet Time (h)"),
     )
 
     table_source_df = selectors.filter_by_date_range(
@@ -379,7 +410,9 @@ def _build_page_content(
     table_df["Magnet"] = table_source_df.apply(magnet_link, axis=1)
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
-    summary = [f"Processed: {(exp_df['Status'] == 'STATS DONE').sum()}"]
+    summary = [
+        i18n._("Processed: {n}").format(n=(exp_df["Status"] == "STATS DONE").sum())
+    ]
 
     return (
         fig_field_on,
@@ -391,17 +424,17 @@ def _build_page_content(
 def layout(magnet=None, **kwargs):
     return html.Div(
         [
-            html.H1("Magnet Dashboard"),
+            html.H1(i18n._("Magnet Dashboard")),
             html.Div(
                 [
                     selectors.aggregate_filter(
                         "magnet-stats-status-filter",
-                        "Status",
+                        i18n._("Status"),
                         style={"width": "250px"},
                     ),
                     selectors.aggregate_filter(
                         "magnet-stats-magnet-filter",
-                        "Magnet",
+                        i18n._("Magnet"),
                         style={"width": "400px"},
                         value=magnet,
                     ),
@@ -414,13 +447,13 @@ def layout(magnet=None, **kwargs):
             ),
             html.Div(id="magnet-stats-summary"),
             html.Br(),
-            dcc.Graph(id="magnet-stats-fig-field-on"),
+            selectors.graph(id="magnet-stats-fig-field-on"),
             html.Br(),
             html.Details(
                 id="magnet-stats-assembly-history-details",
                 children=[
                     html.Summary(
-                        "📁 Assembly history",
+                        f"📁 {i18n._('Assembly history')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
@@ -438,7 +471,7 @@ def layout(magnet=None, **kwargs):
                 id="magnet-stats-parts-details",
                 children=[
                     html.Summary(
-                        "🔩 Parts", style={"fontWeight": "bold", "cursor": "pointer"}
+                        f"🔩 {i18n._('Parts')}", style={"fontWeight": "bold", "cursor": "pointer"}
                     ),
                     html.Div(id="magnet-stats-parts", style={"padding": "10px"}),
                 ],
@@ -453,14 +486,14 @@ def layout(magnet=None, **kwargs):
             html.Details(
                 [
                     html.Summary(
-                        "📁 Overview records",
+                        f"📁 {i18n._('Overview records')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
                         [
                             selectors.date_range_filter(
                                 "magnet-stats-overview-date-filter",
-                                "Filter by record date (t0)",
+                                i18n._("Filter by record date (t0)"),
                                 style={"marginBottom": "10px"},
                             ),
                             html.Div(id="magnet-stats-overview-records"),
@@ -478,19 +511,19 @@ def layout(magnet=None, **kwargs):
             html.Details(
                 [
                     html.Summary(
-                        "📊 Experiments table",
+                        f"📊 {i18n._('Experiments table')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
                         [
                             selectors.date_range_filter(
                                 "magnet-stats-table-date-filter",
-                                "Filter by experiment date",
+                                i18n._("Filter by experiment date"),
                                 style={"marginBottom": "10px"},
                             ),
                             DataTable(
                                 id="magnet-stats-table",
-                                columns=TABLE_COLUMNS,
+                                columns=table_columns(),
                                 data=[],
                                 page_size=20,
                                 sort_action="native",
@@ -564,7 +597,7 @@ def update_magnet_stats(
 
     df = load_data(selected_db)
     missing_banner = (
-        "" if not df.empty else "No experiment data found for this database."
+        "" if not df.empty else i18n._("No experiment data found for this database.")
     )
 
     status_options = [selectors.ALL] + db.get_distinct_statuses("magnets")

@@ -1,37 +1,51 @@
 import dash
 import dash_selectors as selectors
+import i18n
 import magnetdb_analysis as db
 import pandas as pd
 import plotly.express as px
-from dash import Input, Output, callback, dcc, html
+from dash import Input, Output, callback, html
 from dash.dash_table import DataTable
 from experiment_links import assembly_link, experiment_link, overview_record_link
 from plotly import graph_objects as go
 
-dash.register_page(__name__, path="/research-area", name="Manips", order=1)
+dash.register_page(
+    __name__, path="/research-area", name="Manips", order=1, title=lambda: i18n._("Manips")
+)
 
-RA_STATS_COLUMNS = [
-    {"name": c, "id": c}
-    for c in ("research_area", "n_experiments", "n_manips", "total_field_time_h")
-]
 
-EXPERIMENTS_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c in ("Experiment", "Assembly")
-        else {"name": c, "id": c}
-    )
-    for c in ("Experiment", "Assembly", "Housing", "Status")
-]
+def ra_stats_columns():
+    numeric = {"n_experiments", "n_manips", "total_field_time_h"}
+    return [
+        (
+            {"name": c, "id": c, "type": "numeric", "format": i18n.localized_number_format()}
+            if c in numeric
+            else {"name": c, "id": c}
+        )
+        for c in ("research_area", "n_experiments", "n_manips", "total_field_time_h")
+    ]
 
-OVERVIEW_RECORD_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c in ("Overview Record", "Assembly")
-        else {"name": c, "id": c}
-    )
-    for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats")
-]
+
+def experiments_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c in ("Experiment", "Assembly")
+            else {"name": c, "id": c}
+        )
+        for c in ("Experiment", "Assembly", "Housing", "Status")
+    ]
+
+
+def overview_record_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c in ("Overview Record", "Assembly")
+            else {"name": c, "id": c}
+        )
+        for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats")
+    ]
 
 
 def _no_data_message(text):
@@ -42,7 +56,7 @@ def _no_data_message(text):
 def _experiments_section(exp_df):
     """Build the "Matching experiments" accordion content for a filtered dataframe."""
     if exp_df.empty:
-        return _no_data_message("No experiments found for the current filters.")
+        return _no_data_message(i18n._("No experiments found for the current filters."))
     source_df = exp_df.rename(
         columns={
             "name": "Experiment",
@@ -60,7 +74,7 @@ def _experiments_section(exp_df):
     table_df = table_df[["Experiment", "Assembly", "Housing", "Status"]]
 
     return DataTable(
-        columns=EXPERIMENTS_COLUMNS,
+        columns=experiments_columns(),
         data=table_df.to_dict("records"),
         page_size=10,
         sort_action="native",
@@ -73,7 +87,7 @@ def _experiments_section(exp_df):
 def _overview_records_section(ov_df):
     """Build the "Matching overview records" accordion content for a filtered dataframe."""
     if ov_df.empty:
-        return _no_data_message("No overview records found for the current filters.")
+        return _no_data_message(i18n._("No overview records found for the current filters."))
     source_df = ov_df.rename(
         columns={
             "filename": "Overview Record",
@@ -89,9 +103,10 @@ def _overview_records_section(ov_df):
     ].copy()
     table_df["Overview Record"] = source_df.apply(overview_record_link, axis=1)
     table_df["Assembly"] = source_df.apply(assembly_link, axis=1)
+    table_df["t0"] = table_df["t0"].apply(i18n.format_date)
 
     return DataTable(
-        columns=OVERVIEW_RECORD_COLUMNS,
+        columns=overview_record_columns(),
         data=table_df.to_dict("records"),
         page_size=10,
         sort_action="native",
@@ -142,104 +157,109 @@ def _add_field_bin_columns(df, percent_group_cols):
     return bin_order, bin_colors
 
 
-layout = html.Div(
-    [
-        html.H2("Manip Dashboard"),
-        html.Br(),
-        html.Div(
-            [
-                selectors.aggregate_filter(
-                    "ra-research-area",
-                    "Research area",
-                    options=db.get_research_areas(),
-                    style={"width": "250px"},
-                ),
-                selectors.aggregate_filter(
-                    "ra-housing",
-                    "Housing",
-                    options=db.get_housings(),
-                    style={"width": "250px"},
-                ),
-                selectors.aggregate_filter(
-                    "ra-year",
-                    "Year",
-                    options=["2022", "2023", "2024", "2025", "2026"],
-                    style={"width": "250px"},
-                ),
-                selectors.aggregate_filter(
-                    "ra-user", "Manip", options=db.get_users(), style={"width": "250px"}
-                ),
-            ],
-            style={"display": "flex", "gap": "30px", "marginBottom": "30px"},
-        ),
-        html.Br(),
-        dcc.Graph(id="ra-exp"),
-        dcc.Graph(id="ra-time"),
-        dcc.Graph(id="ra-time-by-bin"),
-        dcc.Graph(id="ra-users"),
-        html.Details(
-            [
-                html.Summary(
-                    "📊 Statistics", style={"fontWeight": "bold", "cursor": "pointer"}
-                ),
-                html.Div(
-                    DataTable(
-                        id="ra-table",
-                        columns=RA_STATS_COLUMNS,
-                        data=[],
-                        page_size=10,
-                        sort_action="native",
-                        style_table={"overflowX": "auto"},
-                        style_cell={"textAlign": "center", "padding": "6px"},
-                        style_header={"fontWeight": "auto"},
+def layout(**kwargs):
+    return html.Div(
+        [
+            html.H2(i18n._("Manip Dashboard")),
+            html.Br(),
+            html.Div(
+                [
+                    selectors.aggregate_filter(
+                        "ra-research-area",
+                        i18n._("Research area"),
+                        options=db.get_research_areas(),
+                        style={"width": "250px"},
                     ),
-                    style={"padding": "10px"},
-                ),
-            ],
-            open=True,
-            style={
-                "border": "1px solid #ddd",
-                "borderRadius": "8px",
-                "marginBottom": "20px",
-            },
-        ),
-        html.Details(
-            [
-                html.Summary(
-                    "📊 Matching experiments",
-                    style={"fontWeight": "bold", "cursor": "pointer"},
-                ),
-                html.Div(id="ra-experiments-content", style={"padding": "10px"}),
-            ],
-            id="ra-experiments",
-            open=False,
-            style={
-                "border": "1px solid #ddd",
-                "borderRadius": "8px",
-                "marginBottom": "10px",
-                "display": "none",
-            },
-        ),
-        html.Details(
-            [
-                html.Summary(
-                    "📁 Matching overview records",
-                    style={"fontWeight": "bold", "cursor": "pointer"},
-                ),
-                html.Div(id="ra-overview-records-content", style={"padding": "10px"}),
-            ],
-            id="ra-overview-records",
-            open=False,
-            style={
-                "border": "1px solid #ddd",
-                "borderRadius": "8px",
-                "marginBottom": "10px",
-                "display": "none",
-            },
-        ),
-    ],
-    style={"padding": "20px"},
-)
+                    selectors.aggregate_filter(
+                        "ra-housing",
+                        i18n._("Housing"),
+                        options=db.get_housings(),
+                        style={"width": "250px"},
+                    ),
+                    selectors.aggregate_filter(
+                        "ra-year",
+                        i18n._("Year"),
+                        options=["2022", "2023", "2024", "2025", "2026"],
+                        style={"width": "250px"},
+                    ),
+                    selectors.aggregate_filter(
+                        "ra-user",
+                        i18n._("Manip"),
+                        options=db.get_users(),
+                        style={"width": "250px"},
+                    ),
+                ],
+                style={"display": "flex", "gap": "30px", "marginBottom": "30px"},
+            ),
+            html.Br(),
+            selectors.graph(id="ra-exp"),
+            selectors.graph(id="ra-time"),
+            selectors.graph(id="ra-time-by-bin"),
+            selectors.graph(id="ra-users"),
+            html.Details(
+                [
+                    html.Summary(
+                        f"📊 {i18n._('Statistics')}",
+                        style={"fontWeight": "bold", "cursor": "pointer"},
+                    ),
+                    html.Div(
+                        DataTable(
+                            id="ra-table",
+                            columns=ra_stats_columns(),
+                            data=[],
+                            page_size=10,
+                            sort_action="native",
+                            style_table={"overflowX": "auto"},
+                            style_cell={"textAlign": "center", "padding": "6px"},
+                            style_header={"fontWeight": "auto"},
+                        ),
+                        style={"padding": "10px"},
+                    ),
+                ],
+                open=True,
+                style={
+                    "border": "1px solid #ddd",
+                    "borderRadius": "8px",
+                    "marginBottom": "20px",
+                },
+            ),
+            html.Details(
+                [
+                    html.Summary(
+                        f"📊 {i18n._('Matching experiments')}",
+                        style={"fontWeight": "bold", "cursor": "pointer"},
+                    ),
+                    html.Div(id="ra-experiments-content", style={"padding": "10px"}),
+                ],
+                id="ra-experiments",
+                open=False,
+                style={
+                    "border": "1px solid #ddd",
+                    "borderRadius": "8px",
+                    "marginBottom": "10px",
+                    "display": "none",
+                },
+            ),
+            html.Details(
+                [
+                    html.Summary(
+                        f"📁 {i18n._('Matching overview records')}",
+                        style={"fontWeight": "bold", "cursor": "pointer"},
+                    ),
+                    html.Div(id="ra-overview-records-content", style={"padding": "10px"}),
+                ],
+                id="ra-overview-records",
+                open=False,
+                style={
+                    "border": "1px solid #ddd",
+                    "borderRadius": "8px",
+                    "marginBottom": "10px",
+                    "display": "none",
+                },
+            ),
+        ],
+        style={"padding": "20px"},
+    )
 
 
 @callback(
@@ -290,7 +310,7 @@ def update(research_area, housing, year, user):
         y="n_experiments",
         color="year",
         barmode="group",
-        title="Experiments per research area",
+        title=i18n._("Experiments per research area"),
     )
 
     fig_users = px.bar(
@@ -299,7 +319,7 @@ def update(research_area, housing, year, user):
         y="n_manips",
         color="year",
         barmode="group",
-        title="Manips per research area",
+        title=i18n._("Manips per research area"),
     )
 
     fig_time = px.bar(
@@ -308,7 +328,7 @@ def update(research_area, housing, year, user):
         y="total_field_time_h",
         color="year",
         barmode="group",
-        title="Total field time (h)",
+        title=i18n._("Total field time (h)"),
     )
 
     bin_df = db.get_research_area_field_bin_stats_by_year(
@@ -334,12 +354,13 @@ def update(research_area, housing, year, user):
             category_orders={"Field bin": bin_order},
             color_discrete_sequence=bin_colors,
             custom_data=["Percent"],
-            title="Total field time per research area per year by field bin (h)",
+            title=i18n._("Total field time per research area per year by field bin (h)"),
         )
         fig_time_by_bin.update_traces(
             hovertemplate=(
                 "%{fullData.name}<br>%{x}<br>"
-                "%{y:.1f} h (%{customdata[0]:.1f}% of research area total)<extra></extra>"
+                f"%{{y:.1f}} {i18n._('h')} "
+                f"(%{{customdata[0]:.1f}}% {i18n._('of research area total')})<extra></extra>"
             )
         )
         fig_time_by_bin.for_each_annotation(

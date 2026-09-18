@@ -1,6 +1,7 @@
 import dash
 import dash_selectors as selectors
 import duckdb
+import i18n
 import magnetdb_analysis as db
 import pandas as pd
 import plotly.express as px
@@ -17,7 +18,9 @@ from plotly import graph_objects as go
 from python_magnetrun.utils.downsampling import DownsampleConfig, downsample_dataframe
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/part_stats", name="Parts", order=5)
+dash.register_page(
+    __name__, path="/part_stats", name="Parts", order=5, title=lambda: i18n._("Parts")
+)
 
 
 S_TO_H = 3600
@@ -160,74 +163,101 @@ def load_overview_records(db_path=None):
 
 _TABLE_MARKDOWN_COLUMNS = {"Experiment", "Part", "Magnet", "Assembly"}
 
-TABLE_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c in _TABLE_MARKDOWN_COLUMNS
-        else (
-            {"name": "Magnet Time (h)", "id": c}
-            if c == "Time (h)"
+
+def table_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c in _TABLE_MARKDOWN_COLUMNS
+            else (
+                {
+                    "name": "Magnet Time (h)",
+                    "id": c,
+                    "type": "numeric",
+                    "format": i18n.localized_number_format(),
+                }
+                if c == "Time (h)"
+                else {"name": c, "id": c}
+            )
+        )
+        for c in EXP_PART_BIN_STATS_COLUMNS
+        if c not in ("File", "ID", "Peak hoop stress proxy (A^2)")
+    ]
+
+
+def overview_record_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c in ("Overview Record", "Assembly")
             else {"name": c, "id": c}
         )
-    )
-    for c in EXP_PART_BIN_STATS_COLUMNS
-    if c not in ("File", "ID", "Peak hoop stress proxy (A^2)")
-]
+        for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats")
+    ]
 
-OVERVIEW_RECORD_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c in ("Overview Record", "Assembly")
-        else {"name": c, "id": c}
-    )
-    for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats")
-]
 
-MAGNET_HISTORY_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c == "magnet_name"
-        else {"name": c, "id": c}
-    )
-    for c in ("magnet_name", "type", "status", "assembled_at", "rank", "coil_index")
-]
+def magnet_history_columns():
+    numeric = {"rank", "coil_index"}
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c == "magnet_name"
+            else (
+                {"name": c, "id": c, "type": "numeric", "format": i18n.localized_number_format()}
+                if c in numeric
+                else {"name": c, "id": c}
+            )
+        )
+        for c in ("magnet_name", "type", "status", "assembled_at", "rank", "coil_index")
+    ]
 
-ASSEMBLY_HISTORY_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c == "assembly_name"
-        else {"name": c, "id": c}
-    )
-    for c in (
-        "assembly_name",
-        "housing",
-        "status",
-        "commissioned_at",
-        "decommissioned_at",
-    )
-]
 
-HOOP_STRESS_SUMMARY_COLUMNS = [
-    {"name": c, "id": c}
-    for c in (
-        "Experiments",
-        "Samples",
-        "Mean (MPa)",
-        "Std dev (MPa)",
-        "Peak (MPa)",
-        "Cycles",
-        "Fatigue proxy (MPa³)",
-    )
-]
+def assembly_history_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c == "assembly_name"
+            else {"name": c, "id": c}
+        )
+        for c in (
+            "assembly_name",
+            "housing",
+            "status",
+            "commissioned_at",
+            "decommissioned_at",
+        )
+    ]
 
-FATIGUE_TABLE_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c in ("Experiment", "Assembly")
-        else {"name": c, "id": c}
-    )
-    for c in ("Experiment", "Assembly", "Cycles", "Fatigue proxy (MPa^3)")
-]
+
+def hoop_stress_summary_columns():
+    return [
+        {"name": c, "id": c, "type": "numeric", "format": i18n.localized_number_format()}
+        for c in (
+            "Experiments",
+            "Samples",
+            "Mean (MPa)",
+            "Std dev (MPa)",
+            "Peak (MPa)",
+            "Cycles",
+            "Fatigue proxy (MPa³)",
+        )
+    ]
+
+
+def fatigue_table_columns():
+    numeric = {"Cycles", "Fatigue proxy (MPa^3)"}
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c in ("Experiment", "Assembly")
+            else (
+                {"name": c, "id": c, "type": "numeric", "format": i18n.localized_number_format()}
+                if c in numeric
+                else {"name": c, "id": c}
+            )
+        )
+        for c in ("Experiment", "Assembly", "Cycles", "Fatigue proxy (MPa^3)")
+    ]
 
 
 def _overview_records_section(overview_df, start_date=None, end_date=None):
@@ -254,16 +284,17 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
 
     if overview_df.empty:
         return html.Div(
-            "No overview records found for the current filters.",
+            i18n._("No overview records found for the current filters."),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
     table_df = overview_df.copy()
     table_df["Overview Record"] = table_df.apply(overview_record_link, axis=1)
     table_df["Assembly"] = table_df.apply(assembly_link, axis=1)
+    table_df["t0"] = table_df["t0"].apply(i18n.format_date)
 
     return DataTable(
-        columns=OVERVIEW_RECORD_COLUMNS,
+        columns=overview_record_columns(),
         data=table_df.to_dict("records"),
         page_size=10,
         sort_action="native",
@@ -277,23 +308,28 @@ def _magnet_history_section(selected_part, db_path):
     """Build the "Magnet history" accordion for the selected part, ascending by magnets.assembled_at."""
     if not selected_part or selected_part == selectors.ALL:
         return html.Div(
-            "Select a part above to see its magnet history.",
+            i18n._("Select a part above to see its magnet history."),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
     history = db.get_magnet_history_for_part(selected_part, db_path)
     if not history:
         return html.Div(
-            f"No magnet history found for {selected_part}.",
+            i18n._("No magnet history found for {part}.").format(part=selected_part),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
     history = [
-        {**h, "magnet_name": magnet_link({"Magnet": h["magnet_name"]})} for h in history
+        {
+            **h,
+            "magnet_name": magnet_link({"Magnet": h["magnet_name"]}),
+            "assembled_at": i18n.format_date(h["assembled_at"]),
+        }
+        for h in history
     ]
 
     return DataTable(
-        columns=MAGNET_HISTORY_COLUMNS,
+        columns=magnet_history_columns(),
         data=history,
         page_size=10,
         sort_action="native",
@@ -307,23 +343,28 @@ def _assembly_history_section(selected_part, history):
     """Build the "Assembly history" accordion for the selected part, ascending by assemblies.commissioned_at."""
     if not selected_part or selected_part == selectors.ALL:
         return html.Div(
-            "Select a part above to see its assembly history.",
+            i18n._("Select a part above to see its assembly history."),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
     if not history:
         return html.Div(
-            f"No assembly history found for {selected_part}.",
+            i18n._("No assembly history found for {part}.").format(part=selected_part),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
     history = [
-        {**h, "assembly_name": assembly_link({"Assembly": h["assembly_name"]})}
+        {
+            **h,
+            "assembly_name": assembly_link({"Assembly": h["assembly_name"]}),
+            "commissioned_at": i18n.format_date(h["commissioned_at"]),
+            "decommissioned_at": i18n.format_date(h["decommissioned_at"]),
+        }
         for h in history
     ]
 
     return DataTable(
-        columns=ASSEMBLY_HISTORY_COLUMNS,
+        columns=assembly_history_columns(),
         data=history,
         page_size=10,
         sort_action="native",
@@ -352,7 +393,7 @@ def _hoop_stress_section(selected_part, db_path):
 
     if not selected_part or selected_part == selectors.ALL:
         return (
-            _hoop_stress_banner("Select a part above to see its hoop-stress history."),
+            _hoop_stress_banner(i18n._("Select a part above to see its hoop-stress history.")),
             [],
             empty_fig,
             empty_fig,
@@ -362,9 +403,11 @@ def _hoop_stress_section(selected_part, db_path):
     if not summary["n_experiments"]:
         return (
             _hoop_stress_banner(
-                f"No hoop-stress data computed for {selected_part}. Run, for its assembly:\n"
-                "to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py "
-                f"hoop-stress compute <ASSEMBLY_NAME> --db {db_path}"
+                i18n._(
+                    "No hoop-stress data computed for {part}. Run, for its assembly:\n"
+                    "to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py "
+                    "hoop-stress compute <ASSEMBLY_NAME> --db {db_path}"
+                ).format(part=selected_part, db_path=db_path)
             ),
             [],
             empty_fig,
@@ -406,17 +449,22 @@ def _hoop_stress_section(selected_part, db_path):
         x="bin",
         y="hours",
         category_orders={"bin": bin_df["bin"].tolist()},
-        labels={"bin": "Hoop stress (MPa)", "hours": "Time at stress level (h)"},
-        title=f"Hoop Stress Distribution — {selected_part}",
+        labels={
+            "bin": i18n._("Hoop stress (MPa)"),
+            "hours": i18n._("Time at stress level (h)"),
+        },
+        title=i18n._("Hoop Stress Distribution — {part}").format(part=selected_part),
     )
 
     history_df = db.load_hoop_stress_history_for_part(selected_part, db_path)
     if history_df is None:
         history_fig = empty_fig
         banner = _hoop_stress_banner(
-            f"Raw hoop-stress history not built yet for {selected_part}. Run:\n"
-            "to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py "
-            f"hoop-stress part-history {selected_part} --db {db_path}"
+            i18n._(
+                "Raw hoop-stress history not built yet for {part}. Run:\n"
+                "to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py "
+                "hoop-stress part-history {part} --db {db_path}"
+            ).format(part=selected_part, db_path=db_path)
         )
     else:
         plot_df = downsample_dataframe(
@@ -434,9 +482,9 @@ def _hoop_stress_section(selected_part, db_path):
             )
         )
         history_fig.update_layout(
-            title=f"Hoop Stress History — {selected_part}",
-            xaxis_title="Time",
-            yaxis_title="Hoop stress (MPa)",
+            title=i18n._("Hoop Stress History — {part}").format(part=selected_part),
+            xaxis_title=i18n._("Time"),
+            yaxis_title=i18n._("Hoop stress (MPa)"),
         )
         banner = ""
 
@@ -456,7 +504,7 @@ def _fatigue_section(selected_part, db_path):
 
     if not selected_part or selected_part == selectors.ALL:
         return (
-            _hoop_stress_banner("Select a part above to see its fatigue results."),
+            _hoop_stress_banner(i18n._("Select a part above to see its fatigue results.")),
             [],
             empty_fig,
             empty_fig,
@@ -466,9 +514,11 @@ def _fatigue_section(selected_part, db_path):
     if fatigue_df.empty:
         return (
             _hoop_stress_banner(
-                f"No fatigue data computed for {selected_part}. Run, for its assembly:\n"
-                "to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py "
-                f"hoop-stress compute <ASSEMBLY_NAME> --db {db_path}"
+                i18n._(
+                    "No fatigue data computed for {part}. Run, for its assembly:\n"
+                    "to_duckdb/venv-systempackages/bin/python3 to_duckdb/magnetdb.py "
+                    "hoop-stress compute <ASSEMBLY_NAME> --db {db_path}"
+                ).format(part=selected_part, db_path=db_path)
             ),
             [],
             empty_fig,
@@ -491,18 +541,18 @@ def _fatigue_section(selected_part, db_path):
         x="Experiment label",
         y="Cycles",
         category_orders={"Experiment label": experiment_order},
-        title=f"Rainflow Cycles per Experiment — {selected_part}",
-        labels={"Experiment label": "Experiment", "Cycles": "Cycles"},
+        title=i18n._("Rainflow Cycles per Experiment — {part}").format(part=selected_part),
+        labels={"Experiment label": i18n._("Experiment"), "Cycles": i18n._("Cycles")},
     )
     range3_fig = px.bar(
         plot_df,
         x="Experiment label",
         y="Fatigue proxy (MPa^3)",
         category_orders={"Experiment label": experiment_order},
-        title=f"Fatigue Proxy per Experiment — {selected_part}",
+        title=i18n._("Fatigue Proxy per Experiment — {part}").format(part=selected_part),
         labels={
-            "Experiment label": "Experiment",
-            "Fatigue proxy (MPa^3)": "Fatigue proxy (MPa³)",
+            "Experiment label": i18n._("Experiment"),
+            "Fatigue proxy (MPa^3)": i18n._("Fatigue proxy (MPa³)"),
         },
     )
     # Plotly auto-detects date-like x labels and reverts to a date axis
@@ -555,7 +605,7 @@ def _build_page_content(
         y="Time (h)",
         color="Magnet",
         category_orders={"Part": part_order, "Magnet": magnet_order},
-        title="Magnet Time per Part (h)",
+        title=i18n._("Magnet Time per Part (h)"),
     )
 
     table_source_df = selectors.filter_by_date_range(
@@ -567,7 +617,9 @@ def _build_page_content(
     table_df["Magnet"] = table_source_df.apply(magnet_link, axis=1)
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
-    summary = [f"Processed: {(exp_df['Status'] == 'STATS DONE').sum()}"]
+    summary = [
+        i18n._("Processed: {n}").format(n=(exp_df["Status"] == "STATS DONE").sum())
+    ]
 
     return (
         fig_magnet_time,
@@ -579,17 +631,17 @@ def _build_page_content(
 def layout(part=None, **kwargs):
     return html.Div(
         [
-            html.H1("Part Dashboard"),
+            html.H1(i18n._("Part Dashboard")),
             html.Div(
                 [
                     selectors.aggregate_filter(
                         "part-stats-status-filter",
-                        "Status",
+                        i18n._("Status"),
                         style={"width": "250px"},
                     ),
                     selectors.aggregate_filter(
                         "part-stats-part-filter",
-                        "Part",
+                        i18n._("Part"),
                         style={"width": "400px"},
                         value=part,
                     ),
@@ -602,13 +654,13 @@ def layout(part=None, **kwargs):
             ),
             html.Div(id="part-stats-summary"),
             html.Br(),
-            dcc.Graph(id="part-stats-fig-magnet-time"),
+            selectors.graph(id="part-stats-fig-magnet-time"),
             html.Br(),
             html.Details(
                 id="part-stats-hoop-stress-details",
                 children=[
                     html.Summary(
-                        "📈 Hoop stress history",
+                        f"📈 {i18n._('Hoop stress history')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     dcc.Loading(
@@ -617,7 +669,7 @@ def layout(part=None, **kwargs):
                                 html.Div(id="part-stats-hoop-stress-banner"),
                                 DataTable(
                                     id="part-stats-hoop-stress-table",
-                                    columns=HOOP_STRESS_SUMMARY_COLUMNS,
+                                    columns=hoop_stress_summary_columns(),
                                     data=[],
                                     style_table={"overflowX": "auto"},
                                     style_cell={
@@ -626,8 +678,8 @@ def layout(part=None, **kwargs):
                                     },
                                     style_header={"fontWeight": "bold"},
                                 ),
-                                dcc.Graph(id="part-stats-hoop-stress-fig"),
-                                dcc.Graph(id="part-stats-hoop-stress-history-fig"),
+                                selectors.graph(id="part-stats-hoop-stress-fig"),
+                                selectors.graph(id="part-stats-hoop-stress-history-fig"),
                             ],
                             style={"padding": "10px"},
                         ),
@@ -646,7 +698,7 @@ def layout(part=None, **kwargs):
                 id="part-stats-fatigue-details",
                 children=[
                     html.Summary(
-                        "🔧 Fatigue results",
+                        f"🔧 {i18n._('Fatigue results')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
@@ -654,7 +706,7 @@ def layout(part=None, **kwargs):
                             html.Div(id="part-stats-fatigue-banner"),
                             DataTable(
                                 id="part-stats-fatigue-table",
-                                columns=FATIGUE_TABLE_COLUMNS,
+                                columns=fatigue_table_columns(),
                                 data=[],
                                 page_size=20,
                                 sort_action="native",
@@ -662,8 +714,8 @@ def layout(part=None, **kwargs):
                                 style_cell={"textAlign": "center", "padding": "6px"},
                                 style_header={"fontWeight": "bold"},
                             ),
-                            dcc.Graph(id="part-stats-fatigue-cycles-fig"),
-                            dcc.Graph(id="part-stats-fatigue-range3-fig"),
+                            selectors.graph(id="part-stats-fatigue-cycles-fig"),
+                            selectors.graph(id="part-stats-fatigue-range3-fig"),
                         ],
                         style={"padding": "10px"},
                     ),
@@ -680,7 +732,7 @@ def layout(part=None, **kwargs):
                 id="part-stats-magnet-history-details",
                 children=[
                     html.Summary(
-                        "📁 Magnet history",
+                        f"📁 {i18n._('Magnet history')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(id="part-stats-magnet-history", style={"padding": "10px"}),
@@ -696,7 +748,7 @@ def layout(part=None, **kwargs):
                 id="part-stats-assembly-history-details",
                 children=[
                     html.Summary(
-                        "📁 Assembly history",
+                        f"📁 {i18n._('Assembly history')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
@@ -714,14 +766,14 @@ def layout(part=None, **kwargs):
             html.Details(
                 [
                     html.Summary(
-                        "📁 Overview records",
+                        f"📁 {i18n._('Overview records')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
                         [
                             selectors.date_range_filter(
                                 "part-stats-overview-date-filter",
-                                "Filter by record date (t0)",
+                                i18n._("Filter by record date (t0)"),
                                 style={"marginBottom": "10px"},
                             ),
                             html.Div(id="part-stats-overview-records"),
@@ -739,19 +791,19 @@ def layout(part=None, **kwargs):
             html.Details(
                 [
                     html.Summary(
-                        "📊 Experiments table",
+                        f"📊 {i18n._('Experiments table')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
                         [
                             selectors.date_range_filter(
                                 "part-stats-table-date-filter",
-                                "Filter by experiment date",
+                                i18n._("Filter by experiment date"),
                                 style={"marginBottom": "10px"},
                             ),
                             DataTable(
                                 id="part-stats-table",
-                                columns=TABLE_COLUMNS,
+                                columns=table_columns(),
                                 data=[],
                                 page_size=20,
                                 sort_action="native",
@@ -845,7 +897,7 @@ def update_part_stats(
 
     df = load_data(selected_db)
     missing_banner = (
-        "" if not df.empty else "No experiment data found for this database."
+        "" if not df.empty else i18n._("No experiment data found for this database.")
     )
 
     status_options = [selectors.ALL] + db.get_distinct_statuses("parts")

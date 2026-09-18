@@ -2,6 +2,7 @@ import dash
 import dash_bootstrap_components as dbc
 import dash_selectors as selectors
 import duckdb
+import i18n
 import magnetdb_analysis as db
 import pandas as pd
 import plotly.express as px
@@ -11,7 +12,9 @@ from experiment_links import assembly_link
 from natsort import natsorted
 from plotly import graph_objects as go
 
-dash.register_page(__name__, path="/", name="Housings", order=2)
+dash.register_page(
+    __name__, path="/", name="Housings", order=2, title=lambda: i18n._("Housings")
+)
 
 
 J_TO_KWH = 3.6e6
@@ -32,14 +35,15 @@ _MONTH_LABELS = [
     "Dec",
 ]
 
-COMMISSIONING_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c == "Assembly"
-        else {"name": c, "id": c}
-    )
-    for c in ("Assembly", "Status", "Commissioned", "Decommissioned")
-]
+def commissioning_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c == "Assembly"
+            else {"name": c, "id": c}
+        )
+        for c in ("Assembly", "Status", "Commissioned", "Decommissioned")
+    ]
 
 
 def load_housing_summary(db_path=None, assembly_names=None):
@@ -417,6 +421,8 @@ def load_commissioning_history(db_path=None, assemblies_in_year=None):
     df["Commissioned"] = db.to_display_tz(df["Commissioned"])
     df["Decommissioned"] = db.to_display_tz(df["Decommissioned"])
     df["Assembly"] = df.apply(assembly_link, axis=1)
+    df["Commissioned"] = df["Commissioned"].apply(i18n.format_date)
+    df["Decommissioned"] = df["Decommissioned"].apply(i18n.format_date)
     return {
         housing: group.drop(columns=["Housing"]).to_dict("records")
         for housing, group in df.groupby("Housing")
@@ -437,7 +443,7 @@ def _field_activity_strip(housing, db_path=None, assembly_names=None, year=None)
     )
     if not history:
         return html.Div(
-            "No commissioning history yet.",
+            i18n._("No commissioning history yet."),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
@@ -450,9 +456,9 @@ def _field_activity_strip(housing, db_path=None, assembly_names=None, year=None)
     for row in history:
         start, end = row["period_start"], row["period_end"]
         color, label = (
-            ("#2ca02c", "activity")
+            ("#2ca02c", i18n._("activity"))
             if row["has_activity"]
-            else ("#ffffff", "no activity")
+            else ("#ffffff", i18n._("no activity"))
         )
         if year is not None:
             period_desc = f"{start:%b %d} – {end:%b %d} {start.year}"
@@ -475,7 +481,9 @@ def _field_activity_strip(housing, db_path=None, assembly_names=None, year=None)
         if row["commissioned"]:
             cells.append(
                 html.Div(
-                    title=f"Commissioned: {', '.join(row['commissioned'])}",
+                    title=i18n._("Commissioned: {names}").format(
+                        names=", ".join(row["commissioned"])
+                    ),
                     style={
                         "width": "3px",
                         "height": "18px",
@@ -552,25 +560,33 @@ def _housing_section(
             html.Div(
                 [
                     html.Span(
-                        f"Energy: {energy:,.2f} kWh", style={"marginRight": "25px"}
+                        i18n._("Energy: {value} kWh").format(
+                            value=i18n.format_number(energy)
+                        ),
+                        style={"marginRight": "25px"},
                     ),
                     html.Span(
-                        f"Magnet time: {field_on:,.2f} h", style={"marginRight": "25px"}
+                        i18n._("Magnet time: {value} h").format(
+                            value=i18n.format_number(field_on)
+                        ),
+                        style={"marginRight": "25px"},
                     ),
                     html.Span(
-                        f"Assemblies: {n_assemblies} ({n_in_operation} in operation)"
+                        i18n._("Assemblies: {n} ({in_operation} in operation)").format(
+                            n=n_assemblies, in_operation=n_in_operation
+                        )
                     ),
                 ],
                 style={"marginBottom": "10px"},
             ),
             html.Label(
-                "Commissioning activity by month:",
+                i18n._("Commissioning activity by month:"),
                 style={"fontSize": "13px", "color": "#555"},
             ),
             _field_activity_strip(housing, db_path, assembly_names, year),
             html.Br(),
             DataTable(
-                columns=COMMISSIONING_COLUMNS,
+                columns=commissioning_columns(),
                 data=commissioning_rows,
                 page_size=10,
                 sort_action="native",
@@ -579,7 +595,7 @@ def _housing_section(
                 style_header={"fontWeight": "bold"},
             ),
             html.Br(),
-            dcc.Link("View all assemblies →", href="/assembly_stats"),
+            dcc.Link(i18n._("View all assemblies →"), href="/assembly_stats"),
         ],
         title=html.Span(["🏠 ", html.B(housing)]),
         item_id=housing,
@@ -589,24 +605,24 @@ def _housing_section(
 def layout(**kwargs):
     return html.Div(
         [
-            html.H1("Housing Dashboard"),
+            html.H1(i18n._("Housing Dashboard")),
             selectors.aggregate_filter(
                 "housing-stats-year-filter",
-                "Year",
+                i18n._("Year"),
                 style={"width": "150px", "marginBottom": "15px"},
             ),
             html.Div(id="housing-stats-summary"),
-            dcc.Graph(id="housing-stats-energy-fig"),
+            selectors.graph(id="housing-stats-energy-fig"),
             html.Br(),
-            dcc.Graph(id="housing-stats-field-bins-fig"),
+            selectors.graph(id="housing-stats-field-bins-fig"),
             html.Br(),
-            dcc.Graph(id="housing-stats-energy-year-fig"),
+            selectors.graph(id="housing-stats-energy-year-fig"),
             html.Br(),
-            dcc.Graph(id="housing-stats-field-on-year-fig"),
+            selectors.graph(id="housing-stats-field-on-year-fig"),
             html.Br(),
-            dcc.Graph(id="housing-stats-field-bins-year-fig"),
+            selectors.graph(id="housing-stats-field-bins-year-fig"),
             html.Br(),
-            html.H3("Housing Details"),
+            html.H3(i18n._("Housing Details")),
             html.Div(id="housing-stats-sections"),
         ],
         style={"padding": "20px"},
@@ -692,7 +708,7 @@ def update_housing_stats(selected_db, selected_year):
         color="Housing",
         color_discrete_map=HOUSING_COLORS,
         category_orders={"Housing": housing_order},
-        title=f"Total Energy per Housing{year_suffix}",
+        title=i18n._("Total Energy per Housing") + year_suffix,
     )
 
     field_bin_df = load_field_bin_stats_by_housing(
@@ -711,12 +727,13 @@ def update_housing_stats(selected_db, selected_year):
             category_orders={"Housing": housing_order, "Field bin": bin_order},
             color_discrete_sequence=bin_colors,
             custom_data=["Percent"],
-            title=f"Magnet Time per Housing by Field Bin (h){year_suffix}",
+            title=i18n._("Magnet Time per Housing by Field Bin (h)") + year_suffix,
         )
         fig_field_bins.update_traces(
             hovertemplate=(
                 "%{fullData.name}<br>%{x}<br>"
-                "%{y:.1f} h (%{customdata[0]:.1f}% of housing total)<extra></extra>"
+                f"%{{y:.1f}} {i18n._('h')} "
+                f"(%{{customdata[0]:.1f}}% {i18n._('of housing total')})<extra></extra>"
             )
         )
 
@@ -731,10 +748,13 @@ def update_housing_stats(selected_db, selected_year):
             color_discrete_map=HOUSING_COLORS,
             category_orders={"Housing": housing_order},
             barmode="group",
-            title=f"Energy per Housing per Month{year_suffix}",
+            title=i18n._("Energy per Housing per Month") + year_suffix,
         )
         fig_energy_year.update_xaxes(
-            dtick=1, tickvals=list(range(1, 13)), ticktext=_MONTH_LABELS, title="Month"
+            dtick=1,
+            tickvals=list(range(1, 13)),
+            ticktext=_MONTH_LABELS,
+            title=i18n._("Month"),
         )
 
         fig_field_on_year = px.bar(
@@ -745,10 +765,13 @@ def update_housing_stats(selected_db, selected_year):
             color_discrete_map=HOUSING_COLORS,
             category_orders={"Housing": housing_order},
             barmode="group",
-            title=f"Magnet Time per Housing per Month (h){year_suffix}",
+            title=i18n._("Magnet Time per Housing per Month (h)") + year_suffix,
         )
         fig_field_on_year.update_xaxes(
-            dtick=1, tickvals=list(range(1, 13)), ticktext=_MONTH_LABELS, title="Month"
+            dtick=1,
+            tickvals=list(range(1, 13)),
+            ticktext=_MONTH_LABELS,
+            title=i18n._("Month"),
         )
 
         field_bin_period_df = load_field_bin_stats_by_housing_month(
@@ -769,13 +792,14 @@ def update_housing_stats(selected_db, selected_year):
                 category_orders={"Housing": housing_order, "Field bin": bin_order_p},
                 color_discrete_sequence=bin_colors_p,
                 custom_data=["Percent"],
-                title=f"Magnet Time per Housing per Month by Field Bin (h){year_suffix}",
+                title=i18n._("Magnet Time per Housing per Month by Field Bin (h)")
+                + year_suffix,
             )
             fig_field_bins_year.update_xaxes(
                 dtick=1,
                 tickvals=list(range(1, 13)),
                 ticktext=_MONTH_LABELS,
-                title="Month",
+                title=i18n._("Month"),
             )
     else:
         fig_energy_year = px.bar(
@@ -786,9 +810,9 @@ def update_housing_stats(selected_db, selected_year):
             color_discrete_map=HOUSING_COLORS,
             category_orders={"Housing": housing_order},
             barmode="group",
-            title="Energy per Housing per Year",
+            title=i18n._("Energy per Housing per Year"),
         )
-        fig_energy_year.update_xaxes(dtick=1, title="Year")
+        fig_energy_year.update_xaxes(dtick=1, title=i18n._("Year"))
 
         fig_field_on_year = px.bar(
             summary_by_year_df,
@@ -798,9 +822,9 @@ def update_housing_stats(selected_db, selected_year):
             color_discrete_map=HOUSING_COLORS,
             category_orders={"Housing": housing_order},
             barmode="group",
-            title="Magnet Time per Housing per Year (h)",
+            title=i18n._("Magnet Time per Housing per Year (h)"),
         )
-        fig_field_on_year.update_xaxes(dtick=1, title="Year")
+        fig_field_on_year.update_xaxes(dtick=1, title=i18n._("Year"))
 
         field_bin_period_df = load_field_bin_stats_by_housing_year(selected_db)
         if field_bin_period_df.empty:
@@ -818,14 +842,15 @@ def update_housing_stats(selected_db, selected_year):
                 category_orders={"Housing": housing_order, "Field bin": bin_order_p},
                 color_discrete_sequence=bin_colors_p,
                 custom_data=["Percent"],
-                title="Magnet Time per Housing per Year by Field Bin (h)",
+                title=i18n._("Magnet Time per Housing per Year by Field Bin (h)"),
             )
-            fig_field_bins_year.update_xaxes(dtick=1, title="Year")
+            fig_field_bins_year.update_xaxes(dtick=1, title=i18n._("Year"))
 
     fig_field_bins_year.update_traces(
         hovertemplate=(
             "%{fullData.name}<br>%{x}<br>"
-            "%{y:.1f} h (%{customdata[0]:.1f}% of housing total)<extra></extra>"
+            f"%{{y:.1f}} {i18n._('h')} "
+            f"(%{{customdata[0]:.1f}}% {i18n._('of housing total')})<extra></extra>"
         )
     )
     fig_field_bins_year.for_each_annotation(

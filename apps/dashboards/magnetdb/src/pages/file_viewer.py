@@ -1,5 +1,6 @@
 import dash
 import dash_selectors as selectors
+import i18n
 import magnetdb_analysis as db
 import magnetdb_plot as plot
 import pandas as pd
@@ -19,7 +20,13 @@ from dash.exceptions import PreventUpdate
 from plotly import graph_objects as go
 from python_magnetrun.utils.timezone import local_to_utc_naive
 
-dash.register_page(__name__, path="/file_viewer", name="File viewer", order=6)
+dash.register_page(
+    __name__,
+    path="/file_viewer",
+    name="File viewer",
+    order=6,
+    title=lambda: i18n._("File viewer"),
+)
 
 
 # `assembly`/`file` are populated by Dash Pages from the URL's query string (e.g. the
@@ -36,20 +43,24 @@ def layout(assembly=None, file=None, **kwargs):
             html.Div(
                 [
                     html.H2(
-                        "Pupitre Dashboard",
+                        i18n._("Pupitre Dashboard"),
                         style={"marginTop": "0px", "marginBottom": "20px"},
                     ),
                     html.Hr(),
                     html.Div(
                         [
                             selectors.aggregate_filter(
-                                "fv-housing-filter", "Housing", style={"width": "200px"}
+                                "fv-housing-filter",
+                                i18n._("Housing"),
+                                style={"width": "200px"},
                             ),
                             selectors.aggregate_filter(
-                                "fv-year-filter", "Year", style={"width": "150px"}
+                                "fv-year-filter", i18n._("Year"), style={"width": "150px"}
                             ),
                             selectors.aggregate_filter(
-                                "fv-status-filter", "Status", style={"width": "200px"}
+                                "fv-status-filter",
+                                i18n._("Status"),
+                                style={"width": "200px"},
                             ),
                         ],
                         style={
@@ -59,41 +70,41 @@ def layout(assembly=None, file=None, **kwargs):
                         },
                     ),
                     selectors.cascading_selector(
-                        "dd-assembly", "Assembly", 1, value=assembly
+                        "dd-assembly", i18n._("Assembly"), 1, value=assembly
                     ),
                     html.Br(),
                     html.Div(id="fv-magnets-table", style={"marginBottom": "10px"}),
                     html.Br(),
-                    html.Label("2. Choose File :", style={"fontWeight": "bold"}),
+                    html.Label(i18n._("2. Choose File :"), style={"fontWeight": "bold"}),
                     dcc.Dropdown(
                         id="dd-file",
                         options=[file] if file else [],
                         value=file,
-                        placeholder="Choose a file...",
+                        placeholder=i18n._("Choose a file..."),
                     ),
                     html.Br(),
                     html.Div(id="fv-file-stats", style={"marginBottom": "10px"}),
-                    dcc.Graph(
+                    selectors.graph(
                         id="fv-field-histogram",
                         figure=plot.field_histogram_figure(None),
                         style={"height": "250px"},
                     ),
                     html.Br(),
                     html.Label(
-                        "3. Choose X-axis :",
+                        i18n._("3. Choose X-axis :"),
                         style={"fontWeight": "bold", "color": "#007bff"},
                     ),
                     dcc.Dropdown(
                         id="dd-x-axis",
                         options=[
-                            {"label": "Real Time (timestamp)", "value": "timestamp"},
-                            {"label": "Elapsed Time (t)", "value": "t"},
+                            {"label": i18n._("Real Time (timestamp)"), "value": "timestamp"},
+                            {"label": i18n._("Elapsed Time (t)"), "value": "t"},
                         ],
                         value="timestamp",
                         clearable=False,
                     ),
                     html.Br(),
-                    html.Label("4. Choose Sensors :", style={"fontWeight": "bold"}),
+                    html.Label(i18n._("4. Choose Sensors :"), style={"fontWeight": "bold"}),
                     # C'est ce conteneur unique qui contiendra tout (Groupes + Checklist + Graphiques associés)
                     dcc.Loading(
                         html.Div(
@@ -106,14 +117,14 @@ def layout(assembly=None, file=None, **kwargs):
                     style_editor.modal_component("fv"),
                     style_editor.download_store("fv"),
                     html.Br(),
-                    html.Label("5. Cursor sync:", style={"fontWeight": "bold"}),
+                    html.Label(i18n._("5. Cursor sync:"), style={"fontWeight": "bold"}),
                     html.Div(
                         [
                             dcc.Checklist(
                                 id="fv-sync-cursor-toggle",
                                 options=[
                                     {
-                                        "label": " Sync cursor across graphs",
+                                        "label": i18n._(" Sync cursor across graphs"),
                                         "value": "sync",
                                     }
                                 ],
@@ -124,13 +135,15 @@ def layout(assembly=None, file=None, **kwargs):
                                 },
                             ),
                             html.Button(
-                                "Clear cursors", id="fv-clear-cursors-btn", n_clicks=0
+                                i18n._("Clear cursors"), id="fv-clear-cursors-btn", n_clicks=0
                             ),
                         ],
                         style={"marginTop": "4px"},
                     ),
                     html.Br(),
-                    html.Label("6. Downsampling Method:", style={"fontWeight": "bold"}),
+                    html.Label(
+                        i18n._("6. Downsampling Method:"), style={"fontWeight": "bold"}
+                    ),
                     dcc.Dropdown(
                         id="dropdown-downsampling",
                         options=["raw data", "LTTB", "minmax", "M4", "naive"],
@@ -315,7 +328,7 @@ def _sensor_group_block(group_name, options, saved_values, open_by_default=False
         [
             # 1. EN-TÊTE : Le titre cliquable qui contrôle TOUT le bloc
             html.Summary(
-                f"📂 {group_name}",
+                f"📂 {i18n._(group_name)}",
                 style={
                     "fontWeight": "bold",
                     "cursor": "pointer",
@@ -359,7 +372,7 @@ def _sensor_group_block(group_name, options, saved_values, open_by_default=False
                     # --- PARTIE DROITE : Le conteneur du Graphique ---
                     html.Div(
                         children=[
-                            dcc.Graph(
+                            selectors.graph(
                                 id={
                                     "type": "dynamic-graph",
                                     "index": group_name,
@@ -523,7 +536,7 @@ def update_outputs(
     empty_fig.update_layout(
         annotations=[
             {
-                "text": "Cochez un capteur pour afficher la courbe",
+                "text": i18n._("Check a sensor to display its curve"),
                 "xref": "paper",
                 "yref": "paper",
                 "showarrow": False,

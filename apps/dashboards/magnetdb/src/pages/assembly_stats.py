@@ -1,10 +1,11 @@
 import dash
 import dash_selectors as selectors
 import duckdb
+import i18n
 import magnetdb_analysis as db
 import pandas as pd
 import plotly.express as px
-from dash import Input, Output, dcc, html
+from dash import Input, Output, html
 from dash.dash_table import DataTable
 from experiment_links import (
     assembly_link,
@@ -14,7 +15,13 @@ from experiment_links import (
 from plotly import graph_objects as go
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
-dash.register_page(__name__, path="/assembly_stats", name="Assemblies", order=3)
+dash.register_page(
+    __name__,
+    path="/assembly_stats",
+    name="Assemblies",
+    order=3,
+    title=lambda: i18n._("Assemblies"),
+)
 
 
 J_TO_KWH = 3.6e6
@@ -220,25 +227,39 @@ def load_field_bin_stats(experiment_ids, db_path=None):
 
 
 _TABLE_MARKDOWN_COLUMNS = {"Experiment", "Assembly"}
+_TABLE_NUMERIC_COLUMNS = {
+    "Energy (kWh)",
+    "Extracted heat (kWh)",
+    "Duration (s)",
+    "Magnet Time (s)",
+}
 
-TABLE_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c in _TABLE_MARKDOWN_COLUMNS
-        else {"name": c, "id": c}
-    )
-    for c in EXP_RUN_SCALARS_COLUMNS
-    if c not in ("File", "ID")
-]
 
-OVERVIEW_RECORD_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c in ("Overview Record", "Assembly")
-        else {"name": c, "id": c}
-    )
-    for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats")
-]
+def table_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c in _TABLE_MARKDOWN_COLUMNS
+            else (
+                {"name": c, "id": c, "type": "numeric", "format": i18n.localized_number_format()}
+                if c in _TABLE_NUMERIC_COLUMNS
+                else {"name": c, "id": c}
+            )
+        )
+        for c in EXP_RUN_SCALARS_COLUMNS
+        if c not in ("File", "ID")
+    ]
+
+
+def overview_record_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c in ("Overview Record", "Assembly")
+            else {"name": c, "id": c}
+        )
+        for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats")
+    ]
 
 
 def _overview_records_section(overview_df, start_date=None, end_date=None):
@@ -265,16 +286,17 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
 
     if overview_df.empty:
         return html.Div(
-            "No overview records found for the current filters.",
+            i18n._("No overview records found for the current filters."),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
     table_df = overview_df.copy()
     table_df["Overview Record"] = table_df.apply(overview_record_link, axis=1)
     table_df["Assembly"] = table_df.apply(assembly_link, axis=1)
+    table_df["t0"] = table_df["t0"].apply(i18n.format_date)
 
     return DataTable(
-        columns=OVERVIEW_RECORD_COLUMNS,
+        columns=overview_record_columns(),
         data=table_df.to_dict("records"),
         page_size=10,
         sort_action="native",
@@ -335,7 +357,7 @@ def _build_page_content(
         color_discrete_map={"M9": "red", "M10": "blue"},
         category_orders={"Housing": housing_order},
         hover_data=["Assembly"],
-        title="Energy per Experiment",
+        title=i18n._("Energy per Experiment"),
     )
 
     x_range = None
@@ -362,7 +384,7 @@ def _build_page_content(
             dtick, tickformat = _adaptive_time_ticks((range_end - range_start).days)
 
     fig_per_exp.update_xaxes(
-        tickformat=tickformat, dtick=dtick, title="Experiment Date", range=x_range
+        tickformat=tickformat, dtick=dtick, title=i18n._("Experiment Date"), range=x_range
     )
 
     fig_per_exp.update_traces(width=bar_width_ms)
@@ -382,7 +404,7 @@ def _build_page_content(
             "Assembly": energy_by_assembly["Assembly"].tolist(),
             "Housing": housing_order,
         },
-        title="Energy per Assembly",
+        title=i18n._("Energy per Assembly"),
     )
 
     field_on_by_assembly = df.groupby(["Assembly", "Housing"], as_index=False).agg(
@@ -401,7 +423,7 @@ def _build_page_content(
             "Assembly": field_on_by_assembly["Assembly"].tolist(),
             "Housing": housing_order,
         },
-        title="Magnet Time per Assembly (h)",
+        title=i18n._("Magnet Time per Assembly (h)"),
     )
 
     field_bin_df = load_field_bin_stats(df["ID"].tolist(), db_path)
@@ -440,12 +462,13 @@ def _build_page_content(
             },
             color_discrete_sequence=bin_colors,
             custom_data=["Percent"],
-            title="Magnet Time per Assembly by Field Bin (h)",
+            title=i18n._("Magnet Time per Assembly by Field Bin (h)"),
         )
         fig_field_bins.update_traces(
             hovertemplate=(
                 "%{fullData.name}<br>%{x}<br>"
-                "%{y:.1f} h (%{customdata[0]:.1f}% of assembly total)<extra></extra>"
+                f"%{{y:.1f}} {i18n._('h')} "
+                f"(%{{customdata[0]:.1f}}% {i18n._('of assembly total')})<extra></extra>"
             )
         )
 
@@ -456,7 +479,7 @@ def _build_page_content(
     table_df["Experiment"] = table_source_df.apply(experiment_link, axis=1)
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
 
-    summary = [f"Processed: {(df['Status'] == 'STATS DONE').sum()}"]
+    summary = [i18n._("Processed: {n}").format(n=(df["Status"] == "STATS DONE").sum())]
 
     return (
         fig_per_exp,
@@ -471,28 +494,28 @@ def _build_page_content(
 def layout(assembly=None, **kwargs):
     return html.Div(
         [
-            html.H1("Assembly Dashboard"),
+            html.H1(i18n._("Assembly Dashboard")),
             html.Div(
                 [
                     selectors.aggregate_filter(
                         "assembly-stats-housing-filter",
-                        "Housing",
+                        i18n._("Housing"),
                         options=db.get_housings(),
                         style={"width": "250px"},
                     ),
                     selectors.aggregate_filter(
                         "assembly-stats-year-filter",
-                        "Year",
+                        i18n._("Year"),
                         style={"width": "150px"},
                     ),
                     selectors.aggregate_filter(
                         "assembly-stats-status-filter",
-                        "Status",
+                        i18n._("Status"),
                         style={"width": "250px"},
                     ),
                     selectors.aggregate_filter(
                         "assembly-stats-assembly-filter",
-                        "Assembly",
+                        i18n._("Assembly"),
                         style={"width": "400px"},
                         value=assembly,
                     ),
@@ -505,18 +528,18 @@ def layout(assembly=None, **kwargs):
             ),
             html.Div(id="assembly-stats-summary"),
             html.Br(),
-            dcc.Graph(id="fig-per-exp"),
+            selectors.graph(id="fig-per-exp"),
             html.Br(),
-            dcc.Graph(id="fig-per-assembly"),
+            selectors.graph(id="fig-per-assembly"),
             html.Br(),
-            dcc.Graph(id="fig-field-on"),
+            selectors.graph(id="fig-field-on"),
             html.Br(),
-            dcc.Graph(id="fig-field-bins"),
+            selectors.graph(id="fig-field-bins"),
             html.Br(),
             html.Details(
                 [
                     html.Summary(
-                        "🧲 Magnets",
+                        f"🧲 {i18n._('Magnets')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(id="assembly-stats-magnets", style={"padding": "10px"}),
@@ -532,14 +555,14 @@ def layout(assembly=None, **kwargs):
             html.Details(
                 [
                     html.Summary(
-                        "📁 Overview records",
+                        f"📁 {i18n._('Overview records')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
                         [
                             selectors.date_range_filter(
                                 "assembly-stats-overview-date-filter",
-                                "Filter by record date (t0)",
+                                i18n._("Filter by record date (t0)"),
                                 style={"marginBottom": "10px"},
                             ),
                             html.Div(id="assembly-stats-overview-records"),
@@ -558,19 +581,19 @@ def layout(assembly=None, **kwargs):
             html.Details(
                 [
                     html.Summary(
-                        "📊 Experiments table",
+                        f"📊 {i18n._('Experiments table')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
                     html.Div(
                         [
                             selectors.date_range_filter(
                                 "assembly-stats-table-date-filter",
-                                "Filter by experiment date",
+                                i18n._("Filter by experiment date"),
                                 style={"marginBottom": "10px"},
                             ),
                             DataTable(
                                 id="assembly-stats-table",
-                                columns=TABLE_COLUMNS,
+                                columns=table_columns(),
                                 data=[],
                                 page_size=20,
                                 sort_action="native",
@@ -692,7 +715,7 @@ def update_assembly_stats(
         [selected_assembly] if assembly_selected else assembly_options[1:]
     )
     missing_banner = (
-        "" if not df.empty else "No experiment data found for this database."
+        "" if not df.empty else i18n._("No experiment data found for this database.")
     )
 
     plot_df = df

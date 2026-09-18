@@ -1,3 +1,4 @@
+import i18n
 import magnetdb_analysis as db
 import pandas as pd
 from dash import dcc, html
@@ -6,14 +7,36 @@ from experiment_links import file_viewer_href, magnet_link
 
 ALL = "All"
 
-MAGNETS_TABLE_COLUMNS = [
-    (
-        {"name": c, "id": c, "presentation": "markdown"}
-        if c == "Magnet"
-        else {"name": c, "id": c}
-    )
-    for c in ("Magnet", "Description", "Type", "Composition", "Status", "Assembled")
-]
+
+def graph(figure=None, **kwargs):
+    """:class:`~dash.dcc.Graph` pre-configured with the current language's Plotly.js locale.
+
+    Parameters
+    ----------
+    figure : :class:`~plotly.graph_objects.Figure`, optional
+        Figure to display. Omit for a placeholder ``dcc.Graph`` whose
+        ``figure`` a page callback fills in later — the ``locale`` config
+        set here still applies once that callback sets the figure.
+    **kwargs
+        Forwarded to :class:`~dash.dcc.Graph` (e.g. ``id``, ``style``).
+
+    Returns
+    -------
+    :class:`~dash.dcc.Graph`
+    """
+    if figure is not None:
+        kwargs["figure"] = figure
+    return dcc.Graph(config={"locale": i18n.current_language()}, **kwargs)
+
+def magnets_table_columns():
+    return [
+        (
+            {"name": c, "id": c, "presentation": "markdown"}
+            if c == "Magnet"
+            else {"name": c, "id": c}
+        )
+        for c in ("Magnet", "Description", "Type", "Composition", "Status", "Assembled")
+    ]
 
 
 def entity_count_line(label, total, in_scope_count):
@@ -73,12 +96,19 @@ def _year_housing_pivot_table(by_year_housing):
     """
     if by_year_housing.empty:
         return html.Div(
-            "No dated records for the current scope.",
+            i18n._("No dated records for the current scope."),
             style={"color": "#888", "fontStyle": "italic"},
         )
     table_df = by_year_housing.reset_index().rename(columns={"year": "Year"})
     return DataTable(
-        columns=[{"name": c, "id": c} for c in table_df.columns],
+        columns=[
+            (
+                {"name": c, "id": c}
+                if c == "Year"
+                else {"name": c, "id": c, "type": "numeric", "format": i18n.localized_number_format(precision=0)}
+            )
+            for c in table_df.columns
+        ],
         data=table_df.to_dict("records"),
         sort_action="native",
         style_table={"overflowX": "auto"},
@@ -109,31 +139,40 @@ def database_summary_banner(summary):
         summary["parts"],
     )
     lines = [
-        html.Div(f"Housings: {housings['total']} ({', '.join(housings['names'])})"),
+        html.Div(
+            i18n._("Housings: {n} ({names})").format(
+                n=housings["total"], names=", ".join(housings["names"])
+            )
+        ),
         html.Div(
             [
-                f"Assemblies: {assemblies['total']} (",
+                i18n._("Assemblies: {n} (").format(n=assemblies["total"]),
                 status_breakdown_text(assemblies["by_status"], db.get_distinct_statuses("assemblies")),
                 ")",
             ]
         ),
         html.Div(
             [
-                f"Magnets: {magnets['total']} (",
+                i18n._("Magnets: {n} (").format(n=magnets["total"]),
                 status_breakdown_text(magnets["by_status"], db.get_distinct_statuses("magnets")),
                 ")",
             ]
         ),
         html.Div(
             [
-                f"Parts: {parts['total']} (helix/bitter/supra: {parts['coil_total']} - ",
+                i18n._("Parts: {n} (helix/bitter/supra: {coil_total} - ").format(
+                    n=parts["total"], coil_total=parts["coil_total"]
+                ),
                 status_breakdown_text(parts["by_status"], db.get_distinct_statuses("parts")),
                 ")",
             ]
         ),
     ]
 
-    for label, key in (("Experiments", "experiments"), ("Overview records", "overview_records")):
+    for label, key in (
+        (i18n._("Experiments"), "experiments"),
+        (i18n._("Overview records"), "overview_records"),
+    ):
         category = summary[key]
         lines.append(
             html.Details(
@@ -147,12 +186,15 @@ def database_summary_banner(summary):
 
     manips = summary["manips"]
     if manips["from_date"] is None:
-        lines.append(html.Div(f"Manips: {manips['total']}"))
+        lines.append(html.Div(i18n._("Manips: {n}").format(n=manips["total"])))
     else:
         lines.append(
             html.Div(
-                f"Manips: {manips['total']} unique users "
-                f"({manips['from_date']:%Y-%m-%d} → {manips['to_date']:%Y-%m-%d})"
+                i18n._("Manips: {n} unique users ({from_date} → {to_date})").format(
+                    n=manips["total"],
+                    from_date=i18n.format_date(manips["from_date"]),
+                    to_date=i18n.format_date(manips["to_date"]),
+                )
             )
         )
 
@@ -187,7 +229,7 @@ def cascading_selector(id, label, step_n, value=None):
                 id=id,
                 options=[value] if value else [],
                 value=value,
-                placeholder=f"Choose a{'n' if label[0].lower() in 'aeiou' else ''} {label.lower()}...",
+                placeholder=i18n._("Choose {label}...").format(label=label),
             ),
         ]
     )
@@ -322,14 +364,14 @@ def magnets_table_section(assembly_name, db_path=None):
     """
     if not assembly_name or assembly_name == ALL:
         return html.Div(
-            "Select an assembly above to see its magnets.",
+            i18n._("Select an assembly above to see its magnets."),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
     magnets = db.get_magnets_for_assembly(assembly_name, db_path)
     if not magnets:
         return html.Div(
-            f"No magnets found for {assembly_name}.",
+            i18n._("No magnets found for {assembly}.").format(assembly=assembly_name),
             style={"color": "#888", "fontStyle": "italic"},
         )
 
@@ -347,9 +389,10 @@ def magnets_table_section(assembly_name, db_path=None):
     table_df["Composition"] = table_df["Magnet"].map(composition).fillna("")
     table_df["Description"] = table_df["Description"].fillna("")
     table_df["Magnet"] = table_df.apply(magnet_link, axis=1)
+    table_df["Assembled"] = table_df["Assembled"].apply(i18n.format_date)
 
     return DataTable(
-        columns=MAGNETS_TABLE_COLUMNS,
+        columns=magnets_table_columns(),
         data=table_df.to_dict("records"),
         page_size=10,
         sort_action="native",
@@ -409,7 +452,7 @@ def file_stats_banner(
 
     segments = []
     if duration_seconds is not None:
-        segments.append(f"Duration: {duration_seconds:.1f} s")
+        segments.append(i18n._("Duration: {value:.1f} s").format(value=duration_seconds))
     if field_stats is not None:
         unit_suffix = f" {field_stats['unit']}" if field_stats["unit"] else ""
         segments.append(
@@ -420,11 +463,13 @@ def file_stats_banner(
             f"std={field_stats['std']:.3g}{unit_suffix}"
         )
     if energy_stats is not None:
-        segments.append(f"Energy: {energy_stats['energy_mwh']:.3g} MWh")
+        segments.append(
+            i18n._("Energy: {value:.3g} MWh").format(value=energy_stats["energy_mwh"])
+        )
     if zoomed:
-        segments.append("(zoomed range)")
+        segments.append(i18n._("(zoomed range)"))
     if pupitre_files:
-        pupitre_children = ["Pupitre sources: "]
+        pupitre_children = [i18n._("Pupitre sources: ")]
         for i, fname in enumerate(pupitre_files):
             if i:
                 pupitre_children.append(", ")

@@ -4,6 +4,7 @@ import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
+import i18n
 import numpy as np
 import pandas as pd
 import pint
@@ -211,11 +212,11 @@ def field_histogram_figure(field_stats):
     unit_suffix = f" [{field_stats['unit']}]" if field_stats["unit"] else ""
     fig = go.Figure(go.Histogram(x=field_stats["values"], marker={"color": "#1f77b4"}))
     fig.update_layout(
-        title=f"{field_stats['column']} histogram",
+        title=f"{field_stats['column']} {i18n._('histogram')}",
         template="plotly_white",
         margin={"l": 40, "r": 20, "t": 40, "b": 40},
         xaxis={"title": f"{field_stats['column']}{unit_suffix}"},
-        yaxis={"title": "Count"},
+        yaxis={"title": i18n._("Count")},
         bargap=0.02,
     )
     return fig
@@ -610,7 +611,7 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
     # 4. Layout
     title = f"Visualization : {filename}"
     if group_name:
-        title += f" - {group_name}"
+        title += f" - {i18n._(group_name)}"
     title += f" (Algo: {method})"
     fig.update_layout(
         title=title,
@@ -1019,7 +1020,7 @@ def create_annotated_plot(
 
     x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time (local)'}
     fig.update_layout(
-        title=group_name,
+        title=i18n._(group_name),
         template="plotly_white",
         margin={'l': 40, 'r': 40, 't': 60, 'b': 40},
         xaxis={'title': x_label_mapping.get(x_col, x_col)},
