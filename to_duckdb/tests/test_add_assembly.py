@@ -108,6 +108,103 @@ def test_add_assembly_is_idempotent(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Conflict guard: re-adding an existing assembly with different content
+# ---------------------------------------------------------------------------
+
+
+def _second_magnet():
+    """Return a copy of MAGNET_JSON with distinct magnet and part names."""
+    mag = copy.deepcopy(MAGNET_JSON)
+    mag["name"] = "MAG_JSON_2"
+    for part in mag["parts"]:
+        part["name"] = part["name"].replace("_01", "_02")
+    return mag
+
+
+def test_add_assembly_refuses_extra_magnet(tmp_path):
+    db = _db_with_magnet(tmp_path)
+    add_magnet(_second_magnet(), db)
+    add_assembly(ASSEMBLY_JSON, db)
+    data = {**ASSEMBLY_JSON, "magnets": ["MAG_JSON", "MAG_JSON_2"]}
+    with pytest.raises(SystemExit):
+        add_assembly(data, db)
+    assert _count(db, "assembly_magnets") == 1
+
+
+def test_add_assembly_refuses_missing_magnet(tmp_path):
+    db = _db_with_magnet(tmp_path)
+    add_magnet(_second_magnet(), db)
+    add_assembly({**ASSEMBLY_JSON, "magnets": ["MAG_JSON", "MAG_JSON_2"]}, db)
+    with pytest.raises(SystemExit):
+        add_assembly(ASSEMBLY_JSON, db)
+    assert _count(db, "assembly_magnets") == 2
+
+
+def test_add_assembly_refuses_different_commissioned_at(tmp_path):
+    db = _db_with_magnet(tmp_path)
+    add_assembly(ASSEMBLY_JSON, db)
+    with pytest.raises(SystemExit):
+        add_assembly({**ASSEMBLY_JSON, "commissioned_at": "2025-02-01 08:00:00"}, db)
+    row = _fetch_one(db, "SELECT commissioned_at FROM assemblies WHERE name = 'ASSEMBLY_JSON_01'")
+    assert str(row[0]) == "2025-01-01 00:00:00"
+
+
+def test_add_assembly_refuses_different_housing(tmp_path):
+    db = _db_with_magnet(tmp_path)
+    add_assembly(ASSEMBLY_JSON, db)
+    with pytest.raises(SystemExit):
+        add_assembly({**ASSEMBLY_JSON, "housing": "M9"}, db)
+    row = _fetch_one(db, "SELECT housing FROM assemblies WHERE name = 'ASSEMBLY_JSON_01'")
+    assert row[0] == "M10"
+
+
+def test_add_assembly_open_json_after_auto_close_is_not_a_conflict(tmp_path):
+    """An empty decommissioned_at in the JSON must not clash with a DB auto-close."""
+    db = _db_with_magnet(tmp_path)
+    add_magnet(_second_magnet(), db)
+    add_assembly(ASSEMBLY_JSON, db)
+    later = {
+        **ASSEMBLY_JSON,
+        "name": "ASSEMBLY_JSON_02",
+        "commissioned_at": "2025-06-01 08:00:00",
+        "magnets": ["MAG_JSON_2"],
+        "records": [],
+    }
+    add_assembly(later, db)  # auto-closes ASSEMBLY_JSON_01 (same housing)
+    closed = _fetch_one(db, "SELECT decommissioned_at FROM assemblies WHERE name = 'ASSEMBLY_JSON_01'")
+    assert closed[0] is not None
+
+    add_assembly(ASSEMBLY_JSON, db)  # must not raise
+    assert _count(db, "assemblies") == 2
+
+
+def test_add_assembly_dry_run_reports_conflict(tmp_path, capsys):
+    db = _db_with_magnet(tmp_path)
+    add_assembly(ASSEMBLY_JSON, db)
+    with pytest.raises(SystemExit):
+        add_assembly({**ASSEMBLY_JSON, "housing": "M9"}, db, dry_run=True)
+    out = capsys.readouterr().out
+    assert "housing" in out
+    row = _fetch_one(db, "SELECT housing FROM assemblies WHERE name = 'ASSEMBLY_JSON_01'")
+    assert row[0] == "M10"
+
+
+def test_assembly_add_cli_refuses_name_mismatch(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+    json_path = tmp_path / "OTHER_NAME.json"
+    json_path.write_text(json.dumps(ASSEMBLY_JSON))
+
+    monkeypatch.setattr(
+        "sys.argv",
+        ["magnetdb.py", "assembly", "add", str(json_path), "--db", str(db)],
+    )
+    with pytest.raises(SystemExit):
+        magnetdb.main()
+    assert "OTHER_NAME" in capsys.readouterr().out
+    assert _count(db, "assemblies") == 0
+
+
+# ---------------------------------------------------------------------------
 # Auto-load missing magnets
 # ---------------------------------------------------------------------------
 

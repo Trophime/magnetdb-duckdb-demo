@@ -119,6 +119,21 @@ python magnetdb.py assembly add M10_M19071101_13.json \
 
 The operation is **idempotent**: running it twice with the same JSON is safe.
 
+Two guards refuse a load (exit status 1, nothing written):
+
+- the file name must match the JSON `name` field (`M9_A260707_00.json` must
+  declare `"name": "M9_A260707_00"`);
+- if the assembly already exists, the JSON must agree with the DB: same
+  linked magnets, same `housing`, and the same `commissioned_at` /
+  `decommissioned_at` when the JSON gives them (an empty
+  `decommissioned_at` is accepted, since the DB may have auto-closed the
+  assembly when a later one was added on the same housing). The differences
+  are listed, also with `--dry-run`.
+
+There is currently no command to correct an existing assembly's magnets or
+dates: `assembly update` only refreshes `description`, and
+`assembly delete` also deletes the assembly's experiments.
+
 ### Loading multiple assembly versions
 
 Each `<Housing>_<Magnet>_<N>.json` file is an independent operational campaign. Load each version you want:

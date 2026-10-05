@@ -14,7 +14,9 @@ import pytest
 from schema import ensure_schema
 from crud import (
     _derive_housing_config_dict,
+    _housing_config_data_from_magnetrun,
     insert_housing_config,
+    insert_housing_config_from_magnetrun,
     export_housing_config_json,
 )
 
@@ -371,3 +373,45 @@ class TestExportHousingConfigJson:
             assert path.read_text() == originals[name], (
                 f"Reference file {path.name} was modified!"
             )
+
+
+# ---------------------------------------------------------------------------
+# Single-group housings (M5: Bitter only, M7: Insert only)
+# ---------------------------------------------------------------------------
+
+_SINGLE_GROUP_HOUSINGS: dict[str, dict[str, str]] = {
+    "M5": {"Bitter": "GR1"},
+    "M7": {"Insert": "GR1"},
+}
+
+
+@pytest.mark.parametrize("housing", list(_SINGLE_GROUP_HOUSINGS))
+class TestSingleGroupHousing:
+    def _ref(self, housing):
+        return json.loads(
+            (_MAGNETRUN_PKG / f"{housing}-housing-config.json").read_text()
+        )
+
+    def test_coil_assignment_has_single_coil(self, housing):
+        data = _housing_config_data_from_magnetrun(housing)
+        assert data["coil_assignment"] == _SINGLE_GROUP_HOUSINGS[housing]
+
+    def test_round_trip_matches_reference(self, housing):
+        data = _housing_config_data_from_magnetrun(housing)
+        derived = _derive_housing_config_dict(
+            housing, data["coil_assignment"], data["formats"], data["extra_config"]
+        )
+        ref = self._ref(housing)
+        for field in _DERIVED_FIELDS + ["pupitre_formula_map", "pigbrother_formula_map"]:
+            assert derived[field] == ref[field], (
+                f"{housing}.{field}: got {derived[field]!r}, "
+                f"expected {ref[field]!r}"
+            )
+
+    def test_export_round_trip(self, con, tmp_path, housing):
+        insert_housing_config_from_magnetrun(con, housing, verbose=False)
+        path = export_housing_config_json(con, housing, tmp_path)
+        exported = json.loads(path.read_text())
+        ref = self._ref(housing)
+        for field in _DERIVED_FIELDS + ["pupitre_formula_map", "pigbrother_formula_map"]:
+            assert exported[field] == ref[field]

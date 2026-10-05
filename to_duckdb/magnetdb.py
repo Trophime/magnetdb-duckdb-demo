@@ -111,6 +111,7 @@ from crud import (
     list_objects,
     load_json,
     merge_duplicate_pupitre_records,
+    parse_timestamp,
     print_geometry_check,
     resolve_overview_assembly,
     update_assembly_from_json,
@@ -451,6 +452,46 @@ def _validate_assembly(data: dict) -> list[str]:
     return errors
 
 
+def _assembly_conflicts(con, data: dict) -> list[str]:
+    """Differences between *data* and the existing DB assembly of the same name ([] if none or absent)."""
+    name = data["name"]
+    row = con.execute(
+        "SELECT housing, commissioned_at, decommissioned_at FROM assemblies WHERE name = ?",
+        [name],
+    ).fetchone()
+    if row is None:
+        return []
+    db_housing, db_commissioned, db_decommissioned = row
+    conflicts = []
+
+    json_magnets = {_magnet_name(e) for e in data.get("magnets", [])}
+    db_magnets = {
+        r[0]
+        for r in con.execute(
+            "SELECT magnet_name FROM assembly_magnets WHERE assembly_name = ?", [name]
+        ).fetchall()
+    }
+    if json_magnets - db_magnets:
+        conflicts.append(f"magnets in JSON but not linked in DB: {sorted(json_magnets - db_magnets)}")
+    if db_magnets - json_magnets:
+        conflicts.append(f"magnets linked in DB but not in JSON: {sorted(db_magnets - json_magnets)}")
+
+    json_housing = data.get("housing") or None
+    if json_housing != db_housing:
+        conflicts.append(f"housing: JSON={json_housing!r} DB={db_housing!r}")
+
+    # Dates are compared only when the JSON gives one: an open JSON assembly may
+    # legitimately have been auto-closed in the DB by a later assembly.
+    for field, db_value in (("commissioned_at", db_commissioned), ("decommissioned_at", db_decommissioned)):
+        json_value = parse_timestamp(data.get(field))
+        if json_value is None:
+            continue
+        json_ts = con.execute("SELECT CAST(? AS TIMESTAMP)", [json_value]).fetchone()[0]
+        if json_ts != db_value:
+            conflicts.append(f"{field}: JSON={json_ts} DB={db_value}")
+    return conflicts
+
+
 def _ensure_magnets(
     magnet_entries: list, db_path: Path, magnet_dir: Path, dry_run: bool = False
 ) -> list[str]:
@@ -501,6 +542,15 @@ def _add_assembly(data: dict, db_path, dry_run: bool = False, magnet_dir=None) -
         print("Validation errors:")
         for e in errors:
             print(f"  • {e}")
+        sys.exit(1)
+
+    with duckdb.connect(str(db_path), read_only=True) as chk:
+        conflicts = _assembly_conflicts(chk, data)
+    if conflicts:
+        print(f"Assembly '{data['name']}' already exists with different content:")
+        for c in conflicts:
+            print(f"  • {c}")
+        print("Nothing written. Re-adding only accepts identical content.")
         sys.exit(1)
 
     missing_errors = _ensure_magnets(
@@ -689,7 +739,17 @@ def cmd_assembly_add(args) -> None:
         print(f"Error: '{json_path}' not found.")
         sys.exit(1)
     magnet_dir = Path(args.magnet_dir) if args.magnet_dir else json_path.parent
-    _add_assembly(load_json(json_path), args.db, dry_run=args.dry_run, magnet_dir=magnet_dir)
+    data = load_json(json_path)
+    name = data.get("name", "")
+    if name.endswith(".json"):
+        name = name[:-5]
+    if name != json_path.stem:
+        print(
+            f"Error: '{json_path.name}' declares assembly name '{name}'; "
+            f"the file name and the 'name' field must match. Nothing written."
+        )
+        sys.exit(1)
+    _add_assembly(data, args.db, dry_run=args.dry_run, magnet_dir=magnet_dir)
 
 
 def cmd_assembly_view(args) -> None:

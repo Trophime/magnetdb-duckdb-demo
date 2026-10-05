@@ -2252,12 +2252,16 @@ def _derive_housing_config_dict(
     name:
         Housing identifier, e.g. ``"M9"``.
     coil_assignment:
-        ``{"Insert": "GR1", "Bitter": "GR2"}`` or vice-versa.
+        ``{"Insert": "GR1", "Bitter": "GR2"}`` or vice-versa.  A single-group
+        housing has only a ``GR1`` entry (e.g. ``{"Bitter": "GR1"}`` for M5);
+        its GR2 fields are then left empty (``""`` / ``[]``) and only GR1
+        formulas are emitted.
     formats:
         List of supported format names (``"pupitre"``, ``"pigbrother"``, …).
     extra_config:
         Optional dict of extra/override fields stored verbatim (hybrid fields
-        for M8: ``reference_gr{1,2}_hybrid``, ``hybrid_formula_map``, …).
+        for M8: ``reference_gr{1,2}_hybrid``, ``hybrid_formula_map``, …;
+        ``voltage_channels_gr1`` for single-group housings).
 
     Returns
     -------
@@ -2266,15 +2270,22 @@ def _derive_housing_config_dict(
     """
     gr_to_coil = {gr: coil for coil, gr in coil_assignment.items()}
     gr1_coil = gr_to_coil["GR1"]
-    gr2_coil = gr_to_coil["GR2"]
+    gr2_coil = gr_to_coil.get("GR2")
     s1 = _COIL_TO_SUFFIX[gr1_coil]
-    s2 = _COIL_TO_SUFFIX[gr2_coil]
+    s2 = _COIL_TO_SUFFIX[gr2_coil] if gr2_coil else ""
+
+    def _gr2(base: str) -> str:
+        """Return ``base + s2``, or ``""`` for a single-group housing."""
+        return f"{base}{s2}" if s2 else ""
 
     gr1_ucoils = _H_UCOILS if gr1_coil == "Insert" else _B_UCOILS
-    gr2_ucoils = _H_UCOILS if gr2_coil == "Insert" else _B_UCOILS
+    if gr2_coil:
+        gr2_ucoils = _H_UCOILS if gr2_coil == "Insert" else _B_UCOILS
+    else:
+        gr2_ucoils = []
 
-    label1 = "Upper Coil Current" if s1 == "H" else "Lower Coil Current"
-    label2 = "Upper Coil Current" if s2 == "H" else "Lower Coil Current"
+    label1 = f"{gr1_coil} Coil Current"
+    label2 = f"{gr2_coil} Coil Current"
     desc1 = f"{'Upper' if s1 == 'H' else 'Lower'} coil current sum from DCCT sensors"
     desc2 = f"{'Upper' if s2 == 'H' else 'Lower'} coil current sum from DCCT sensors"
 
@@ -2286,34 +2297,41 @@ def _derive_housing_config_dict(
             "label": label1,
             "description": desc1,
         },
-        f"I{s2}": {
+    }
+    if s2:
+        pupitre_formula_map[f"I{s2}"] = {
             "formula": f"I{s2} = Idcct3 + Idcct4",
             "symbol": f"I_{s2}",
             "unit": "ampere",
             "label": label2,
             "description": desc2,
-        },
-    }
+        }
+
+    pigbrother_formula_map = (
+        _PIGBROTHER_FORMULA_MAP if "pigbrother" in formats else {}
+    )
+    if not s2:
+        pigbrother_formula_map = {
+            k: v for k, v in pigbrother_formula_map.items() if not k.endswith("_GR2")
+        }
 
     cfg: dict[str, Any] = {
         "name": name,
         "formats": formats,
         "reference_gr1_current": f"I{s1}",
-        "reference_gr2_current": f"I{s2}",
+        "reference_gr2_current": _gr2("I"),
         "reference_gr1_flow": f"Flow{s1}",
-        "reference_gr2_flow": f"Flow{s2}",
+        "reference_gr2_flow": _gr2("Flow"),
         "reference_gr1_rpm": f"Rpm{s1}",
-        "reference_gr2_rpm": f"Rpm{s2}",
+        "reference_gr2_rpm": _gr2("Rpm"),
         "reference_gr1_pin": f"HP{s1}",
-        "reference_gr2_pin": f"HP{s2}",
+        "reference_gr2_pin": _gr2("HP"),
         "voltage_channels_gr1": gr1_ucoils,
         "voltage_channels_gr2": gr2_ucoils,
         "reference_gr1_voltage": f"U{s1}",
-        "reference_gr2_voltage": f"U{s2}",
+        "reference_gr2_voltage": _gr2("U"),
         "pupitre_formula_map": pupitre_formula_map,
-        "pigbrother_formula_map": (
-            _PIGBROTHER_FORMULA_MAP if "pigbrother" in formats else {}
-        ),
+        "pigbrother_formula_map": pigbrother_formula_map,
         "hybrid_formula_map": {},
         "hybrid_voltage_mask_map": {},
     }
@@ -2331,6 +2349,21 @@ def _housing_config_data_from_magnetrun(housing_name: str) -> dict:
     locate the JSON file for *housing_name* (e.g. ``"M8"``, ``"M9"``, ``"M10"``),
     then derives the compact ``coil_assignment`` from the ``reference_gr1_current``
     field (suffix ``"H"`` → Insert, ``"B"`` → Bitter).
+
+    Single-group housings (empty ``reference_gr2_current``, e.g. M5 = Bitter
+    only, M7 = Insert only) get a one-entry ``coil_assignment`` and their
+    ``voltage_channels_gr1`` is preserved in ``extra_config``.
+
+    Parameters
+    ----------
+    housing_name : str
+        Housing identifier matching a bundled JSON, e.g. ``"M9"``.
+
+    Returns
+    -------
+    dict
+        Dict with ``name``, ``coil_assignment``, ``formats`` and
+        ``extra_config`` keys, ready for :func:`insert_housing_config`.
 
     Raises
     ------
@@ -2365,9 +2398,16 @@ def _housing_config_data_from_magnetrun(housing_name: str) -> dict:
             f"reference_gr1_current={gr1_current!r} has unknown suffix {suffix!r}. "
             f"Expected one of {list(_SUFFIX_TO_COIL)}"
         )
-    gr2_coil = "Bitter" if gr1_coil == "Insert" else "Insert"
-
     extra: dict = {}
+    if raw.get("reference_gr2_current"):
+        gr2_coil = "Bitter" if gr1_coil == "Insert" else "Insert"
+        coil_assignment = {gr1_coil: "GR1", gr2_coil: "GR2"}
+    else:
+        # Single-group housing: keep its actual Ucoil wiring, which differs
+        # from the generic per-coil defaults used by the export.
+        coil_assignment = {gr1_coil: "GR1"}
+        extra["voltage_channels_gr1"] = list(raw.get("voltage_channels_gr1", []))
+
     for key in (
         "reference_gr1_hybrid",
         "reference_gr2_hybrid",
@@ -2380,7 +2420,7 @@ def _housing_config_data_from_magnetrun(housing_name: str) -> dict:
 
     return {
         "name": housing_name,
-        "coil_assignment": {gr1_coil: "GR1", gr2_coil: "GR2"},
+        "coil_assignment": coil_assignment,
         "formats": list(raw.get("formats", [])),
         "extra_config": extra or None,
     }
