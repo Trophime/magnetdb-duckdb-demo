@@ -32,6 +32,19 @@ done
 #     --db "$DB"
 
 # mark Bitters -- aka M9_Bi and M9_Bi09 -- that has burned as dead
+# M9_A230124_00: M9Bitters dead with M9_Bi dead
+# python magnetdb.py magnet update-status M9Bitters \
+#     --status dead --dead-part M9_Bi \
+#     --description "HS, inner bitter coil dead on 2023-06-08." \
+#     --changed-at "2023-06-08 07:00:00" \
+#     --db "$DB"
+
+# M9_A250730_00: M9Bitters dead with M9_Bi09 dead
+# python magnetdb.py magnet update-status M9Bitters-newBi09 \
+#     --status dead --dead-part M9_Bi09 \
+#     --description "HS, inner bitter coil dead on 2026-05-05." \
+#     --changed-at "2026-05-05 07:00:00" \
+#     --db "$DB"
 
 # check database consistency
 ../scripts/list_assembly_configs.sh
