@@ -20,7 +20,9 @@ from python_magnetrun.field_defs import (
     match_channels_across_formats,
     resolve_defs_file,
 )
+from python_magnetrun.data_dirs import HYBRID_DATA_DIR
 from python_magnetrun.housing_config import get_housing_config
+from python_magnetrun.hybrid.hybrid_run import HybridRun
 from python_magnetrun.magnetdata_base import DataType
 from python_magnetrun.MagnetRun import load_mrun
 
@@ -2231,6 +2233,126 @@ def get_linked_files(housing, pupitre_filename, db_path=None):
         """
         result = conn.execute(query, [housing, pupitre_filename]).df().to_dict("records")
     return result[0] if result else None
+
+
+def assembly_has_supra(assembly_name, db_path=None):
+    """Return whether an assembly includes at least one supraconductor magnet.
+
+    Parameters
+    ----------
+    assembly_name : str
+        ``assemblies.name`` to look up.
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    bool
+        ``True`` if any part of any magnet in the assembly has
+        ``parts.type == "supra"``.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT EXISTS (
+                SELECT 1
+                FROM assembly_magnets AS sm
+                JOIN magnet_parts AS mp ON mp.magnet_name = sm.magnet_name
+                JOIN parts AS p ON p.name = mp.part_name
+                WHERE sm.assembly_name = ? AND p.type = 'supra'
+            )
+        """
+        return bool(conn.execute(query, [assembly_name]).fetchone()[0])
+
+
+def get_hybrid_khz_source(housing, pupitre_filename, db_path=None):
+    """Return the Hybrid kHz source linked to a Pupitre file, if any.
+
+    Parameters
+    ----------
+    housing : str
+        Housing name (e.g. ``"M8"``).
+    pupitre_filename : str
+        Pupitre filename to look up in ``overview_records.sources_pupitre``.
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    str or None
+        First entry of ``overview_records.sources_hybrid_kHz`` for the
+        matching row, or ``None`` if there is no matching row or it has no
+        linked Hybrid kHz data.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT sources_hybrid_kHz[1] AS hybrid_source
+            FROM overview_records
+            WHERE housing = ? AND list_contains(sources_pupitre, ?)
+        """
+        result = conn.execute(query, [housing, pupitre_filename]).fetchone()
+    return result[0] if result else None
+
+
+_HYBRID_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+@functools.lru_cache(maxsize=32)
+def load_hybrid_supra_current(hybrid_source, housing, assembly_name, start, end):
+    """Load the Hybrid supra current (I_BOB), downsampled to 1 Hz.
+
+    Parameters
+    ----------
+    hybrid_source : str
+        One entry of ``overview_records.sources_hybrid_kHz`` (must contain a
+        ``YYYY-MM-DD`` date), as returned by :func:`get_hybrid_khz_source`.
+    housing : str
+        Housing name (e.g. ``"M8"``).
+    assembly_name : str
+        ``assemblies.name`` the current experiment is attached to.
+    start, end : :class:`~datetime.datetime`
+        Naive-UTC start/end of the Pupitre experiment (e.g. from
+        ``MagnetData.get_time_range()``) — restricts which hourly kHz files
+        are read, and anchors the elapsed-seconds time array they return.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        Columns ``timestamp`` (naive UTC) and ``I_BOB`` [A], one row per
+        second.
+
+    Raises
+    ------
+    ValueError
+        If *hybrid_source* does not contain a ``YYYY-MM-DD`` date.
+    """
+    match = _HYBRID_DATE_RE.search(hybrid_source)
+    if match is None:
+        raise ValueError(f"Cannot extract a date from hybrid source {hybrid_source!r}")
+    date_str = match.group(0)
+
+    hrun = HybridRun.fromdir(
+        base_dir=HYBRID_DATA_DIR,
+        date_str=date_str,
+        fepc_system="FEPC-LNCMI",
+        housing=housing,
+        assembly=assembly_name,
+    )
+    # HybridRun.getData()'s elapsed-seconds "time" array is anchored to the
+    # start of the earliest hour it reads. Restricting `hours` to exactly the
+    # UTC hours the Pupitre file spans — already the criterion
+    # overview_records used to link this Hybrid source in the first place, so
+    # every one of these hours is guaranteed to have a file — makes that
+    # earliest hour exactly `start`'s own hour, so we anchor from it directly
+    # instead of relying on undocumented internal t0 handling.
+    hours = range(start.hour, end.hour + 1)
+    data, elapsed = hrun.getData("kHz/FEPC-LNCMI/I_BOB", hours=hours)
+
+    anchor = start.replace(minute=0, second=0, microsecond=0)
+    timestamps = anchor + pd.to_timedelta(elapsed, unit="s")
+
+    series = pd.Series(data, index=pd.DatetimeIndex(timestamps)).sort_index()
+    downsampled = series.resample("1s").mean().rename("I_BOB").reset_index()
+    return downsampled.rename(columns={downsampled.columns[0]: "timestamp"})
 
 
 def get_research_areas(db_path=None):

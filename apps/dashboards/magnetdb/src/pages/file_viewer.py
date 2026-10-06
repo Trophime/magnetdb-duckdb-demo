@@ -479,6 +479,18 @@ def update_sensors_menus(
             options += db.supervision_field_options(group_name)
             covered_supervision_groups.add(group_name)
 
+        # Assemblies with a supraconductor magnet get an extra "I_BOB"
+        # option here, sourced from the Hybrid dataset linked to this
+        # Pupitre file via overview_records (currently only ever available
+        # for M8).
+        if group_name == "Courants_Alimentations" and db.assembly_has_supra(
+            selected_assembly
+        ):
+            if db.get_hybrid_khz_source(housing, selected_file):
+                options.append(
+                    {"label": "I_BOB [Hybrid] (I [A])", "value": "hybrid:I_BOB"}
+                )
+
         saved_values_for_this_group = saved_state_map.get(group_name, [])
         for target in pending_auto_plot:
             if target in sensors and target not in saved_values_for_this_group:
@@ -608,14 +620,18 @@ def update_outputs(
             outputs_figures.append(empty_fig)
             continue
 
-        # Checked sensors are either native (mrun's own column names) or
-        # SUPERVISION-sourced ("supervision:"-prefixed, see update_sensors_menus).
+        # Checked sensors are either native (mrun's own column names),
+        # SUPERVISION-sourced ("supervision:"-prefixed) or Hybrid-sourced
+        # ("hybrid:"-prefixed) — see update_sensors_menus.
         native_sensors = [
-            s for s in sensors_in_this_group if not s.startswith("supervision:")
+            s
+            for s in sensors_in_this_group
+            if not s.startswith("supervision:") and not s.startswith("hybrid:")
         ]
         supervision_values = [
             s for s in sensors_in_this_group if s.startswith("supervision:")
         ]
+        hybrid_values = [s for s in sensors_in_this_group if s.startswith("hybrid:")]
 
         fig = None
 
@@ -664,6 +680,41 @@ def update_outputs(
                 fig = supervision_fig
             else:
                 fig.add_traces(supervision_fig.data)
+
+        if hybrid_values and group_name == "Courants_Alimentations":
+            hybrid_source = db.get_hybrid_khz_source(housing, selected_file)
+            if hybrid_source:
+                start, end = mrun.MagnetData.get_time_range()
+                hourly = db.load_hybrid_supra_current(
+                    hybrid_source, housing, selected_assembly, start, end
+                )
+                pupitre_df = mrun.MagnetData.get_group_data(group_name)
+                # Match onto the Pupitre file's own timestamps (nominally 1 Hz,
+                # like `hourly`, but not a perfectly regular grid) rather than
+                # plotting Hybrid's independent 1 Hz grid.
+                hybrid_df = pd.merge_asof(
+                    pupitre_df[["t", "timestamp"]],
+                    hourly.rename(columns={"I_BOB": "hybrid:I_BOB"}),
+                    on="timestamp",
+                    direction="nearest",
+                    tolerance=pd.Timedelta("0.5s"),
+                )
+                hybrid_fig = plot.create_plot(
+                    hybrid_df,
+                    selected_x,
+                    ["hybrid:I_BOB"],
+                    selected_algo,
+                    filename="Hybrid",
+                    mrun=None,
+                    group_name=group_name,
+                )
+                for trace in hybrid_fig.data:
+                    trace.name = "I_BOB [Hybrid]"
+
+                if fig is None:
+                    fig = hybrid_fig
+                else:
+                    fig.add_traces(hybrid_fig.data)
 
         if fig is None:
             fig = empty_fig
