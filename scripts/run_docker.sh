@@ -15,6 +15,9 @@ die() {
 : "${DOCKER_IMAGE:=trophime/magnetdb-dashboard:dev}"
 IMAGE_REF="${DOCKER_REGISTRY:+${DOCKER_REGISTRY}/}${DOCKER_IMAGE}"
 
+# need to get duckdb from nextcloud
+# same for the supervision data directory (provided as tgz archive right now)
+
 command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH."
 
 [ -f "$DUCKDB_DIR/$DUCKDB_NAME" ] || die "$DUCKDB_DIR/$DUCKDB_NAME not found."
