@@ -96,11 +96,11 @@ python magnetdb.py populate overview-records-infer --db $DB
 # Use envdir to define environment variables such as EMFL_API_KEY and SUPERVISION_DB credentials
 # see python_magnetrun original .envrc
 
-python to_duckdb/demos/users_table_demo.py --from 2018-01-01 --db to_duckdb/test-magnetdb.duckdb 
-python to_duckdb/demos/users_table_demo.py --link-only --db to_duckdb/test-magnetdb.duckdb
+python demos/users_table_demo.py --from 2018-01-01 --db $DB 
+python demos/users_table_demo.py --link-only --db $DB
 
 # Check users that are not linked (nor associated with any records -- either experiments or overview records)
-python to_duckdb/demos/list_users_unlinked.py --db to_duckdb/test-magnetdb.duckdb
+python demos/list_users_unlinked.py --db $DB
 
 # update magnet/part status retro-actively
 # get DB coverage from Valentin work

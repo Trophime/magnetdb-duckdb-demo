@@ -40,9 +40,14 @@ DB_DIR = os.environ.get("MAGNETDB_DB_DIR", os.path.dirname(DB_PATH))
 
 # SUPERVISION 'bdd' table CSV export (site-level cooling/utility channels,
 # not tied to a single magnet/housing) — surchargable via variable d'environnement.
+_HERE = Path(__file__).resolve()
 SUPERVISION_BDD_CSV = os.environ.get(
     "MAGNETDB_SUPERVISION_BDD_CSV",
-    str(Path(__file__).resolve().parents[4] / "Data" / "bdd.csv"),
+    str(
+        _HERE.parents[4] / "Data" / "bdd.csv"
+        if len(_HERE.parents) > 4
+        else Path("Data") / "bdd.csv"
+    ),
 )
 
 # Timestamps are stored in the database as naive UTC (see to_duckdb/populate.py's
