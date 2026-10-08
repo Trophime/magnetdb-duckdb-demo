@@ -4,6 +4,7 @@ import argparse
 
 import magnettools.magnettools as mt
 import pandas as pd
+import polars as pl
 import pytest
 
 import stress_map
@@ -27,6 +28,45 @@ def test_assert_current_units_rejects_incompatible_unit():
     units = {"IH": ("T", ureg.tesla)}
     with pytest.raises(ValueError, match="IH"):
         _assert_current_units(units, ["IH"], ureg)
+
+
+# ---------------------------------------------------------------------------
+# _load_pupitre_frame — PolarsMagnetData exposes a polars ``.Data``
+# ---------------------------------------------------------------------------
+
+
+class _FakePolarsMagnetData:
+    def __init__(self):
+        self.Data = pl.DataFrame({"t": [0.0, 1.0], "IH": [1.0, None], "IB": [0.0, None]})
+        self.units = {}
+
+    def Units(self):  # noqa: N802
+        pass
+
+
+def test_load_pupitre_frame_converts_polars_data(monkeypatch):
+    monkeypatch.setattr(stress_map, "load_magnetdata", lambda _f: _FakePolarsMagnetData())
+    monkeypatch.setattr(stress_map, "prepareData", lambda _md, _housing: None)
+
+    df, units = stress_map._load_pupitre_frame("x.txt", "M9", use_mrun=False, assembly="")
+
+    assert isinstance(df, pd.DataFrame)
+    assert df["IH"].tolist()[0] == 1.0
+    assert units == {}
+
+
+def test_load_pupitre_frame_converts_polars_data_with_mrun(monkeypatch):
+    class _FakeMagnetRun:
+        MagnetData = _FakePolarsMagnetData()
+
+    monkeypatch.setattr(
+        "python_magnetrun.MagnetRun.load_mrun", lambda *_a, **_k: _FakeMagnetRun()
+    )
+
+    df, _ = stress_map._load_pupitre_frame("x.txt", "M9", use_mrun=True, assembly="A")
+
+    assert isinstance(df, pd.DataFrame)
+    assert df["IH"].tolist()[0] == 1.0
 
 
 # ---------------------------------------------------------------------------

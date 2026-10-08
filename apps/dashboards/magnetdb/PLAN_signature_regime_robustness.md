@@ -2,6 +2,31 @@
 
 Status: methodology approved (2026-08-11), revised (2026-08-12) to anchor on the reference current — parameter sweep / signal-statistics work not yet executed. One prerequisite fix already landed (see below).
 
+## Related (added 2026-10-07)
+
+This plan is step **S1** of the cross-plan order in
+[PLAN_digital_twin_schema.md](../../../PLAN_digital_twin_schema.md#cross-plan-order-blockers-and-approvals).
+It depends on no other plan; these depend on it:
+
+- **S2** — fill `overview_records.signatures`, `plateaux` and `sync_info`
+  with real `Signature` output. **All three are empty today** (0 of 1915
+  records in `test-magnetdb.duckdb`): python_magnetrun's
+  `analysis/processing.py` `_extract_signatures` stores placeholder
+  min/max/mean only.
+- **Digital twin phase 4** (ODE config builder): its reference current comes
+  from the pigbrother `Signature` — Step 2 below (regimes from
+  `Référence_A1`) is exactly that input.
+- **Commissioning readings** (digital twin open question #24): candidate
+  commissioning experiments are assumed to have a given pupitre `Field`
+  signature, still to be defined — needs a robust `Field` signature.
+  Existing work: `stage/` writes `overview_experiments.field_signature`
+  with a hand-picked `FIELD_THRESHOLD = 0.1` (gap A).
+- **Supra current `IS`** (digital twin open question #27): aligning Hybrid
+  `I_BOB` onto pupitre timestamps assumes the two clocks agree; this plan's
+  lag work is the reference for checking it.
+- **`teb` time series** (Related future work below): the lag shift would
+  become an ETL step using a lag stored in `sync_info`.
+
 ## Goal
 
 Before relying on `Signature.regimes` (the `"U"`/`"P"`/`"D"` classification of a

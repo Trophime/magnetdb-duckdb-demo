@@ -34,7 +34,10 @@ CREATE TABLE IF NOT EXISTS parts (
     name                    VARCHAR PRIMARY KEY,
     type                    VARCHAR,
     status                  VARCHAR,
-    material_name           VARCHAR REFERENCES materials(name),
+    -- No FK to materials(name): DuckDB runs an UPDATE of an indexed (FK)
+    -- column as DELETE + INSERT, which fails once the part is referenced
+    -- (magnet_parts, stats tables). Existence is checked in crud.py.
+    material_name           VARCHAR,
     geometry                VARCHAR,
     geometry_data           JSON,
     cad                     VARCHAR,
@@ -322,10 +325,14 @@ CREATE TABLE IF NOT EXISTS exp_part_bin_stats (
 
 -- ── Hoop-stress statistics tables ────────────────────────────────────────────
 
--- Idempotency guard: one row per (experiment, bin_config) pair.
+-- Idempotency guard: one bin_config per experiment (the stats tables below
+-- carry no bin_config, so configurations must not mix). Re-running with
+-- other bins is skipped; --reprocess (or a stale row) deletes all of the
+-- experiment's hoop rows and re-inserts them.
 -- bin_config is the canonical edges string, e.g. "0.0,100.0,200.0,300.0,400.0,500.0,600.0".
--- Using a composite PK allows re-running with different bin configs without data loss.
 -- parquet_path stores the path to the Parquet file with the full time series.
+-- stale_since / stale_reason: set when an update changed an input of this
+-- result (stale_reason = operation_log.id); cleared by recomputation.
 CREATE TABLE IF NOT EXISTS hoop_stress_processed (
     experiment_id   INTEGER  REFERENCES experiments(id),
     bin_config      VARCHAR  NOT NULL,
@@ -334,6 +341,10 @@ CREATE TABLE IF NOT EXISTS hoop_stress_processed (
     parquet_path    VARCHAR,
     PRIMARY KEY (experiment_id, bin_config)
 );
+
+-- idempotent migration for databases that predate stale tracking
+ALTER TABLE hoop_stress_processed ADD COLUMN IF NOT EXISTS stale_since  TIMESTAMP;
+ALTER TABLE hoop_stress_processed ADD COLUMN IF NOT EXISTS stale_reason INTEGER;
 
 -- Per-part stress-bin distributions.
 -- One row per (experiment, part_name, stress_bin_low).

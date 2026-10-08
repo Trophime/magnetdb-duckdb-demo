@@ -7,7 +7,10 @@ notes collect the evidence, the defects found, and the agreed changes so they
 can be turned into a plan once the confirmation arrives.
 
 Related: [PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md) (section
-mapping, variable binding, data issue #8).
+mapping, variable binding, data issue #8, open question #26; M5 is step 4 of
+its "Cross-plan order, blockers and approvals");
+[PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md) (spec-driven Pupitre
+ETL, which changes how the Pupitre part below is implemented).
 
 ---
 
@@ -70,6 +73,14 @@ M5 assemblies contain **two Bitters magnets** (one per supply) instead of one
   code change.
 - `IB1`/`IB2` come from the existing `Icoil → role` rename in
   `_cleanup_pupitre_icoil` once the summed `IB` formula is removed.
+- **With the spec-driven Pupitre ETL** ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)),
+  the two bullets above apply only to the legacy `prepareData` path. On the
+  spec path, the to_duckdb builder produces these entries from the M5
+  assembly (two Bitters magnets), with no python_magnetrun code change:
+  - rename `Icoil1 → IB1`, `Icoil2 → IB2`, `Flow1 → FlowB1`,
+    `Flow2 → FlowB2` (same for `Rpm`, `Tin`, `HP`);
+  - add `UB1 = Ucoil1`, `UB2 = Ucoil2`;
+  - no summed `IB` / `UB` formula.
 
 ### 3.3 Pigbrother
 
@@ -133,7 +144,8 @@ M8/M9/M10 need no overrides.
 | Component | Change |
 |---|---|
 | `to_duckdb/crud.py` `_housing_config_data_from_magnetrun` | derivation that understands `IB1`/`IB2` and two Bitters magnets (today the suffix `1` raises `ValueError`, which would break M5 housing auto-creation and `assembly add` for M5) |
-| `python_magnetrun/housing_config.py` `get_pupitre_rename_map` | use per-GR flow names as given (`FlowB1`/`FlowB2`) instead of the H/B-suffix logic |
+| `python_magnetrun/housing_config.py` `get_pupitre_rename_map` | use per-GR flow names as given (`FlowB1`/`FlowB2`) instead of the H/B-suffix logic — **legacy `prepareData` path only**; on the spec path the rename comes from the builder (next row) |
+| `to_duckdb/etl_spec.py` `build_pupitre_etl_spec` (created by [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)) | emit the M5 entries of §3.2 from the assembly's two Bitters magnets |
 | `python_magnetrun/magnetdata_tdms.py` `TdmsMagnetData.cleanupData` | support `"replace": true` on a formula entry (overwrite an existing channel) — default behaviour unchanged |
 | `python_magnetrun` housing config / defs | `field_overrides` support + `get_field_defs(fmt, housing)`; per-housing channel exclusions |
 | `apps/dashboards/magnetdb/src/magnetdb_analysis.py` | pairing via the merged defs (M5: `IB1` ↔ `Courant_GR1`, `UB1` ↔ `Interne1`, …); per-housing exclusions |
@@ -191,3 +203,8 @@ M8/M9/M10 need no overrides.
   `prepareData` (`runetl.py`), which the dashboards and (after the change in
   §5) overview mode inference go through; raw TDMS files are never modified.
 - `Imax<n>` semantics (per supply?) — see the MAGFILE defs work.
+- `housing_config.coil_assignment` is `MAP(role → GR)` and cannot hold two
+  Bitters magnets: which key to use (magnet name, `Bitter1`/`Bitter2`, …)?
+  Needed before §6. Tracked as open question #26 in
+  [PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md) (also affects
+  its L2 slot rule for M5 and L1 `power_circuits`).

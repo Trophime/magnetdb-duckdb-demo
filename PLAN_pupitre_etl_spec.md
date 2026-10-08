@@ -1,9 +1,17 @@
 # Plan: spec-driven ETL for Pupitre files
 
-**Status (2026-10-06): awaiting approval.**
+**Status (2026-10-07): awaiting approval.** Step 1 of the cross-plan order
+in [PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md#cross-plan-order-blockers-and-approvals);
+no blocker.
 
-Related: [NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md) (M5 is the
-first case that needs assembly-driven ETL).
+Related:
+- [NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md): M5 is the first
+  case that needs assembly-driven ETL (§3.2 describes its spec entries).
+- [PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md): its L2 section
+  mapping (`v_config_sections`, phase 2) gives the assembly → `Ucoil` rule
+  used by v2 of the builder; its L3 binding and commissioning readings rely
+  on the channel names this ETL produces; its supra current `IS` (M8) is
+  added by this ETL in step 1b (see Follow-ups).
 
 ## Goal
 
@@ -86,6 +94,32 @@ def prepare_pupitre(data: PandasMagnetData | PolarsMagnetData, spec: PupitreEtlS
   It returns a plain dict, ready for JSON. to_duckdb already imports
   python_magnetrun; the reverse import never happens.
 
+## Assembly resolution (added 2026-10-07)
+
+Reading a raw pupitre file (`load_magnetdata`) does not need the assembly;
+**applying the spec does**, since the builder produces one spec per assembly
+(voltage sums in v2, `IS` in step 1b, M5's `IB1`/`IB2`). The assembly is
+resolved from the database before the file is opened:
+
+1. **Registered file:** file → `experiments.file` → `assembly_name`
+   (experiments are created per assembly from the assembly JSON's records,
+   `crud.insert_experiments`).
+2. **File not in `experiments`** (new file, overview-linked file): housing
+   and start time from the filename (`parse_filename_timestamp`) → the
+   assembly whose `[commissioned_at, decommissioned_at)` window covers it
+   (the assembly overlap guard ensures at most one).
+3. **No assembly covers it** (e.g. data issue #9 in the digital twin plan):
+   open question #28 there — housing-only spec (v1 content, no
+   assembly-specific entries) with a warning (recommended), or refuse the
+   ETL.
+
+The pupitre header (line 1, `MagnetCode`) is only a cross-check, never used
+to resolve the assembly (`MagnetCode` is unreliable as a key).
+
+Once step E of the cross-plan order exists, the ETL can also read
+`experiments.file_integrity` (`ok` / `truncated` / `unreadable`) to skip or
+flag broken files.
+
 ## Steps
 
 1. Write the python_magnetrun tests first: spec round-trip and validation,
@@ -111,8 +145,10 @@ def prepare_pupitre(data: PandasMagnetData | PolarsMagnetData, spec: PupitreEtlS
 - **v1 is housing-driven only.** The assembly is used just to find its
   housing. Real assembly-driven content (number of `Ucoil` channels per
   insert, M5's two Bitters) needs a rule for mapping assembly magnets and
-  parts to `Ucoil`/`Icoil`/`Flow` channels. Open: is there one? M5 also stays
-  on hold, per its notes.
+  parts to `Ucoil`/`Icoil`/`Flow` channels. That rule is the L2 section
+  mapping of [PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md)
+  (`v_config_sections`, its phase 2): v2 of the builder uses it. M5 also
+  stays on hold, per its notes.
 - **Voltage sums are no longer filtered by file content.** If a `Ucoil` in the
   formula is missing from a file, `UH` is skipped with a warning instead of
   being a partial sum. This is arguably more correct, but it is a behaviour
@@ -120,3 +156,45 @@ def prepare_pupitre(data: PandasMagnetData | PolarsMagnetData, spec: PupitreEtlS
 - **No caller is switched yet** (`load_mrun`, the dashboards,
   `stress_map.py`). That's a later step, after reviewing the step 5
   comparison.
+
+## Follow-ups (not in this plan; each needs its own plan and approval)
+
+- **Switch Pupitre callers to the spec path** (step 2a of the cross-plan
+  order).
+- **v2 builder driven by the assembly** through `v_config_sections` (step 3;
+  needs digital twin phase 2).
+- **M5 entries** (step 4; blocked on the formal wiring confirmation).
+- **Supra current `IS` for M8** (step 1b, after v1; outline agreed
+  2026-10-07, resolves digital twin open question #15). `IS` becomes a
+  column of the Pupitre data after the ETL:
+  - **new `external` entry type** in `PupitreEtlSpec`: reader, date, FEPC
+    system, channel, resampling, alignment, field definition, e.g.
+
+    ```json
+    "external": {
+      "IS": {
+        "reader": "hybrid", "date": "2024-03-15", "fepc_system": "FEPC-LNCMI",
+        "channel": "kHz/FEPC-LNCMI/I_BOB",
+        "resample": "1s", "align": {"method": "nearest", "tolerance_s": 0.5},
+        "symbol": "I_S", "unit": "ampere", "label": "Supra current",
+        "description": "Derived from Hybrid I_BOB during ETL"
+      }
+    }
+    ```
+  - **builder (to_duckdb):** emits the `IS` entry only when the housing is
+    M8, the assembly has a `supra` part, and `overview_records` links a
+    hybrid source; the date comes from `sources_hybrid_kHz`;
+  - **`prepare_pupitre` (python_magnetrun):** loads the channel with
+    `HybridRun.fromdir` (base directory: python_magnetrun's
+    `HYBRID_DATA_DIR` by default, optional override argument), downsamples
+    with `resample("1s").mean()`, aligns with `merge_asof` (`nearest`,
+    0.5 s) onto the Pupitre `timestamp` column, adds `IS` [A]; `NaN`
+    outside the tolerance, no column when there is no entry;
+  - **code moved** from the dashboard (`load_hybrid_supra_current`) to
+    python_magnetrun, fixing its hours range, which is empty for a run that
+    crosses midnight (`range(start.hour, end.hour + 1)`);
+  - removing the dashboard's own `hybrid:I_BOB` path is a later step;
+  - **check first** (digital twin open question #27): whether the Hybrid and
+    pupitre clocks need a lag correction before the 0.5 s `merge_asof`
+    alignment — pupitre vs pigbrother clocks do differ
+    ([PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md)).

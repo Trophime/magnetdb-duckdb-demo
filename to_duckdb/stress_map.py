@@ -743,6 +743,27 @@ def _section_index_at_z(elements, indices, z0: float = 0.0) -> int:
     return best_idx
 
 
+def _load_pupitre_frame(
+    pupitre_file: str, housing: str, use_mrun: bool, assembly: str
+) -> tuple[pd.DataFrame, dict]:
+    """Load a pupitre file and return its ``(data frame, units)``."""
+    if use_mrun:
+        from python_magnetrun.MagnetRun import load_mrun
+
+        mrun = load_mrun(pupitre_file, housing=housing, assembly=assembly)
+        mrun.MagnetData.Units()
+        df = mrun.MagnetData.Data
+        units = mrun.MagnetData.units
+    else:
+        mdata = load_magnetdata(pupitre_file)
+        prepareData(mdata, housing)
+        mdata.Units()
+        df = mdata.Data
+        units = mdata.units
+    df = df.to_pandas() if hasattr(df, "to_pandas") else df
+    return df, units
+
+
 def validate_fast_from_pupitre(
     data: tuple,
     pupitre_file: str,
@@ -940,19 +961,7 @@ def validate_fast_from_pupitre(
     # 2. Load pupitre data
     # ------------------------------------------------------------------
     print(f"\n── Loading pupitre data: {pupitre_file} …")
-    if use_mrun:
-        from python_magnetrun.MagnetRun import load_mrun
-
-        mrun = load_mrun(pupitre_file, housing=housing, assembly=assembly)
-        mrun.MagnetData.Units()
-        df = mrun.MagnetData.Data
-        units = mrun.MagnetData.units
-    else:
-        mdata = load_magnetdata(pupitre_file)
-        prepareData(mdata, housing)
-        mdata.Units()
-        df = mdata.Data
-        units = mdata.units
+    df, units = _load_pupitre_frame(pupitre_file, housing, use_mrun, assembly)
 
     # Drop rows where all current columns are NaN — they would propagate NaN
     # into the stress computation and produce broken plots.

@@ -117,11 +117,17 @@ def load_file(path: Path) -> tuple[pd.DataFrame, dict] | None:
 
         md = load_magnetdata(str(path))
         md.Units()
-        df = md.Data.copy()
+        data = md.Data
+        df = data.to_pandas() if hasattr(data, "to_pandas") else data.copy()
         units = md.units
-    except Exception:
+    except Exception as exc:
+        print(f"  [WARN] python_magnetrun could not load {path.name} ({exc}); falling back to pandas")
         try:
-            df = pd.read_csv(path, sep="\t", low_memory=False)
+            # Old pupitre files start with a preamble line before the header.
+            with open(path) as fh:
+                first = fh.readline().rstrip("\n").split("\t")
+            skiprows = 0 if FIELD_COL in first else 1
+            df = pd.read_csv(path, sep="\t", skiprows=skiprows, low_memory=False)
             units = {}
         except Exception as exc:
             print(f"  [ERROR] cannot read {path.name}: {exc}")

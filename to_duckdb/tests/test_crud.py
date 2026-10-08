@@ -7,6 +7,7 @@ import pytest
 
 from crud import (
     _find_assembly_for_timestamp,
+    _log_operation,
     _parse_overview_filename,
     _postprocess_overview_record,
     assembled_at_from_name,
@@ -34,6 +35,7 @@ from crud import (
     update_assembly_magnet,
     update_magnet_from_json,
     update_magnet_status,
+    update_material_from_json,
     update_part_from_json,
     update_part_status,
     view_magnet,
@@ -65,6 +67,19 @@ def test_exists_returns_false_before_insert(con):
 def test_exists_returns_true_after_insert(con):
     insert_material(con, MATERIAL_COPPER, verbose=False)
     assert exists(con, "materials", "MAT_COPPER") is True
+
+
+# ---------------------------------------------------------------------------
+# _log_operation()
+# ---------------------------------------------------------------------------
+
+
+def test_log_operation_returns_new_row_id(con):
+    first = _log_operation(con, "update", "parts", "P1")
+    second = _log_operation(con, "update", "parts", "P2", details={"a": 1})
+    assert second > first
+    row = con.execute("SELECT record_name FROM operation_log WHERE id = ?", [second]).fetchone()
+    assert row[0] == "P2"
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +166,12 @@ def test_insert_part_rejects_invalid_status(con):
     insert_material(con, MATERIAL_COPPER, verbose=False)
     with pytest.raises(ValueError):
         insert_part(con, {**PART_HELIX, "status": "bogus"}, verbose=False)
+
+
+def test_insert_part_rejects_unknown_material(con):
+    with pytest.raises(ValueError, match="NOPE"):
+        insert_part(con, {**PART_HELIX, "material_name": "NOPE"}, verbose=False)
+    assert exists(con, "parts", "HELIX_01") is False
 
 
 def test_insert_part_sets_manufactured_at_from_conforming_name(con):
@@ -891,6 +912,23 @@ def test_update_part_from_json_raises_for_unknown_material(con):
     insert_part(con, PART_HELIX, verbose=False)
     with pytest.raises(ValueError):
         update_part_from_json(con, {"name": "HELIX_01", "material_name": "NOPE"}, verbose=False)
+
+
+def test_update_part_from_json_changes_material_of_linked_part(con_populated):
+    """A part linked in magnet_parts can get a corrected material (no FK on material_name)."""
+    update_part_from_json(con_populated, {"name": "HELIX_01", "material_name": "MAT_STEEL"}, verbose=False)
+    row = con_populated.execute("SELECT material_name FROM parts WHERE name = 'HELIX_01'").fetchone()
+    assert row[0] == "MAT_STEEL"
+
+
+def test_update_part_from_json_same_material_on_linked_part(con_populated):
+    update_part_from_json(
+        con_populated,
+        {"name": "HELIX_01", "material": {"name": "MAT_COPPER"}, "cad": "/new/cad.step"},
+        verbose=False,
+    )
+    row = con_populated.execute("SELECT material_name, cad FROM parts WHERE name = 'HELIX_01'").fetchone()
+    assert row == ("MAT_COPPER", "/new/cad.step")
 
 
 def test_update_part_from_json_raises_for_unknown_part(con):
@@ -1950,6 +1988,41 @@ def test_infer_overview_record_fields_resolves_source_basenames(con, monkeypatch
     ]
 
 
+def test_infer_overview_record_fields_averages_polars_pupitre_data(con, monkeypatch, tmp_path):
+    """PolarsMagnetData exposes a polars ``.Data``; teb/bp means must still be computed."""
+    import polars as pl
+
+    pupitre_dir = tmp_path / "pupitre" / "M9"
+    pupitre_dir.mkdir(parents=True)
+    (pupitre_dir / "pupitre1.txt").touch()
+    monkeypatch.setattr(
+        "python_magnetrun.data_dirs.PUPITRE_DATA_DIR", str(tmp_path / "pupitre")
+    )
+
+    _insert_m9_assemblies(con)
+    insert_overview_record_from_dict(
+        con,
+        {"filename": "M9_Overview_220127-1756", "sources_pupitre": ["pupitre1.txt"]},
+        verbose=False,
+    )
+
+    class _FakePolarsMagnetData:
+        Data = pl.DataFrame({"teb": [10.0, None, 14.0], "BP": [2.0, 4.0, None]})
+
+    monkeypatch.setattr(
+        "python_magnetrun.magnetdata.load_magnetdata",
+        lambda _path: _FakePolarsMagnetData(),
+    )
+
+    status = infer_overview_record_fields(con, "M9_Overview_220127-1756", FILE_TZ, verbose=False)
+
+    assert status == "resolved"
+    row = con.execute(
+        "SELECT teb, bp FROM overview_records WHERE filename = 'M9_Overview_220127-1756'"
+    ).fetchone()
+    assert row == (12.0, 3.0)
+
+
 # ---------------------------------------------------------------------------
 # infer_operating_mode()
 # ---------------------------------------------------------------------------
@@ -2133,3 +2206,215 @@ def test_postprocess_overview_record_resolves_bare_basename(con, monkeypatch, tm
 
     assert status == "applied"
     assert seen_paths == [str(overview_dir / "M9_Overview_220127-1756.tdms")]
+
+
+# ---------------------------------------------------------------------------
+# Impact tracking of updates: change journal + stale hoop-stress marks
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def con_hoop(con_populated):
+    """con_populated + MAG_01 linked to ASSEMBLY_01, one experiment with processed hoop stats."""
+    con = con_populated
+    insert_assembly_magnets(con, "ASSEMBLY_01", [{"name": "MAG_01", "commissioned_at": "2025-01-01 00:00:00"}],
+                            verbose=False)
+    insert_experiments(con, "ASSEMBLY_01", [{"name": "e1", "file": "e1.txt"}], verbose=False)
+    exp_id = con.execute("SELECT id FROM experiments WHERE name = 'e1'").fetchone()[0]
+    con.execute(
+        "INSERT INTO hoop_stress_processed (experiment_id, bin_config, magnet_type) VALUES (?, 'k', 'all')",
+        [exp_id],
+    )
+    return con
+
+
+def _last_update_log(con, table: str, record_name: str):
+    row = con.execute(
+        "SELECT id, details FROM operation_log WHERE operation = 'update' AND table_name = ? "
+        "AND record_name = ? ORDER BY id DESC LIMIT 1",
+        [table, record_name],
+    ).fetchone()
+    return (row[0], json.loads(row[1])) if row else (None, None)
+
+
+def _stale_reason(con):
+    return con.execute("SELECT stale_reason FROM hoop_stress_processed").fetchone()[0]
+
+
+def _is_marked(con) -> bool:
+    return con.execute(
+        "SELECT stale_since IS NOT NULL FROM hoop_stress_processed"
+    ).fetchone()[0]
+
+
+def test_update_part_material_change_logs_and_marks_hoop_stale(con_hoop, capsys):
+    update_part_from_json(con_hoop, {"name": "HELIX_01", "material_name": "MAT_STEEL"}, verbose=True)
+
+    op_id, details = _last_update_log(con_hoop, "parts", "HELIX_01")
+    assert details["changes"] == {"material_name": ["MAT_COPPER", "MAT_STEEL"]}
+    assert details["stale"]["assemblies"] == ["ASSEMBLY_01"]
+    assert details["stale"]["experiments"] == 1
+    assert _is_marked(con_hoop) and _stale_reason(con_hoop) == op_id
+    assert "now stale (material_name changed)" in capsys.readouterr().out
+
+
+def test_update_part_cad_change_logs_without_marking(con_hoop):
+    update_part_from_json(con_hoop, {"name": "HELIX_01", "cad": "/new/cad.step"}, verbose=False)
+
+    _op_id, details = _last_update_log(con_hoop, "parts", "HELIX_01")
+    assert details == {"changes": {"cad": [None, "/new/cad.step"]}}
+    assert not _is_marked(con_hoop)
+
+
+def test_update_part_geometry_data_logged_as_changed_and_marks_stale(con_hoop):
+    update_part_from_json(con_hoop, {"name": "HELIX_01", "geometry_data": '{"r": [1, 2]}'}, verbose=False)
+
+    _op_id, details = _last_update_log(con_hoop, "parts", "HELIX_01")
+    assert details["changes"] == {"geometry_data": "changed"}
+    assert _is_marked(con_hoop)
+
+
+def test_update_part_identical_values_change_nothing(con_hoop, capsys):
+    update_part_from_json(
+        con_hoop,
+        {"name": "HELIX_01", "material": {"name": "MAT_COPPER"}, "design_office_reference": "HL-TEST"},
+        verbose=True,
+    )
+    assert _last_update_log(con_hoop, "parts", "HELIX_01") == (None, None)
+    assert not _is_marked(con_hoop)
+    assert "no change" in capsys.readouterr().out
+
+
+def test_update_part_dry_run_reports_without_logging_or_marking(con_hoop, capsys):
+    update_part_from_json(con_hoop, {"name": "HELIX_01", "material_name": "MAT_STEEL"}, dry_run=True)
+
+    out = capsys.readouterr().out
+    assert "would update material_name" in out
+    assert "would become stale" in out
+    assert _last_update_log(con_hoop, "parts", "HELIX_01") == (None, None)
+    assert not _is_marked(con_hoop)
+    assert con_hoop.execute("SELECT material_name FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "MAT_COPPER"
+
+
+def test_update_magnet_geometry_change_marks_hoop_stale(con_hoop):
+    update_magnet_from_json(con_hoop, {"name": "MAG_01", "geometry_data": '{"helices": []}'}, verbose=False)
+
+    _op_id, details = _last_update_log(con_hoop, "magnets", "MAG_01")
+    assert details["changes"] == {"geometry_data": "changed"}
+    assert _is_marked(con_hoop)
+
+
+def test_update_magnet_same_geometry_json_with_other_spacing_is_no_change(con_hoop):
+    con_hoop.execute("UPDATE magnets SET geometry_data = '{\"a\": 1}' WHERE name = 'MAG_01'")
+    update_magnet_from_json(con_hoop, {"name": "MAG_01", "geometry_data": '{"a":1}'}, verbose=False)
+    assert _last_update_log(con_hoop, "magnets", "MAG_01") == (None, None)
+
+
+def test_update_magnet_description_change_logs_without_marking(con_hoop):
+    update_magnet_from_json(con_hoop, {"name": "MAG_01", "description": "note"}, verbose=False)
+
+    _op_id, details = _last_update_log(con_hoop, "magnets", "MAG_01")
+    assert details == {"changes": {"description": [None, "note"]}}
+    assert not _is_marked(con_hoop)
+
+
+def test_update_assembly_description_change_is_logged(con_hoop):
+    update_assembly_from_json(con_hoop, {"name": "ASSEMBLY_01", "description": "new note"}, verbose=False)
+
+    _op_id, details = _last_update_log(con_hoop, "assemblies", "ASSEMBLY_01")
+    assert details == {"changes": {"description": ["Test assembly", "new note"]}}
+    assert not _is_marked(con_hoop)
+
+
+def test_update_assembly_magnet_z_offset_marks_hoop_stale(con_hoop):
+    update_assembly_magnet(con_hoop, "ASSEMBLY_01", "MAG_01", z_offset=12.5)
+
+    op_id, details = _last_update_log(con_hoop, "assembly_magnets", "ASSEMBLY_01/MAG_01")
+    assert details["changes"] == {"z_offset": [0.0, 12.5]}
+    assert _is_marked(con_hoop) and _stale_reason(con_hoop) == op_id
+
+
+def test_update_assembly_magnet_r_offset_logs_without_marking(con_hoop):
+    update_assembly_magnet(con_hoop, "ASSEMBLY_01", "MAG_01", r_offset=0.5)
+
+    _op_id, details = _last_update_log(con_hoop, "assembly_magnets", "ASSEMBLY_01/MAG_01")
+    assert details == {"changes": {"r_offset": [0.0, 0.5]}}
+    assert not _is_marked(con_hoop)
+
+
+def test_update_assembly_magnet_same_commissioned_at_other_format_is_no_change(con_hoop, capsys):
+    update_assembly_magnet(con_hoop, "ASSEMBLY_01", "MAG_01", commissioned_at="2025-01-01T00:00:00")
+
+    assert _last_update_log(con_hoop, "assembly_magnets", "ASSEMBLY_01/MAG_01") == (None, None)
+    assert not _is_marked(con_hoop)
+    assert "no change" in capsys.readouterr().out
+
+
+def test_decommission_assembly_reports_records_dated_after_end(con_populated, capsys):
+    insert_experiments(
+        con_populated, "ASSEMBLY_01",
+        [{"name": "late", "file": "M10_2025.06.01 - 10:00:00.txt"},
+         {"name": "early", "file": "M10_2025.02.01 - 10:00:00.txt"}],
+        verbose=False,
+    )
+    decommission_assembly(con_populated, "ASSEMBLY_01", decommissioned_at="2025-03-01 00:00:00")
+
+    out = capsys.readouterr().out
+    assert "still assigned to 'ASSEMBLY_01'" in out
+    assert "late" in out
+    assert "early" not in out
+
+
+def test_decommission_assembly_prints_no_report_when_nothing_is_late(con_populated, capsys):
+    decommission_assembly(con_populated, "ASSEMBLY_01", decommissioned_at="2025-03-01 00:00:00")
+    assert "still assigned" not in capsys.readouterr().out
+
+
+def test_update_material_property_change_marks_assemblies_using_it(con_hoop):
+    update_material_from_json(con_hoop, {"name": "MAT_COPPER", "rpe": 500e6}, verbose=False)
+
+    op_id, details = _last_update_log(con_hoop, "materials", "MAT_COPPER")
+    assert details["changes"] == {"rpe": [490e6, 500e6]}
+    assert details["stale"]["assemblies"] == ["ASSEMBLY_01"]
+    assert _is_marked(con_hoop) and _stale_reason(con_hoop) == op_id
+    assert con_hoop.execute("SELECT rpe FROM materials WHERE name = 'MAT_COPPER'").fetchone()[0] == 500e6
+
+
+def test_update_material_only_present_keys_are_considered(con_hoop):
+    update_material_from_json(con_hoop, {"name": "MAT_COPPER", "nuance": "CuAg3"}, verbose=False)
+    row = con_hoop.execute("SELECT nuance, rpe FROM materials WHERE name = 'MAT_COPPER'").fetchone()
+    assert row == ("CuAg3", 490e6)
+
+
+def test_update_material_description_change_logs_without_marking(con_hoop):
+    update_material_from_json(con_hoop, {"name": "MAT_COPPER", "description": "note"}, verbose=False)
+
+    _op_id, details = _last_update_log(con_hoop, "materials", "MAT_COPPER")
+    assert details == {"changes": {"description": ["Copper alloy", "note"]}}
+    assert not _is_marked(con_hoop)
+
+
+def test_update_material_identical_content_is_noop(con_hoop):
+    update_material_from_json(con_hoop, MATERIAL_COPPER, verbose=False)
+    assert _last_update_log(con_hoop, "materials", "MAT_COPPER") == (None, None)
+    assert not _is_marked(con_hoop)
+
+
+def test_update_material_unknown_material_raises(con):
+    with pytest.raises(ValueError, match="NOPE"):
+        update_material_from_json(con, {"name": "NOPE", "rpe": 1.0}, verbose=False)
+
+
+def test_update_material_dry_run_writes_nothing(con_hoop, capsys):
+    update_material_from_json(con_hoop, {"name": "MAT_COPPER", "rpe": 1.0}, dry_run=True)
+    assert "would become stale" in capsys.readouterr().out
+    assert con_hoop.execute("SELECT rpe FROM materials WHERE name = 'MAT_COPPER'").fetchone()[0] == 490e6
+    assert not _is_marked(con_hoop)
+
+
+def test_update_assembly_magnet_commissioned_at_change_marks_hoop_stale(con_hoop):
+    update_assembly_magnet(con_hoop, "ASSEMBLY_01", "MAG_01", commissioned_at="2025-02-01 00:00:00")
+
+    _op_id, details = _last_update_log(con_hoop, "assembly_magnets", "ASSEMBLY_01/MAG_01")
+    assert details["changes"] == {"commissioned_at": ["2025-01-01 00:00:00", "2025-02-01 00:00:00"]}
+    assert _is_marked(con_hoop)

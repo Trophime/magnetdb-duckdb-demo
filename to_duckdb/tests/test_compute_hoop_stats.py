@@ -8,6 +8,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from compute_hoop_stats import (
+    DEFAULT_STRESS_BINS,
     _bin_rainflow_cycles,
     _bin_series,
     _check_processed,
@@ -646,13 +647,34 @@ def test_compute_hoop_stress_history_dry_run_writes_nothing(
         con.close()
 
 
-def test_compute_hoop_stress_history_different_bin_config_warns_and_reprocesses(
+def _fake_validate_returning(sigma_by_call: list[list[float]]):
+    """Fake validate_fast_from_pupitre: the n-th assembly run returns sigma_by_call[n] for every experiment."""
+    state = {"run": -1, "seen": set()}
+
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, assembly=None, z0_h=None, z0_b=None):
+        if exp_file in state["seen"] or state["run"] < 0:
+            state["run"] += 1
+            state["seen"] = set()
+        state["seen"].add(exp_file)
+        sigma = sigma_by_call[min(state["run"], len(sigma_by_call) - 1)]
+        return pd.DataFrame({"t": [float(i) for i in range(len(sigma))], "H1_fast": sigma})
+
+    return fake_validate
+
+
+def _hoop_rows(db_path: str, sql: str) -> list:
+    con = duckdb.connect(db_path, read_only=True)
+    try:
+        return con.execute(sql).fetchall()
+    finally:
+        con.close()
+
+
+def test_compute_hoop_stress_history_different_bin_config_warns_and_skips(
     patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path, capsys
 ):
-    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, assembly=None, z0_h=None, z0_b=None):
-        return pd.DataFrame({"t": [0.0, 1.0], "H1_fast": [10.0, 20.0]})
-
-    monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
+    """One bin configuration per experiment: other bins without --reprocess are skipped, not mixed in."""
+    monkeypatch.setattr("stress_map.validate_fast_from_pupitre", _fake_validate_returning([[10.0, 20.0]]))
     pq_dir = str(tmp_path / "pq")
 
     r1 = compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir, verbose=False)
@@ -666,17 +688,85 @@ def test_compute_hoop_stress_history_different_bin_config_warns_and_reprocesses(
     captured = capsys.readouterr()
 
     assert "previously processed with" in captured.out
-    assert r2["new"] == 2  # not skipped -- computed under the new bin_key too
-    assert r2["skipped"] == 0
+    assert r2["new"] == 0
+    assert r2["skipped"] == 2
+    configs = _hoop_rows(hoop_db_path, "SELECT DISTINCT bin_config FROM hoop_stress_processed")
+    assert configs == [(bins_to_key(DEFAULT_STRESS_BINS),)]
 
-    con = duckdb.connect(hoop_db_path, read_only=True)
-    try:
-        n_configs = con.execute(
-            "SELECT COUNT(DISTINCT bin_config) FROM hoop_stress_processed"
-        ).fetchone()[0]
-        assert n_configs == 2
-    finally:
-        con.close()
+
+def test_compute_hoop_stress_history_different_bins_with_reprocess_replaces(
+    patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path
+):
+    monkeypatch.setattr("stress_map.validate_fast_from_pupitre", _fake_validate_returning([[10.0, 20.0]]))
+    pq_dir = str(tmp_path / "pq")
+    new_bins = [(0.0, 50.0), (50.0, 150.0)]
+
+    compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir, verbose=False)
+    r2 = compute_hoop_stress_history(
+        "HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir, bins=new_bins, reprocess=True, verbose=False,
+    )
+
+    assert r2["new"] == 2
+    configs = _hoop_rows(hoop_db_path, "SELECT DISTINCT bin_config FROM hoop_stress_processed")
+    assert configs == [(bins_to_key(new_bins),)]
+    highs = _hoop_rows(hoop_db_path, "SELECT DISTINCT stress_bin_high FROM hoop_stress_bin_stats ORDER BY 1")
+    assert highs == [(50.0,)]  # the old (0, 100) rows are gone, not overwritten-by-key only
+
+
+def test_compute_hoop_stress_history_reprocess_drops_rows_of_emptied_bins(
+    patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path
+):
+    """Same bins, --reprocess: a bin that held samples before but is empty now must not keep its old row."""
+    monkeypatch.setattr(
+        "stress_map.validate_fast_from_pupitre",
+        _fake_validate_returning([[10.0, 150.0, 20.0], [10.0, 20.0, 30.0]]),
+    )
+    pq_dir = str(tmp_path / "pq")
+
+    compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir, verbose=False)
+    lows = _hoop_rows(hoop_db_path, "SELECT DISTINCT stress_bin_low FROM hoop_stress_bin_stats ORDER BY 1")
+    assert lows == [(0.0,), (100.0,)]
+
+    compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir, reprocess=True, verbose=False)
+    lows = _hoop_rows(hoop_db_path, "SELECT DISTINCT stress_bin_low FROM hoop_stress_bin_stats ORDER BY 1")
+    assert lows == [(0.0,)]
+
+
+def test_compute_hoop_stress_history_recomputes_stale_and_clears_mark(
+    patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path
+):
+    monkeypatch.setattr("stress_map.validate_fast_from_pupitre", _fake_validate_returning([[10.0, 20.0]]))
+    pq_dir = str(tmp_path / "pq")
+    compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir, verbose=False)
+
+    con = duckdb.connect(hoop_db_path)
+    exp1 = con.execute("SELECT id FROM experiments WHERE name = 'exp1'").fetchone()[0]
+    con.execute(
+        "UPDATE hoop_stress_processed SET stale_since = now(), stale_reason = 42 WHERE experiment_id = ?",
+        [exp1],
+    )
+    con.close()
+
+    r2 = compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, parquet_dir=pq_dir, verbose=False)
+
+    assert r2["new"] == 1 and r2["skipped"] == 1
+    stale = _hoop_rows(
+        hoop_db_path, "SELECT COUNT(*) FROM hoop_stress_processed WHERE stale_since IS NOT NULL",
+    )
+    assert stale == [(0,)]
+
+
+def test_check_processed_reports_not_done_when_stale(hoop_assembly_with_experiments):
+    con = hoop_assembly_with_experiments
+    exp_id = int(_get_experiments(con, "HOOP_ASSEMBLY").iloc[0]["id"])
+    bin_key = "0.0,100.0,200.0"
+    _mark_processed(con, exp_id, "all", bin_key, None)
+    con.execute("UPDATE hoop_stress_processed SET stale_since = now() WHERE experiment_id = ?", [exp_id])
+
+    done, others = _check_processed(con, exp_id, bin_key)
+
+    assert done is False
+    assert others == set()
 
 
 def test_compute_hoop_stress_history_continues_after_one_experiment_errors(

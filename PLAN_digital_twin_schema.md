@@ -4,7 +4,15 @@
 discussion; revised the same day: L1 (PID semantics from
 `configAlims/README.md`), L2 (pupitre header reader, `ct` cross-check), L3
 (characteristics, units, variable binding, default selection), open
-questions reviewed. **No implementation phase is approved yet** — each phase below
+questions reviewed. Revised 2026-10-07: §1 of
+[PLAN_commissioning_numerical_companion.md](PLAN_commissioning_numerical_companion.md)
+(raw commissioning measurements) merged into L3, the rest of that plan
+superseded; cross-references to
+[PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md) and
+[NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md); order, blockers and
+approvals across these plans in
+[Cross-plan order, blockers and approvals](#cross-plan-order-blockers-and-approvals).
+**No implementation phase is approved yet** — each phase below
 gets its own short plan + approval before any code or schema change.
 Items marked **[unconfirmed]** are assumptions awaiting an answer (see
 [Open questions](#open-questions)).
@@ -59,8 +67,9 @@ pigbrother `Signature`, Tin series) entirely from the database.
 | magnettools / `python_magnetworkflows` CSV | R(I,Tin) per section and total, L, M | e.g. `R_14Helices.csv`, `Rtot_M9Bitters_18MW.csv` | L3 |
 | Pupitre file **line 1** (skipped today by python_magnetrun, `skiprows=1`) | embedded MAGFILE core fields: `NbCoil MagnetCode Imax1 Imax2 [r0 a0 b0 ct] × NbCoil` — matches the conf files exactly (checked on M8 `M23012001`, M9 `M25032101`); era-dependent, see L2 "Pupitre header reader" | `~/LNCMIG-Data/records/srv-data-install/<housing>/*.txt` | L2 (per experiment) |
 | Channel defs (`pupitre-defs.json`, `hybrid-defs.json`, `pigbrother-defs.json`) | channel units; `IH`/`IB`, `TinH`/`TinB` (older/M8 `Tin1`/`Tin2`), hybrid `I_BOB` (supra current); pupitre `IS` = supra current derived from `I_BOB` during ETL (to add) | `python_magnetrun/python_magnetrun/` | L3 variable binding (`I`, `Tin`) |
-| pigbrother `Signature` | reference currents per circuit | `overview_records.signatures` | L5 inputs |
-| `overview_records.plateaux` | plateau metadata | `overview_records` | run search only (view), not an entity |
+| Commissioning measurements | field and voltage per magnet at PID-stabilized current setpoints, with flow and Tin, taken when an assembly is commissioned | extracted from experiments' pupitre files (with a proper header, open question #29) at load time; candidate commissioning experiments identified by a `Field` signature still to be defined — **[unconfirmed, open question #24]** | L3 (raw tables, then fits) |
+| pigbrother `Signature` | reference currents per circuit | `overview_records.signatures` — **empty today** (0 / 1915 records in `test-magnetdb.duckdb`; the python_magnetrun extraction stores placeholder min/max/mean only), filled by step S2 | L5 inputs |
+| `overview_records.plateaux` | plateau metadata | `overview_records` — **empty today** (0 / 1915), filled by step S2 | run search only (view), not an entity |
 | `python_magnetdb` `Probe` / `python_magnetgeo` `Probe` | name, type (`voltage_taps`/`temperature`/`magnetic_field`), labels, points | held by `Insert`/`Bitters`/`Supras` in magnetgeo | `probes` table |
 
 ---
@@ -405,6 +414,15 @@ default:
 -- v_config_sections: (config_id, slot, magnet_name, section_index, part_names[] | probe_name)
 ```
 
+- **Used by the Pupitre ETL:** this slot mapping is the assembly → `Ucoil`
+  channel rule that [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)
+  lacks in its v1. ETL spec v2 builds the voltage sums from
+  `v_config_sections` (e.g. 7 `Ucoil` on M7; slot 1 absent on M9
+  `M25032101`).
+- **M5 row** of the slot table above (Bitters 1–2 on GR1) changes if the M5
+  rewiring in [NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md) is
+  confirmed (Bitter 1 on GR1, Bitter 2 on GR2) — see open question #26.
+
 ### Probes
 
 ```sql
@@ -490,6 +508,30 @@ other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
   `experiment_id` is the first occurrence.
 - Files of class *data* or *empty* get a file-level flag
   (`no_parameter_line`) in the coverage view, never a configuration row.
+- **File quality on `experiments`** (step E of the cross-plan order, before
+  phase 2, which reuses its classification):
+
+  ```sql
+  ALTER TABLE experiments ADD COLUMN IF NOT EXISTS header_class    VARCHAR;  -- full | short | data | empty (line-1 classes above)
+  ALTER TABLE experiments ADD COLUMN IF NOT EXISTS file_integrity  VARCHAR;  -- ok | truncated | unreadable
+  ALTER TABLE experiments ADD COLUMN IF NOT EXISTS file_checks     JSON DEFAULT '{}';  -- reason, rows read, lines dropped, …
+  ALTER TABLE experiments ADD COLUMN IF NOT EXISTS file_checked_at TIMESTAMP;
+  ```
+
+  - `file_integrity` (user, 2026-10-07): `ok` = read completely;
+    `truncated` = broken but recovered by python_magnetrun reading up to the
+    point of failure (`fromtxt` with `on_bad_lines="warn"`, detected by
+    `check_pupitre_truncation`), data partial; `unreadable` = cannot be read
+    (`FileFormatError`: header only, missing `Date`/`Time`, …), no data.
+  - python_magnetrun must **report** truncation: today
+    `check_pupitre_truncation`'s result is only logged
+    (`magnetdata_pandas.py` / `magnetdata_polars.py` `fromtxt`); e.g. a
+    `truncated` flag on the loaded data object. Part of step E.
+  - Kept separate from `experiments.status`, which holds processing tokens
+    (`STATS DONE`, `HOOP STRESS DONE`).
+  - **"Proper" header — pending (open question #29):** its meaning will be
+    given by the designer of the pupitre format; `header_class` alone is
+    not assumed to define it.
 - Section absence still requires `r0 = a0 = b0 = 0`: M8 Bitters coils 15/16
   have `r0 = 0` with non-zero `a0`/`b0`. Slot 1 of M9 `M25032101` is
   `0 0 0` in both `MAGFILEM9.conf` and the 2026-10-02 pupitre header (see
@@ -626,7 +668,11 @@ Binding helper, e.g.
 3. circuit → inlet temperature via **new** `reference_gr<n>_tin` keys
    (e.g. M9: `TinH` / `TinB`) — explicit, not derived from the `H`/`B`
    suffix, because older data and M8 files use `Tin1`/`Tin2` (also
-   `Flow1/2`, `HP1/2`, `Rpm1/2`);
+   `Flow1/2`, `HP1/2`, `Rpm1/2`). Once Pupitre files go through the
+   spec-driven ETL ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)),
+   the spec's rename (`Tin1 → TinH`) already holds this mapping on the
+   database side; whether the new keys are still needed in python_magnetrun's
+   housing JSON is decided in the phase 3 plan;
 4. supra → **new** `reference_supra_current` = pupitre **`IS`** when present,
    otherwise hybrid `I_BOB` extracted on the fly (same procedure as below).
    Pupitre files have no native supra current; `IS` is a **derived channel
@@ -660,11 +706,19 @@ Procedure, as implemented (uncommitted) for M8 in
 - `pupitre-defs.json` gains an `IS` entry ("Supra current, derived from
   Hybrid I_BOB during ETL", unit `ampere`, group `Courants_Alimentations`).
 - No linked hybrid source → no `IS` column (never zero-filled).
-- `get_hybrid_khz_source` / `load_hybrid_supra_current` move from the
-  dashboard to a shared module (python_magnetrun or `to_duckdb`) so ETL,
-  dashboard and binding share one implementation.
-- Where the ETL step lives (python_magnetrun Stream 4.7 parquet save, or
-  `to_duckdb` populate) — open question #15; decided in its phase plan.
+- **Where the ETL step lives — decided 2026-10-07 (open question #15):**
+  `IS` is a column of the Pupitre data after the ETL, added through the
+  `external` entries of the Pupitre ETL spec
+  ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md), step 1b):
+  - the to_duckdb builder emits the `IS` entry when the condition above
+    holds; the hybrid date comes from `overview_records.sources_hybrid_kHz`
+    (`get_hybrid_khz_source` and `assembly_has_supra` logic moves to the
+    builder);
+  - python_magnetrun `prepare_pupitre` loads, downsamples and aligns
+    `I_BOB` (`load_hybrid_supra_current` logic moves to python_magnetrun,
+    shared by ETL, dashboard and binding); the hybrid data directory is
+    python_magnetrun's `HYBRID_DATA_DIR`, never stored in the spec or the
+    database.
 
 ### Mutual inductance (confirmed rules)
 
@@ -685,6 +739,10 @@ Procedure, as implemented (uncommitted) for M8 in
 - **Current dependence — supra only:** L and M of supra parts may depend on
   `I` (the supra current, see binding); they then use `table` or
   `expression` with `variables = ['I']`. Everything else is constant.
+- **Alternative shape** (from the commissioning plan): one row per magnet
+  pair (`assembly, magnet_a, magnet_b, value`), easier to query in SQL; the
+  `vector` above keeps the magnet-scipy layout and an explicit `order`. Open
+  question #23.
 
 ### Field factor
 
@@ -756,6 +814,67 @@ is kept with the configuration as provenance only.
 | magnet-scipy `mutual_inductances` | M, `vector`, assembly level |
 | `R_14Helices.csv` | R, `table`, 7 section rows + 1 magnet row |
 | `Rtot_M9Bitters_18MW.csv` | R, `table`, magnet level |
+| Commissioning measurements (below) | R and FF fitted from the raw rows, `source = fit`, `source_ref` = the commissioning row ids |
+
+### Commissioning measurements (raw)
+
+Merged from §1 of
+[PLAN_commissioning_numerical_companion.md](PLAN_commissioning_numerical_companion.md)
+(2026-10-01), adapted to this plan's conventions: values in SI with units in
+comments; the derived ratios (`field / current`, `voltage / current`) are not
+stored — they are computed by the fit that writes the
+`electrical_characteristics` row. The rest of that plan (§2 parameters, §3
+mutual inductance, §4 PID gains) is covered by L3 and L1.
+
+```sql
+-- One row per PID-stabilized setpoint; a setpoint may be repeated in a campaign
+CREATE SEQUENCE IF NOT EXISTS commissioning_field_factor_id_seq START 1;
+CREATE TABLE IF NOT EXISTS commissioning_field_factor (
+    id             INTEGER PRIMARY KEY DEFAULT nextval('commissioning_field_factor_id_seq'),
+    assembly_name  VARCHAR REFERENCES assemblies(name),
+    magnet_name    VARCHAR REFERENCES magnets(name),
+    current        DOUBLE NOT NULL,     -- [A] [unconfirmed, open question #25]
+    field          DOUBLE NOT NULL,     -- [T], at the assembly field centre
+    flow_rate      DOUBLE,              -- [m^3/s]
+    tin            DOUBLE,              -- [K]
+    measured_at    TIMESTAMP,
+    experiment_id  INTEGER REFERENCES experiments(id),  -- backing raw file, when any
+    source_ref     VARCHAR,             -- manual entry | pupitre file + plateau (open question #24)
+    notes          VARCHAR
+);
+
+CREATE SEQUENCE IF NOT EXISTS commissioning_resistance_id_seq START 1;
+CREATE TABLE IF NOT EXISTS commissioning_resistance (
+    id             INTEGER PRIMARY KEY DEFAULT nextval('commissioning_resistance_id_seq'),
+    assembly_name  VARCHAR REFERENCES assemblies(name),
+    magnet_name    VARCHAR REFERENCES magnets(name),
+    current        DOUBLE NOT NULL,     -- [A]
+    voltage        DOUBLE NOT NULL,     -- [V]
+    flow_rate      DOUBLE,              -- [m^3/s]
+    tin            DOUBLE,              -- [K]
+    measured_at    TIMESTAMP,
+    experiment_id  INTEGER REFERENCES experiments(id),
+    source_ref     VARCHAR,
+    notes          VARCHAR
+);
+```
+
+- Keyed by assembly, not only magnet: field factor and resistance depend on
+  the other magnets sharing the bore (commissioning plan rationale).
+- PID gains tuned at commissioning end up in the CIRRUS XML of the supplies,
+  so they are ingested by L1 (`pid_configs` / `pid_params`), not stored per
+  assembly.
+- **Origin of the readings (user, 2026-10-07; open question #24):**
+  extracted from experiments when loading their pupitre data, only for files
+  with a proper header (open question #29). **[unconfirmed]** Candidate
+  commissioning experiments are those whose pupitre `Field` signature
+  matches a commissioning pattern **still to be defined**, to be checked
+  against real commissioning runs. Computed by a `to_duckdb` step after the
+  ETL, since they need the per-magnet channel names produced by the
+  spec-driven ETL ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)) —
+  for M5, `IB1` / `UB1` / `IB2` / `UB2` — and python_magnetrun never writes
+  to the database. Plateau detection finds the PID-stabilized setpoints, so
+  this depends on step S2.
 
 ### Units and defs files
 
@@ -943,14 +1062,15 @@ following the existing `to_duckdb/tests/test_*_db.py` pattern.
    housing reported from the reader's own classification.
 3. **L3 characteristics** — `electrical_characteristics` +
    `to_duckdb/characteristics.py` (lookup API, `set_preferred`, binding),
-   `flow_params`; projection of MAGFILE R(I)/FF; import of magnettools CSV,
+   `flow_params`, `commissioning_field_factor` / `commissioning_resistance`
+   (merged from the commissioning plan); projection of MAGFILE R(I)/FF; import of magnettools CSV,
    magnet-scipy L / M and `*-flow_params.json`; CLI
    `characteristic list | set-preferred`. **python_magnetrun:**
    `reference_gr<n>_tin` and `reference_supra_current` in the housing
    configs, `IS` entry (derived channel) in `pupitre-defs.json`.
-   **Before phase 4:** `IS` ETL step (location per open question #15) +
-   move of `get_hybrid_khz_source` / `load_hybrid_supra_current` to a
-   shared module — needed for M8 supra runs.
+   **Before phase 4:** `IS` ETL step — step 1b of the cross-plan order
+   (Pupitre ETL spec `external` entries, see "Supra current") — needed for
+   M8 supra runs.
    → verify: `R_14Helices.csv`/`Rtot_M9Bitters_18MW.csv` round-trip;
    `get_resistance(M25032101, at=…)` evaluated with `I=IH`, `Tin=TinH`
    (bound + converted to K) matches the CSV; no preferred + 2 candidates →
@@ -960,7 +1080,9 @@ following the existing `to_duckdb/tests/test_*_db.py` pattern.
 4. **ODE config builder** — `build_ode_config(...)`.
    **Prerequisites:** reference currents come from
    `overview_records.signatures` — `magnetdb.duckdb` has **0** overview
-   records, `test-magnetdb.duckdb` has 1915 (both have magnet `M23072801`,
+   records, `test-magnetdb.duckdb` has 1915 but **all with empty
+   `signatures`, `plateaux` and `sync_info`** (checked 2026-10-07; filling
+   them is step S2 of the cross-plan order) (both have magnet `M23072801`,
    assembly `M9_A230801_00`, and 3 M9 experiments on 2023-09-16), so the
    acceptance test runs against `test-magnetdb.duckdb` or a fixture
    extracted from it until `magnetdb.duckdb` has overview records; R(T)
@@ -979,6 +1101,41 @@ modules under `to_duckdb/` (e.g. `operating_config.py`, `installation.py`,
 `readers/`); create tests under `to_duckdb/tests/`; edit
 `to_duckdb/magnetdb.py` for CLI subcommands; edit `to_duckdb/stress_map.py`
 in phase 6.
+
+---
+
+## Cross-plan order, blockers and approvals
+
+As of 2026-10-07. Plans covered: this plan,
+[PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md),
+[NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md),
+[PLAN_commissioning_numerical_companion.md](PLAN_commissioning_numerical_companion.md)
+(superseded; its §1 is merged into L3),
+[apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md)
+(methodology approved 2026-08-11, not executed).
+
+**Approved so far:** step 0 only (documentation), plus the signature
+robustness *methodology* (S1, 2026-08-11). **Nothing else is approved for
+implementation.**
+
+| Step | Work | Depends on | Blockers | Approval |
+|---|---|---|---|---|
+| 0 | Reconcile the plan documents | — | — | **Done** 2026-10-07 |
+| E | File quality on `experiments` (`header_class`, `file_integrity` ok / truncated / unreadable, `file_checks`; python_magnetrun reports truncation) — see L2 "Pupitre header reader" | — | #29 ("proper" header) only for interpreting `header_class` | Plan to write, then approval |
+| S1 | Signature regime robustness study ([PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md)), incl. a robust pupitre `Field` signature | — | before running: where the tooling lives; library fixes vs local work-arounds; RDP vs PELT; 3–4 test file pairs to pick | **Methodology approved** 2026-08-11; execution choices to decide |
+| S2 | Fill `overview_records.signatures`, `plateaux`, `sync_info` with real `Signature` output (replacing the placeholder `_extract_signatures` in python_magnetrun `analysis/processing.py`); per-experiment `Field` signature (existing work: `stage/` writes `overview_experiments.field_signature` with a hand-picked `FIELD_THRESHOLD = 0.1`) | S1 | none beyond S1 | Plan to write, then approval |
+| 1 | Pupitre ETL spec v1 ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)) | — | none | **Plan written, awaiting approval** |
+| 1b | Supra current `IS` for M8: `external` spec entries, hybrid loading moved from the dashboard to python_magnetrun (outline in [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)) | 1 | #27 (Hybrid ↔ pupitre clock lag) to check before aligning | Outline agreed 2026-10-07; detailed plan to write, then approval |
+| 2a | Switch Pupitre callers (`load_mrun`/dashboards, `stress_map.py`) to the spec path | 1 + review of its step 5 comparison | none | Plan to write, then approval |
+| 2b | Phase 2: probes + L2 run configuration + `v_config_sections` | — | #2 (conf → experiment link, conf reader only), #3 (M9 slot 1), #17 (M10 coverage start), #20 (M3 only) | Phase plan to write, then approval |
+| 2c | Phase 1: L1 installation | — | **CIRRUS XML history access** (the 4 magnet-scipy samples suffice for tests and the phase 4 acceptance case); #5, #11, #14, #18, #21 | Phase plan to write, then approval |
+| 3 | Pupitre ETL spec v2: builder driven by the assembly through `v_config_sections` | 1, 2b | none beyond its dependencies | Plan to write, then approval |
+| 4 | M5 rewiring ([NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md)) | 2a (Pupitre part), 3 (optional) | **Formal confirmation of the M5 wiring**; corrected M5 source JSON (two Bitters magnets, user); #26 (`coil_assignment` key for two Bitters); M5 notes §9 open details | Notes ON HOLD; plan to write after confirmation, then approval |
+| 5 | Phase 3: L3 characteristics, incl. raw commissioning tables | 2a (binding uses names after the ETL), 2b (sections), 1b (`IS` for M8 supra), S2 + E (commissioning readings) | #22 (source vocabulary), #23 (mutual-inductance shape), #24 (commissioning `Field` signature to define and check), #25 (per-magnet field factor), #29 ("proper" header) | Phase plan to write, then approval |
+| 6 | Phase 4: ODE config builder | 2c, 5, S2 (reference currents from signatures) | data issue #7 (`materials.alpha`); 0 overview records in `magnetdb.duckdb` and empty signatures in `test-magnetdb.duckdb` (until S2) | Phase plan to write, then approval |
+| 7 | Phases 5–7: storage, L4 digital variants, L5 simulations | 5, 6 | #10 (rustfs instance); #7 (L4 option A/B) | Phase plans to write, then approval |
+
+Steps 1, E, S1, 2b and 2c can run in parallel.
 
 ---
 
@@ -1095,10 +1252,18 @@ in phase 6.
 | 12 | ~~Pupitre `IS`~~ — resolved: no native supra current in pupitre; `IS` derived from hybrid `I_BOB` during ETL (M8, supra in assembly, hybrid source linked), on-the-fly `I_BOB` as fallback | — |
 | 13 | ~~MySQL defs file~~ — merged into #8 | — |
 | 14 | L1 cooling/flow tables (`cooling_circuits`, `primary_loop`, `flow_params`) are drafted in python_magnetcooling's working units (rpm, l/s, bar, MW, m³/h): convert to SI like L2/L3, or keep those units for direct use by `WaterFlow`? | phase 1 / 3 |
-| 15 | Where does the `IS` ETL step live: python_magnetrun Stream 4.7 (parquet save) or `to_duckdb` populate? | before phase 4 |
+| 15 | ~~Where does the `IS` ETL step live~~ — resolved 2026-10-07: `IS` is a column of the Pupitre data after the ETL, through the Pupitre ETL spec's `external` entries (step 1b); hybrid directory from python_magnetrun's `HYBRID_DATA_DIR` | — |
 | 16 | ~~Meaning of `ct`~~ — resolved: temperature coefficient [1/K]; cross-checked against `materials.alpha` (reference), resistance-weighted per helix pair for inserts (L2) | — |
 | 17 | Exact start of full pupitre parameter lines in M10 (shell scan inconclusive) | phase 2 coverage |
 | 18 | PID third-range threshold: 1000 A (CIRRUS README, R14L09 p13) vs 800 A (magnet-scipy `high_threshold` default) — which is right? If 1000 A, magnet-scipy's default needs a separate fix | phase 1 seed / phase 4 |
 | 19 | CIRRUS ramps (`analogique.rampes.rampe`): needed (e.g. ramp rates vs MAGFILE `dIdtmax`), or out of scope? | low priority |
 | 20 | Section slots outside M8/M9/M10 — **resolved for M5/M7** by the derived rule (first `Ucoil` of the role's GR; M5 Bitters GR1, M7 insert GR1). **M3** still open: a new `M3-housing-config.json` is needed — which magnet(s) (3 coils, `Imax1 = Imax2 = 13010`), on which circuit(s), and the channel mapping (`Idcct1–4`, `Tin1/2`, `Flow1/2`, `HP1/2`, `Rpm1/2`) | phase 2 (M3) |
 | 21 | Should the M8 hybrid supra supply be an L1 `power_circuits` row (e.g. circuit `SUPRA`), or stay only as `reference_supra_current` binding? | phase 1 / 3 |
+| 22 | Source vocabulary: the commissioning plan used `measured` / `analytical` / `fem`; this plan uses `magfile_conf`, …, `measurement`, `fit`, `manual`. Recommended: keep this plan's list, `measured` → `measurement`; add `analytical` only if a model other than magnettools needs it | phase 3 |
+| 23 | Mutual-inductance shape: `vector` with explicit `order` (magnet-scipy layout, recommended) or one row per magnet pair (commissioning plan, easier SQL) | phase 3 |
+| 24 | Commissioning readings — **partly resolved 2026-10-07:** extracted from experiments when loading their pupitre data, only for files with a proper header (#29), computed after the ETL by `to_duckdb`. **Open [unconfirmed]:** candidate commissioning experiments have a given pupitre `Field` signature, still to be defined and checked against real commissioning runs | phase 3 (commissioning tables) |
+| 25 | Per-magnet field factor at commissioning: the measured centre field is the sum of all powered magnets (B = FF1·I₁ + FF2·I₂). Is one magnet powered at a time, or is FF fitted over several (I₁, I₂) setpoints? In the second case a row must store every circuit's current, not one `current` | phase 3 (commissioning tables) |
+| 26 | `housing_config.coil_assignment` is `MAP(role → GR)`: it cannot express two Bitters magnets on GR1/GR2 (M5 rewiring). Which key (magnet name, `Bitter1`/`Bitter2`, …)? Also affects the L2 slot rule for M5 and L1 `power_circuits` | M5 (step 4), phase 1 / 2 |
+| 27 | Do the Hybrid and pupitre clocks need a lag correction before `IS` is aligned with `merge_asof` (0.5 s)? Pupitre vs pigbrother lag is the subject of the signature robustness plan; Hybrid vs pupitre was never checked | step 1b |
+| 28 | Pupitre file with no assembly covering its time (e.g. data issue #9): build a housing-only spec (v1 content, no assembly-specific entries) with a warning (recommended), or refuse the ETL? | step 1 follow-ups / 2a |
+| 29 | **Pending — "proper" pupitre header:** what makes a pupitre header proper (needed for commissioning readings and to interpret `header_class`)? Hints to come from the designer of the pupitre format | step E (interpretation), phase 3 (commissioning) |

@@ -87,6 +87,31 @@ def test_add_magnet_is_idempotent(tmp_path):
     assert _count(db, "materials") == 2
 
 
+def test_add_magnet_refuses_existing_magnet_with_extra_part(tmp_path, capsys):
+    """Re-adding an existing magnet must not silently link new parts."""
+    db = tmp_path / "test.duckdb"
+    add_magnet(MAGNET_JSON, db)
+    data = copy.deepcopy(MAGNET_JSON)
+    data["parts"].append({**copy.deepcopy(data["parts"][1]), "name": "R_JSON_02"})
+
+    with pytest.raises(SystemExit):
+        add_magnet(data, db)
+
+    assert "already exists with different content" in capsys.readouterr().out
+    assert _count(db, "magnet_parts") == 2
+    assert _count(db, "parts") == 2  # nothing written
+
+
+def test_add_magnet_refuses_existing_magnet_with_other_part_order(tmp_path):
+    db = tmp_path / "test.duckdb"
+    add_magnet(MAGNET_JSON, db)
+    data = copy.deepcopy(MAGNET_JSON)
+    data["parts"].reverse()
+
+    with pytest.raises(SystemExit):
+        add_magnet(data, db)
+
+
 def test_add_magnet_shared_material_inserted_once(tmp_path):
     """Two parts referencing the same material must not cause a duplicate key error."""
     data = copy.deepcopy(MAGNET_JSON)

@@ -376,14 +376,32 @@ def _check_processed(
     """Check whether this (experiment, bin_key) pair has already been processed.
 
     Returns (already_done, other_keys) where:
-      already_done  – True if this exact bin_key is recorded for exp_id
+      already_done  – True if this exact bin_key is recorded for exp_id and
+                      the experiment is not marked stale
       other_keys    – set of different bin keys already stored for exp_id
     """
     rows = con.execute(
         "SELECT bin_config FROM hoop_stress_processed WHERE experiment_id = ?", [exp_id]
     ).fetchall()
     stored = {r[0] for r in rows}
-    return bin_key in stored, stored - {bin_key}
+    return bin_key in stored and not _is_stale(con, exp_id), stored - {bin_key}
+
+
+def _is_stale(con, exp_id: int) -> bool:
+    """True if any hoop_stress_processed row of *exp_id* is marked stale."""
+    return con.execute(
+        "SELECT 1 FROM hoop_stress_processed WHERE experiment_id = ? AND stale_since IS NOT NULL",
+        [exp_id],
+    ).fetchone() is not None
+
+
+def _delete_hoop_rows(con, exp_id: int) -> None:
+    """Delete every hoop-stress row of *exp_id* (stats, fatigue, processed marker)."""
+    for table in (
+        "hoop_stress_bin_stats", "hoop_stress_fatigue",
+        "hoop_stress_fatigue_bins", "hoop_stress_processed",
+    ):
+        con.execute(f"DELETE FROM {table} WHERE experiment_id = ?", [exp_id])
 
 
 def _mark_processed(
@@ -708,7 +726,9 @@ def compute_hoop_stress_history(
     bins           : list of (low, high) stress bins in MPa
     parquet_dir    : directory for Parquet output files (default: <db dir>/hoop_parquet)
     geometries_dir : override for geometry YAML directory
-    reprocess      : if True, overwrite already-processed files
+    reprocess      : if True, replace all hoop rows of already-processed
+                     experiments (also replaces another bin configuration).
+                     Experiments marked stale are always recomputed.
     dry_run        : discover files but do not write to DB or disk
     use_mrun       : pass to validate_fast_from_pupitre
     pupitre_datadir: root for pupitre files
@@ -796,15 +816,17 @@ def compute_hoop_stress_history(
 
             bin_key = bins_to_key(bins)
             already_done, other_keys = _check_processed(con, exp_id, bin_key)
-            if other_keys:
-                print(
-                    f"  [WARN] [{exp_id}] {exp_name}: previously processed with "
-                    f"different bin(s): {sorted(other_keys)}. "
-                    f"Use --reprocess to overwrite."
-                )
-            if already_done and not reprocess:
-                results["skipped"] += 1
-                continue
+            stale = _is_stale(con, exp_id)
+            if not reprocess and not stale:
+                if other_keys:
+                    print(
+                        f"  [WARN] [{exp_id}] {exp_name}: previously processed with "
+                        f"different bin(s): {sorted(other_keys)}. Skipped — "
+                        f"use --reprocess to replace them."
+                    )
+                if already_done or other_keys:
+                    results["skipped"] += 1
+                    continue
 
             if verbose:
                 print(f"  processing [{exp_id}] {exp_name}")
@@ -867,22 +889,30 @@ def compute_hoop_stress_history(
                     print(f"  [WARN] Parquet write failed for {exp_name}: {exc}")
                 pq_path = None
 
-            # Bin stats + rainflow per part
-            for col in hoop_cols:
-                part_name = part_map.get(col, col)
-                sigma = df[col]
+            # Bin stats + rainflow per part, replacing every previous hoop row
+            # of this experiment in one transaction (no stale or mixed-bin rows).
+            con.begin()
+            try:
+                _delete_hoop_rows(con, exp_id)
+                for col in hoop_cols:
+                    part_name = part_map.get(col, col)
+                    sigma = df[col]
 
-                bin_rows = _bin_series(sigma, dt, bins)
-                _insert_bin_stats(con, exp_id, part_name, bin_rows)
+                    bin_rows = _bin_series(sigma, dt, bins)
+                    _insert_bin_stats(con, exp_id, part_name, bin_rows)
 
-                fatigue = _rainflow_stats(sigma, bins)
-                _insert_fatigue(con, exp_id, part_name, fatigue)
+                    fatigue = _rainflow_stats(sigma, bins)
+                    _insert_fatigue(con, exp_id, part_name, fatigue)
 
-            _mark_processed(
-                con, exp_id, magnet_type, bin_key,
-                str(pq_path) if pq_path else None,
-            )
-            _append_hoop_status(con, exp_id)
+                _mark_processed(
+                    con, exp_id, magnet_type, bin_key,
+                    str(pq_path) if pq_path else None,
+                )
+                _append_hoop_status(con, exp_id)
+                con.commit()
+            except Exception:
+                con.rollback()
+                raise
             results["new"] += 1
     finally:
         shutil.rmtree(tmpdir_path, ignore_errors=True)
@@ -926,7 +956,8 @@ def _parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--geometries",   default=None,
                         help="Override geometry YAML directory")
     parser.add_argument("--reprocess",    action="store_true",
-                        help="Re-compute already-processed experiments")
+                        help="Re-compute already-processed experiments, replacing all their "
+                             "hoop rows (stale experiments are always recomputed)")
     parser.add_argument("--dry-run",      action="store_true", dest="dry_run",
                         help="Discover files but do not write to DB or disk")
     parser.add_argument("--use-mrun",     action="store_true", dest="use_mrun",

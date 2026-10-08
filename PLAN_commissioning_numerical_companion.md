@@ -1,6 +1,21 @@
 # Assembly-commissioning measurements + numerical-companion tables
 
-**Status:** Design plan — not yet approved for implementation.
+**Status (2026-10-07): SUPERSEDED — do not implement.** This plan and
+[PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md) were written
+separately for the same goal (replaying an assembly with magnet-scipy).
+Where each part went:
+
+| Section here | Now in PLAN_digital_twin_schema.md |
+|---|---|
+| §1 raw commissioning measurements | **Merged** into L3 "Commissioning measurements (raw)", adapted (SI values, derived ratios computed by the fit, not stored); built in phase 3 |
+| §2 `assembly_magnet_parameters` | Replaced by L3 `electrical_characteristics` (validity windows, part/section levels, several representations, `preferred`) |
+| §3 `assembly_mutual_inductance` | Replaced by the L3 mutual-inductance rows; the one-row-per-pair shape is kept as open question #23 |
+| §4 `assembly_magnet_pid_params` | Replaced by L1 `pid_configs` / `pid_params` (PID belongs to the power installation, per supply, versioned from CIRRUS XML) |
+| §5 `ParameterSource` enum | Source vocabulary is open question #22 |
+
+The original text is kept below for reference.
+
+---
 
 ## Context
 

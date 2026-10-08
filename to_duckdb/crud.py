@@ -33,6 +33,7 @@ insert_experiments(con, assembly_name, records, verbose)
 
 update_part_status(con, name, status, description, changed_at, attachments, verbose)
 update_magnet_status(con, name, status, description, changed_at, attachments, dead_parts, verbose)
+update_material_from_json(con, data, dry_run, verbose)
 update_part_from_json(con, data, dry_run, verbose)
 update_magnet_from_json(con, data, dry_run, verbose)
 update_assembly_from_json(con, data, dry_run, verbose)
@@ -60,6 +61,13 @@ from pathlib import Path
 from typing import Any
 
 from enums import COIL_PART_TO_MAGNET_TYPE, AssemblyStatus, LifecycleStatus
+from impact import (
+    decommission_report,
+    find_hoop_stale_impact,
+    format_hoop_stale_report,
+    mark_hoop_stale,
+    stale_summary,
+)
 from populate import FILE_TZ, as_aware
 from schema import COIL_TYPES
 
@@ -158,13 +166,144 @@ def _log_operation(
     record_name: str,
     status: str = "ok",
     details: dict | None = None,
-) -> None:
-    """Append one audit row to ``operation_log``."""
-    con.execute(
+) -> int:
+    """Append one audit row to ``operation_log`` and return its ``id``."""
+    return con.execute(
         "INSERT INTO operation_log (operation, table_name, record_name, username, status, details) "
-        "VALUES (?,?,?,?,?,?)",
+        "VALUES (?,?,?,?,?,?) RETURNING id",
         [operation, table, record_name, getpass.getuser(), status, json.dumps(details) if details else None],
-    )
+    ).fetchone()[0]
+
+
+# Columns compared as parsed JSON / as timestamps when diffing an update.
+_UPDATE_JSON_COLUMNS = frozenset({"geometry_data", "metadata"})
+_UPDATE_TIMESTAMP_COLUMNS = frozenset({"commissioned_at", "decommissioned_at"})
+# Columns logged as "changed" instead of [old, new] (too large for the log).
+_UPDATE_LOG_AS_CHANGED = frozenset({"geometry_data"})
+
+
+def _normalized(field: str, value):
+    """Return *value* in a form comparable with the DB value of *field*."""
+    if value is None or value == "":
+        return None
+    if field in _UPDATE_JSON_COLUMNS:
+        return json.loads(value) if isinstance(value, str) else value
+    if field in _UPDATE_TIMESTAMP_COLUMNS:
+        return datetime.fromisoformat(str(value))
+    return value
+
+
+def _changed_fields(current: dict, fields: dict) -> dict:
+    """Return ``{field: (old, new)}`` for the entries of *fields* that differ from *current*."""
+    return {
+        f: (current.get(f), v) for f, v in fields.items()
+        if _normalized(f, current.get(f)) != _normalized(f, v)
+    }
+
+
+def _log_value(field: str, value):
+    """Return a JSON-serialisable form of *value* for ``operation_log.details``."""
+    normalized = _normalized(field, value)
+    return str(normalized) if isinstance(normalized, datetime) else normalized
+
+
+def _record_update(
+    con, table: str, record_name: str, impact_key, changes: dict, dry_run: bool = False
+) -> str:
+    """Log *changes* and mark the hoop-stress results they make stale; return the report text."""
+    impact = find_hoop_stale_impact(con, table, impact_key, changes)
+    report = format_hoop_stale_report(impact, dry_run=dry_run)
+    if dry_run:
+        return report
+    details: dict = {"changes": {
+        f: "changed" if f in _UPDATE_LOG_AS_CHANGED else [_log_value(f, old), _log_value(f, new)]
+        for f, (old, new) in changes.items()
+    }}
+    if impact and impact["experiment_ids"]:
+        details["stale"] = stale_summary(impact)
+    op_id = _log_operation(con, "update", table, record_name, details=details)
+    if impact:
+        mark_hoop_stale(con, impact["experiment_ids"], op_id)
+    return report
+
+
+def _apply_update(
+    con,
+    table: str,
+    where: str,
+    where_params: list,
+    fields: dict,
+    record_name: str,
+    impact_key,
+    label: str,
+    dry_run: bool = False,
+    verbose: bool = True,
+) -> dict:
+    """Write the entries of *fields* that changed, log them and mark stale results.
+
+    The write, the ``operation_log`` row and the stale marks happen in one
+    transaction. Unchanged fields are neither rewritten nor logged.
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open connection, not inside a transaction.
+    table : str
+        Table to update.
+    where : str
+        SQL condition selecting the single row, e.g. ``"name = ?"``.
+    where_params : list
+        Parameters of *where*.
+    fields : dict
+        Column → new value.
+    record_name : str
+        Name stored in ``operation_log.record_name``.
+    impact_key : str or tuple of str
+        Row key passed to :func:`impact.find_hoop_stale_impact`.
+    label : str
+        Prefix of the printed status lines, e.g. ``"part      H1"``.
+    dry_run : bool, optional
+        Report the changes and their impact without writing.
+    verbose : bool, optional
+        Print status lines and the impact report.
+
+    Returns
+    -------
+    dict
+        ``{field: (old, new)}`` of the changed fields.
+    """
+    row = con.execute(f"SELECT {', '.join(fields)} FROM {table} WHERE {where}", where_params).fetchone()
+    changes = _changed_fields(dict(zip(fields, row)), fields)
+    if not changes:
+        if verbose:
+            print(f"  ~ {label}  (no change)")
+        return changes
+
+    if dry_run:
+        report = _record_update(con, table, record_name, impact_key, changes, dry_run=True)
+        if verbose:
+            print(f"[dry-run] {label}: would update {', '.join(changes)}")
+            if report:
+                print(report)
+        return changes
+
+    con.begin()
+    try:
+        set_clause = ", ".join(f"{col} = ?" for col in changes)
+        con.execute(
+            f"UPDATE {table} SET {set_clause} WHERE {where}",
+            [new for _old, new in changes.values()] + list(where_params),
+        )
+        report = _record_update(con, table, record_name, impact_key, changes)
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    if verbose:
+        print(f"  ~ {label}  updated: {', '.join(changes)}")
+        if report:
+            print(report)
+    return changes
 
 
 def view_operation_log(
@@ -337,6 +476,68 @@ def insert_material(con, mat: dict, verbose: bool = True) -> None:
         raise
 
 
+_MATERIAL_UPDATE_FIELDS = (
+    "description", "nuance", "t_ref", "volumic_mass", "specific_heat", "alpha",
+    "electrical_conductivity", "thermal_conductivity", "magnet_permeability",
+    "young", "poisson", "expansion_coefficient", "rpe",
+)
+
+
+def update_material_from_json(con, data: dict, dry_run: bool = False, verbose: bool = True) -> None:
+    """Correct a material's properties from a JSON payload.
+
+    Takes the same JSON as ``material add``. Only keys present in *data* are
+    considered, and only fields whose value actually changes are written;
+    they are logged as ``{field: [old, new]}`` in ``operation_log``. A change
+    of any property (not of the free-text ``description``) marks the
+    hoop-stress results of every assembly containing a part made of this
+    material stale (see :mod:`impact`).
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open DuckDB connection.
+    data : dict
+        Material dict with ``name`` and any of ``description``, ``nuance``,
+        ``t_ref`` [K], ``volumic_mass`` [kg/m3], ``specific_heat``
+        [J/(kg.K)], ``alpha`` [1/K], ``electrical_conductivity`` [S/m],
+        ``thermal_conductivity`` [W/(m.K)], ``magnet_permeability``,
+        ``young`` [Pa], ``poisson``, ``expansion_coefficient`` [1/K],
+        ``rpe`` [Pa].
+    dry_run : bool, optional
+        When ``True``, report which fields would change, and what would
+        become stale, without writing.
+    verbose : bool, optional
+        Print status lines.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    ValueError
+        If the material is not found.
+    """
+    name = data["name"]
+    if not exists(con, "materials", name):
+        raise ValueError(f"Material '{name}' not found in DB — nothing to update.")
+
+    fields = {
+        f: (data.get(f) or None) if f in ("description", "nuance") else data.get(f)
+        for f in _MATERIAL_UPDATE_FIELDS if f in data
+    }
+    if not fields:
+        if verbose:
+            print(f"  ~ material  {name}  (no property in JSON, nothing to update)")
+        return
+
+    _apply_update(
+        con, "materials", "name = ?", [name], fields, record_name=name, impact_key=name,
+        label=f"material  {name}", dry_run=dry_run, verbose=verbose,
+    )
+
+
 def view_materials(con, nuance_filter: str | None = None) -> None:
     conditions, params = [], []
     if nuance_filter:
@@ -404,6 +605,17 @@ def delete_material(con, name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _check_material_exists(con, material_name: str | None) -> None:
+    """Raise ValueError if *material_name* is set but not in ``materials`` (no FK enforces it)."""
+    if material_name and con.execute(
+        "SELECT 1 FROM materials WHERE name = ?", [material_name]
+    ).fetchone() is None:
+        raise ValueError(
+            f"Material '{material_name}' not found — add it with "
+            "'material add' first, or fix the JSON."
+        )
+
+
 def insert_part(con, part: dict, verbose: bool = True) -> None:
     """Insert a part row; skip silently if it already exists.
 
@@ -418,6 +630,7 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
             _log_operation(con, "insert", "parts", name)
             return
         material_name = part.get("material_name") or (part.get("material") or {}).get("name")
+        _check_material_exists(con, material_name)
         geometry_data = part.get("geometry_data") or load_geometry_json(part.get("geometry") or part.get("geometry_config"))
         status = _valid_lifecycle_status(part.get("status") or LifecycleStatus.IN_STOCK.value)
         con.execute(
@@ -449,25 +662,38 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
 def update_part_from_json(con, data: dict, dry_run: bool = False, verbose: bool = True) -> None:
     """Refresh a part's descriptive/geometry fields from a JSON payload.
 
-    Only keys present in *data* are written; a key absent from *data* leaves
-    the corresponding column untouched — this is a partial refresh, not a
-    full re-sync. ``name``, ``type``, ``status``, and ``status_history`` are
-    never touched here; see :func:`update_part_status` for lifecycle changes.
+    Only keys present in *data* are considered; a key absent from *data*
+    leaves the corresponding column untouched — this is a partial refresh,
+    not a full re-sync. ``name``, ``type``, ``status``, and
+    ``status_history`` are never touched here; see
+    :func:`update_part_status` for lifecycle changes.
+
+    Only fields whose value actually changes are written. They are logged
+    as ``{field: [old, new]}`` in ``operation_log``; a change of
+    ``material_name`` or ``geometry_data`` (compared on content, not on the
+    ``geometry`` path) marks the hoop-stress results of every assembly
+    containing the part stale (see :mod:`impact`). Correcting the material
+    of a part already linked to a magnet is supported.
 
     Parameters
     ----------
-    con:
+    con : duckdb.DuckDBPyConnection
         Open DuckDB connection.
-    data:
+    data : dict
         Part dict; only ``material_name``/``material.name``, ``geometry``,
         ``geometry_data``, ``cad``, and ``design_office_reference`` are
         consulted. ``geometry_data`` is recomputed via
         :func:`load_geometry_json` when ``geometry``/``geometry_config`` is
         present but ``geometry_data`` itself is not.
-    dry_run:
-        When ``True``, report which fields would change without writing.
-    verbose:
+    dry_run : bool, optional
+        When ``True``, report which fields would change, and what would
+        become stale, without writing.
+    verbose : bool, optional
         Print status lines.
+
+    Returns
+    -------
+    None
 
     Raises
     ------
@@ -482,13 +708,7 @@ def update_part_from_json(con, data: dict, dry_run: bool = False, verbose: bool 
     fields: dict = {}
     if "material_name" in data or "material" in data:
         material_name = data.get("material_name") or (data.get("material") or {}).get("name")
-        if material_name and con.execute(
-            "SELECT 1 FROM materials WHERE name = ?", [material_name]
-        ).fetchone() is None:
-            raise ValueError(
-                f"Material '{material_name}' not found — add it with "
-                "'material add' first, or fix the JSON."
-            )
+        _check_material_exists(con, material_name)
         fields["material_name"] = material_name
     if "geometry" in data:
         fields["geometry"] = data.get("geometry") or None
@@ -506,15 +726,10 @@ def update_part_from_json(con, data: dict, dry_run: bool = False, verbose: bool 
             print(f"  ~ part      {name}  (no descriptive fields in JSON, nothing to update)")
         return
 
-    if dry_run:
-        if verbose:
-            print(f"[dry-run] part '{name}': would update {', '.join(fields)}")
-        return
-
-    set_clause = ", ".join(f"{col} = ?" for col in fields)
-    con.execute(f"UPDATE parts SET {set_clause} WHERE name = ?", [*fields.values(), name])
-    if verbose:
-        print(f"  ~ part      {name}  updated: {', '.join(fields)}")
+    _apply_update(
+        con, "parts", "name = ?", [name], fields, record_name=name, impact_key=name,
+        label=f"part      {name}", dry_run=dry_run, verbose=verbose,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -561,26 +776,36 @@ def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> No
 def update_magnet_from_json(con, data: dict, dry_run: bool = False, verbose: bool = True) -> None:
     """Refresh a magnet's descriptive/geometry fields from a JSON payload.
 
-    Only keys present in *data* are written; a key absent from *data* leaves
-    the corresponding column untouched — this is a partial refresh, not a
-    full re-sync. ``name``, ``type``, ``status``, ``status_history``, and
-    linked ``parts`` are never touched here; see :func:`update_magnet_status`
-    for lifecycle changes.
+    Only keys present in *data* are considered; a key absent from *data*
+    leaves the corresponding column untouched — this is a partial refresh,
+    not a full re-sync. ``name``, ``type``, ``status``, ``status_history``,
+    and linked ``parts`` are never touched here; see
+    :func:`update_magnet_status` for lifecycle changes.
+
+    Only fields whose value actually changes are written. They are logged
+    as ``{field: [old, new]}`` in ``operation_log``; a change of
+    ``geometry_data`` (compared on content) marks the hoop-stress results of
+    every assembly containing the magnet stale (see :mod:`impact`).
 
     Parameters
     ----------
-    con:
+    con : duckdb.DuckDBPyConnection
         Open DuckDB connection.
-    data:
+    data : dict
         Magnet dict; only ``description``, ``geometry``, ``geometry_data``,
         and ``design_office_reference`` are consulted. ``geometry_data`` is
         recomputed via :func:`load_geometry_json` when
         ``geometry``/``geometry_config`` is present but ``geometry_data``
         itself is not.
-    dry_run:
-        When ``True``, report which fields would change without writing.
-    verbose:
+    dry_run : bool, optional
+        When ``True``, report which fields would change, and what would
+        become stale, without writing.
+    verbose : bool, optional
         Print status lines.
+
+    Returns
+    -------
+    None
 
     Raises
     ------
@@ -608,15 +833,10 @@ def update_magnet_from_json(con, data: dict, dry_run: bool = False, verbose: boo
             print(f"  ~ magnet    {name}  (no descriptive fields in JSON, nothing to update)")
         return
 
-    if dry_run:
-        if verbose:
-            print(f"[dry-run] magnet '{name}': would update {', '.join(fields)}")
-        return
-
-    set_clause = ", ".join(f"{col} = ?" for col in fields)
-    con.execute(f"UPDATE magnets SET {set_clause} WHERE name = ?", [*fields.values(), name])
-    if verbose:
-        print(f"  ~ magnet    {name}  updated: {', '.join(fields)}")
+    _apply_update(
+        con, "magnets", "name = ?", [name], fields, record_name=name, impact_key=name,
+        label=f"magnet    {name}", dry_run=dry_run, verbose=verbose,
+    )
 
 
 def _reclaim_reused_parts(con, new_magnet_name: str, part_names: list[str], verbose: bool = True) -> None:
@@ -1087,19 +1307,25 @@ def update_assembly_from_json(con, data: dict, dry_run: bool = False, verbose: b
     *data* — this is a partial refresh, not a full re-sync. ``name``,
     ``status``, ``status_history``, ``housing``,
     ``commissioned_at``/``decommissioned_at``, and linked ``magnets``/
-    ``records`` are never touched here.
+    ``records`` are never touched here. A change is logged as
+    ``{"description": [old, new]}`` in ``operation_log``; no stored result
+    depends on it.
 
     Parameters
     ----------
-    con:
+    con : duckdb.DuckDBPyConnection
         Open DuckDB connection.
-    data:
+    data : dict
         Assembly dict; only ``description`` is consulted.
-    dry_run:
+    dry_run : bool, optional
         When ``True``, report whether ``description`` would change without
         writing.
-    verbose:
+    verbose : bool, optional
         Print status lines.
+
+    Returns
+    -------
+    None
 
     Raises
     ------
@@ -1115,17 +1341,11 @@ def update_assembly_from_json(con, data: dict, dry_run: bool = False, verbose: b
             print(f"  ~ assembly      {name}  (no descriptive fields in JSON, nothing to update)")
         return
 
-    if dry_run:
-        if verbose:
-            print(f"[dry-run] assembly '{name}': would update description")
-        return
-
-    con.execute(
-        "UPDATE assemblies SET description = ? WHERE name = ?",
-        [data.get("description") or None, name],
+    _apply_update(
+        con, "assemblies", "name = ?", [name], {"description": data.get("description") or None},
+        record_name=name, impact_key=name, label=f"assembly      {name}",
+        dry_run=dry_run, verbose=verbose,
     )
-    if verbose:
-        print(f"  ~ assembly      {name}  updated: description")
 
 
 def _cascade_assembly_disassembly(con, assembly_name: str, decommissioned_at, verbose: bool = True) -> None:
@@ -1217,9 +1437,23 @@ def decommission_assembly(
 
         _cascade_assembly_disassembly(con, name, decommissioned_at, verbose=verbose)
         _log_operation(con, "decommission", "assemblies", name)
+        if verbose:
+            _print_decommission_report(con, name, decommissioned_at)
     except Exception as exc:
         _log_operation(con, "decommission", "assemblies", name, status="error", details={"error": str(exc)})
         raise
+
+
+def _print_decommission_report(con, name: str, decommissioned_at) -> None:
+    """Print the records still assigned to *name* but dated after *decommissioned_at* (if any)."""
+    end = con.execute("SELECT decommissioned_at FROM assemblies WHERE name = ?", [name]).fetchone()[0]
+    late = decommission_report(con, name, end or decommissioned_at)
+    if not any(late.values()):
+        return
+    print(f"  ! records dated after {end} still assigned to '{name}' (populate never reassigns):")
+    for table, names in late.items():
+        if names:
+            print(f"      {table} ({len(names)}): {', '.join(names)}")
 
 
 def _magnet_entry_name(entry) -> str:
@@ -3258,7 +3492,8 @@ def infer_overview_record_fields(
         from python_magnetrun.magnetdata import load_magnetdata
 
         try:
-            pupitre_frames.append(load_magnetdata(resolved_pupitre_path).Data)
+            data = load_magnetdata(resolved_pupitre_path).Data
+            pupitre_frames.append(data.to_pandas() if hasattr(data, "to_pandas") else data)
         except Exception as exc:
             print(f"  ! overview_record {filename}: could not read {resolved_pupitre_path}: {exc}")
 
@@ -3558,9 +3793,33 @@ def merge_duplicate_pupitre_records(
 def update_assembly_magnet(con, assembly_name: str, magnet_name: str, **kwargs) -> None:
     """Update positional/temporal fields on an existing assembly_magnets row.
 
-    Accepted kwargs: z_offset, r_offset, parallax, commissioned_at,
-    decommissioned_at, metadata.  Only non-None values are updated.
-    Raises ValueError if the (assembly_name, magnet_name) row does not exist.
+    Only fields whose value actually changes are written; they are logged
+    as ``{field: [old, new]}`` in ``operation_log``. A change of
+    ``z_offset`` or ``commissioned_at`` (which orders the magnets, hence the
+    hoop-stress column → part mapping) marks the hoop-stress results of the
+    assembly stale (see :mod:`impact`).
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open DuckDB connection.
+    assembly_name : str
+        Assembly of the link.
+    magnet_name : str
+        Magnet of the link.
+    **kwargs
+        Any of ``z_offset``, ``r_offset``, ``parallax`` [mm],
+        ``commissioned_at``, ``decommissioned_at``, ``metadata``. Only
+        non-None values are considered.
+
+    Returns
+    -------
+    None
+
+    Raises
+    ------
+    ValueError
+        If the (assembly_name, magnet_name) row does not exist.
     """
     record_name = f"{assembly_name}/{magnet_name}"
     try:
@@ -3576,27 +3835,20 @@ def update_assembly_magnet(con, assembly_name: str, magnet_name: str, **kwargs) 
         ).fetchone():
             raise ValueError(f"No link between assembly '{assembly_name}' and magnet '{magnet_name}'.")
 
-        set_clauses = []
-        values = []
+        fields = {}
         for field, value in updates.items():
-            set_clauses.append(f"{field} = ?")
             if field in _TIMESTAMP_FIELDS:
-                values.append(parse_timestamp(value))
+                fields[field] = parse_timestamp(value)
             elif field in _JSON_FIELDS:
-                values.append(json.dumps(value) if not isinstance(value, str) else value)
+                fields[field] = json.dumps(value) if not isinstance(value, str) else value
             else:
-                values.append(float(value))
+                fields[field] = float(value)
 
-        values.extend([assembly_name, magnet_name])
-        con.execute(
-            f"UPDATE assembly_magnets SET {', '.join(set_clauses)} "
-            "WHERE assembly_name = ? AND magnet_name = ?",
-            values,
-        )
-        print(f"Updated assembly_magnets ({assembly_name}, {magnet_name}): {sorted(updates)}")
-        _log_operation(
-            con, "update", "assembly_magnets", record_name,
-            details={"updated_fields": sorted(updates)},
+        _apply_update(
+            con, "assembly_magnets", "assembly_name = ? AND magnet_name = ?",
+            [assembly_name, magnet_name], fields, record_name=record_name,
+            impact_key=(assembly_name, magnet_name),
+            label=f"assembly_magnets ({assembly_name}, {magnet_name})",
         )
     except Exception as exc:
         _log_operation(con, "update", "assembly_magnets", record_name, status="error", details={"error": str(exc)})

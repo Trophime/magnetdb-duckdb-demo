@@ -330,13 +330,14 @@ con.close()
 files = sorted(PUPITRE_DIR.glob("*.txt"))
 
 print(f"Found {len(files)} files")
-print(f"Loading: {files[0].name}")
+housing = files[0].parent.name  # srv-data-install/<housing>/<date>.txt
+print(f"Loading: {files[0].name} (housing={housing})")
 
-md = load_mrun(str(files[0]))
+md = load_mrun(str(files[0]), housing=housing)
 df = md.getMData().Data
 
 print("\nAVAILABLE CHANNELS:", md.getKeys())
-print("\nCOLUMNS:", df.columns.tolist())
+print("\nCOLUMNS:", list(df.columns))
 print("\nFIRST ROWS:\n", df.head())
 
 

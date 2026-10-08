@@ -15,6 +15,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py material add <json_file> [--db ...] [--input-dir ...] [--dry-run]
     python magnetdb.py material view [<name>]   [--db ...] [--nuance NUANCE]
     python magnetdb.py material delete <name>   [--db ...]
+    python magnetdb.py material update <json_file> [--db ...] [--input-dir ...] [--dry-run]
 
     python magnetdb.py part view [<name>]               [--db ...] [--type TYPE] [--status STATUS]
     python magnetdb.py part update <json_file>          [--db ...] [--dry-run]
@@ -118,6 +119,7 @@ from crud import (
     update_assembly_magnet,
     update_magnet_from_json,
     update_magnet_status,
+    update_material_from_json,
     update_part_from_json,
     update_part_status,
     upsert_overview_record,
@@ -319,6 +321,25 @@ def cmd_material_delete(args) -> None:
         delete_material(con, args.name)
 
 
+def cmd_material_update(args) -> None:
+    json_path = Path(args.json_file)
+    if args.input_dir:
+        json_path = Path(args.input_dir) / json_path
+    if not json_path.exists():
+        print(f"Error: '{json_path}' not found.")
+        sys.exit(1)
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    with duckdb.connect(str(db_path), read_only=args.dry_run) as con:
+        try:
+            update_material_from_json(con, load_json(json_path), dry_run=args.dry_run)
+        except ValueError as exc:
+            print(f"Error: {exc}")
+            sys.exit(1)
+
+
 # ---------------------------------------------------------------------------
 # add_magnet / add_site  (migrated from deprecated/add_magnet.py and add_site.py)
 # ---------------------------------------------------------------------------
@@ -405,6 +426,16 @@ def _add_magnet(
         print(f"Validation errors:\n  • {exc}")
         sys.exit(1)
 
+    if db_path.exists():
+        with duckdb.connect(str(db_path), read_only=True) as chk:
+            conflicts = _magnet_conflicts(chk, data)
+        if conflicts:
+            print(f"Magnet '{data['name']}' already exists with different content:")
+            for c in conflicts:
+                print(f"  • {c}")
+            print("Nothing written. Re-adding only accepts identical content.")
+            sys.exit(1)
+
     if dry_run:
         coil_parts = [p for p in parts if p.get("type") in COIL_TYPES]
         mats = {p["material"]["name"] for p in parts if p.get("material")}
@@ -450,6 +481,34 @@ def _validate_assembly(data: dict) -> list[str]:
     if not data.get("magnets"):
         errors.append("'magnets' list is empty or missing")
     return errors
+
+
+def _magnet_conflicts(con, data: dict) -> list[str]:
+    """Differences between *data*'s part list and the existing DB magnet ([] if none or absent).
+
+    Parts are compared by name and order (``magnet_parts.rank``): re-adding a
+    magnet must not silently link new parts, which would shift the coil →
+    part mappings of the stored results.
+    """
+    name = data["name"]
+    if con.execute("SELECT 1 FROM magnets WHERE name = ?", [name]).fetchone() is None:
+        return []
+    db_parts = [
+        r[0] for r in con.execute(
+            "SELECT part_name FROM magnet_parts WHERE magnet_name = ? ORDER BY rank", [name]
+        ).fetchall()
+    ]
+    json_parts = [p["name"] if isinstance(p, dict) else p for p in data.get("parts", [])]
+    if json_parts == db_parts:
+        return []
+    conflicts = []
+    if set(json_parts) - set(db_parts):
+        conflicts.append(f"parts in JSON but not linked in DB: {sorted(set(json_parts) - set(db_parts))}")
+    if set(db_parts) - set(json_parts):
+        conflicts.append(f"parts linked in DB but not in JSON: {sorted(set(db_parts) - set(json_parts))}")
+    if not conflicts:
+        conflicts.append(f"part order: JSON={json_parts} DB={db_parts}")
+    return conflicts
 
 
 def _assembly_conflicts(con, data: dict) -> list[str]:
@@ -1450,6 +1509,7 @@ _DISPATCH = {
     ("material",          "add"):             cmd_material_add,
     ("material",          "view"):            cmd_material_view,
     ("material",          "delete"):          cmd_material_delete,
+    ("material",          "update"):          cmd_material_update,
     ("part",              "view"):             cmd_part_view,
     ("part",              "update"):           cmd_part_update,
     ("part",              "update-status"):    cmd_part_update_status,
@@ -1657,7 +1717,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── material ─────────────────────────────────────────────────────────────
     mat_p = entity.add_parser("material", help="Manage materials.")
     mat_sub = mat_p.add_subparsers(dest="action", required=True,
-                                   metavar="{add,view,delete}")
+                                   metavar="{add,view,delete,update}")
 
     ma_add = mat_sub.add_parser("add", help="Add a material from a JSON file.")
     ma_add.add_argument("json_file", help="Path to the material JSON file (or bare name with --input-dir)")
@@ -1676,6 +1736,18 @@ def build_parser() -> argparse.ArgumentParser:
     ma_del = mat_sub.add_parser("delete", help="Delete a material (fails if referenced by a part).")
     ma_del.add_argument("name", help="Material name")
     _db_arg(ma_del)
+
+    ma_upd = mat_sub.add_parser(
+        "update",
+        help="Correct a material's properties from a JSON file (same format as 'add'). "
+             "Only keys present in the JSON are considered; a changed property marks "
+             "the hoop-stress results of every assembly using the material stale.",
+    )
+    ma_upd.add_argument("json_file", help="Path to the material JSON file (or bare name with --input-dir)")
+    _db_arg(ma_upd)
+    _input_dir_arg(ma_upd)
+    ma_upd.add_argument("--dry-run", action="store_true",
+                        help="Report what would change, and what would become stale, without writing")
 
     # ── part ────────────────────────────────────────────────────────────────
     part_p = entity.add_parser("part", help="View and manage part lifecycle status.")
@@ -2155,7 +2227,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     hs_compute.add_argument(
         "--reprocess", action="store_true",
-        help="Re-compute already-processed experiments",
+        help="Re-compute already-processed experiments, replacing all their "
+             "hoop rows (stale experiments are always recomputed)",
     )
     hs_compute.add_argument(
         "--dry-run", action="store_true", dest="dry_run",
