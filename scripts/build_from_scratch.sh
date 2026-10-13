@@ -53,6 +53,8 @@ if [ -n "$DB" ] && [ "${DB#/}" = "$DB" ]; then DB="$PWD/$DB"; fi
 cd $(dirname "$0")/../to_duckdb
 [ -n "$DB" ] || DB="$PWD/magnetdb-$(date +%Y-%m-%d).duckdb"
 JSON=~/github/hifimagnet-projects/magnetdb.json
+# known magnet status changes (dead, retired, ...), applied in file order
+STATUS_FILE=$JSON/magnet_status.json
 RECORDS=~/LNCMIG-Data/records
 DATA_DIR=~/github/magnetdb-duckdb-demo/Data
 LOG="$DB.log"
@@ -118,37 +120,6 @@ for (s,) in con.execute('SELECT name FROM assemblies ORDER BY commissioned_at NU
 }
 
 # --- step functions ---------------------------------------------------------
-
-set_magnet_statuses() {
-    # deal with known dead magnets
-    python magnetdb.py magnet update-status M09052601 \
-        --status dead --dead-part ALL \
-        --description "HS, coils declared dead following major incident on 2024-11-09." \
-        --changed-at "2024-12-06 07:00:00" \
-        --db "$DB" || return 1
-
-    python magnetdb.py magnet update-status M12082401 \
-        --status retired \
-        --description "Superseded, coils reused / no longer in service." \
-        --changed-at "2024-12-10 07:00:00" \
-        --db "$DB" || return 1
-
-    # mark Bitters -- aka M9Bi and M9_newBi09 -- that has burned as dead
-    # M9_A230124_00: M9Bitters dead with M9Bi dead
-
-    python magnetdb.py magnet update-status M9Bitters \
-        --status dead --dead-part M9Bi \
-        --description "HS, inner bitter coil dead on 2023-06-08." \
-        --changed-at "2023-06-08 07:00:00" \
-        --db "$DB" || return 1
-
-    # M9_A250730_00: M9Bitters dead with M9_Bi09 dead
-    python magnetdb.py magnet update-status M9Bitters-newBi09 \
-        --status dead --dead-part M9_newBi09 \
-        --description "HS, inner bitter coil dead on 2026-05-05." \
-        --changed-at "2026-05-05 07:00:00" \
-        --db "$DB" || return 1
-}
 
 ingest_exp_stats() {
     local assemblies assembly
@@ -264,7 +235,9 @@ else
     not_run
 fi
 
-section statuses "Set known magnet statuses" set_magnet_statuses
+# deal with known dead/retired magnets, listed in $STATUS_FILE
+section statuses "Set known magnet statuses" \
+    python magnetdb.py magnet update-status-from-file "$STATUS_FILE" --db "$DB"
 
 # check database consistency (check exits non-zero when it finds problems: report and go on)
 section check "Check database consistency" python magnetdb.py check --db "$DB" || true

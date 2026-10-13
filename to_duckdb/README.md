@@ -22,6 +22,7 @@ to_duckdb/
 ├── compute_hoop_stats.py        ← ingest per-file hoop-stress statistics
 ├── query_cumstats.py            ← query cumulative stats by site / magnet / part
 ├── stress_map.py                ← hoop-stress analysis library (geometry, plots)
+├── impact.py                    ← impact of updates on stored results (stale marking)
 ├── conftest.py                  ← pytest fixtures
 ├── docs/
 │   ├── loading.md               ← adding magnets, assemblies, materials
@@ -37,6 +38,7 @@ to_duckdb/
 │   ├── test_add_assembly.py
 │   ├── test_magnetdb.py
 │   ├── test_material_db.py
+│   ├── test_impact.py
 │   └── test_housing_config_db.py
 ├── tutorials/                   ← standalone demo scripts
 │   ├── README.md
@@ -82,9 +84,10 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | `db create` | Create DB and initialise schema | [loading.md](docs/loading.md) |
 | `db delete [--yes]` | Delete DB file | [loading.md](docs/loading.md) |
 | `db drop-table --table TABLE [TABLE ...] [--yes] [--dry-run]` | Drop one or more tables from the DB | [loading.md](docs/loading.md) |
-| `material add/view/delete` | Manage materials | [loading.md](docs/loading.md) |
-| `part view/update/update-status` | View a part, refresh descriptive/geometry fields from JSON, or change lifecycle status | [loading.md](docs/loading.md) |
-| `magnet add/view/update/delete` | Manage magnets | [loading.md](docs/loading.md) |
+| `material add/view/update/delete` | Manage materials; `update` corrects properties from JSON | [loading.md](docs/loading.md), [below](#tracking-the-impact-of-updates) |
+| `part view/update/update-status` | View a part, refresh descriptive/geometry fields (including the material of a linked part) from JSON, or change lifecycle status | [loading.md](docs/loading.md), [below](#tracking-the-impact-of-updates) |
+| `magnet add/view/update/delete` | Manage magnets; `add` refuses an existing magnet whose parts differ | [loading.md](docs/loading.md) |
+| `magnet update-status/update-status-from-file` | Change a magnet's lifecycle status, or apply a JSON list of `{magnet, status, dead_parts, description, changed_at, attachments}` changes in file order (stops at the first rejected one) | [schema.md](docs/schema.md) |
 | `assembly add/view/update/delete` | Manage assemblies + experiment records | [loading.md](docs/loading.md) |
 | `assembly update-magnet` | Patch positional/temporal AssemblyMagnet fields | [loading.md](docs/loading.md) |
 | `housing view` | List housing configs | [loading.md](docs/loading.md#housing-configs) |
@@ -95,11 +98,12 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | `populate experiments [--assembly ASSEMBLY\|--all]` | Discover additional pupitre TXT files | [populate.md](docs/populate.md) |
 | `populate overview-records [--assembly ASSEMBLY\|--all]` | Process Overview TDMS via python_magnetrun | [populate.md](docs/populate.md) |
 | `populate overview-records-from-json` | Load overview_records from a summary JSON | [populate.md](docs/populate.md) |
-| `hoop-stress compute` | Compute and persist hoop-stress bin stats + fatigue | [hoop-stress.md](docs/hoop-stress.md) |
+| `hoop-stress compute` | Compute and persist hoop-stress bin stats + fatigue; recomputes stale experiments; one bin configuration per experiment | [hoop-stress.md](docs/hoop-stress.md), [below](#tracking-the-impact-of-updates) |
 | `hoop-stress barchart` | Bar chart: stress at given currents vs Rpe | [hoop-stress.md](docs/hoop-stress.md) |
 | `hoop-stress history` | Normalised stress vs time from pupitre file | [hoop-stress.md](docs/hoop-stress.md) |
 | `hoop-stress stats` | Descriptive statistics of stress time series | [hoop-stress.md](docs/hoop-stress.md) |
 | `hoop-stress fatigue` | Rainflow cycle counting | [hoop-stress.md](docs/hoop-stress.md) |
+| `log view [--table ...] [--operation ...] [--record ...]` | Show the `operation_log` audit trail (inserts, updates with old → new values) | [below](#tracking-the-impact-of-updates) |
 
 ### View filters
 
@@ -162,6 +166,81 @@ that's a data-inconsistency bug to fix by hand, not something to paper over.
 
 ---
 
+## Tracking the impact of updates
+
+Stored hoop-stress results (`hoop_stress_bin_stats`, `hoop_stress_fatigue`,
+`hoop_stress_fatigue_bins`) are computed from materials, part and magnet
+geometry, and magnet positions. When an `update` command changes one of these
+inputs, the results computed from it are **marked stale** — never deleted —
+and `hoop-stress compute` recomputes them.
+
+Every update writes only the fields whose value actually changes, and records
+them in `operation_log` as `{"changes": {field: [old, new]}, "stale": {...}}`
+(`geometry_data` is recorded as `"changed"`). Re-applying identical values
+prints `(no change)` and logs nothing. The write, the log row and the stale
+marks happen in one transaction.
+
+| Command | Changes that mark results stale | Scope |
+|---|---|---|
+| `material update` | any property (not `description`) | every assembly containing a part made of that material |
+| `part update` | `material_name`, `geometry_data` (compared on content, not on the `geometry` path) | every assembly containing a magnet that holds the part |
+| `magnet update` | `geometry_data` | every assembly containing the magnet |
+| `assembly update-magnet` | `z_offset`, `commissioned_at` (orders the magnets, hence the column → part mapping) | that assembly |
+| `assembly update`, `*-status` | — (logged only) | — |
+
+The scope is the whole assembly, all parts: the total field B couples every
+coil, so a change on one part affects the stresses of the others.
+
+```bash
+# Preview: what would change, and what would become stale
+python magnetdb.py material update MAT_COPPER.json --db $DB --dry-run
+
+# Apply — prints the stale experiments and the command to recompute them
+python magnetdb.py material update MAT_COPPER.json --db $DB
+#   ~ material  MAT_COPPER  updated: electrical_conductivity
+#   ! hoop-stress results now stale (electrical_conductivity changed): 1 assembly, 2 experiment(s)
+#       hoop_stress_bin_stats: 2 row(s)
+#       ...
+#     recompute with: python magnetdb.py hoop-stress compute --assembly M9_A19061901_00
+
+# Audit trail of updates
+python magnetdb.py log view --operation update --db $DB
+
+# Recompute: only stale (and never-processed) experiments are processed
+python magnetdb.py hoop-stress compute --assembly M9_A19061901_00 --db $DB
+```
+
+Stale experiments can also be listed directly:
+`SELECT * FROM hoop_stress_processed WHERE stale_since IS NOT NULL`
+(`stale_reason` is the `operation_log.id` of the change).
+
+**One bin configuration per experiment.** The stats tables carry no bin
+configuration, so configurations must not mix: `hoop-stress compute` with
+other `--bins` skips already-processed experiments with a warning, and
+`--reprocess` deletes *all* hoop rows of each experiment before inserting the
+new ones. Since this also drops the rows of magnet types not being computed,
+reprocess with `--magnet-type all` (the default).
+
+**Related safeguards.**
+
+- `part update` can correct the material of a part already linked to a
+  magnet: `parts.material_name` has no foreign key (DuckDB runs an `UPDATE`
+  of a foreign-key column as delete + insert, which fails once the part is
+  referenced), and the material's existence is checked in Python instead.
+  Databases created before this change keep the foreign key until rebuilt.
+- `magnet add` on an existing magnet whose parts (names or order) differ from
+  the JSON is refused — it would otherwise silently link new parts and shift
+  the coil → part mappings. Re-adding identical content is accepted.
+- `assembly decommission` lists the experiments, operationaldata and
+  overview_records dated after the new end date that are still assigned to
+  the assembly (`populate` never reassigns files).
+
+Known gaps and next steps (angles, magnet bores, updating the inputs that
+have no `update` command yet, …) are listed in
+[PLAN_update_impact_tracking.md](../PLAN_update_impact_tracking.md#follow-ups-not-in-this-plan-each-needs-its-own-plan-and-approval).
+
+---
+
 ## Typical full setup
 
 ```bash
@@ -206,7 +285,8 @@ for (s,) in con.execute('SELECT name FROM assemblies ORDER BY name').fetchall():
         --assembly "$ASSEMBLY" --type Pupitre
 done
 
-# 5. Ingest hoop-stress statistics (idempotent)
+# 5. Ingest hoop-stress statistics (idempotent; also recomputes experiments
+#    marked stale by an update — see "Tracking the impact of updates")
 python magnetdb.py hoop-stress compute --all --db $DB
 
 # 6. Query

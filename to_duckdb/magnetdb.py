@@ -78,6 +78,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
 """
 
 import argparse
+import difflib
 import json
 import sys
 from pathlib import Path
@@ -783,6 +784,93 @@ def cmd_magnet_update_status(args) -> None:
         except ValueError as exc:
             print(f"Error: {exc}")
             sys.exit(1)
+
+
+_STATUS_CHANGE_KEYS = ("magnet", "status", "dead_parts", "description", "changed_at", "attachments")
+
+
+def _load_status_changes(json_path: Path) -> list[dict]:
+    """Read a magnet status-change file and check its structure; exit 1 if malformed."""
+    try:
+        with open(json_path, encoding="utf-8") as fh:
+            changes = json.load(fh)
+    except json.JSONDecodeError as exc:
+        print(f"Error: '{json_path}' is not valid JSON: {exc}")
+        sys.exit(1)
+
+    if not isinstance(changes, list):
+        print("Error: status file must contain a top-level array of status changes.")
+        sys.exit(1)
+    for i, change in enumerate(changes, start=1):
+        if not isinstance(change, dict) or not change.get("magnet") or not change.get("status"):
+            print(f"Error: entry {i} must be an object with 'magnet' and 'status'.")
+            sys.exit(1)
+        for key in change:
+            if key not in _STATUS_CHANGE_KEYS:
+                close = difflib.get_close_matches(key, _STATUS_CHANGE_KEYS, n=1)
+                hint = f" (did you mean '{close[0]}'?)" if close else ""
+                print(f"Error: entry {i} ({change['magnet']}): unknown key '{key}'{hint}.")
+                sys.exit(1)
+        dead_parts = change.get("dead_parts")
+        if dead_parts is not None and dead_parts != "ALL" and not (
+            isinstance(dead_parts, list) and all(isinstance(p, str) for p in dead_parts)
+        ):
+            print(f"Error: entry {i} ({change['magnet']}): 'dead_parts' must be \"ALL\" "
+                  "or a list of part names.")
+            sys.exit(1)
+    return changes
+
+
+def cmd_magnet_update_status_from_file(args) -> None:
+    """Apply the magnet status changes listed in a JSON file, in file order.
+
+    The whole file is checked before any change is made. Changes are then
+    applied one by one with :func:`~crud.update_magnet_status`; the first
+    rejected change stops the run, leaving the changes before it applied.
+
+    Parameters
+    ----------
+    args : argparse.Namespace
+        Parsed arguments: ``json_file``, a JSON array of objects with keys
+        ``magnet`` and ``status`` (required), ``dead_parts`` (``"ALL"`` or a
+        list of part names), ``description``, ``changed_at`` and
+        ``attachments`` (list of ``{"kind": ..., "path": ...}``); and ``db``,
+        the DuckDB file.
+
+    Returns
+    -------
+    None
+        Exits with status 1 if the file or the database is missing, the file
+        is malformed, or a change is rejected.
+    """
+    json_path = Path(args.json_file)
+    if not json_path.exists():
+        print(f"Error: '{json_path}' not found.")
+        sys.exit(1)
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+
+    changes = _load_status_changes(json_path)
+    with duckdb.connect(str(db_path)) as con:
+        for i, change in enumerate(changes, start=1):
+            dead_parts = change.get("dead_parts")
+            if dead_parts == "ALL":
+                dead_parts = ["ALL"]
+            try:
+                update_magnet_status(
+                    con, change["magnet"], change["status"],
+                    description=change.get("description", ""),
+                    changed_at=change.get("changed_at"),
+                    attachments=change.get("attachments"),
+                    dead_parts=dead_parts,
+                )
+            except ValueError as exc:
+                print(f"Error: entry {i} ({change['magnet']}): {exc}")
+                print(f"Stopped: {i - 1} of {len(changes)} status change(s) applied.")
+                sys.exit(1)
+    print(f"{len(changes)} status change(s) applied.")
 
 
 # ---------------------------------------------------------------------------
@@ -1519,6 +1607,7 @@ _DISPATCH = {
     ("magnet",            "update"):           cmd_magnet_update,
     ("magnet",            "delete"):           cmd_magnet_delete,
     ("magnet",            "update-status"):    cmd_magnet_update_status,
+    ("magnet",            "update-status-from-file"): cmd_magnet_update_status_from_file,
     ("assembly",          "add"):             cmd_assembly_add,
     ("assembly",          "view"):            cmd_assembly_view,
     ("assembly",          "update"):          cmd_assembly_update,
@@ -1789,7 +1878,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── magnet ──────────────────────────────────────────────────────────────
     magnet_p = entity.add_parser("magnet", help="Manage magnets.")
     magnet_sub = magnet_p.add_subparsers(dest="action", required=True,
-                                         metavar="{add,view,check-geometry,update,delete,update-status}")
+                                         metavar="{add,view,check-geometry,update,delete,update-status,update-status-from-file}")
 
     m_add = magnet_sub.add_parser("add", help="Add a magnet from a JSON export.")
     m_add.add_argument("json_file", help="Path to the magnet JSON file (or bare name with --input-dir)")
@@ -1859,6 +1948,19 @@ def build_parser() -> argparse.ArgumentParser:
     m_upd_status.add_argument("--changed-at", dest="changed_at", default=None,
                               help="Timestamp for this change (default: now)")
     _attachment_arg(m_upd_status)
+
+    m_upd_status_file = magnet_sub.add_parser(
+        "update-status-from-file",
+        help="Apply the magnet status changes listed in a JSON file, in file order "
+             "(keep it sorted by changed_at). The file is checked first; the first "
+             "rejected change stops the run.",
+    )
+    m_upd_status_file.add_argument(
+        "json_file",
+        help="JSON array of {magnet, status, dead_parts (\"ALL\" or list), "
+             "description, changed_at, attachments} objects",
+    )
+    _db_arg(m_upd_status_file)
 
     # ── assembly ─────────────────────────────────────────────────────────────────
     assembly_p = entity.add_parser("assembly", aliases=["site"], help="Manage assemblies.")

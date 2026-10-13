@@ -162,7 +162,11 @@ flag broken files.
 - **Switch Pupitre callers to the spec path** (step 2a of the cross-plan
   order).
 - **v2 builder driven by the assembly** through `v_config_sections` (step 3;
-  needs digital twin phase 2).
+  needs digital twin phase 2). Voltage sums use only the slots present under
+  the digital twin's L2 section mapping rules (2026-10-08): pair layout with
+  `Ucoil7` = outermost pair (e.g. `Ucoil2–7` for a 12-helix insert),
+  per-helix layout detected from probes or non-null `Ucoil8–14`, Bitters on
+  `Ucoil15–16`, null channels (unplugged or absent) left out.
 - **M5 entries** (step 4; blocked on the formal wiring confirmation).
 - **Supra current `IS` for M8** (step 1b, after v1; outline agreed
   2026-10-07, resolves digital twin open question #15). `IS` becomes a

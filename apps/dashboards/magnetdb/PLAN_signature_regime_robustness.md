@@ -24,8 +24,14 @@ It depends on no other plan; these depend on it:
 - **Supra current `IS`** (digital twin open question #27): aligning Hybrid
   `I_BOB` onto pupitre timestamps assumes the two clocks agree; this plan's
   lag work is the reference for checking it.
-- **`teb` time series** (Related future work below): the lag shift would
-  become an ETL step using a lag stored in `sync_info`.
+- **`teb` time series** (Related future work below): step **S3** — an ETL
+  step shifting `teb` by the lag stored in `sync_info` (after S2 and the
+  switch of pupitre callers to the spec-driven ETL, step 2a).
+- **Channel names:** S2's lag computation looks up pupitre current channels
+  by their post-ETL names (`IH`/`IB`); once callers use the spec-driven ETL
+  (step 2a), it must use the spec's names or the raw `Idcct*` columns.
+- The "one pupitre file → several pigbrother files" case deferred below is
+  listed among S1's open points in the cross-plan table.
 
 ## Goal
 

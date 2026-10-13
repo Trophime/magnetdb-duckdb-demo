@@ -34,7 +34,9 @@ ETL, which changes how the Pupitre part below is implemented).
   no `Courant_GR2`. `Champ_magn` = 10,130.6 G.
 - **Pupitre header** (line 1, `M5/2026.09.08 - 14:27:54.txt`):
   `NbCoil = 2`, empty `MagnetCode`, `Imax1 = Imax2 = 9550`, two coils with
-  distinct R(I) (r0 = 23.79 and 18.87 mΩ).
+  distinct R(I) (r0 = 23.79 and 18.87 mΩ). On M5, `Imax1` / `Imax2` are
+  per **supply** (A1 / A2), not per GR (user, 2026-10-08) — consistent with
+  each Bitter on its own supply.
 
 ## 2. Current state and defects
 

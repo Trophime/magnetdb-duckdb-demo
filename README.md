@@ -20,7 +20,7 @@ isolate the DuckDB-based tooling and demo apps.
 | `apps/notebooks/` | Jupyter notebooks, including Voila-servable apps (`voila-Bmap.ipynb`, `voila-Bmap-db.ipynb`) |
 | `apps/marimo/` | Interactive [marimo](https://marimo.io/) app for browsing assemblies |
 | [`apps/tutorials/`](apps/tutorials/README.md) | Standalone demo scripts and student tutorials |
-| `scripts/` | Misc shell utilities (geometry checks, config listing, summary sorting) |
+| [`scripts/`](scripts/README.md) | Database build script and shell utilities (geometry checks, dashboard Docker launcher, config listing, summary sorting) |
 | `python_magnetrun/`, `python_magnetgeo/`, `python_magnetsetup/`, `python_magnetcooling/` | Git submodules — vendored MagnetDB Python packages |
 
 ## Getting started
@@ -41,6 +41,34 @@ source .venv/bin/activate
 
 For the database CLI and schema reference, see
 [to_duckdb/README.md](to_duckdb/README.md).
+
+## Building the database
+
+[`scripts/build_from_scratch.sh`](scripts/build_from_scratch.sh) rebuilds the
+database from scratch into `to_duckdb/magnetdb-<YYYY-MM-DD>.duckdb`: it loads
+the assemblies, magnet statuses, experiments, operational data and their
+statistics, overview records and the users table. Each step prints `OK`,
+`FAILED` or `SKIPPED`; the command output goes to `<database>.log`.
+
+```bash
+source .venv/bin/activate
+scripts/build_from_scratch.sh
+```
+
+It needs the assembly JSON files (`~/github/hifimagnet-projects/magnetdb.json`)
+and the records tree (`~/LNCMIG-Data/records`). Refreshing the source CSVs in
+`Data/` needs credentials loaded by direnv from
+`~/github/python_magnetrun/examples/.envrc`; without them that step is skipped
+and the existing files are used.
+
+To re-run part of a build on an existing database:
+
+```bash
+scripts/build_from_scratch.sh --from export --db to_duckdb/magnetdb-2026-10-08.duckdb
+```
+
+See [scripts/README.md](scripts/README.md) for the step IDs and the other
+helper scripts.
 
 ## Running the dashboard
 

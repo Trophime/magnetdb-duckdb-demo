@@ -510,6 +510,122 @@ def test_cli_magnet_update_status_missing_db_exits(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# magnet update-status-from-file
+# ---------------------------------------------------------------------------
+
+
+def _status_file(tmp_path, changes):
+    path = tmp_path / "magnet_status.json"
+    path.write_text(json.dumps(changes))
+    return path
+
+
+def _magnet_status(db):
+    return _fetch_one(db, "SELECT status FROM magnets WHERE name = 'MAG_JSON'")[0]
+
+
+def test_cli_magnet_update_status_from_file_applies_in_file_order(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    path = _status_file(tmp_path, [
+        {"magnet": "MAG_JSON", "status": "in_stock", "changed_at": "2024-01-01 07:00:00"},
+        {"magnet": "MAG_JSON", "status": "retired", "description": "Superseded.",
+         "changed_at": "2024-06-01 07:00:00"},
+    ])
+
+    _run(monkeypatch, "magnet", "update-status-from-file", str(path), "--db", str(db))
+
+    assert _magnet_status(db) == "retired"
+    history = json.loads(_fetch_one(db, "SELECT status_history FROM magnets WHERE name = 'MAG_JSON'")[0])
+    assert [event["description"] for event in history][-1] == "Superseded."
+
+
+def test_cli_magnet_update_status_from_file_dead_parts_all(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    path = _status_file(tmp_path, [{"magnet": "MAG_JSON", "status": "dead", "dead_parts": "ALL"}])
+
+    _run(monkeypatch, "magnet", "update-status-from-file", str(path), "--db", str(db))
+
+    assert _magnet_status(db) == "dead"
+    for part_name in ("H_JSON_01", "R_JSON_01"):
+        assert _fetch_one(db, "SELECT status FROM parts WHERE name = ?", [part_name])[0] == "dead"
+
+
+def test_cli_magnet_update_status_from_file_dead_parts_list(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    path = _status_file(tmp_path, [{"magnet": "MAG_JSON", "status": "dead", "dead_parts": ["H_JSON_01"]}])
+
+    _run(monkeypatch, "magnet", "update-status-from-file", str(path), "--db", str(db))
+
+    assert _magnet_status(db) == "dead"
+    assert _fetch_one(db, "SELECT status FROM parts WHERE name = 'H_JSON_01'")[0] == "dead"
+
+
+@pytest.mark.parametrize("content", [
+    {"magnet": "MAG_JSON", "status": "in_stock"},                     # not a list
+    [{"magnet": "MAG_JSON", "status": "in_stock"}, {"status": "retired"}],   # no magnet
+    [{"magnet": "MAG_JSON", "status": "in_stock"}, {"magnet": "MAG_JSON"}],  # no status
+    [{"magnet": "MAG_JSON", "status": "dead", "dead_parts": "H_JSON_01"}],   # neither ALL nor a list
+])
+def test_cli_magnet_update_status_from_file_malformed_file_changes_nothing(tmp_path, monkeypatch, content):
+    db = _db_with_magnet(tmp_path)
+    path = _status_file(tmp_path, content)
+
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, "magnet", "update-status-from-file", str(path), "--db", str(db))
+    assert exc.value.code == 1
+
+    assert _magnet_status(db) == "in_operation"
+
+
+def test_cli_magnet_update_status_from_file_unknown_key_exits_with_hint(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+    path = _status_file(tmp_path, [{"magnet": "MAG_JSON", "status": "retired", "descripton": "typo"}])
+
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, "magnet", "update-status-from-file", str(path), "--db", str(db))
+    assert exc.value.code == 1
+
+    assert _magnet_status(db) == "in_operation"
+    out = capsys.readouterr().out
+    assert "'descripton'" in out
+    assert "did you mean 'description'" in out
+
+
+def test_cli_magnet_update_status_from_file_invalid_json_exits(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    path = tmp_path / "magnet_status.json"
+    path.write_text("[{")
+
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, "magnet", "update-status-from-file", str(path), "--db", str(db))
+    assert exc.value.code == 1
+
+
+def test_cli_magnet_update_status_from_file_stops_at_rejected_entry(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+    path = _status_file(tmp_path, [
+        {"magnet": "MAG_JSON", "status": "in_stock"},
+        {"magnet": "MAG_JSON", "status": "dead", "dead_parts": ["NOPE"]},
+        {"magnet": "MAG_JSON", "status": "retired"},
+    ])
+
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, "magnet", "update-status-from-file", str(path), "--db", str(db))
+    assert exc.value.code == 1
+
+    assert _magnet_status(db) == "in_stock"
+    assert "entry 2" in capsys.readouterr().out
+
+
+def test_cli_magnet_update_status_from_file_missing_db_exits(tmp_path, monkeypatch):
+    path = _status_file(tmp_path, [{"magnet": "MAG_JSON", "status": "in_stock"}])
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, "magnet", "update-status-from-file", str(path),
+             "--db", str(tmp_path / "nope.duckdb"))
+    assert exc.value.code == 1
+
+
+# ---------------------------------------------------------------------------
 # log view
 # ---------------------------------------------------------------------------
 

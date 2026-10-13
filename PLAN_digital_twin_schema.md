@@ -67,7 +67,7 @@ pigbrother `Signature`, Tin series) entirely from the database.
 | magnettools / `python_magnetworkflows` CSV | R(I,Tin) per section and total, L, M | e.g. `R_14Helices.csv`, `Rtot_M9Bitters_18MW.csv` | L3 |
 | Pupitre file **line 1** (skipped today by python_magnetrun, `skiprows=1`) | embedded MAGFILE core fields: `NbCoil MagnetCode Imax1 Imax2 [r0 a0 b0 ct] × NbCoil` — matches the conf files exactly (checked on M8 `M23012001`, M9 `M25032101`); era-dependent, see L2 "Pupitre header reader" | `~/LNCMIG-Data/records/srv-data-install/<housing>/*.txt` | L2 (per experiment) |
 | Channel defs (`pupitre-defs.json`, `hybrid-defs.json`, `pigbrother-defs.json`) | channel units; `IH`/`IB`, `TinH`/`TinB` (older/M8 `Tin1`/`Tin2`), hybrid `I_BOB` (supra current); pupitre `IS` = supra current derived from `I_BOB` during ETL (to add) | `python_magnetrun/python_magnetrun/` | L3 variable binding (`I`, `Tin`) |
-| Commissioning measurements | field and voltage per magnet at PID-stabilized current setpoints, with flow and Tin, taken when an assembly is commissioned | extracted from experiments' pupitre files (with a proper header, open question #29) at load time; candidate commissioning experiments identified by a `Field` signature still to be defined — **[unconfirmed, open question #24]** | L3 (raw tables, then fits) |
+| Commissioning measurements | field and voltage per magnet at PID-stabilized current setpoints, with flow and Tin, taken when an assembly is commissioned | extracted from experiments' pupitre files with a proper header (`header_class = 'full'`, #29) at load time; candidate commissioning experiments identified by a `Field` signature still to be defined — **[unconfirmed, open question #24]** | L3 (raw tables, then fits) |
 | pigbrother `Signature` | reference currents per circuit | `overview_records.signatures` — **empty today** (0 / 1915 records in `test-magnetdb.duckdb`; the python_magnetrun extraction stores placeholder min/max/mean only), filled by step S2 | L5 inputs |
 | `overview_records.plateaux` | plateau metadata | `overview_records` — **empty today** (0 / 1915), filled by step S2 | run search only (view), not an entity |
 | `python_magnetdb` `Probe` / `python_magnetgeo` `Probe` | name, type (`voltage_taps`/`temperature`/`magnetic_field`), labels, points | held by `Insert`/`Bitters`/`Supras` in magnetgeo | `probes` table |
@@ -262,7 +262,7 @@ the 14 sample files). Summary:
 
 | MAGFILE fields | Meaning (unit) | Status | Target |
 |---|---|---|---|
-| `Imax<n>`, `Seuil` | max current of circuit n — per supply in paralleled housings? **[unconfirmed]** (A); eco-mode threshold (A) | active | `config_circuits` |
+| `Imax<n>`, `Seuil` | max current (A) of circuit n ("Imax tr<n>" in the pupitre writer, "tr" = GR): M8/M9/M10 `Imax1` = GR1, `Imax2` = GR2; M5 `Imax1` = supply A1, `Imax2` = supply A2; M7 `Imax1` = GR1 only (user, 2026-10-08); eco-mode threshold (A) | active | `config_circuits` |
 | `dIdtmax` | theoretical max ramp (A/s); superseded by dB/dt ≈ 50 A/s × FF in eco mode | obsolete | `config_circuits` |
 | `Ratio` | eco mode: I_helix = I_bitter × Ratio below `Seuil` (dimensionless) | active | `config_circuits` |
 | `Ivar`/`Ivar2`, `Nmaxaimant<n>` | pump law v = 1000 + 2000 (I/Ivar)² [rpm] capped at `Nmaxaimant` (A, rpm) | active | `config_circuits` |
@@ -307,7 +307,8 @@ CREATE TABLE IF NOT EXISTS operating_configurations (
     housing           VARCHAR,          -- from NMagnet, cross-check vs assembly
     insert_code       VARCHAR,          -- MagnetCode, cross-check vs assembly insert
     resolution_status VARCHAR,          -- ok | insert_mismatch | no_experiment | section_mismatch
-                                        -- | source_mismatch | ct_mismatch (several → JSON list)
+                                        -- | source_mismatch | ct_mismatch | layout_mismatch
+                                        -- (several → JSON list)
     nb_coil           INTEGER,
     ps_used           INTEGER,
     couplage          INTEGER,
@@ -320,7 +321,7 @@ CREATE TABLE IF NOT EXISTS operating_configurations (
 
 CREATE TABLE IF NOT EXISTS config_circuits (
     config_id     INTEGER REFERENCES operating_configurations(id),
-    circuit       INTEGER,              -- 1 | 2 (GR1 | GR2)
+    circuit       INTEGER,              -- 1 | 2: GR1 | GR2 (M7: GR1 only); M5: supply A1 | A2
     i_max         DOUBLE,               -- [A]
     i_var         DOUBLE,               -- [A]
     n_max_pump    DOUBLE,               -- Nmaxaimant [rad/s] (source rpm)
@@ -379,30 +380,53 @@ A MAGFILE coil is a **section**, a different unit from `magnet_parts.coil_index`
 (which maps one part to one `Icoil_N` column, see `to_duckdb/docs/schema.md`).
 To avoid the name clash, the schema calls it a *section*.
 
-1. **Slot of each magnet role — derived, no extra key:** slot *s* is the
-   `Ucoil<s>` / `Icoil<s>` channel. A role's sections start at the first
-   `Ucoil` index of the GR assigned to it (`housing_config.coil_assignment`
-   + `voltage_channels_gr<n>` of the housing config):
+Rules confirmed by the user on 2026-10-08 (they replace the earlier
+"sections start at the first `Ucoil` of the GR" rule). Slot *s* is the
+`Ucoil<s>` / `Icoil<s>` channel; the pupitre header coefficients
+(`R00/Adv/Bdv/CT` of channel *s*) and the MAGFILE `r0/a0/b0_coil<s>` follow
+the same numbering.
 
-   | Housing | Wiring | Slots |
-   |---|---|---|
-   | M8, M10 | Insert GR2 (`Ucoil1–14`), Bitters GR1 (`Ucoil15–16`) | insert 1–14, Bitters 15–16 |
-   | M9 | Insert GR1 (`Ucoil1–14`), Bitters GR2 (`Ucoil15–16`) | insert 1–14, Bitters 15–16 |
-   | M7 | Insert only, GR1 (`Ucoil1–7`) | insert 1–7 |
-   | M5 | Bitters only, GR1 (`Ucoil1–2`) | Bitters 1–2 |
-   | M3 | needs a new `M3-housing-config.json` (3 coils) | open question #20 |
+1. **Channels per role:**
+
+   | Housing | Wiring | Insert channels | Bitters channels |
+   |---|---|---|---|
+   | M8, M10 | Insert GR2, Bitters GR1 | `Ucoil1–14` | `Ucoil15–16`, one per Bitter |
+   | M9 | Insert GR1, Bitters GR2 | `Ucoil1–14` | `Ucoil15–16`, one per Bitter |
+   | M7 | Insert only, GR1 | `Ucoil1–7` (same insert rules) | — |
+   | M5 | Bitters only, GR1 | — | `Ucoil1–2` |
+   | M3 | needs a new `M3-housing-config.json` (3 coils) | open question #20 | |
 
    M5 and M7 are single-group housings (confirmed); their `magnetdb.duckdb`
    rows were corrected on 2026-10-05 (data issue #8).
-2. **Probes defined:** local section *i* = the *i*-th probe of
-   `type = 'voltage_taps'` of that magnet (ordered by `probes.rank`).
-   Temperature and magnetic-field probes never count.
-3. **No probes — insert:** disjoint helix pairs, as in magnet-scipy
-   `R_14Helices.csv`: section *k* = helix parts with `coil_index` ∈
-   {2k−1, 2k} (H1H2, H3H4, …).
-4. **No probes — Bitters:** one voltage tap per Bitter part: section *j* =
-   Bitter part with `coil_index` = j.
-5. **Ordering** is inner → outer. `magnet_parts.coil_index` follows the magnet
+2. **Insert layout — pair (standard today):** one voltage tap per couple of
+   consecutive helices, on the **HP-side ring** joining the couple. Taps run
+   inner → outer and **`Ucoil7` is always the outermost pair (largest
+   diameter)**: for an insert of N helices, pair *k* (helices 2k−1, 2k,
+   counted from the inside) is on **`Ucoil(7 − N/2 + k)`** — 14 helices →
+   `Ucoil1–7`, 12 → `Ucoil2–7`, 10 → `Ucoil3–7`. Section *k* = helix parts
+   with `coil_index` ∈ {2k−1, 2k} (as in magnet-scipy `R_14Helices.csv`).
+3. **Insert layout — one tap per helix (older):** taps on every ring.
+   `Ucoil14` = outermost helix (confirmed 2026-10-08); helix *j* of an N-helix
+   insert is on **`Ucoil(14 − N + j)`**. Section *j* = the helix part with
+   `coil_index` = j.
+4. **Which insert layout:**
+   1. voltage-tap **probes attached to the magnet** → they define the layout
+      and the sections (local section *i* = the *i*-th probe of
+      `type = 'voltage_taps'`, ordered by `probes.rank`; temperature and
+      magnetic-field probes never count);
+   2. no probes → assume the **pair layout**;
+   3. data check: any non-null `Ucoil8`–`Ucoil14` (or non-zero header
+      coefficients in slots 8–14) contradicts the pair assumption → treat as
+      the per-helix layout and flag it (`layout_mismatch` in
+      `resolution_status`).
+5. **Null channel** (`Ucoil_n` null, coefficients all 0) means either the
+   channel is **unplugged**, or that pair / helix **does not exist** in this
+   insert. Told apart from the insert's `geometry_data` (helix count, rings)
+   and probes when present. E.g. M9 `M25032101` (14 helices): `Ucoil1` null
+   → unplugged.
+6. **Bitters:** one voltage tap per Bitter part: section *j* = Bitter part
+   with `coil_index` = j.
+7. **Ordering** is inner → outer. `magnet_parts.coil_index` follows the magnet
    definition order, so this assumes magnet JSON lists parts inner → outer;
    verified at ingest (inner radius increasing with `coil_index`, from
    `geometry_data`).
@@ -417,7 +441,8 @@ default:
 - **Used by the Pupitre ETL:** this slot mapping is the assembly → `Ucoil`
   channel rule that [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)
   lacks in its v1. ETL spec v2 builds the voltage sums from
-  `v_config_sections` (e.g. 7 `Ucoil` on M7; slot 1 absent on M9
+  `v_config_sections`, summing only the slots present under the rules
+  above (e.g. `Ucoil2–7` for a 12-helix insert; `Ucoil1` unplugged on M9
   `M25032101`).
 - **M5 row** of the slot table above (Bitters 1–2 on GR1) changes if the M5
   rewiring in [NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md) is
@@ -474,6 +499,24 @@ NbCoil  MagnetCode  Imax1  Imax2  [r0  a0  b0  ct] × NbCoil
 ```
 
 (4 + 4 × NbCoil values; identical to `MAGFILEM8.conf` / `MAGFILEM9.conf`.)
+
+**Writer (pupitre acquisition C++ code, received from the user 2026-10-08):**
+line 1 is written as `nbcoils \t mag_code \t imax1 \t imax2` then, for each
+of the `nbcoils` measurement channels, `\t R00 \t Adv \t Bdv \t CT`; no
+trailing tab. Designer's notes in that code:
+
+- `mag_code` may be null or empty → an empty field between two tabs.
+- `R00`, `Adv`, `Bdv` are the coefficients **in use at that instant**:
+  R(I) = R00 + Adv·I + Bdv·I²; `CT` is the temperature coefficient.
+- The loop covers the measurement channels (16 on M8/M9/M10); **all four
+  values at 0 = channel not used**.
+- `imax1` / `imax2` are annotated "Imax tr1" / "Imax tr2"; "tr" = GR
+  (user, 2026-10-08): GR1 / GR2 on M8/M9/M10, supplies A1 / A2 on M5,
+  GR1 only on M7 (see the MAGFILE field table).
+- A comment in that code about M9 (4 helices on one channel) is
+  misleading and is ignored (user, 2026-10-08); channel numbering follows
+  the section mapping rules above.
+
 It largely closes the MAGFILE history gap for recent runs: no time matching
 is needed for these fields. The conf file / MySQL stays the source for the
 other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
@@ -486,7 +529,7 @@ other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
 
   | Class | Recognised by | Stored |
   |---|---|---|
-  | full | first token integer `NbCoil`, field count = 4 + 4 × NbCoil (split on **tab**, keeping empty fields: M3 has an empty `MagnetCode`) | everything |
+  | full = **proper header** (#29) | first token integer `NbCoil` ≥ 1, field count = 4 + 4 × NbCoil (split on **tab**, keeping empty fields: M3 and M5 have an empty `MagnetCode`), `Imax1`, `Imax2` and the 4 × NbCoil coefficients numeric | everything |
   | short | `NbCoil` only (2011–2012); `NbCoil MagnetCode` (M10 2018); `NbCoil <label>` (M8 2016 `HL-28_1_BI04_1_BE02_1_13/05/2014`) | what is present; label in `extra` |
   | data | first token parses as a date (M10 2011/2013 files) | nothing — no parameter line; file flagged |
   | empty / unreadable | empty line, null bytes | nothing; file flagged |
@@ -529,13 +572,15 @@ other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
     `truncated` flag on the loaded data object. Part of step E.
   - Kept separate from `experiments.status`, which holds processing tokens
     (`STATS DONE`, `HOOP STRESS DONE`).
-  - **"Proper" header — pending (open question #29):** its meaning will be
-    given by the designer of the pupitre format; `header_class` alone is
-    not assumed to define it.
+  - **"Proper" header (open question #29, resolved 2026-10-08):** defined
+    by line 1 only, as the writer produces it — i.e. **proper header ⇔
+    `header_class = 'full'`**. Checked on the latest file of M3, M5, M7,
+    M8, M9, M10 (all full); the 2019 M9 / 2020 M10 sample files in
+    python_magnetrun are *short*.
 - Section absence still requires `r0 = a0 = b0 = 0`: M8 Bitters coils 15/16
   have `r0 = 0` with non-zero `a0`/`b0`. Slot 1 of M9 `M25032101` is
-  `0 0 0` in both `MAGFILEM9.conf` and the 2026-10-02 pupitre header (see
-  open question #3).
+  `0 0 0` in both `MAGFILEM9.conf` and the 2026-10-02 pupitre header:
+  channel unplugged (section mapping rule 5; open question #3 resolved).
 
 ### Temperature coefficient cross-check (`ct` vs `materials.alpha`)
 
@@ -866,7 +911,7 @@ CREATE TABLE IF NOT EXISTS commissioning_resistance (
   assembly.
 - **Origin of the readings (user, 2026-10-07; open question #24):**
   extracted from experiments when loading their pupitre data, only for files
-  with a proper header (open question #29). **[unconfirmed]** Candidate
+  with a proper header (`header_class = 'full'`, #29 resolved). **[unconfirmed]** Candidate
   commissioning experiments are those whose pupitre `Field` signature
   matches a commissioning pattern **still to be defined**, to be checked
   against real commissioning runs. Computed by a `to_duckdb` step after the
@@ -1121,17 +1166,18 @@ implementation.**
 | Step | Work | Depends on | Blockers | Approval |
 |---|---|---|---|---|
 | 0 | Reconcile the plan documents | — | — | **Done** 2026-10-07 |
-| E | File quality on `experiments` (`header_class`, `file_integrity` ok / truncated / unreadable, `file_checks`; python_magnetrun reports truncation) — see L2 "Pupitre header reader" | — | #29 ("proper" header) only for interpreting `header_class` | Plan to write, then approval |
-| S1 | Signature regime robustness study ([PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md)), incl. a robust pupitre `Field` signature | — | before running: where the tooling lives; library fixes vs local work-arounds; RDP vs PELT; 3–4 test file pairs to pick | **Methodology approved** 2026-08-11; execution choices to decide |
-| S2 | Fill `overview_records.signatures`, `plateaux`, `sync_info` with real `Signature` output (replacing the placeholder `_extract_signatures` in python_magnetrun `analysis/processing.py`); per-experiment `Field` signature (existing work: `stage/` writes `overview_experiments.field_signature` with a hand-picked `FIELD_THRESHOLD = 0.1`) | S1 | none beyond S1 | Plan to write, then approval |
+| E | File quality on `experiments` (`header_class`, `file_integrity` ok / truncated / unreadable, `file_checks`; python_magnetrun reports truncation) — see L2 "Pupitre header reader" | — | none | Plan to write, then approval |
+| S1 | Signature regime robustness study ([PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md)), incl. a robust pupitre `Field` signature | — | before running: where the tooling lives; library fixes vs local work-arounds; RDP vs PELT; 3–4 test file pairs to pick. Deferred by that plan (2026-08-11): the "one pupitre file → several pigbrother files" case (no discovery logic in that direction yet) | **Methodology approved** 2026-08-11; execution choices to decide |
+| S2 | Fill `overview_records.signatures`, `plateaux`, `sync_info` with real `Signature` output (replacing the placeholder `_extract_signatures` in python_magnetrun `analysis/processing.py`); per-experiment `Field` signature (existing work: `stage/` writes `overview_experiments.field_signature` with a hand-picked `FIELD_THRESHOLD = 0.1`) | S1; 2a for channel names — the lag computation (`_compute_lag_correlation`) looks up pupitre current channels by their post-ETL names (`IH`/`IB` via `get_pupitre_current_channel`): use the spec's names, or the raw `Idcct*` columns | none beyond its dependencies | Plan to write, then approval |
+| S3 | `teb` as a time series: an ETL step shifting pupitre `teb` by the lag stored in `sync_info` (for magnet cooling modeling; signature plan "Related future work"). **Assumption to flag:** one clock offset per pupitre file, borrowed from the current-channel lag — no pigbrother temperature to verify it against | S2 (lag in `sync_info`), 2a (spec path) | none beyond its dependencies | Plan to write, then approval |
 | 1 | Pupitre ETL spec v1 ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)) | — | none | **Plan written, awaiting approval** |
 | 1b | Supra current `IS` for M8: `external` spec entries, hybrid loading moved from the dashboard to python_magnetrun (outline in [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)) | 1 | #27 (Hybrid ↔ pupitre clock lag) to check before aligning | Outline agreed 2026-10-07; detailed plan to write, then approval |
 | 2a | Switch Pupitre callers (`load_mrun`/dashboards, `stress_map.py`) to the spec path | 1 + review of its step 5 comparison | none | Plan to write, then approval |
-| 2b | Phase 2: probes + L2 run configuration + `v_config_sections` | — | #2 (conf → experiment link, conf reader only), #3 (M9 slot 1), #17 (M10 coverage start), #20 (M3 only) | Phase plan to write, then approval |
+| 2b | Phase 2: probes + L2 run configuration + `v_config_sections` | — | #2 (conf → experiment link, conf reader only), #17 (M10 coverage start), #20 (M3 only) | Phase plan to write, then approval |
 | 2c | Phase 1: L1 installation | — | **CIRRUS XML history access** (the 4 magnet-scipy samples suffice for tests and the phase 4 acceptance case); #5, #11, #14, #18, #21 | Phase plan to write, then approval |
 | 3 | Pupitre ETL spec v2: builder driven by the assembly through `v_config_sections` | 1, 2b | none beyond its dependencies | Plan to write, then approval |
 | 4 | M5 rewiring ([NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md)) | 2a (Pupitre part), 3 (optional) | **Formal confirmation of the M5 wiring**; corrected M5 source JSON (two Bitters magnets, user); #26 (`coil_assignment` key for two Bitters); M5 notes §9 open details | Notes ON HOLD; plan to write after confirmation, then approval |
-| 5 | Phase 3: L3 characteristics, incl. raw commissioning tables | 2a (binding uses names after the ETL), 2b (sections), 1b (`IS` for M8 supra), S2 + E (commissioning readings) | #22 (source vocabulary), #23 (mutual-inductance shape), #24 (commissioning `Field` signature to define and check), #25 (per-magnet field factor), #29 ("proper" header) | Phase plan to write, then approval |
+| 5 | Phase 3: L3 characteristics, incl. raw commissioning tables | 2a (binding uses names after the ETL), 2b (sections), 1b (`IS` for M8 supra), S2 + E (commissioning readings) | #22 (source vocabulary), #23 (mutual-inductance shape), #24 (commissioning `Field` signature to define and check), #25 (per-magnet field factor) | Phase plan to write, then approval |
 | 6 | Phase 4: ODE config builder | 2c, 5, S2 (reference currents from signatures) | data issue #7 (`materials.alpha`); 0 overview records in `magnetdb.duckdb` and empty signatures in `test-magnetdb.duckdb` (until S2) | Phase plan to write, then approval |
 | 7 | Phases 5–7: storage, L4 digital variants, L5 simulations | 5, 6 | #10 (rustfs instance); #7 (L4 option A/B) | Phase plans to write, then approval |
 
@@ -1238,9 +1284,9 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
 
 | # | Question | Blocks |
 |---|---|---|
-| 1 | MAGFILE semantics/units — **mostly resolved** in `magfile-defs.json` (from `magfile.txt`; FF in G/A per circuit and r0 scale checked against data). Remaining: units of `r0/a0/b0` (mΩ, mΩ/A, mΩ/A² inferred from data) and `H<i>` (mH inferred); meaning and unit of `DeltaT0`; unit of `DeltaPFA/PFU` (mbar?, unused); whether `Imax<n>` is per supply (M9 IH reached 29.5 kA with `Imax1` = 14.8 kA) | phase 2 typed columns |
+| 1 | MAGFILE semantics/units — **mostly resolved** in `magfile-defs.json` (from `magfile.txt`; FF in G/A per circuit and r0 scale checked against data). Remaining: units of `r0/a0/b0` (mΩ, mΩ/A, mΩ/A² inferred from data) and `H<i>` (mH inferred); meaning and unit of `DeltaT0`; unit of `DeltaPFA/PFU` (mbar?, unused); ~~whether `Imax<n>` is per supply~~ — resolved 2026-10-08 (user): M8/M9/M10 one `Imax` per GR, M5 one per supply (A1, A2), M7 one for GR1. Note to explain in phase 2: M9 IH reached 29.5 kA with `Imax1` = 14.8 kA (limit not a hard cap on the measured current, or `IH = Idcct1 + Idcct2` is not the limited quantity?) | phase 2 typed columns |
 | 2 | MAGFILE conf → experiment link — only for **conf-only fields** (`Ivar`, `FF`, `Qnom`, surveillance), since the pupitre header links its fields to the experiment directly. `Date`/`Heure` is the file's **generation time**, not an experiment start, which favours a **validity window** (a conf applies from its generation time until the next one for that housing/assembly) over "nearest preceding experiment" | phase 2 reader |
-| 3 | Insert slot 1 is `0 0 0` for `M25032101` in both `MAGFILEM9.conf` and the 2026-10-02 pupitre header (so absent in live data too), while the magnet has 14 helices (7 pairs): **which** helix pair has no section — real voltage-tap probes not yet in DuckDB, pairing starting at slot 2, or H1H2 not instrumented? | phase 2 section-count check |
+| 3 | Insert slot 1 is `0 0 0` for `M25032101` in both `MAGFILEM9.conf` and the 2026-10-02 pupitre header (so absent in live data too), while the magnet has 14 helices (7 pairs): **which** helix pair has no section — real voltage-tap probes not yet in DuckDB, pairing starting at slot 2, or H1H2 not instrumented? — **resolved 2026-10-08** (user): insert channel rules in the L2 section mapping (pair layout, `Ucoil7` = outermost pair; a null channel = unplugged or pair absent, told apart via `geometry_data` and probes). For `M25032101` (14 helices) `Ucoil1` is unplugged; the C++ writer comment about 4 helices on one channel is ignored. Per-helix layout: `Ucoil14` = outermost helix (confirmed) | — |
 | 4 | ~~PID `jeu` 1–16~~ — resolved: `jeu` is just the parameter-set id (`numero_jeu`); 17–20 = M7–M10, 1–16 stored with no housing; threshold ranges from `configAlims/README.md` | — |
 | 5 | Primary-loop hysteresis: installation-wide or per housing | phase 1 |
 | 6 | ~~R/L ageing~~ — resolved: values change over time, `valid_from/valid_to` used in L3 | — |
@@ -1266,4 +1312,4 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
 | 26 | `housing_config.coil_assignment` is `MAP(role → GR)`: it cannot express two Bitters magnets on GR1/GR2 (M5 rewiring). Which key (magnet name, `Bitter1`/`Bitter2`, …)? Also affects the L2 slot rule for M5 and L1 `power_circuits` | M5 (step 4), phase 1 / 2 |
 | 27 | Do the Hybrid and pupitre clocks need a lag correction before `IS` is aligned with `merge_asof` (0.5 s)? Pupitre vs pigbrother lag is the subject of the signature robustness plan; Hybrid vs pupitre was never checked | step 1b |
 | 28 | Pupitre file with no assembly covering its time (e.g. data issue #9): build a housing-only spec (v1 content, no assembly-specific entries) with a warning (recommended), or refuse the ETL? | step 1 follow-ups / 2a |
-| 29 | **Pending — "proper" pupitre header:** what makes a pupitre header proper (needed for commissioning readings and to interpret `header_class`)? Hints to come from the designer of the pupitre format | step E (interpretation), phase 3 (commissioning) |
+| 29 | ~~"Proper" pupitre header~~ — resolved 2026-10-08 from the pupitre writer's C++ code: defined by line 1 only; proper ⇔ `header_class = 'full'` (see L2 "Pupitre header reader") | — |

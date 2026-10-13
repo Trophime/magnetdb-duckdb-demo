@@ -42,6 +42,9 @@ scripts/build_from_scratch.sh --from export --db to_duckdb/magnetdb-2026-10-08.d
 ```
 
 Paths (`JSON`, `RECORDS`, `DATA_DIR`) are set at the top of the script.
+Known magnet status changes (dead, retired, …) are read from
+`$JSON/magnet_status.json` and applied in file order, so keep its entries
+sorted by `changed_at`, oldest first.
 The data-export section needs `USERDB_API_KEY` and the `MYSQL_*` variables,
 loaded by direnv from `~/github/python_magnetrun/examples/.envrc`.
 
