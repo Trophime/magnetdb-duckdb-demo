@@ -51,7 +51,9 @@ loaded by direnv from `~/github/python_magnetrun/examples/.envrc`.
 Each step prints its title and a status: `OK`, `FAILED` (the build stops,
 except for the consistency check and individual assembly files) or `SKIPPED`
 (data export without credentials). Command output goes to
-`to_duckdb/magnetdb-<YYYY-MM-DD>.duckdb.log`.
+`to_duckdb/magnetdb-<YYYY-MM-DD>.duckdb.log`. The two statistics steps add
+their file counts, e.g. `OK (114 processed, 67 skipped, 1 errors)`; the files
+in error are listed in the log.
 
 ## `check_and_fix_geometry.sh`
 

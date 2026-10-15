@@ -76,7 +76,7 @@ title() {
     local pad=".................................................."
     printf '%s %s ' "$1" "${pad:${#1}}"
 }
-ok()      { echo -e "\033[32mOK\033[0m"; }
+ok()      { echo -e "\033[32mOK\033[0m${1:+ ($1)}"; }
 failed()  { echo -e "\033[31mFAILED\033[0m ($1see $LOG)"; }
 skipped() { echo -e "\033[33mSKIPPED\033[0m ($1)"; }
 not_run() { echo -e "\033[90mnot run\033[0m"; }
@@ -90,7 +90,8 @@ wanted() {
 
 # section ID TITLE COMMAND...: run COMMAND as one step; returns 1 (stopping the build) on failure.
 # A step outside --from..--to is listed as "not run".
-# A step function that sets SKIP_REASON and returns 0 is reported as SKIPPED.
+# A step function that sets SKIP_REASON and returns 0 is reported as SKIPPED;
+# one that sets STEP_NOTE gets it printed after OK.
 section() {
     local id=$1 name=$2
     shift 2
@@ -101,8 +102,9 @@ section() {
     fi
     echo "=== $name ===" >> "$LOG"
     SKIP_REASON=""
+    STEP_NOTE=""
     if "$@" >> "$LOG" 2>&1; then
-        if [ -n "$SKIP_REASON" ]; then skipped "$SKIP_REASON"; else ok; fi
+        if [ -n "$SKIP_REASON" ]; then skipped "$SKIP_REASON"; else ok "$STEP_NOTE"; fi
     else
         failed
         return 1
@@ -119,24 +121,44 @@ for (s,) in con.execute('SELECT name FROM assemblies ORDER BY commissioned_at NU
 "
 }
 
+# add_done_counts FILE: add the "Done — N processed, M skipped, K errors" line
+# printed by compute_*_stats.py (kept in FILE) to COUNTS=(processed skipped errors)
+add_done_counts() {
+    local p s e
+    read -r p s e < <(sed -n 's/^Done — \([0-9]*\) processed, \([0-9]*\) skipped, \([0-9]*\) errors$/\1 \2 \3/p' "$1") || return 0
+    COUNTS=($((COUNTS[0] + p)) $((COUNTS[1] + s)) $((COUNTS[2] + e)))
+}
+
 # --- step functions ---------------------------------------------------------
 
 ingest_exp_stats() {
-    local assemblies assembly
+    local assemblies assembly tmp
     assemblies=$(list_assemblies) || return 1
+    tmp=$(mktemp) || return 1
+    COUNTS=(0 0 0)
     for assembly in $assemblies; do
-        python compute_exp_stats.py --db $DB --records-base $RECORDS --assembly "$assembly" || return 1
+        python compute_exp_stats.py --db $DB --records-base $RECORDS --assembly "$assembly" 2>&1 \
+            | tee "$tmp" || { rm -f "$tmp"; return 1; }
+        add_done_counts "$tmp"
     done
+    rm -f "$tmp"
+    STEP_NOTE="${COUNTS[0]} processed, ${COUNTS[1]} skipped, ${COUNTS[2]} errors"
 }
 
 ingest_op_stats() {
-    local assemblies assembly
+    local assemblies assembly tmp
     assemblies=$(list_assemblies) || return 1
+    tmp=$(mktemp) || return 1
+    COUNTS=(0 0 0)
     for assembly in $assemblies; do
         python compute_op_stats.py --db $DB \
             --records-base $RECORDS \
-            --assembly "$assembly" --type Pupitre || return 1
+            --assembly "$assembly" --type Pupitre 2>&1 \
+            | tee "$tmp" || { rm -f "$tmp"; return 1; }
+        add_done_counts "$tmp"
     done
+    rm -f "$tmp"
+    STEP_NOTE="${COUNTS[0]} processed, ${COUNTS[1]} skipped, ${COUNTS[2]} errors"
 }
 
 load_overview_records() {
@@ -255,6 +277,8 @@ section operationaldata "Populate operationaldata" \
     python magnetdb.py populate  operationaldata --all --db $DB --records-base $RECORDS --type Overview Archive Spike Default Pupitre
 # Ingest per-file operational statistics (idempotent)
 section op-stats "Ingest per-file operational statistics" ingest_op_stats
+
+# TODO add hoop stress
 
 # note on creating *summary*.json
 # magnetrun analysis M9_Overview_25*.tdms --housing M9 > M9_2025.log
