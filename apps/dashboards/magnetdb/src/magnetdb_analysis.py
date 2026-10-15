@@ -830,6 +830,40 @@ def load_mrun_object(filename, housing):
     return load_mrun(filename=os.path.basename(filename), housing=housing)
 
 
+def _to_pandas(df):
+    """Return *df* as a pandas DataFrame (polars/narwhals ones are converted)."""
+    if isinstance(df, pd.DataFrame):
+        return df
+    return df.to_pandas()
+
+
+def group_data_pandas(mrun, group):
+    """Return a MagnetRun's group data as a pandas DataFrame.
+
+    python_magnetrun's ``get_group_data()`` returns a polars DataFrame for
+    both pupitre and TDMS runs; the dashboard's plotting and stats code
+    expects pandas.
+
+    Parameters
+    ----------
+    mrun : :class:`~python_magnetrun.MagnetRun.MagnetRun`
+        Loaded run.
+    group : str
+        Sensor group name, e.g. ``"Magnetic_Field"``.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        The ``"t"``/``"timestamp"`` columns plus every channel of *group*.
+
+    Raises
+    ------
+    KeyError
+        If *group* is not one of the run's groups.
+    """
+    return _to_pandas(mrun.MagnetData.get_group_data(group))
+
+
 @functools.lru_cache(maxsize=64)
 def get_group_dataframe(filename, housing, group_name):
     """Return get_group_data(group_name) for filename, cached per (filename, housing, group_name).
@@ -840,7 +874,7 @@ def get_group_dataframe(filename, housing, group_name):
     files repeatedly (once per pair-graph), so this is cached separately.
     """
     mrun = load_mrun_object(filename, housing)
-    return mrun.MagnetData.get_group_data(group_name)
+    return group_data_pandas(mrun, group_name)
 
 
 @functools.lru_cache(maxsize=1)
@@ -1066,11 +1100,11 @@ def _get_column_with_time(mrun, key):
     column = key.split("/")[-1]
     if mrun.MagnetData.Type == DataType.TDMS:
         group = key.split("/")[0]
-        df = mrun.MagnetData.get_group_data(group)
+        df = group_data_pandas(mrun, group)
         return df[[c for c in (column, "t", "timestamp") if c in df.columns]]
     keys = mrun.MagnetData.getKeys()
     cols = [column] + [c for c in ("t", "timestamp") if c in keys]
-    return mrun.MagnetData.getData(cols)
+    return _to_pandas(mrun.MagnetData.getData(cols))
 
 
 def filter_by_x_range(df, x_col, x_range):

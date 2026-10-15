@@ -564,7 +564,7 @@ def update_outputs(
 
         if group_name in mrun.MagnetData.list_groups():
             try:
-                df = mrun.MagnetData.get_group_data(group_name)
+                df = db.group_data_pandas(mrun, group_name)
             except KeyError:
                 df = None
             if isinstance(df, pd.DataFrame):
@@ -661,7 +661,7 @@ def download_group_csv(
         raise PreventUpdate
 
     try:
-        group_df = mrun.MagnetData.get_group_data(group_name)
+        group_df = db.group_data_pandas(mrun, group_name)
     except KeyError:
         raise PreventUpdate
 

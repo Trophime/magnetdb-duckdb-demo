@@ -637,7 +637,7 @@ def update_outputs(
 
         if native_sensors and group_name in mrun.MagnetData.list_groups():
             try:
-                df = mrun.MagnetData.get_group_data(group_name)
+                df = db.group_data_pandas(mrun, group_name)
             except KeyError:
                 df = None
             if isinstance(df, pd.DataFrame):
@@ -688,7 +688,7 @@ def update_outputs(
                 hourly = db.load_hybrid_supra_current(
                     hybrid_source, housing, selected_assembly, start, end
                 )
-                pupitre_df = mrun.MagnetData.get_group_data(group_name)
+                pupitre_df = db.group_data_pandas(mrun, group_name)
                 # Match onto the Pupitre file's own timestamps (nominally 1 Hz,
                 # like `hourly`, but not a perfectly regular grid) rather than
                 # plotting Hybrid's independent 1 Hz grid.
@@ -803,7 +803,7 @@ def download_group_csv(
 
     if native_sensors and group_name in mrun.MagnetData.list_groups():
         try:
-            group_df = mrun.MagnetData.get_group_data(group_name)
+            group_df = db.group_data_pandas(mrun, group_name)
         except KeyError:
             group_df = None
         if isinstance(group_df, pd.DataFrame) and selected_x in group_df.columns:
