@@ -167,13 +167,11 @@ def layout(**kwargs):
                     selectors.aggregate_filter(
                         "ra-research-area",
                         i18n._("Research area"),
-                        options=db.get_research_areas(),
                         style={"width": "250px"},
                     ),
                     selectors.aggregate_filter(
                         "ra-housing",
                         i18n._("Housing"),
-                        options=db.get_housings(),
                         style={"width": "250px"},
                     ),
                     selectors.aggregate_filter(
@@ -185,7 +183,6 @@ def layout(**kwargs):
                     selectors.aggregate_filter(
                         "ra-user",
                         i18n._("Manip"),
-                        options=db.get_users(),
                         style={"width": "250px"},
                     ),
                 ],
@@ -263,6 +260,34 @@ def layout(**kwargs):
 
 
 @callback(
+    Output("ra-research-area", "options"),
+    Output("ra-housing", "options"),
+    Output("ra-user", "options"),
+    Input("dd-database", "value"),
+)
+def update_filter_options(selected_db):
+    """Populate the research area / housing / user filters from the selected database.
+
+    Parameters
+    ----------
+    selected_db : str or None
+        Path to the DuckDB database chosen in the ``dd-database`` dropdown.
+        ``None`` falls back to `db.DB_PATH`.
+
+    Returns
+    -------
+    tuple of (list of str, list of str, list of str)
+        Options (with a leading :data:`selectors.ALL`) for the research
+        area, housing and user filters.
+    """
+    return (
+        [selectors.ALL] + db.get_research_areas(db_path=selected_db),
+        [selectors.ALL] + db.get_housings(db_path=selected_db),
+        [selectors.ALL] + db.get_users(db_path=selected_db),
+    )
+
+
+@callback(
     Output("ra-table", "data"),
     Output("ra-exp", "figure"),
     Output("ra-users", "figure"),
@@ -272,12 +297,13 @@ def layout(**kwargs):
     Output("ra-experiments-content", "children"),
     Output("ra-overview-records", "style"),
     Output("ra-overview-records-content", "children"),
+    Input("dd-database", "value"),
     Input("ra-research-area", "value"),
     Input("ra-housing", "value"),
     Input("ra-year", "value"),
     Input("ra-user", "value"),
 )
-def update(research_area, housing, year, user):
+def update(selected_db, research_area, housing, year, user):
 
     research_area = None if research_area == "All" else research_area
     housing = None if housing == "All" else housing
@@ -289,6 +315,7 @@ def update(research_area, housing, year, user):
         year=year,
         research_area=research_area,
         user=user,
+        db_path=selected_db,
     )
     df = df.rename(
         columns={"total_field_time_s": "total_field_time_h", "n_users": "n_manips"}
@@ -296,7 +323,7 @@ def update(research_area, housing, year, user):
     df["total_field_time_h"] = df["total_field_time_h"] / 3600
 
     by_year_df = db.get_research_area_stats_by_year(
-        housing=housing, year=year, research_area=research_area, user=user
+        housing=housing, year=year, research_area=research_area, user=user, db_path=selected_db
     )
     by_year_df["year"] = by_year_df["year"].astype(int).astype(str)
     by_year_df = by_year_df.rename(
@@ -332,7 +359,7 @@ def update(research_area, housing, year, user):
     )
 
     bin_df = db.get_research_area_field_bin_stats_by_year(
-        housing=housing, year=year, research_area=research_area, user=user
+        housing=housing, year=year, research_area=research_area, user=user, db_path=selected_db
     )
     if bin_df.empty:
         fig_time_by_bin = go.Figure()
@@ -377,10 +404,10 @@ def update(research_area, housing, year, user):
 
     if filters_active:
         exp_df = db.get_experiments_for_filters(
-            housing=housing, year=year, research_area=research_area, user=user
+            housing=housing, year=year, research_area=research_area, user=user, db_path=selected_db
         )
         ov_df = db.get_overview_records_for_filters(
-            housing=housing, year=year, research_area=research_area, user=user
+            housing=housing, year=year, research_area=research_area, user=user, db_path=selected_db
         )
         section_style = {**section_style, "display": "block"}
         exp_content = _experiments_section(exp_df)
