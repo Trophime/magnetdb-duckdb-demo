@@ -36,6 +36,7 @@ Physical constants
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import duckdb
@@ -497,7 +498,8 @@ def ingest_assembly(
     Returns
     -------
     dict
-        ``{"new": int, "skipped": int, "errors": list}``.
+        ``{"new": int, "skipped": int, "errors": list, "missing": int}``;
+        ``missing`` counts the entries of ``errors`` whose file does not exist.
     """
     con = duckdb.connect(db_path)
     ensure_schema(con)
@@ -506,7 +508,7 @@ def ingest_assembly(
     parts = get_assembly_parts(con, assembly_name)
     records_path = Path(records_dir)
 
-    results = {"new": 0, "skipped": 0, "errors": []}
+    results = {"new": 0, "skipped": 0, "errors": [], "missing": 0}
 
     for _, row in od_df.iterrows():
         od_id = int(row["id"])
@@ -520,6 +522,8 @@ def ingest_assembly(
         result = load_file(path)
         if result is None:
             results["errors"].append(filename)
+            if not path.exists():
+                results["missing"] += 1
             continue
         df, units = result
 
@@ -622,7 +626,7 @@ def main() -> None:
     bins = _parse_bins(args.bins) if args.bins else DEFAULT_BINS
     channels = [c.strip() for c in args.channels.split(",") if c.strip()]
 
-    ingest_assembly(
+    results = ingest_assembly(
         assembly_name=args.assembly,
         db_path=args.db,
         records_dir=args.records_base,
@@ -633,6 +637,14 @@ def main() -> None:
         reprocess=args.reprocess,
         verbose=not args.quiet,
     )
+    # every attempted file missing: the records base is most likely wrong
+    attempted = results["new"] + len(results["errors"])
+    if attempted and results["missing"] == attempted:
+        print(
+            f"Error: none of the {attempted} file(s) were found under {args.records_base}; "
+            "check --records-base or ~/.config/python_magnetrun/data_dirs.json."
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":

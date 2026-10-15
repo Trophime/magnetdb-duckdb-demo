@@ -258,7 +258,7 @@ section op-stats "Ingest per-file operational statistics" ingest_op_stats
 
 # note on creating *summary*.json
 # magnetrun analysis M9_Overview_25*.tdms --housing M9 > M9_2025.log
-# mv summary.json to ../Data/M9_summary_2025.json
+# mv summary.json to ../Data/M9_summary-2025.json
 # Populate overview_records from JSON
 section overview-json "Load overview records from JSON" load_overview_records
 # Consolidate overview_records and remove duplicates

@@ -114,6 +114,24 @@ python magnetdb.py populate overview-records-from-json summary-2026.json \
 | `--dry-run` | — | Preview records without writing to the DB |
 | `--db` | `student_magnetdb.duckdb` | Target DuckDB file |
 
+### Producing a summary file
+
+A summary covers one housing and one year. It is written by the
+`python_magnetrun` analysis command from that year's Overview TDMS files:
+
+```bash
+source .venv/bin/activate
+magnetrun analysis 'M9_Overview_25*.tdms' --housing M9 --output-dir /tmp/M9_2025 > M9_2025.log
+mv /tmp/M9_2025/summary.json Data/M9_summary-2025.json
+```
+
+- A pattern without a directory is looked up in the current directory, then
+  in the pigbrother data directory under `<housing>/Overview`.
+- The command always names its output `summary.json` (in `--output-dir`,
+  default: the current directory). Rename it `<housing>_summary-<YYYY>.json`:
+  `scripts/build_from_scratch.sh` only loads `Data/M*_summary-YYYY.json` files
+  (step `overview-json`).
+
 ### Accepted JSON format
 
 The file must contain a top-level JSON array. Each element is a dict with the following fields (all optional except `filename`):

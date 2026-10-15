@@ -35,6 +35,7 @@ Physical constants
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 import duckdb
@@ -455,6 +456,35 @@ def ingest_assembly(
     as records_base / srv_subdir / housing / filename.
     If experiments.file is already an absolute path it is used as-is (migration
     backward-compatibility).
+
+    Parameters
+    ----------
+    assembly_name : str
+        Assembly whose experiments are processed.
+    db_path : str
+        DuckDB file.
+    records_base : str, optional
+        Root of the records tree.
+    srv_subdir : str, optional
+        Subdirectory of *records_base* holding the pupitre TXT files.
+    bins : list of tuple, optional
+        Field bins ``(low, high)`` [T].
+    assembly_channels : list of str, optional
+        Assembly-level channels to aggregate per bin.
+    flow_to_m3s : float, optional
+        Conversion factor from ``debitbrut`` to [m³/s].
+    rho_cp : float, optional
+        Volumetric heat capacity of water [J/(m³·K)].
+    reprocess : bool, optional
+        Re-compute files that were already processed.
+    verbose : bool, optional
+        Print per-file progress and a final summary.
+
+    Returns
+    -------
+    dict
+        ``{"new": int, "skipped": int, "errors": list, "missing": int}``;
+        ``missing`` counts the entries of ``errors`` whose file does not exist.
     """
     con = duckdb.connect(db_path)
     ensure_schema(con)
@@ -462,7 +492,7 @@ def ingest_assembly(
     exp_df = get_experiments(con, assembly_name)
     parts = get_assembly_parts(con, assembly_name)
 
-    results = {"new": 0, "skipped": 0, "errors": []}
+    results = {"new": 0, "skipped": 0, "errors": [], "missing": 0}
 
     for _, row in exp_df.iterrows():
         exp_id = int(row["id"])
@@ -482,6 +512,8 @@ def ingest_assembly(
         result = load_file(path)
         if result is None:
             results["errors"].append(filename)
+            if not path.exists():
+                results["missing"] += 1
             continue
         df, units = result
 
@@ -592,7 +624,7 @@ def main() -> None:
     bins = _parse_bins(args.bins) if args.bins else DEFAULT_BINS
     channels = [c.strip() for c in args.channels.split(",") if c.strip()]
 
-    ingest_assembly(
+    results = ingest_assembly(
         assembly_name=args.assembly,
         db_path=args.db,
         records_base=args.records_base,
@@ -603,6 +635,14 @@ def main() -> None:
         reprocess=args.reprocess,
         verbose=not args.quiet,
     )
+    # every attempted file missing: the records base is most likely wrong
+    attempted = results["new"] + len(results["errors"])
+    if attempted and results["missing"] == attempted:
+        print(
+            f"Error: none of the {attempted} file(s) were found under {args.records_base}; "
+            "check --records-base or ~/.config/python_magnetrun/data_dirs.json."
+        )
+        sys.exit(1)
 
 
 if __name__ == "__main__":
