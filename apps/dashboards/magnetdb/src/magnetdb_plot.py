@@ -437,6 +437,15 @@ def _resolve_file_style(filename: str) -> TraceStyle | None:
     return FILE_TYPE_STYLES.get(resolve_file_type_key(filename))
 
 
+def _short_file_label(filename: str) -> str:
+    """Return a compact title/legend tag for *filename*, e.g. "Archive 27/01 16:05" (bare stem if unparsed)."""
+    file_type = resolve_file_type_key(filename)
+    dt_local = parse_filename_timestamp(filename) if file_type else None
+    if dt_local is None:
+        return os.path.splitext(os.path.basename(filename))[0]
+    return f"{file_type.capitalize()} {dt_local:%d/%m %H:%M}"
+
+
 def _resolve_field_override(group_name: str, sensor: str) -> FieldStyleOverride | None:
     """Return the FIELD_STYLE_OVERRIDES entry for (*group_name*, *sensor*), or None if unset."""
     return FIELD_STYLE_OVERRIDES.get(group_name, {}).get(sensor)
@@ -513,8 +522,32 @@ def _display_x_series(df, x_col: str):
 
 
 def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", mrun=None, group_name: str = "") -> go.Figure:
-    """
-    Gère le sous-échantillonnage et génère la figure Plotly pour Pupitre ET PigBrother.
+    """Downsample *df* and build a single-file Plotly figure (Pupitre or PigBrother).
+
+    Parameters
+    ----------
+    df : :class:`~pandas.DataFrame`
+        Source data, with *x_col* and the *y_cols* columns (either the full
+        ``"Group/Channel"`` key or the bare channel name).
+    x_col : str
+        Column to use for the x-axis (``"timestamp"`` or ``"t"``).
+    y_cols : list of str
+        Sensor keys to plot, one trace each.
+    method : str
+        Downsampling method name, or ``"raw data"``/``"none"`` to disable.
+    filename : str, optional
+        Source data filename; selects the trace style and is shown in the
+        title as a short tag (see :func:`_short_file_label`).
+    mrun : MagnetRun, optional
+        Used to resolve the y-axis symbol and unit.
+    group_name : str, optional
+        Data group, shown in the title.
+
+    Returns
+    -------
+    :class:`~plotly.graph_objects.Figure`
+        One trace per resolved sensor, named by its bare channel name
+        (``"Group/Channel"`` -> ``"Channel"``). Empty figure if *df* is empty.
     """
     if df is None or df.empty:
         return go.Figure()
@@ -585,7 +618,7 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
                     fig.add_trace(go.Scattergl(
                         x=_display_x_series(sub_df, x_col),
                         y=y_values,
-                        name=sensor,
+                        name=short_name,
                         **_apply_style(style, override, len(y_values)),
                     ))
 
@@ -604,15 +637,17 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
                 fig.add_trace(go.Scattergl(
                     x=_display_x_series(df_plot, x_col),
                     y=y_values,
-                    name=sensor,
+                    name=short_name,
                     **_apply_style(style, override, len(y_values)),
                 ))
 
     # 4. Layout
-    title = f"Visualization : {filename}"
+    title_parts = []
     if group_name:
-        title += f" - {i18n._(group_name)}"
-    title += f" (Algo: {method})"
+        title_parts.append(i18n._(group_name))
+    if filename:
+        title_parts.append(_short_file_label(filename))
+    title = " — ".join(title_parts)
     fig.update_layout(
         title=title,
         template="plotly_white",
@@ -939,9 +974,10 @@ def create_annotated_plot(
     Returns
     -------
     :class:`~plotly.graph_objects.Figure`
-        One line trace per regular file/sensor, plus one overlay line per
-        incident file. Empty figure if both *files_data* and *event_files*
-        are empty.
+        One line trace per regular file/sensor, named by its bare channel
+        name and grouped in the legend under the file's short tag (see
+        :func:`_short_file_label`), plus one overlay line per incident file.
+        Empty figure if both *files_data* and *event_files* are empty.
     """
     if not files_data and not event_files:
         return go.Figure()
@@ -976,6 +1012,7 @@ def create_annotated_plot(
             continue
 
         style = _resolve_file_style(file)
+        file_label = _short_file_label(file)
 
         if downsample_method == 'none':
             df_plot = df_raw.copy()
@@ -1010,8 +1047,12 @@ def create_annotated_plot(
             fig.add_trace(go.Scatter(
                 x=x_data,
                 y=y_data,
-                name=f"{file} - {sensor}",
+                name=short_name,
                 legendgroup=file,
+                legendgrouptitle_text=file_label,
+                # %{fullData.name} (not short_name) so the hover follows any
+                # later trace.name cleanup by the page (e.g. "supervision:").
+                hovertemplate=f"{file_label} — %{{fullData.name}}: %{{y}}<extra></extra>",
                 **_apply_style(style, override, len(y_data)),
             ))
 

@@ -120,8 +120,8 @@ def test_create_annotated_plot_forces_group_unit():
     assert fig.layout.yaxis.title.text == "Q [l/s]"
 
     traces_by_name = {tr.name: tr for tr in fig.data}
-    np.testing.assert_allclose(traces_by_name["a.txt - debitbrut"].y, [1.0, 2.0])
-    np.testing.assert_allclose(traces_by_name["b.txt - FlowH"].y, [1.0, 2.0])
+    np.testing.assert_allclose(traces_by_name["debitbrut"].y, [1.0, 2.0])
+    np.testing.assert_allclose(traces_by_name["FlowH"].y, [1.0, 2.0])
 
 
 if __name__ == "__main__":
