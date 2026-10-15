@@ -251,7 +251,7 @@ def layout(assembly=None, record=None, **kwargs):
             dcc.Store(id="overview-records-group-entries"),
             style_editor.modal_component("ov"),
             style_editor.download_store("ov"),
-            dcc.Loading(
+            selectors.loading_region(
                 [
                     html.Div(
                         id="overview-records-missing-banner",
@@ -263,7 +263,10 @@ def layout(assembly=None, record=None, **kwargs):
                         style={"marginTop": "10px"},
                     ),
                 ],
-                type="circle",
+                target_components={
+                    "overview-records-missing-banner": "children",
+                    "overview-records-groups-container": "children",
+                },
             ),
         ],
         style={"padding": "20px", "backgroundColor": "#f8f9fa", "minHeight": "100vh"},
@@ -578,10 +581,12 @@ def update_groups(selected_record, selected_db, include_archive_value, include_i
                                 },
                             ),
                             html.Div(
-                                selectors.graph(
-                                    id={"type": "ov-dynamic-graph", "index": group_name},
-                                    figure=_empty_fig(),
-                                    style={"height": "350px"},
+                                selectors.loading_region(
+                                    selectors.graph(
+                                        id={"type": "ov-dynamic-graph", "index": group_name},
+                                        figure=_empty_fig(),
+                                        style={"height": "350px"},
+                                    )
                                 ),
                                 style={"flexGrow": 1, "minWidth": "0", "padding": "10px"},
                             ),

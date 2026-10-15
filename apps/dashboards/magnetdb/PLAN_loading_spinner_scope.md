@@ -140,3 +140,64 @@ research areas) get **no** loading indicator at all now, instead of the
 previous blank-page-during-load. This is fine per the survey above —
 none of them do per-file/time-series work, so their callbacks are fast
 regardless of DB size.
+
+## Blur retry (2026-10-15)
+
+Status: implemented and verified, uncommitted.
+
+### Findings
+
+1. **"No graph after the spinner stops" was not a spinner bug.**
+   `python_magnetrun.magnetdata_base._make_ureg()` was an unlocked lazy
+   singleton; building a `UnitRegistry` is slow (~2 s for 4 concurrent
+   builds), so parallel Dash callbacks on a cold start (direct page
+   load → `update_groups` / `update_file_stats` / `update_graphs` all
+   loading files at once) each got their own registry. `lru_cache` then
+   kept those mixed `MagnetRun` objects, so every later
+   `convert_values_to_unit` raised `Cannot operate with Unit and Unit of
+   different registries` until restart — figures never arrived.
+   Intermittent: an app whose first unit lookup happened without
+   concurrency was unaffected. Fixed with a lock + double check in
+   `_make_ureg()`; test in `python_magnetrun/tests/test_magnetdata_base.py`.
+2. **Region wrappers reacted to every graph update.** The wrapped
+   containers also hold the dynamic graphs, updated by `update_graphs`,
+   `sync_zoom_*`, `pin_cursor_*`, `clear_cursors_*`. Fixed with
+   `target_components` (only the slow rebuild callback's outputs).
+3. **Gap after the region spinner.** `update_graphs` runs *after*
+   `update_groups` (it needs the new checklists), so a region-only
+   spinner stops while graphs are still empty placeholders. Fixed with a
+   per-graph wrapper around each dynamic `dcc.Graph`.
+
+### Implementation
+
+- `dash_selectors.loading_region(children, target_components=None)`:
+  `dcc.Loading` with `overlay_style` blur(3px) + opacity 0.5 +
+  `minHeight: 80px` (room for the card in an empty region, only while
+  loading), a 0.2 s fade, `delay_show=300` / `show_initially=False`, and
+  a `custom_spinner` card (`dbc.Spinner` + translated label "Be patient
+  while data are processed…", sticky near the region top).
+- Region wrappers (with `target_components`): overview_records,
+  defaults_spikes, file_viewer, stats_viewer, part_stats (hoop stress).
+- Per-graph wrappers (no target): overview_records / defaults_spikes
+  `update_groups`, file_viewer / stats_viewer `_sensor_group_block`.
+- Label added to `magnetdb.pot` and en/fr/de/nl `.po`; `.mo` recompiled
+  (`python -m babel.messages.frontend compile -f -d src/locales -D magnetdb`).
+
+### Verified (Playwright, cold-started app)
+
+- overview_records: region card 1.7–16.6 s, per-graph cards
+  17.2–18.6 s, then Magnetic_Field has 4 traces; no registry errors.
+- Zoom on a graph: no blur. Rebuild over existing content (archive
+  toggle): content blurred under the card.
+- file_viewer first load: card does not overlap the "5." label;
+  French label shown.
+- part_stats / stats_viewer render, no stuck spinner, no console or
+  server errors. Dashboard tests: 108 passed before and after.
+
+### Known limitations
+
+- Ticking a sensor checkbox blurs **all** graphs for ~1 s, not just that
+  one: `update_graphs` outputs every figure (`ALL`). Narrowing it would
+  need a callback restructure.
+- During a rebuild that also re-runs `update_graphs` (archive/incident
+  toggles), the per-graph card shows blurred under the region card.

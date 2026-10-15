@@ -766,3 +766,7 @@ msgstr "Leistungen"
 msgid "Refroidissement"
 msgstr "Kühlung"
 
+
+#: src/dash_selectors.py:56
+msgid "Be patient while data are processed…"
+msgstr "Bitte haben Sie Geduld, die Daten werden verarbeitet…"

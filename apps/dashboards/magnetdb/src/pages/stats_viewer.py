@@ -104,13 +104,13 @@ def layout(assembly=None, file=None, **kwargs):
                     ),
                     html.Br(),
                     html.Label(i18n._("4. Choose Sensors :"), style={"fontWeight": "bold"}),
-                    dcc.Loading(
+                    selectors.loading_region(
                         html.Div(
                             id="sv-sensors-selectors-container",
                             children=[],
                             style={"marginTop": "10px"},
                         ),
-                        type="circle",
+                        target_components={"sv-sensors-selectors-container": "children"},
                     ),
                     style_editor.modal_component("sv"),
                     style_editor.download_store("sv"),
@@ -359,12 +359,14 @@ def _sensor_group_block(group_name, options, saved_values, open_by_default=False
                     ),
                     html.Div(
                         children=[
-                            selectors.graph(
-                                id={
-                                    "type": "sv-dynamic-graph",
-                                    "index": group_name,
-                                },
-                                style={"height": "350px"},
+                            selectors.loading_region(
+                                selectors.graph(
+                                    id={
+                                        "type": "sv-dynamic-graph",
+                                        "index": group_name,
+                                    },
+                                    style={"height": "350px"},
+                                )
                             )
                         ],
                         style={

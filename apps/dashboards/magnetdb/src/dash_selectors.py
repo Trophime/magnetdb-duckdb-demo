@@ -1,3 +1,4 @@
+import dash_bootstrap_components as dbc
 import i18n
 import magnetdb_analysis as db
 import pandas as pd
@@ -27,6 +28,65 @@ def graph(figure=None, **kwargs):
     if figure is not None:
         kwargs["figure"] = figure
     return dcc.Graph(config={"locale": i18n.current_language()}, **kwargs)
+
+
+def loading_region(children, target_components=None):
+    """:class:`~dash.dcc.Loading` that blurs *children* under a labelled spinner card.
+
+    While loading, the wrapped content stays visible but blurred and dimmed,
+    and clicks on it are blocked by ``dcc.Loading``'s own overlay. The card
+    sticks near the top of the region so it stays visible in tall regions.
+
+    Parameters
+    ----------
+    children : dash component or list of dash components
+        Content to wrap.
+    target_components : dict, optional
+        ``{component_id: prop or [props]}`` — only these outputs trigger the
+        spinner, so other callbacks writing inside *children* (zoom sync,
+        cursor pins, ...) don't. ``None`` reacts to any descendant.
+
+    Returns
+    -------
+    :class:`~dash.dcc.Loading`
+    """
+    card = html.Div(
+        [
+            dbc.Spinner(color="primary", size="sm"),
+            html.Span(i18n._("Be patient while data are processed…")),
+        ],
+        className="mdb-loading-card",
+        style={
+            "position": "sticky",
+            "top": "1rem",
+            "alignSelf": "flex-start",
+            "marginTop": "16px",
+            "display": "flex",
+            "alignItems": "center",
+            "gap": "10px",
+            "padding": "10px 16px",
+            "backgroundColor": "#ffffff",
+            "borderRadius": "8px",
+            "boxShadow": "0 2px 8px rgba(0,0,0,0.15)",
+            "fontWeight": "bold",
+            "color": "#495057",
+        },
+    )
+    kwargs = {"target_components": target_components} if target_components else {}
+    return dcc.Loading(
+        children,
+        custom_spinner=card,
+        overlay_style={
+            "visibility": "visible",
+            "filter": "blur(3px)",
+            "opacity": 0.5,
+            "minHeight": "80px",
+        },
+        parent_style={"transition": "filter 0.2s, opacity 0.2s"},
+        delay_show=300,
+        show_initially=False,
+        **kwargs,
+    )
 
 def magnets_table_columns():
     return [

@@ -106,13 +106,13 @@ def layout(assembly=None, file=None, **kwargs):
                     html.Br(),
                     html.Label(i18n._("4. Choose Sensors :"), style={"fontWeight": "bold"}),
                     # C'est ce conteneur unique qui contiendra tout (Groupes + Checklist + Graphiques associés)
-                    dcc.Loading(
+                    selectors.loading_region(
                         html.Div(
                             id="sensors-selectors-container",
                             children=[],
                             style={"marginTop": "10px"},
                         ),
-                        type="circle",
+                        target_components={"sensors-selectors-container": "children"},
                     ),
                     style_editor.modal_component("fv"),
                     style_editor.download_store("fv"),
@@ -372,12 +372,14 @@ def _sensor_group_block(group_name, options, saved_values, open_by_default=False
                     # --- PARTIE DROITE : Le conteneur du Graphique ---
                     html.Div(
                         children=[
-                            selectors.graph(
-                                id={
-                                    "type": "dynamic-graph",
-                                    "index": group_name,
-                                },
-                                style={"height": "350px"},
+                            selectors.loading_region(
+                                selectors.graph(
+                                    id={
+                                        "type": "dynamic-graph",
+                                        "index": group_name,
+                                    },
+                                    style={"height": "350px"},
+                                )
                             )
                         ],
                         style={

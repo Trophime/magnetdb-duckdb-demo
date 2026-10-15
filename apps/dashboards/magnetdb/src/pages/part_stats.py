@@ -5,7 +5,7 @@ import i18n
 import magnetdb_analysis as db
 import pandas as pd
 import plotly.express as px
-from dash import Input, Output, dcc, html
+from dash import Input, Output, html
 from dash.dash_table import DataTable
 from experiment_links import (
     assembly_link,
@@ -663,7 +663,7 @@ def layout(part=None, **kwargs):
                         f"📈 {i18n._('Hoop stress history')}",
                         style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
-                    dcc.Loading(
+                    selectors.loading_region(
                         html.Div(
                             [
                                 html.Div(id="part-stats-hoop-stress-banner"),
@@ -683,7 +683,12 @@ def layout(part=None, **kwargs):
                             ],
                             style={"padding": "10px"},
                         ),
-                        type="circle",
+                        target_components={
+                            "part-stats-hoop-stress-banner": "children",
+                            "part-stats-hoop-stress-table": "data",
+                            "part-stats-hoop-stress-fig": "figure",
+                            "part-stats-hoop-stress-history-fig": "figure",
+                        },
                     ),
                 ],
                 open=False,

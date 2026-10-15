@@ -763,3 +763,7 @@ msgstr "Vermogens"
 msgid "Refroidissement"
 msgstr "Koeling"
 
+
+#: src/dash_selectors.py:56
+msgid "Be patient while data are processed…"
+msgstr "Even geduld, de gegevens worden verwerkt…"

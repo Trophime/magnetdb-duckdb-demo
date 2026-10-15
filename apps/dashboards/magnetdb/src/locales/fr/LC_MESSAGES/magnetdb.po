@@ -769,3 +769,7 @@ msgstr "Puissances"
 msgid "Refroidissement"
 msgstr "Refroidissement"
 
+
+#: src/dash_selectors.py:56
+msgid "Be patient while data are processed…"
+msgstr "Patientez pendant le traitement des données…"
