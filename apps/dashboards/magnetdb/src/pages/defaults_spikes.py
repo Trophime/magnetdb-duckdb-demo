@@ -864,7 +864,8 @@ def download_group_csv_defaults_spikes(
     -------
     dict
         :func:`dash.dcc.send_data_frame` payload with columns
-        ``<x>, file, sensor, value``.
+        ``<x>, file, sensor, value [<unit>]`` — values in the graph's y-axis
+        unit (see :func:`magnetdb_plot.annotated_axis_unit`).
     """
     triggered_id = ctx.triggered_id
     if not isinstance(triggered_id, dict) or not ctx.triggered or not ctx.triggered[0]["value"]:
@@ -946,6 +947,8 @@ def download_group_csv_defaults_spikes(
             local_to_utc_naive(pd.Timestamp(x_range[1]), "Europe/Paris"),
         ]
 
+    # Same y-axis unit as the graph's create_annotated_plot().
+    _, target_unit = plot.annotated_axis_unit(files_data, group_name)
     tidy_frames = []
     for entry in files_data:
         df = entry["df"]
@@ -961,13 +964,18 @@ def download_group_csv_defaults_spikes(
                 selected_x: df[selected_x],
                 "file": entry["file"],
                 "sensor": f"{label} [SUPERVISION]" if is_supervision else label,
-                "value": df[sensor],
+                "value": plot.display_values(
+                    df[sensor], entry.get("mrun"), sensor, group_name, target_unit,
+                    native_group=entry.get("native_group"),
+                ),
             }))
 
     if not tidy_frames:
         raise PreventUpdate
 
-    csv_df = pd.concat(tidy_frames, ignore_index=True)
+    csv_df = pd.concat(tidy_frames, ignore_index=True).rename(
+        columns={"value": plot.value_column_header(target_unit)}
+    )
     return dcc.send_data_frame(csv_df.to_csv, f"{group_name}.csv", index=False)
 
 

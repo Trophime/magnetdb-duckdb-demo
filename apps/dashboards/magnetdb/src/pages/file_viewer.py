@@ -802,6 +802,7 @@ def download_group_csv(
     supervision_values = [s for s in sensors_in_this_group if s.startswith("supervision:")]
 
     tidy_frames = []
+    target_unit = None
 
     if native_sensors and group_name in mrun.MagnetData.list_groups():
         try:
@@ -810,13 +811,20 @@ def download_group_csv(
             group_df = None
         if isinstance(group_df, pd.DataFrame) and selected_x in group_df.columns:
             group_df = db.filter_by_x_range(group_df, selected_x, analysis_range)
+            # Same y-axis unit as update_outputs' create_plot(): the first
+            # checked native (non-"hybrid:") sensor's display unit.
+            axis_sensor = next((s for s in native_sensors if not s.startswith("hybrid:")), None)
+            if axis_sensor is not None:
+                _, target_unit = plot.group_display_unit(mrun, group_name, axis_sensor)
             for sensor in native_sensors:
                 if sensor in group_df.columns:
                     tidy_frames.append(pd.DataFrame({
                         selected_x: group_df[selected_x],
                         "file": selected_file,
                         "sensor": sensor,
-                        "value": group_df[sensor],
+                        "value": plot.display_values(
+                            group_df[sensor], mrun, sensor, group_name, target_unit
+                        ),
                     }))
 
     supervision_groups = db.supervision_field_groups()
@@ -840,7 +848,9 @@ def download_group_csv(
     if not tidy_frames:
         raise PreventUpdate
 
-    csv_df = pd.concat(tidy_frames, ignore_index=True)
+    csv_df = pd.concat(tidy_frames, ignore_index=True).rename(
+        columns={"value": plot.value_column_header(target_unit)}
+    )
     return dcc.send_data_frame(csv_df.to_csv, f"{selected_file}_{group_name}.csv", index=False)
 
 

@@ -124,6 +124,47 @@ def test_create_annotated_plot_forces_group_unit():
     np.testing.assert_allclose(traces_by_name["FlowH"].y, [1.0, 2.0])
 
 
+def test_display_values_converts_debitbrut_to_group_unit(monkeypatch):
+    """CSV downloads must match the graph: debitbrut is m³/h in pupitre-defs,
+    displayed in l/s for the Hydraulics group."""
+    import magnetdb_analysis as db
+
+    monkeypatch.chdir(Path(__file__).resolve().parent)
+    mrun = db.load_mrun_object("2025.12.02 - 14:30:46.txt", "M9")
+    df = db.group_data_pandas(mrun, "Hydraulics")
+    _, target_unit = plot.group_display_unit(mrun, "Hydraulics", "debitbrut")
+
+    debitbrut = plot.display_values(df["debitbrut"], mrun, "debitbrut", "Hydraulics", target_unit)
+    np.testing.assert_allclose(debitbrut, df["debitbrut"].to_numpy() / 3.6)
+
+    flow_b = plot.display_values(df["FlowB"], mrun, "FlowB", "Hydraulics", target_unit)
+    np.testing.assert_allclose(flow_b, df["FlowB"].to_numpy())
+
+
+def test_display_values_without_mrun_is_noop():
+    values = np.array([1.0, 2.0])
+    ureg = pint.UnitRegistry()
+    assert plot.display_values(values, None, "teb", "Refroidissement", ureg.Unit("kelvin")) is values
+
+
+def test_value_column_header():
+    ureg = pint.UnitRegistry()
+    assert plot.value_column_header(ureg.Unit("liter / second")) == "value [l/s]"
+    assert plot.value_column_header(None) == "value"
+
+
+def test_annotated_axis_unit_matches_annotated_plot():
+    ureg = pint.UnitRegistry()
+    mrun_a = _FakeMrun({"debitbrut": ("Q", ureg.Unit("meter ** 3 / hour"))})
+    files_data = [
+        {"file": "SUPERVISION", "df": None, "sensors": ["supervision:teb"], "mrun": None},
+        {"file": "a.txt", "df": None, "sensors": ["debitbrut"], "mrun": mrun_a},
+    ]
+    ylabel, target_unit = plot.annotated_axis_unit(files_data, "Hydraulics")
+    assert ylabel == "Q [l/s]"
+    assert target_unit == ureg.Unit("liter / second")
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

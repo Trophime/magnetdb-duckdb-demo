@@ -168,6 +168,7 @@ def serve_layout():
                 style={"display": "flex", "gap": "15px", "marginBottom": "20px"},
             ),
             _language_modal(),
+            dcc.Store(id="db-change-log"),
             # This is where each page's own content is rendered
             dash.page_container,
         ]
@@ -200,6 +201,17 @@ def _save_language(n_clicks, language):
         i18n.COOKIE_NAME, language, max_age=365 * 24 * 3600, samesite="Lax"
     )
     return language
+
+
+@dash.callback(
+    Output("db-change-log", "data"),
+    Input("dd-database", "value"),
+    prevent_initial_call=True,
+)
+def _log_database_change(selected_db):
+    """Print the newly selected database path to the server log."""
+    print(f"Using DuckDB database: {selected_db}", flush=True)
+    return selected_db
 
 
 app.clientside_callback(

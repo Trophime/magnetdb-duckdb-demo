@@ -150,6 +150,56 @@ def convert_values_to_unit(values, unit, target_unit):
         return values
 
 
+def display_values(values, mrun, sensor: str, group_name: str, target_unit, native_group: str | None = None):
+    """Convert *sensor*'s raw values to the graph's y-axis unit, as the graphs do.
+
+    Parameters
+    ----------
+    values : :class:`~numpy.ndarray` or :class:`~pandas.Series`
+        Raw values, in *sensor*'s native unit.
+    mrun : MagnetRun or None
+        Run used to resolve *sensor*'s native unit; ``None`` (e.g. SUPERVISION
+        data) leaves *values* unchanged.
+    sensor : str
+        Sensor/column name.
+    group_name : str
+        Display group *sensor* belongs to.
+    target_unit : pint.Unit or None
+        Graph y-axis unit, e.g. from :func:`group_display_unit` or
+        :func:`annotated_axis_unit`; ``None`` leaves *values* unchanged.
+    native_group : str, optional
+        *sensor*'s own format-native group, used instead of *group_name* to
+        resolve its unit (see :func:`group_display_unit`).
+
+    Returns
+    -------
+    :class:`~numpy.ndarray` or :class:`~pandas.Series`
+        *values* in *target_unit*, or unchanged if no conversion applies
+        (see :func:`convert_values_to_unit`).
+    """
+    if mrun is None or target_unit is None:
+        return values
+    _, sensor_unit = resolve_sensor_unit(mrun, sensor, native_group if native_group is not None else group_name)
+    return convert_values_to_unit(values, sensor_unit, target_unit)
+
+
+def value_column_header(target_unit) -> str:
+    """Return the CSV value-column header for *target_unit*.
+
+    Parameters
+    ----------
+    target_unit : pint.Unit or None
+        Unit the exported values are expressed in.
+
+    Returns
+    -------
+    str
+        ``"value [{unit:~P}]"`` (e.g. ``"value [l/s]"``), or ``"value"`` if
+        *target_unit* is ``None``.
+    """
+    return f"value [{target_unit:~P}]" if target_unit is not None else "value"
+
+
 def format_sensor_label(base_label: str, symbol: str | None, unit) -> str:
     """Append a "(symbol [unit])" suffix to *base_label* when resolvable.
 
@@ -938,6 +988,44 @@ def _add_incident_overlays(fig: go.Figure, event_files: list, x_col: str, record
         )
 
 
+def annotated_axis_unit(files_data: list, group_name: str = ""):
+    """Return the y-axis label and unit :func:`create_annotated_plot` uses for *files_data*.
+
+    The first entry with an ``mrun`` and sensors whose first sensor resolves
+    a symbol sets the axis.
+
+    Parameters
+    ----------
+    files_data : list of dict
+        Same entries as :func:`create_annotated_plot`'s *files_data*.
+    group_name : str, optional
+        Display group, used for :data:`GROUP_UNIT_OVERRIDES`.
+
+    Returns
+    -------
+    tuple
+        ``(ylabel, target_unit)``: e.g. ``("Q [l/s]", <Unit('liter / second')>)``;
+        ``("Value", None)`` if no entry resolves.
+    """
+    ylabel = "Value"
+    target_unit = None
+    for item in files_data:
+        mrun_obj = item.get('mrun')
+        sensors_list = item.get('sensors', [])
+        if mrun_obj and sensors_list:
+            symbol, target_unit = group_display_unit(
+                mrun_obj, group_name, sensors_list[0], native_group=item.get('native_group')
+            )
+
+            if symbol and target_unit is not None:
+                ylabel = f"{symbol} [{target_unit:~P}]"
+                break
+            elif symbol:
+                ylabel = symbol
+                break
+    return ylabel, target_unit
+
+
 def create_annotated_plot(
     files_data: list,
     x_col: str,
@@ -982,22 +1070,7 @@ def create_annotated_plot(
     if not files_data and not event_files:
         return go.Figure()
 
-    ylabel = "Value"
-    target_unit = None
-    for item in files_data:
-        mrun_obj = item.get('mrun')
-        sensors_list = item.get('sensors', [])
-        if mrun_obj and sensors_list:
-            symbol, target_unit = group_display_unit(
-                mrun_obj, group_name, sensors_list[0], native_group=item.get('native_group')
-            )
-
-            if symbol and target_unit is not None:
-                ylabel = f"{symbol} [{target_unit:~P}]"
-                break
-            elif symbol:
-                ylabel = symbol
-                break
+    ylabel, target_unit = annotated_axis_unit(files_data, group_name)
 
     fig = go.Figure()
     downsample_method = 'none' if (not method or method in ['raw data', 'raw', 'none']) else method

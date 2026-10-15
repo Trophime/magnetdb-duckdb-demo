@@ -671,12 +671,14 @@ def download_group_csv(
         raise PreventUpdate
 
     group_df = db.filter_by_x_range(group_df, selected_x, analysis_range)
+    # Same y-axis unit as update_outputs' create_plot(): the first checked sensor's.
+    _, target_unit = plot.group_display_unit(mrun, group_name, sensors_in_this_group[0])
     tidy_frames = [
         pd.DataFrame({
             selected_x: group_df[selected_x],
             "file": selected_file,
             "sensor": sensor,
-            "value": group_df[sensor],
+            "value": plot.display_values(group_df[sensor], mrun, sensor, group_name, target_unit),
         })
         for sensor in sensors_in_this_group
         if sensor in group_df.columns
@@ -685,7 +687,9 @@ def download_group_csv(
     if not tidy_frames:
         raise PreventUpdate
 
-    csv_df = pd.concat(tidy_frames, ignore_index=True)
+    csv_df = pd.concat(tidy_frames, ignore_index=True).rename(
+        columns={"value": plot.value_column_header(target_unit)}
+    )
     return dcc.send_data_frame(csv_df.to_csv, f"{selected_file}_{group_name}.csv", index=False)
 
 
