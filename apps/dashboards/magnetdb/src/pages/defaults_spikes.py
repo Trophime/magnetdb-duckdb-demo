@@ -71,6 +71,20 @@ def _record_sources(record_filename, db_path, include_archive=False):
     return info["housing"], regular_files, event_files
 
 
+def _data_files(regular_files, event_files, incident):
+    """Return *regular_files* plus the selected *incident* file, when it belongs to *event_files*."""
+    if incident and incident in event_files:
+        return regular_files + [incident]
+    return regular_files
+
+
+def _shift_incident_t(entry, record_t0_utc):
+    """Return a copy of a files_data *entry* whose ``t`` is re-based on *record_t0_utc* (naive UTC)."""
+    df = entry["df"].copy()
+    df["t"] = (df["timestamp"] - pd.Timestamp(record_t0_utc)).dt.total_seconds()
+    return {**entry, "df": df}
+
+
 def _resolve_t0_reference(info):
     """Best-effort naive-UTC t=0 reference for elapsed-time (``t``) mode.
 
@@ -465,15 +479,37 @@ def update_incident_options(selected_record, selected_db, current_incident):
     Output("ds-missing-banner", "children"),
     Output("ds-group-entries", "data"),
     Input("ds-record-filter", "value"),
+    Input("ds-incident-filter", "value"),
     Input("dd-database", "value"),
     Input("ds-include-archive", "value"),
 )
-def update_groups(selected_record, selected_db, include_archive_value):
+def update_groups(selected_record, selected_incident, selected_db, include_archive_value):
+    """Build one collapsible sensor-checklist + graph block per data group.
+
+    Parameters
+    ----------
+    selected_record : str or None
+        ``overview_records.filename`` of the selected record.
+    selected_incident : str or None
+        Selected default/spike incident filename; its own groups/channels are
+        added to the checklists alongside the regular files'.
+    selected_db : str
+        Path to the DuckDB database.
+    include_archive_value : list of str
+        ``["archive"]`` to include archive files, else empty.
+
+    Returns
+    -------
+    tuple
+        ``(blocks, banner, group_entries)`` — the block components, a
+        warning-banner message (``""`` when none), and the
+        :func:`~magnetdb_analysis.get_overview_group_entries` mapping.
+    """
     if not selected_record:
         return [], "", {}
 
     include_archive = bool(include_archive_value)
-    housing, regular_files, _event_files = _record_sources(selected_record, selected_db, include_archive)
+    housing, regular_files, event_files = _record_sources(selected_record, selected_db, include_archive)
     if housing is None:
         return [], i18n._("This overview record was not found."), {}
     if not regular_files:
@@ -483,7 +519,9 @@ def update_groups(selected_record, selected_db, include_archive_value):
             {},
         )
 
-    group_entries = db.get_overview_group_entries(regular_files, housing)
+    group_entries = db.get_overview_group_entries(
+        _data_files(regular_files, event_files, selected_incident), housing
+    )
     if not group_entries:
         return [], i18n._("No data group found for this record's source files."), {}
 
@@ -598,6 +636,46 @@ def update_graphs(
     group_entries,
     all_relayout_data,
 ):
+    """Rebuild every group's figure from its checked sensors, centered on the selected incident.
+
+    The selected incident file's data is plotted alongside the regular files'
+    (in ``"t"`` mode its ``t`` is re-based on the record's t=0 reference, see
+    :func:`_shift_incident_t`); every incident file of the record is also
+    drawn as a dashed marker line.
+
+    Parameters
+    ----------
+    selected_record : str or None
+        ``overview_records.filename`` of the selected record.
+    selected_incident : str or None
+        Selected default/spike incident filename.
+    window_seconds : float or None
+        Half-width of the displayed x-range around the incident [s].
+    selected_x : str
+        ``"timestamp"`` or ``"t"``.
+    all_sensor_values : list of list of str
+        Checked values of each group's checklist.
+    all_sensor_ids : list of dict
+        Pattern-matching ids of each group's checklist.
+    selected_algo : str
+        Downsampling method name.
+    selected_db : str
+        Path to the DuckDB database.
+    include_archive_value : list of str
+        ``["archive"]`` to include archive files, else empty.
+    _style_version : int
+        Style-editor save counter (trigger only).
+    group_entries : dict
+        :func:`~magnetdb_analysis.get_overview_group_entries` mapping.
+    all_relayout_data : list of dict
+        Each graph's current ``relayoutData``, for zoom preservation.
+
+    Returns
+    -------
+    tuple
+        ``(figures, incident_warning)`` — one figure per group, and a warning
+        message (``""`` when none).
+    """
     if not selected_record or not all_sensor_ids:
         return [_empty_fig() for _ in all_sensor_ids], ""
 
@@ -669,7 +747,10 @@ def update_graphs(
                     x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
                     break
 
-    mruns = {filename: db.load_mrun_object(filename, housing) for filename in regular_files}
+    mruns = {
+        filename: db.load_mrun_object(filename, housing)
+        for filename in _data_files(regular_files, event_files, selected_incident)
+    }
     group_entries = group_entries or {}
     figures = []
 
@@ -683,6 +764,11 @@ def update_graphs(
         files_data = db.collect_group_files_data(
             mruns, housing, group_name, selected_values, group_entries
         )
+        if selected_x == "t" and record_t0_utc is not None:
+            files_data = [
+                _shift_incident_t(entry, record_t0_utc) if entry["file"] == selected_incident else entry
+                for entry in files_data
+            ]
         if supervision_window is not None:
             files_data = files_data + db.collect_supervision_files_data(
                 group_name, selected_values, group_entries, *supervision_window
@@ -716,6 +802,7 @@ def update_graphs(
     Output("ds-download-data", "data"),
     Input({"type": "ds-download-btn", "index": ALL}, "n_clicks"),
     State("ds-record-filter", "value"),
+    State("ds-incident-filter", "value"),
     State("ds-x-axis", "value"),
     State("dd-database", "value"),
     State("ds-include-archive", "value"),
@@ -729,6 +816,7 @@ def update_graphs(
 def download_group_csv_defaults_spikes(
     all_clicks,
     selected_record,
+    selected_incident,
     selected_x,
     selected_db,
     include_archive_value,
@@ -738,6 +826,41 @@ def download_group_csv_defaults_spikes(
     all_relayout_data,
     all_graph_ids,
 ):
+    """Export one group's checked sensors (incl. the selected incident file's) as a tidy CSV.
+
+    Parameters
+    ----------
+    all_clicks : list of int
+        Each group's download-button click count (trigger only).
+    selected_record : str or None
+        ``overview_records.filename`` of the selected record.
+    selected_incident : str or None
+        Selected default/spike incident filename, exported alongside the
+        regular files (``t`` re-based as in :func:`update_graphs`).
+    selected_x : str
+        ``"timestamp"`` or ``"t"``.
+    selected_db : str
+        Path to the DuckDB database.
+    include_archive_value : list of str
+        ``["archive"]`` to include archive files, else empty.
+    group_entries : dict
+        :func:`~magnetdb_analysis.get_overview_group_entries` mapping.
+    all_sensor_values : list of list of str
+        Checked values of each group's checklist.
+    all_sensor_ids : list of dict
+        Pattern-matching ids of each group's checklist.
+    all_relayout_data : list of dict
+        Each graph's current ``relayoutData``; a zoomed graph restricts the
+        export to its visible x-range.
+    all_graph_ids : list of dict
+        Pattern-matching ids of each graph.
+
+    Returns
+    -------
+    dict
+        :func:`dash.dcc.send_data_frame` payload with columns
+        ``<x>, file, sensor, value``.
+    """
     triggered_id = ctx.triggered_id
     if not isinstance(triggered_id, dict) or not ctx.triggered or not ctx.triggered[0]["value"]:
         raise PreventUpdate
@@ -755,11 +878,14 @@ def download_group_csv_defaults_spikes(
         raise PreventUpdate
 
     include_archive = bool(include_archive_value)
-    housing, regular_files, _event_files = _record_sources(selected_record, selected_db, include_archive)
+    housing, regular_files, event_files = _record_sources(selected_record, selected_db, include_archive)
     if housing is None:
         raise PreventUpdate
 
-    mruns = {filename: db.load_mrun_object(filename, housing) for filename in regular_files}
+    mruns = {
+        filename: db.load_mrun_object(filename, housing)
+        for filename in _data_files(regular_files, event_files, selected_incident)
+    }
     group_entries = group_entries or {}
 
     # SUPERVISION data is sliced to the whole record's [t0, t0+duration] span,
@@ -779,6 +905,12 @@ def download_group_csv_defaults_spikes(
             supervision_window = (sup_start, sup_start + pd.Timedelta(seconds=float(sup_duration)))
 
     files_data = db.collect_group_files_data(mruns, housing, group_name, selected_values, group_entries)
+    record_t0_utc = _resolve_t0_reference(info) if selected_x == "t" and info else None
+    if record_t0_utc is not None:
+        files_data = [
+            _shift_incident_t(entry, record_t0_utc) if entry["file"] == selected_incident else entry
+            for entry in files_data
+        ]
     if supervision_window is not None:
         files_data = files_data + db.collect_supervision_files_data(
             group_name, selected_values, group_entries, *supervision_window
