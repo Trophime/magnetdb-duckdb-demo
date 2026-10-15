@@ -332,14 +332,30 @@ def get_parts_for_magnet(magnet_name, db_path=None):
 
 
 def get_files_for_assembly(assembly_name, table_name, db_path=None):
-    """
-    Interroge la table choisie pour sortir tous les fichiers du assembly.
-    C'est ta nouvelle requête SQL clé.
+    """Return every distinct file of an assembly, in ascending timestamp order.
+
+    Parameters
+    ----------
+    assembly_name : str
+        ``assemblies.name`` to look up.
+    table_name : str
+        Table holding ``file``/``assembly_name`` columns, e.g. ``"experiments"``.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Filenames sorted by the timestamp parsed via
+        :func:`parse_magnet_filename` (unparsable names first), then by name.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = f"SELECT DISTINCT file FROM {table_name} WHERE assembly_name = ? AND file IS NOT NULL"
         df = conn.execute(query, [assembly_name]).df()
-        return df["file"].tolist()
+    return sorted(
+        df["file"].tolist(),
+        key=lambda f: (parse_magnet_filename(f) or datetime.min, f),
+    )
 
 
 # Status vocabularies mirroring to_duckdb/enums.py's AssemblyStatus and

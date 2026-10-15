@@ -248,3 +248,10 @@ def test_field_histogram_figure_has_one_histogram_trace(monkeypatch):
 def test_field_histogram_figure_empty_when_no_stats():
     fig = plot.field_histogram_figure(None)
     assert len(fig.data) == 0
+
+
+def test_get_files_for_assembly_ascending_timestamp():
+    files = db.get_files_for_assembly("M9_A200220_00", "experiments", DB_PATH)
+    timestamps = [db.parse_magnet_filename(f) for f in files]
+    assert len(files) > 1
+    assert timestamps == sorted(timestamps)
