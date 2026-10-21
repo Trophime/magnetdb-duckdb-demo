@@ -9,12 +9,25 @@ Standalone demo scripts for the student MagnetDB DuckDB.
 Builds and populates the `users` table from `Data/EXPERIENCES_LOG.csv`,
 fuzzy-matched against a proposals CSV (`Data/proposals.csv` by
 default) to fill in `research_area`, `call_number`, `access_mode`, `country`,
-and `local_contact`. By
+and `local_contact`. The "internal"/"external" variants of a housing
+(e.g. `M9i`/`M9e`) count as one housing: overlapping sessions of the same
+acronym on one housing become a single `users` row spanning all of them,
+whatever the variant; sessions of different acronyms are never merged.
+Before building rows, per-row acronym typos in the log are fixed from
+`acronym_corrections.csv` (next to the script, override with
+`--corrections`). Each correction targets one log row by its `timestamp`,
+`magnet` and current `acronym`, and must give a `reason`; duplicate rows,
+an empty `reason`, or a `corrected_acronym` that appears nowhere in the
+log abort the run. Applied corrections are printed, and a correction that
+matches no row only warns (e.g. once the row is fixed upstream). By
 default the table's contents are fully replaced; pass `--sync` to instead
 add only new rows and correct mismatched existing ones in place (leaving
 `experiments_ids`/`overview_records_ids` untouched). After (re)populating,
 the script backfills `experiments_ids` by matching each row's housing and
-`[hstart, hstop]` range against `experiments`' file-embedded timestamp, and
+`[hstart, hstop]` range against `experiments`' file-embedded timestamp
+(experiments left unlinked then get a `--margin`-minute fallback, 5 by
+default: linked to the nearest row only when the rows within the margin
+all belong to one acronym; exact links are never changed), and
 `overview_records_ids` the same way against `overview_records.t0` —
 converted from UTC (its storage timezone) to Europe/Paris local time
 before comparing, since `hstart`/`hstop` are naive Europe/Paris local
@@ -51,6 +64,7 @@ python to_duckdb/demos/users_table_demo.py --sync
 python to_duckdb/demos/users_table_demo.py --no-link
 python to_duckdb/demos/users_table_demo.py --link-only
 python to_duckdb/demos/users_table_demo.py --link-only --no-rows
+python to_duckdb/demos/users_table_demo.py --link-only --margin 0
 ```
 
 | Flag | Default | Description |
@@ -60,6 +74,8 @@ python to_duckdb/demos/users_table_demo.py --link-only --no-rows
 | `--proposals` | `Data/proposals.csv` | Input proposals CSV |
 | `--from` | none (no filtering) | Discard entries before this date (Europe/Paris local time), e.g. `2020-01-01` |
 | `--fuzzy-cutoff` | `0.8` | `difflib` similarity cutoff for fuzzy acronym matching |
+| `--corrections` | `demos/acronym_corrections.csv` | Per-row EXPERIENCES_LOG acronym corrections (`timestamp,magnet,acronym,corrected_acronym,reason`) |
+| `--margin` | `5` | Fallback window [min] around `[hstart, hstop]` for experiments no row contains exactly; `0` disables it |
 | `--sample` | `20` | Number of resulting `users` rows to print |
 | `--housing` | `ALL` (no filtering) | Restrict rebuilding to these housings (e.g. `M9 M10`); other housings' existing rows are left untouched in full-replace mode. Mutually exclusive with `--link-only` |
 | `--sync` | off (full replace) | Add new rows and fix mismatched existing rows instead of replacing the whole table's contents |
@@ -133,6 +149,40 @@ python to_duckdb/demos/find_linking_candidates.py --top 5 --max-distance-hours 6
 | `--top` | `3` | Maximum candidates printed per row |
 | `--max-distance-hours` | `24.0` | Only show candidates within this many hours of the session window |
 | `--acronym` | none (all acronyms) | Restrict the search to a single acronym |
+
+---
+
+## report_experiments_linking.py
+
+The experiments-side view of linking, run after `users_table_demo.py`.
+Two read-only reports:
+
+- **Unlinked experiments**: per housing, how many experiments since
+  `--from` appear in no `users.experiments_ids`, then one line per file
+  with the nearest same-housing session (acronym and signed distance in
+  minutes: negative = before `hstart`, positive = after `hstop`) and any
+  other housing with a session covering that time.
+- **Clock drift**: per session, the offset of the nearest experiment file
+  (within ±90 min) from `hstart`, summarised as median [q25, q75] per
+  housing and year. Normally the first file starts a few minutes *after*
+  `hstart`; sessions whose file starts more than `--drift-threshold`
+  minutes *before* it are listed, as they suggest the acquisition PC clock
+  lags behind EXPERIENCES_LOG (seen on M5 in 2023–2026). Nothing is
+  corrected.
+
+```bash
+python to_duckdb/demos/report_experiments_linking.py
+python to_duckdb/demos/report_experiments_linking.py --housing M5
+python to_duckdb/demos/report_experiments_linking.py --drift-threshold 10 --no-rows
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db` | `to_duckdb/test-magnetdb.duckdb` | Target DuckDB file |
+| `--housing` | `ALL` | Restrict both reports to these housings |
+| `--from` | `2018-01-01` | Ignore experiments/sessions before this date |
+| `--drift-threshold` | `5` | Flag sessions whose nearest file starts more than this many minutes before `hstart` |
+| `--no-rows` | off (rows shown) | Print only the summaries |
 
 ---
 
