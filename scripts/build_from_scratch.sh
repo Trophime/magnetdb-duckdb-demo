@@ -218,7 +218,7 @@ export_source_data() {
     local table
     for table in cirrusA1 cirrusA2 cirrusA3 cirrusA4; do
         python ./mysql_connect.py --mode export --format csv \
-           --output-dir $DATA_DIR/ --tables $table \
+           --output-dir $DATA_DIR/ --tables $table --time-field date --sort-time asc \
            --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_LOGS || return 1
     done
 
