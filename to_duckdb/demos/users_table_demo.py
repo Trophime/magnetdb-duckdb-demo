@@ -16,6 +16,7 @@ Run from the repository root, e.g.::
     python to_duckdb/demos/users_table_demo.py --housing M9 M10
     python to_duckdb/demos/users_table_demo.py --sync
     python to_duckdb/demos/users_table_demo.py --link-only
+    python to_duckdb/demos/users_table_demo.py --link-only --margin 0
     python to_duckdb/demos/users_table_demo.py --list
     python to_duckdb/demos/users_table_demo.py --view
     python to_duckdb/demos/users_table_demo.py --view <ACRONYM>
@@ -27,7 +28,7 @@ import difflib
 import re
 import sys
 from collections import Counter, defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 try:
@@ -90,8 +91,55 @@ def parse_cutoff(value: str) -> datetime:
     return dt
 
 
+def load_acronym_corrections(path: Path) -> dict[tuple[datetime, str, str], str]:
+    """Load the hand-maintained EXPERIENCES_LOG acronym corrections.
+
+    Each correction targets exactly one log row, identified by its
+    ``timestamp``, ``Magnet`` and current ``UserCode``, so it can never
+    rename an acronym elsewhere in the log.
+
+    Parameters
+    ----------
+    path : :class:`~pathlib.Path`
+        CSV with columns ``timestamp``, ``magnet``, ``acronym``,
+        ``corrected_acronym`` and ``reason``.
+
+    Returns
+    -------
+    dict[tuple[datetime, str, str], str]
+        ``(timestamp, magnet, acronym)`` -> corrected acronym. Acronyms
+        are upper-cased, as in `load_log`.
+
+    Raises
+    ------
+    ValueError
+        If a row has an empty ``reason`` or ``corrected_acronym``, or two
+        rows target the same log row.
+    """
+    corrections: dict[tuple[datetime, str, str], str] = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for lineno, row in enumerate(csv.DictReader(f), start=2):
+            key = (
+                datetime.fromisoformat(row["timestamp"].strip()),
+                row["magnet"].strip(),
+                row["acronym"].strip().upper(),
+            )
+            corrected = row["corrected_acronym"].strip().upper()
+            if not row["reason"].strip():
+                raise ValueError(f"{path}:{lineno}: empty reason is not allowed")
+            if not corrected:
+                raise ValueError(f"{path}:{lineno}: empty corrected_acronym is not allowed")
+            if key in corrections:
+                raise ValueError(f"{path}:{lineno}: duplicate correction for {key}")
+            corrections[key] = corrected
+    return corrections
+
+
 def load_log(
-    log_path: Path, cutoff: datetime | None, housing_filter: set[str] | None = None
+    log_path: Path,
+    cutoff: datetime | None,
+    housing_filter: set[str] | None = None,
+    corrections: dict[tuple[datetime, str, str], str] | None = None,
 ) -> tuple[
     dict[str, list[tuple[str, str | None, datetime, datetime | None]]],
     dict[str, list[datetime]],
@@ -111,6 +159,11 @@ def load_log(
     housing_filter : set[str] or None
         Upper-cased housing names to keep (e.g. ``{"M9", "M10"}``); sessions
         on any other housing are discarded. ``None`` disables filtering.
+    corrections : dict[tuple[datetime, str, str], str] or None
+        Acronym corrections from `load_acronym_corrections`, applied to
+        every row before `cutoff`/`housing_filter`. Each applied
+        correction is printed; one matching no row prints a warning.
+        ``None`` applies none.
 
     Returns
     -------
@@ -133,12 +186,17 @@ def load_log(
     ------
     ValueError
         If a row has an empty ``UserCode`` — acronym is a required field
-        and an empty one signals a data-quality problem upstream.
+        and an empty one signals a data-quality problem upstream — or if
+        a correction's ``corrected_acronym`` appears nowhere in the log
+        (most likely a typo in the correction itself).
     """
     sessions: dict[str, list[tuple[str, str | None, datetime, datetime | None]]] = (
         defaultdict(list)
     )
     timestamps: dict[str, list[datetime]] = defaultdict(list)
+    corrections = corrections or {}
+    applied: set[tuple[datetime, str, str]] = set()
+    seen_acronyms: set[str] = set()
     n_total = 0
     n_discarded = 0
     n_housing_excluded = 0
@@ -151,11 +209,20 @@ def load_log(
                 raise ValueError(
                     f"{log_path}:{lineno}: empty UserCode (acronym) is not allowed"
                 )
+            seen_acronyms.add(acronym)
             ts = datetime.fromisoformat(row["timestamp"].strip())
+            raw_magnet = row["Magnet"].strip()
+            key = (ts, raw_magnet, acronym)
+            if key in corrections:
+                print(
+                    f"Applied acronym correction: {ts} {raw_magnet} "
+                    f"{acronym} -> {corrections[key]}"
+                )
+                acronym = corrections[key]
+                applied.add(key)
             if cutoff is not None and ts < cutoff:
                 n_discarded += 1
                 continue
-            raw_magnet = row["Magnet"].strip()
             magnet = normalize_magnet(raw_magnet)
             if housing_filter is not None and magnet.upper() not in housing_filter:
                 n_housing_excluded += 1
@@ -166,6 +233,14 @@ def load_log(
             hstop = parse_hlog_timestamp(hstop_str) if hstop_str else None
             sessions[acronym].append((magnet, variant, hstart, hstop))
             timestamps[acronym].append(ts)
+    for key, corrected in corrections.items():
+        if corrected not in seen_acronyms:
+            raise ValueError(
+                f"acronym correction {key} -> {corrected}: '{corrected}' appears "
+                f"nowhere in {log_path}"
+            )
+        if key not in applied:
+            print(f"WARNING: acronym correction {key} matched no EXPERIENCES_LOG row")
     return sessions, timestamps, n_total, n_discarded, n_housing_excluded
 
 
@@ -445,18 +520,15 @@ def build_users(
     -------
     users : list[dict]
         One dict per (acronym, housing, session), matching the ``users``
-        table columns. Sessions on a magnet's "external" variant (e.g.
-        ``"M9e"``) each create their own row, *unless* it overlaps the most
-        recently created row for the same acronym+housing+variant (a run
-        EXPERIENCES_LOG logged twice under the same variant), in which case
-        it's unioned into that row (lowest hstart, highest hstop) instead of
-        creating a second one. Sessions on the "insert" variant (``"M9i"``)
-        never create a row of their own: if one fully encloses the most
-        recently created "external" row for the same acronym+housing (its
-        hstart earlier AND its hstop later, both at once), it widens that
-        row's hstart/hstop; otherwise it's dropped. Rows left identical
-        after merging (from exact-duplicate EXPERIENCES_LOG rows) are
-        deduplicated.
+        table columns. The "internal"/"external" variants of a housing
+        (e.g. ``"M9i"``/``"M9e"``) count as the same housing: sessions of
+        one acronym on one housing are merged when they overlap in time
+        (a session starting at or before the current row's hstop extends
+        that row's hstop), whatever their variant. A session with no
+        HStop that starts inside a row is absorbed into it; otherwise it
+        gets its own open row. Sessions of different acronyms are never
+        merged. Rows left identical after merging (from exact-duplicate
+        EXPERIENCES_LOG rows) are deduplicated.
     match_counts : Counter
         Counts of ``"exact"``, ``"fuzzy"``, ``"unmatched"`` proposal matches.
     n_duplicates_removed : int
@@ -495,43 +567,19 @@ def build_users(
             key=lambda item: (_housing_sort_key(item[0]), item[2]),
         )
         last_entry_for_housing: dict[str, dict] = {}
-        last_variant_for_housing: dict[str, str | None] = {}
-        for magnet, variant, hstart, hstop in ordered_sessions:
+        for magnet, _variant, hstart, hstop in ordered_sessions:
             previous_entry = last_entry_for_housing.get(magnet)
-            previous_variant = last_variant_for_housing.get(magnet)
 
             if (
                 previous_entry is not None
-                and variant is not None
-                and variant == previous_variant
                 and previous_entry["hstop"] is not None
                 and hstart <= previous_entry["hstop"]
             ):
-                # EXPERIENCES_LOG occasionally logs the same run twice under
-                # the same variant (e.g. two "M9e" rows sharing/overlapping
-                # HStop): union them into the existing entry instead of
-                # creating a second row.
-                if hstart < previous_entry["hstart"]:
-                    previous_entry["hstart"] = hstart
-                if hstop is not None and (
-                    previous_entry["hstop"] is None or hstop > previous_entry["hstop"]
-                ):
-                    previous_entry["hstop"] = hstop
-                continue
-
-            if variant == "i":
-                # "insert" sessions never create their own row; they only
-                # widen a differently-variant ("external") entry, and only
-                # when they fully enclose it (start earlier AND stop later)
-                # on both sides at once. Otherwise they're dropped entirely.
-                if (
-                    previous_entry is not None
-                    and hstart < previous_entry["hstart"]
-                    and hstop is not None
-                    and previous_entry["hstop"] is not None
-                    and hstop > previous_entry["hstop"]
-                ):
-                    previous_entry["hstart"] = hstart
+                # Overlapping sessions on one housing are a single powered
+                # session: "M9i" and "M9e" powered together, or the same run
+                # logged twice. Sessions are sorted by hstart, so only hstop
+                # can grow.
+                if hstop is not None and hstop > previous_entry["hstop"]:
                     previous_entry["hstop"] = hstop
                 continue
 
@@ -549,7 +597,6 @@ def build_users(
             }
             users.append(entry)
             last_entry_for_housing[magnet] = entry
-            last_variant_for_housing[magnet] = variant
 
     # EXPERIENCES_LOG itself contains exact-duplicate session rows (the same
     # acronym/housing/HStart/HStop repeated verbatim elsewhere in the file),
@@ -575,6 +622,7 @@ def build_users_from_csv(
     cutoff: datetime | None,
     fuzzy_cutoff: float,
     housing_filter: set[str] | None = None,
+    corrections: dict[tuple[datetime, str, str], str] | None = None,
 ) -> tuple[list[dict], Counter, dict]:
     """Build `users` rows from ``EXPERIENCES_LOG``/proposals CSV files.
 
@@ -595,6 +643,8 @@ def build_users_from_csv(
     housing_filter : set[str] or None
         Upper-cased housing names to keep (see `load_log`). ``None``
         includes every housing found in `log_path`.
+    corrections : dict[tuple[datetime, str, str], str] or None
+        Acronym corrections (see `load_log`). ``None`` applies none.
 
     Returns
     -------
@@ -607,7 +657,7 @@ def build_users_from_csv(
         ``duplicates_removed``, for reporting.
     """
     sessions, timestamps, log_total, log_discarded, log_housing_excluded = load_log(
-        log_path, cutoff, housing_filter
+        log_path, cutoff, housing_filter, corrections
     )
     (
         acronym_rows,
@@ -904,7 +954,42 @@ def _print_distinct_linked_breakdown(con, list_column: str, totals: dict[str, in
         print(f"  {housing}: {distinct_count} / {total} ({distinct_count / total:.1%})")
 
 
-def update_experiments_ids(con, verbose: bool = True) -> dict:
+def _link_experiments_fallback(con, margin: float) -> tuple[Counter, int]:
+    """Link still-unlinked experiments to the nearest same-acronym row within `margin` minutes."""
+    window = timedelta(minutes=margin)
+    candidates = con.execute(
+        f"WITH linked AS (SELECT DISTINCT UNNEST(experiments_ids) AS id FROM users "
+        f"WHERE experiments_ids IS NOT NULL), "
+        f"unlinked AS (SELECT e.id, split_part(e.assembly_name, '_', 1) AS housing, "
+        f"{_EXP_FILE_TS} AS ts FROM experiments e "
+        f"WHERE e.id NOT IN (SELECT id FROM linked)) "
+        f"SELECT x.id, x.housing, "
+        f"arg_min(u.rowid, greatest(epoch(u.hstart) - epoch(x.ts), epoch(x.ts) - epoch(u.hstop))), "
+        f"COUNT(DISTINCT u.acronym) "
+        f"FROM unlinked x JOIN users u ON u.housing = x.housing AND u.hstop IS NOT NULL "
+        f"AND x.ts BETWEEN u.hstart - ? AND u.hstop + ? "
+        f"GROUP BY x.id, x.housing",
+        [window, window],
+    ).fetchall()
+    ids_by_row: dict[int, list[int]] = defaultdict(list)
+    linked_by_housing: Counter = Counter()
+    n_ambiguous = 0
+    for experiment_id, housing, user_rowid, n_acronyms in candidates:
+        if n_acronyms > 1:
+            n_ambiguous += 1
+            continue
+        ids_by_row[user_rowid].append(experiment_id)
+        linked_by_housing[housing] += 1
+    if ids_by_row:
+        con.executemany(
+            "UPDATE users SET experiments_ids = "
+            "list_concat(coalesce(experiments_ids, []::INTEGER[]), ?) WHERE rowid = ?",
+            [[sorted(ids), rowid] for rowid, ids in ids_by_row.items()],
+        )
+    return linked_by_housing, n_ambiguous
+
+
+def update_experiments_ids(con, verbose: bool = True, margin: float = 5.0) -> dict:
     """Link each ``users`` row to its ``experiments`` via housing + time range.
 
     Matches each row's housing (via experiments.assembly_name's "<housing>_..."
@@ -912,18 +997,30 @@ def update_experiments_ids(con, verbose: bool = True) -> dict:
     timestamp. Rows with no hstop have no closed range to contain anything,
     so they're left with experiments_ids = NULL.
 
+    Experiments that no row contains exactly then get a fallback pass: if
+    their timestamp lies within `margin` minutes of rows of a single
+    acronym, they're linked to the nearest such row. Experiments within
+    `margin` of several acronyms stay unlinked, and exact links are never
+    changed by the fallback.
+
     Parameters
     ----------
     con:
         Open DuckDB connection.
     verbose : bool
         Print total/matched/unmatched counts (with a per-housing breakdown
-        of matched and unmatched) when done.
+        of matched and unmatched, and of fallback links) when done.
+    margin : float
+        Fallback window around ``[hstart, hstop]`` [min]. ``0`` disables
+        the fallback pass.
 
     Returns
     -------
     dict
-        ``{"matched": int, "unmatched": int, "total": int}``.
+        ``{"matched": int, "unmatched": int, "total": int, "fallback": int,
+        "fallback_ambiguous": int}``. `fallback` counts experiments linked
+        by the fallback pass; `fallback_ambiguous` those left unlinked
+        because they were within `margin` of several acronyms.
     """
     con.execute(
         f"UPDATE users SET experiments_ids = ("
@@ -932,6 +1029,11 @@ def update_experiments_ids(con, verbose: bool = True) -> dict:
         f"AND {_EXP_FILE_TS} BETWEEN users.hstart AND users.hstop"
         f") WHERE users.hstop IS NOT NULL"
     )
+    fallback_by_housing: Counter = Counter()
+    fallback_ambiguous = 0
+    if margin > 0:
+        fallback_by_housing, fallback_ambiguous = _link_experiments_fallback(con, margin)
+    fallback = sum(fallback_by_housing.values())
     matched = con.execute(
         "SELECT COUNT(*) FROM users WHERE experiments_ids IS NOT NULL"
     ).fetchone()[0]
@@ -960,9 +1062,21 @@ def update_experiments_ids(con, verbose: bool = True) -> dict:
             f"({distinct_linked / total_experiments:.1%})"
         )
         _print_distinct_linked_breakdown(con, "experiments_ids", experiments_totals)
+        print(
+            f"Experiments linked by the ±{margin:g} min fallback: {fallback} "
+            f"({fallback_ambiguous} left unlinked: near several acronyms)"
+        )
+        for housing, count in sorted(fallback_by_housing.items()):
+            print(f"  {housing}: {count}")
         print(f"Records with no experiments_ids: {unmatched}")
         _print_housing_breakdown(con, "experiments_ids IS NULL")
-    return {"matched": matched, "unmatched": unmatched, "total": total}
+    return {
+        "matched": matched,
+        "unmatched": unmatched,
+        "total": total,
+        "fallback": fallback,
+        "fallback_ambiguous": fallback_ambiguous,
+    }
 
 
 def update_overview_records_ids(con, verbose: bool = True) -> dict:
@@ -1370,6 +1484,21 @@ def main() -> None:
         help="difflib similarity cutoff for fuzzy acronym matching.",
     )
     parser.add_argument(
+        "--corrections",
+        type=Path,
+        default=Path(__file__).resolve().parent / "acronym_corrections.csv",
+        help="CSV of per-row EXPERIENCES_LOG acronym corrections "
+        "(timestamp, magnet, acronym, corrected_acronym, reason).",
+    )
+    parser.add_argument(
+        "--margin",
+        type=float,
+        default=5.0,
+        help="Fallback window [min] around [hstart, hstop] for experiments "
+        "no users row contains exactly; linked only when a single acronym "
+        "is in range. 0 disables the fallback.",
+    )
+    parser.add_argument(
         "--sample",
         type=int,
         default=20,
@@ -1468,7 +1597,7 @@ def main() -> None:
         try:
             create_users_table(con, verbose=False)
             report_missing_hstop(con)
-            update_experiments_ids(con)
+            update_experiments_ids(con, margin=args.margin)
             report_experiments_ids_coverage(con, show_rows=args.show_rows)
             update_overview_records_ids(con)
             report_overview_records_ids_coverage(con, show_rows=args.show_rows)
@@ -1481,8 +1610,9 @@ def main() -> None:
 
     cutoff = parse_cutoff(args.from_date) if args.from_date else None
 
+    corrections = load_acronym_corrections(args.corrections)
     users, match_counts, stats = build_users_from_csv(
-        args.log, args.proposals, cutoff, args.fuzzy_cutoff, housing_filter
+        args.log, args.proposals, cutoff, args.fuzzy_cutoff, housing_filter, corrections
     )
 
     con = duckdb.connect(str(args.db))
@@ -1503,7 +1633,7 @@ def main() -> None:
         report_data_quality(con)
 
         if args.link:
-            update_experiments_ids(con)
+            update_experiments_ids(con, margin=args.margin)
             report_experiments_ids_coverage(con, show_rows=args.show_rows)
             update_overview_records_ids(con)
             report_overview_records_ids_coverage(con, show_rows=args.show_rows)
