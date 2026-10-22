@@ -129,7 +129,7 @@ def test_exp_load_file_fallback_drops_stale_tail(tmp_path, monkeypatch):
     assert df["Field"].tolist() == [0.0, 1.5]
 
 
-def test_get_experiments_skips_unreadable(tmp_path):
+def test_get_experiments_skips_unreadable_and_single_row(tmp_path):
     import duckdb
     from compute_exp_stats import get_experiments
     from magnetdb import _add_assembly as add_assembly, _add_magnet as add_magnet
@@ -142,10 +142,15 @@ def test_get_experiments_skips_unreadable(tmp_path):
     with duckdb.connect(str(db)) as con:
         con.execute("DELETE FROM experiments WHERE assembly_name = ?", [assembly])
         con.execute(
-            "INSERT INTO experiments (id, name, file, assembly_name, file_integrity) VALUES "
-            "(1, 'a', 'a.txt', ?, 'ok'), (2, 'b', 'b.txt', ?, 'unreadable'), "
-            "(3, 'c', 'c.txt', ?, NULL), (4, 'd', 'd.txt', ?, 'truncated')",
-            [assembly] * 4,
+            "INSERT INTO experiments (id, name, file, assembly_name, file_integrity, file_checks) VALUES "
+            "(1, 'a', 'a.txt', ?, 'ok', '{\"rows_read\": 10}'), "
+            "(2, 'b', 'b.txt', ?, 'unreadable', '{\"reason\": \"no data rows\"}'), "
+            "(3, 'c', 'c.txt', ?, NULL, '{}'), "
+            "(4, 'd', 'd.txt', ?, 'truncated', '{\"rows_read\": 3}'), "
+            "(5, 'e', 'e.txt', ?, 'ok', '{\"rows_read\": 1}'), "
+            "(6, 'f', 'f.txt', ?, 'ok', '{\"rows_read\": 2}')",
+            [assembly] * 6,
         )
         files = get_experiments(con, assembly)["file"].tolist()
-    assert files == ["a.txt", "c.txt", "d.txt"]
+    # unreadable (b) and single-row (e) files have no statistics to compute
+    assert files == ["a.txt", "c.txt", "d.txt", "f.txt"]

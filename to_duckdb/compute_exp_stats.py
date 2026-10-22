@@ -3,8 +3,9 @@ compute_exp_stats.py
 ====================
 Ingest per-file experiment statistics into DuckDB.
 
-For each experiments file not yet processed (files checked as 'unreadable'
-by check_experiment_files.py are left out) this script:
+For each experiments file not yet processed (files checked as 'unreadable',
+or with fewer than 2 data rows, by check_experiment_files.py are left out)
+this script:
   1. Loads the record file (via python_magnetrun or pandas fallback); rows
      from the first corrupt timestamp on (crash tail) are dropped.
   2. Computes per-run scalar stats   → exp_run_scalars
@@ -144,7 +145,11 @@ def load_file(path: Path) -> tuple[pd.DataFrame, dict] | None:
 
 
 def get_experiments(con, assembly_name: str) -> pd.DataFrame:
-    """Experiments of *assembly_name*, without files checked as ``unreadable``.
+    """Experiments of *assembly_name* that have statistics to compute.
+
+    Leaves out files checked as ``unreadable`` and files with fewer than 2
+    data rows (``file_checks.rows_read``): a single row has no time span.
+    Experiments not checked yet are kept.
 
     Parameters
     ----------
@@ -165,6 +170,7 @@ def get_experiments(con, assembly_name: str) -> pd.DataFrame:
         JOIN assemblies s ON s.name = e.assembly_name
         WHERE e.assembly_name = ?
           AND e.file_integrity IS DISTINCT FROM 'unreadable'
+          AND COALESCE(CAST(e.file_checks->>'rows_read' AS INTEGER), 2) >= 2
         ORDER BY e.name
         """,
         [assembly_name],

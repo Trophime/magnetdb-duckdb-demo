@@ -587,6 +587,9 @@ other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
     the loaded data object, pandas and polars.
   - Filled by `to_duckdb/check_experiment_files.py`; `compute_exp_stats.py`
     leaves out `unreadable` files.
+  - Follow-up: a crash tail of binary data (invalid UTF-8) still makes a
+    file `unreadable` — see
+    [PLAN_pupitre_binary_tail.md](PLAN_pupitre_binary_tail.md).
   - Kept separate from `experiments.status`, which holds processing tokens
     (`STATS DONE`, `HOOP STRESS DONE`).
   - **"Proper" header (open question #29, resolved 2026-10-08):** defined
