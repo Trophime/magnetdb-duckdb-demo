@@ -57,6 +57,7 @@ _default_db = (
     if db.DB_PATH in _default_db_values
     else (_default_db_values[0] if _default_db_values else None)
 )
+_DB_COOKIE_NAME = "database"
 
 # Language names are always shown in their own language, and the button/modal
 # chrome stays untranslated (a multilingual label) — a user who can't yet read
@@ -121,7 +122,11 @@ def serve_layout():
     language (:func:`i18n.current_language`) when the language modal's Save
     action triggers a page reload — a static `app.layout` would only ever
     reflect whatever language happened to be active at process startup.
+    The database dropdown starts on the one saved in the ``database``
+    cookie, if it is still available, so the choice survives full reloads.
     """
+    saved_db = flask.request.cookies.get(_DB_COOKIE_NAME)
+    selected_db = saved_db if saved_db in _default_db_values else _default_db
     return html.Div(
         [
             html.H1(i18n._("Dashboard MagnetDB - LNCMI monitoring")),
@@ -135,7 +140,7 @@ def serve_layout():
                     dcc.Dropdown(
                         id="dd-database",
                         options=_db_options,
-                        value=_default_db,
+                        value=selected_db,
                         clearable=False,
                         style={
                             "width": "350px",
@@ -209,8 +214,12 @@ def _save_language(n_clicks, language):
     prevent_initial_call=True,
 )
 def _log_database_change(selected_db):
-    """Print the newly selected database path to the server log."""
+    """Log the newly selected database and remember it in the ``database`` cookie."""
     print(f"Using DuckDB database: {selected_db}", flush=True)
+    # Same lifetime/flags as the language cookie (see `_save_language`).
+    dash.ctx.response.set_cookie(
+        _DB_COOKIE_NAME, selected_db, max_age=365 * 24 * 3600, samesite="Lax"
+    )
     return selected_db
 
 
