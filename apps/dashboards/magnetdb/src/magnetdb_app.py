@@ -174,6 +174,9 @@ def serve_layout():
             ),
             _language_modal(),
             dcc.Store(id="db-change-log"),
+            # This browser's own plot-style changes, layered over the server
+            # style by magnetdb_plot.merge_style_config (see style_editor.py)
+            dcc.Store(id="user-style", storage_type="local"),
             # This is where each page's own content is rendered
             dash.page_container,
         ]

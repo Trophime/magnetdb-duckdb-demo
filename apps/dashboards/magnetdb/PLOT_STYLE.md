@@ -9,8 +9,9 @@ itself via a gear icon on each group block. Lives entirely in
 
 ## Where a trace's style comes from
 
-`create_plot()` calls `_resolve_file_style(filename)` before building any
-traces:
+`create_plot()` calls `_resolve_file_style(filename, style_config)` before
+building any traces (`style_config` is the server style merged with this
+browser's own changes — see "Per-user changes" below):
 
 1. `filename` ends in `.txt` → `pupitre` style.
 2. `filename` ends in `.tdms` → `classify_pigbrother_file(filename)` (from
@@ -38,18 +39,25 @@ the same file apart, use the legend/hover, not color.
 | trigger  | `#8c564b` | dashdot | 1.5   | 0.8     |
 
 Defined in `magnetdb_plot.py` as two dataclasses: `TraceStyle` (one type's
-color/dash/width/opacity) and `FileTypeStyles` (one `TraceStyle` per type,
-exposed as the module-level `FILE_TYPE_STYLES`).
+color/dash/width/opacity) and `FileTypeStyles` (one `TraceStyle` per type),
+grouped with the per-field overrides in a `StyleConfig`.
 
 ## Overriding without touching code
 
-`_load_default_style_config()` resolves a `StyleConfig` (source-type styles + field overrides,
-see below) in this order, first match wins:
+The style used for a plot has two layers:
+
+- **Server style** — the same for every user, read once at startup into
+  `magnetdb_plot._STYLE_CONFIG` and never written by the dashboard.
+- **Per-user changes** — made with the gear-icon editor, kept in each browser's
+  localStorage and layered on top (see "Per-user changes" below).
+
+`_load_default_style_config()` resolves the server `StyleConfig` (source-type styles + field
+overrides, see below) in this order, first match wins:
 
 1. `$MAGNETDB_FILE_TYPE_STYLES` — path to a JSON file, if the env var is set.
-2. `USER_STYLE_CONFIG_PATH` (`~/.config/magnetdb/style.json`) — a fixed per-user override
-   location, checked if it exists. This is also where the dashboard's own gear-icon editor
-   (see below) always saves to.
+2. `USER_STYLE_CONFIG_PATH` (`~/.config/magnetdb/style.json` of the user running the server) —
+   a site-wide override, checked if it exists. Edited by hand only; the dashboard never writes
+   it, so it can be mounted read-only in Docker.
 3. `style.json` — the bundled default, shipped next to `magnetdb_plot.py`.
 4. In-code `StyleConfig()` dataclass defaults — last-resort fallback if even the bundled file
    is somehow missing or unreadable; startup never crashes.
@@ -113,7 +121,7 @@ color/dash/width/marker — keyed by `(group_name, raw_sensor_name)`, in the sam
 - **`marker_every`** draws a marker only every Nth *plotted* point (after downsampling), via a
   per-point `marker.size` mask (`0` hides that point's marker) on the same trace — there is no
   native Plotly `markevery`, so this is implemented in `_apply_style()`.
-- Resolution: `_resolve_field_override(group_name, sensor)` looks up the override;
+- Resolution: `_resolve_field_override(group_name, sensor, style_config)` looks up the override;
   `_apply_style(style, override, n_points)` merges it with the resolved source-type `TraceStyle`
   and returns the final `mode`/`line`/`opacity`/`marker` kwargs. Used by `create_plot()`,
   `create_comparison_plot()`, and `create_annotated_plot()` — but only for their regular line
@@ -130,20 +138,41 @@ marker-every), plus an "Opacity by source" section for the source types actually
 files to that group. Implemented in `src/style_editor.py`:
 
 - `gear_button()` / `modal_component()` build the UI; `register_callbacks(id_prefix, context_fn,
-  extra_states)` wires open/save/reset/cancel — each page supplies its own `context_fn` that
-  resolves the current group's raw sensor names and source-type keys (`file_viewer.py`: the one
-  loaded file's own columns; `overview_records.py`: the union of raw channels across that
-  record's regular — non-event — source files).
+  extra_states)` wires open/save/reset/reset-all/export/import/cancel — each page supplies its
+  own `context_fn` that resolves the current group's raw sensor names and source-type keys
+  (`file_viewer.py`: the one loaded file's own columns; `overview_records.py`: the union of raw
+  channels across that record's regular — non-event — source files).
 - **Save** always writes a full `color`/`dash`/`width` for every row shown (not a diff against
   what was pre-filled) — editing a field's style via the modal takes explicit ownership of it,
-  decoupled from the source-type table from then on. It writes the *entire* merged
-  `StyleConfig` — every other group's overrides and the full source-type table — to
-  `USER_STYLE_CONFIG_PATH`, then calls `reload_style_config()` so the change applies immediately,
-  and bumps a per-page `dcc.Store` (`fv-style-version` / `ov-style-version`) that's wired into
-  the page's figure-building callback purely as a redraw trigger.
-- **Reset** clears the open group's field overrides only (other groups and the source-type table
-  are untouched), saves, reloads, and closes.
+  decoupled from the source-type table from then on. It replaces that group in this browser's
+  `user-style` store (plus the opacity of each source shown), and bumps a per-page `dcc.Store`
+  (`fv-style-version` / `sv-style-version` / `ov-style-version` / `ds-style-version`) that's
+  wired into the page's figure-building callback purely as a redraw trigger.
+- **Reset** removes the open group from this browser's changes only (it falls back to the server
+  style), and closes.
+- **Reset all** (asks for confirmation) discards all of this browser's changes.
+- **Export** downloads this browser's changes as `magnetdb-style.json`; **Import** replaces them
+  with an uploaded file (a malformed file shows an error and changes nothing).
 - **Cancel** just closes the modal, discarding unsaved edits.
+
+### Per-user changes
+
+The gear-icon editor never writes on the server. Its changes live in the app-wide
+`dcc.Store(id="user-style", storage_type="local")` (in `magnetdb_app.py`), so they belong to one
+browser: another browser, a private window, or clearing site data starts again from the server
+style — use Export/Import to carry them over. The store holds a partial `style.json`:
+
+```json
+{
+  "pupitre": { "opacity": 0.6 },
+  "field_overrides": { "Field": { "Ucoil1": { "color": "#d62728", "width": 3 } } }
+}
+```
+
+Each figure callback merges it over the server style with
+`merge_style_config(_STYLE_CONFIG, user_style)`: source-type properties are updated one by one,
+and a group in `field_overrides` replaces the server's group as a whole. Since an exported file
+has the same format, it can also be used as a site-wide `style.json` (step 1 or 2 above).
 
 ## Which pages actually get typed styling
 

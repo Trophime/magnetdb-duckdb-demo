@@ -481,6 +481,7 @@ def update_sensors_menus(
     Input("sv-downsampling", "value"),
     Input("sv-style-version", "data"),
     State({"type": "sv-dynamic-graph", "index": ALL}, "relayoutData"),
+    State("user-style", "data"),
 )
 def update_outputs(
     selected_file,
@@ -491,6 +492,7 @@ def update_outputs(
     selected_algo,
     _style_version,
     all_relayout_data,
+    user_style,
 ):
 
     empty_fig = go.Figure()
@@ -548,6 +550,7 @@ def update_outputs(
         if sensor_values is not None
     }
 
+    style_config = plot.merge_style_config(plot._STYLE_CONFIG, user_style)
     outputs_figures = []
 
     for sensor_id in all_sensors_ids:
@@ -578,6 +581,7 @@ def update_outputs(
                     filename=selected_file,
                     mrun=mrun,
                     group_name=group_name,
+                    style_config=style_config,
                 )
 
         if fig is None:

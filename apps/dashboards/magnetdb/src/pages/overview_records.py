@@ -624,6 +624,7 @@ def update_groups(selected_record, selected_db, include_archive_value, include_i
     Input("ov-style-version", "data"),
     State("overview-records-group-entries", "data"),
     State({"type": "ov-dynamic-graph", "index": ALL}, "relayoutData"),
+    State("user-style", "data"),
 )
 def update_graphs(
     selected_record,
@@ -637,6 +638,7 @@ def update_graphs(
     _style_version,
     group_entries,
     all_relayout_data,
+    user_style,
 ):
     if not selected_record or not all_sensor_ids:
         return [_empty_fig() for _ in all_sensor_ids], ""
@@ -680,6 +682,7 @@ def update_graphs(
     # from their filenames alone (see create_annotated_plot's event_files arg).
     mruns = {filename: db.load_mrun_object(filename, housing) for filename in regular_files}
     group_entries = group_entries or {}
+    style_config = plot.merge_style_config(plot._STYLE_CONFIG, user_style)
     figures = []
 
     info = db.get_overview_record_sources(selected_record, selected_db)
@@ -725,6 +728,7 @@ def update_graphs(
             group_name=group_name,
             event_files=event_files,
             record_t0_utc=record_t0_utc,
+            style_config=style_config,
         )
 
         # Trace names read "SUPERVISION - supervision:teb" (create_annotated_plot's

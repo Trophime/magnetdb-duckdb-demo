@@ -77,16 +77,24 @@ python scripts/init_group_order.py --file <FILENAME>   # derives group names fro
 See [PLOT_STYLE.md](PLOT_STYLE.md) and `PLAN_group_order.md` for details on
 each file's format.
 
+Both files are server-wide defaults, shared by every user, and are only
+edited by hand: the dashboard never writes them.
+
+Plot-style changes made through the dashboard's ⚙ gear icon are personal:
+they are saved in your browser's localStorage, on top of the server style,
+and don't affect other users. They stay with that browser (another browser,
+a private window, or clearing site data starts from the server style again);
+use the style editor's **Export** / **Import** buttons to carry them over or
+share them, and **Reset all** to drop them. See [PLOT_STYLE.md](PLOT_STYLE.md).
+
 When running in Docker, `~/.config/magnetdb/` resolves inside the
 container (the app user's home there), so a host override only takes
-effect if you mount it in, e.g.
-`-v ~/.config/magnetdb:/home/jovyan/.config/magnetdb` — see the `docker run`
-example below, which includes this mount. Without it, style/group-order
-changes made through the dashboard's UI are lost whenever the container is
-recreated.
+effect if you mount it in, read-only, e.g.
+`-v ~/.config/magnetdb:/home/jovyan/.config/magnetdb:ro` — see the `docker run`
+example below, which includes this mount.
 
-The language preference is different: it lives in a browser cookie, not a
-file, so it needs no volume mount and persists per visitor.
+The language and database preferences are browser cookies, not files, so
+they need no volume mount and persist per visitor.
 
 ### Launch
 
@@ -149,14 +157,13 @@ docker run \
     -e MAGNETDB_RECORDS_DIR=/data/records \
     -v /path/to/to_duckdb:/data/duckdb \
     -v /path/to/records:/data/records \
-    -v ~/.config/magnetdb:/home/jovyan/.config/magnetdb \
+    -v ~/.config/magnetdb:/home/jovyan/.config/magnetdb:ro \
     -p 8050:8050 \
     magnetdb-dashboard
 ```
 
-The last `-v` is optional but recommended — without it, style/group-order
-overrides made through the dashboard's UI (see above) don't survive the
-container being recreated.
+The last `-v` is optional: it only matters if you keep site-wide
+`style.json` / `group_order.json` overrides on the host (see above).
 
 The container serves the app with gunicorn, tunable at `docker run` time
 via `-e` (defaults shown):

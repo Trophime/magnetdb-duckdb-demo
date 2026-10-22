@@ -534,6 +534,7 @@ def update_sensors_menus(
     Input("dropdown-downsampling", "value"),
     Input("fv-style-version", "data"),
     State({"type": "dynamic-graph", "index": ALL}, "relayoutData"),
+    State("user-style", "data"),
 )
 def update_outputs(
     selected_file,
@@ -544,6 +545,7 @@ def update_outputs(
     selected_algo,
     _style_version,
     all_relayout_data,
+    user_style,
 ):
 
     empty_fig = go.Figure()
@@ -608,6 +610,7 @@ def update_outputs(
     }
 
     supervision_groups = db.supervision_field_groups()
+    style_config = plot.merge_style_config(plot._STYLE_CONFIG, user_style)
     outputs_figures = []
 
     for sensor_id in all_sensors_ids:
@@ -652,6 +655,7 @@ def update_outputs(
                     filename=selected_file,
                     mrun=mrun,
                     group_name=group_name,
+                    style_config=style_config,
                 )
 
         if supervision_values and group_name in supervision_groups:
@@ -673,6 +677,7 @@ def update_outputs(
                 filename="SUPERVISION",
                 mrun=None,
                 group_name=group_name,
+                style_config=style_config,
             )
             # Legend label: "supervision:teb" -> "teb [SUPERVISION]".
             for trace in supervision_fig.data:
@@ -709,6 +714,7 @@ def update_outputs(
                     filename="Hybrid",
                     mrun=None,
                     group_name=group_name,
+                    style_config=style_config,
                 )
                 for trace in hybrid_fig.data:
                     trace.name = "I_BOB [Hybrid]"
