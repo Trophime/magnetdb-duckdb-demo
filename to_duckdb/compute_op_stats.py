@@ -108,7 +108,8 @@ def load_file(path: Path) -> tuple[pd.DataFrame, dict] | None:
     """Load a record file into a DataFrame with a 'dt' column added.
 
     Tries python_magnetrun.magnetdata.load_magnetdata first; falls back to
-    pd.read_csv for plain TSV files.
+    pd.read_csv for plain TSV files. Either way, rows from the first corrupt
+    Date/Time on (crash tail) are dropped.
     """
     if not path.exists():
         print(f"  [SKIP] not found: {path.name}")
@@ -129,6 +130,10 @@ def load_file(path: Path) -> tuple[pd.DataFrame, dict] | None:
                 first = fh.readline().rstrip("\n").split("\t")
             skiprows = 0 if FIELD_COL in first else 1
             df = pd.read_csv(path, sep="\t", skiprows=skiprows, low_memory=False)
+            if "Date" in df.columns and "Time" in df.columns:
+                from python_magnetrun.utils.validation import count_valid_pupitre_rows
+
+                df = df.iloc[: count_valid_pupitre_rows(df["Date"], df["Time"])]
             units = {}
         except Exception as exc:
             print(f"  [ERROR] cannot read {path.name}: {exc}")

@@ -2,10 +2,9 @@
 
 **Status (2026-10-22).** Written as a follow-up of step E
 ([PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md), "File quality
-on `experiments`"). The binary-tail fix is **not approved for
-implementation**. Two related items are **done** (approved and implemented
-2026-10-22): see "Done: single-row files and DST rules for filenames" at
-the end.
+on `experiments`"). **Done** (approved and implemented 2026-10-22), with
+two related items: see "Result" and "Done: single-row files and DST rules
+for filenames" at the end.
 
 ## Goal
 
@@ -69,12 +68,32 @@ stats computed.
 - **Cut the bytes, do not decode the junk as Latin-1.** Decoding the
   binary tail as text could change the inferred column types or exceed
   the column count; cutting the bytes before parsing avoids both.
-- **Not included:** the `compute_op_stats.py` fallback reader has no
-  corrupt-tail cutoff. No effect today: its main path goes through
-  `load_magnetdata` (cutoff applies), the fallback only runs when
-  python_magnetrun fails, and `op_run_scalars` only holds 68 pupitre runs
-  of `M10_A180220_00`, none with a corrupt tail. Copy the 3-line cutoff of
-  `compute_exp_stats.py` if op stats are extended to more assemblies.
+- The `compute_op_stats.py` fallback reader had no corrupt-tail cutoff
+  (no effect on data: its main path goes through `load_magnetdata`, and
+  `op_run_scalars` only holds 68 pupitre runs of `M10_A180220_00`, none
+  with a corrupt tail). **Done** 2026-10-22: same 3-line cutoff as
+  `compute_exp_stats.py`; `test_load_file_fallback_drops_stale_tail` now
+  runs for both scripts; `to_duckdb` suite 566 passed.
+
+## Result
+
+- `PupitreReader.read_valid_prefix` returns the bytes before the first
+  line holding a NUL byte or invalid UTF-8. It is used only when decoding
+  fails: `_read_polars_decoded` (polars, stub and full read) and
+  `read_csv_decoded` (pandas, stub and lazy load). The lines cut count in
+  `rows_dropped`.
+- The fixture had to be longer than 8 KB: below that,
+  `_open_text_with_fallback` sees the bad bytes in its probe and switches
+  to Latin-1, which hid the failure for pandas. Both stub reads (1 row) can
+  also fail to decode on small files, so they use the fallback too.
+- Verified: `test_binary_tail_dropped` (both backends); python_magnetrun
+  suite 1322 passed, 19 skipped. Real file: both backends load 209 rows
+  ending at `11:41:44`, 12 lines dropped, `Field` numeric.
+- Database (backup `magnetdb-2026-10-08.duckdb.bak-20261022T154434`):
+  experiment 844 is `truncated` (`header_class` `short`) and `STATS DONE`
+  with its 8 run scalars (`duration_s` 208, `field_max` 0); compared with
+  the backup no other experiment changed. Now 6450 `STATS DONE`,
+  33 `pending` (23 single-row, 10 header-only).
 
 ## Done: single-row files and DST rules for filenames
 

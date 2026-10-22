@@ -544,9 +544,10 @@ other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
   experiments, i.e. files linked to an assembly): `full` M9 1815, M10 1490,
   M8 162, M5 68, M7 11; `short` 2927; `empty` 7; `data` 0 (the M10
   2011/2013 data-line files are not in `experiments`). `file_integrity`:
-  11 `truncated` (10 corrupt tails, 1 incomplete last line), 11
-  `unreadable` (10 header-only, 1 non-UTF-8 for the polars reader:
-  M10 `2020.10.13 - 11:38:15.txt`).
+  12 `truncated` (11 corrupt tails, 1 incomplete last line), 10
+  `unreadable` (header-only). M10 `2020.10.13 - 11:38:15.txt`, first
+  `unreadable` (binary tail, invalid UTF-8), is `truncated` since
+  [PLAN_pupitre_binary_tail.md](PLAN_pupitre_binary_tail.md).
 - **Reconciliation and precedence:** when a conf/MySQL configuration and a
   pupitre header both exist for a run, overlapping fields are compared. For
   its own experiment the **pupitre header wins** (written with the run); the
@@ -587,9 +588,9 @@ other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
     the loaded data object, pandas and polars.
   - Filled by `to_duckdb/check_experiment_files.py`; `compute_exp_stats.py`
     leaves out `unreadable` files.
-  - Follow-up: a crash tail of binary data (invalid UTF-8) still makes a
-    file `unreadable` — see
-    [PLAN_pupitre_binary_tail.md](PLAN_pupitre_binary_tail.md).
+  - A crash tail of binary data (invalid UTF-8) is cut before parsing —
+    see [PLAN_pupitre_binary_tail.md](PLAN_pupitre_binary_tail.md) (done
+    2026-10-22).
   - Kept separate from `experiments.status`, which holds processing tokens
     (`STATS DONE`, `HOOP STRESS DONE`).
   - **"Proper" header (open question #29, resolved 2026-10-08):** defined

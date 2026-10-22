@@ -112,7 +112,8 @@ def test_load_file_fallback_without_preamble(load_file, tmp_path, monkeypatch):
     assert df["Field"].tolist() == [0.0, 1.5]
 
 
-def test_exp_load_file_fallback_drops_stale_tail(tmp_path, monkeypatch):
+@pytest.mark.parametrize("load_file", _LOAD_FNS)
+def test_load_file_fallback_drops_stale_tail(load_file, tmp_path, monkeypatch):
     # Crash tail as in M10 "2024.12.05 - 11:16:02.txt": NUL padding, then older rows.
     path = tmp_path / "2018.02.21 - 10:18:54.txt"
     path.write_bytes(
@@ -125,7 +126,7 @@ def test_exp_load_file_fallback_drops_stale_tail(tmp_path, monkeypatch):
         ).encode("utf-8")
     )
     monkeypatch.setattr("python_magnetrun.magnetdata.load_magnetdata", _failing_load)
-    df, _ = load_exp_file(path)
+    df, _ = load_file(path)
     assert df["Field"].tolist() == [0.0, 1.5]
 
 
