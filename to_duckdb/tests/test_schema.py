@@ -89,6 +89,14 @@ def test_status_history_column_exists(con, table):
     assert "status_history" in cols
 
 
+@pytest.mark.parametrize(
+    "column", ["header_class", "file_integrity", "file_checks", "file_checked_at"]
+)
+def test_experiments_file_quality_columns_exist(con, column):
+    cols = {row[1] for row in con.execute("PRAGMA table_info(experiments)").fetchall()}
+    assert column in cols
+
+
 def test_decommisioned_typo_migrated_to_disassembled(con):
     """A row seeded with the legacy 'decommisioned' (typo) status value must
     be rewritten to 'disassembled' the next time ensure_schema() runs."""

@@ -110,3 +110,42 @@ def test_load_file_fallback_without_preamble(load_file, tmp_path, monkeypatch):
     monkeypatch.setattr("python_magnetrun.magnetdata.load_magnetdata", _failing_load)
     df, _ = load_file(path)
     assert df["Field"].tolist() == [0.0, 1.5]
+
+
+def test_exp_load_file_fallback_drops_stale_tail(tmp_path, monkeypatch):
+    # Crash tail as in M10 "2024.12.05 - 11:16:02.txt": NUL padding, then older rows.
+    path = tmp_path / "2018.02.21 - 10:18:54.txt"
+    path.write_bytes(
+        (
+            "16\tM15061601\n"
+            + _PUPITRE_BODY
+            + "\x00" * 64
+            + ".0\t182.4\n"
+            + "2014.07.27\t22:38:31\t22.2"
+        ).encode("utf-8")
+    )
+    monkeypatch.setattr("python_magnetrun.magnetdata.load_magnetdata", _failing_load)
+    df, _ = load_exp_file(path)
+    assert df["Field"].tolist() == [0.0, 1.5]
+
+
+def test_get_experiments_skips_unreadable(tmp_path):
+    import duckdb
+    from compute_exp_stats import get_experiments
+    from magnetdb import _add_assembly as add_assembly, _add_magnet as add_magnet
+    from tests.conftest import ASSEMBLY_JSON, MAGNET_JSON
+
+    db = tmp_path / "test.duckdb"
+    add_magnet(MAGNET_JSON, db)
+    add_assembly(ASSEMBLY_JSON, db)
+    assembly = ASSEMBLY_JSON["name"]
+    with duckdb.connect(str(db)) as con:
+        con.execute("DELETE FROM experiments WHERE assembly_name = ?", [assembly])
+        con.execute(
+            "INSERT INTO experiments (id, name, file, assembly_name, file_integrity) VALUES "
+            "(1, 'a', 'a.txt', ?, 'ok'), (2, 'b', 'b.txt', ?, 'unreadable'), "
+            "(3, 'c', 'c.txt', ?, NULL), (4, 'd', 'd.txt', ?, 'truncated')",
+            [assembly] * 4,
+        )
+        files = get_experiments(con, assembly)["file"].tolist()
+    assert files == ["a.txt", "c.txt", "d.txt"]
