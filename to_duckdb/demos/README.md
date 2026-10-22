@@ -225,6 +225,56 @@ python to_duckdb/demos/plot_magnet_fatigue.py --magnet M9Bitters \
 
 ---
 
+## archive_magnet_data.py
+
+Builds a `.tar.xz` of every data file recorded while a magnet was part of an
+assembly. The magnet's history comes from `assembly_magnets`; per assembly
+the window is `COALESCE(assembly_magnets.commissioned_at,
+assemblies.commissioned_at)` → `COALESCE(assembly_magnets.decommissioned_at,
+assemblies.decommissioned_at)`, where a NULL end means "until now" (bounds
+inclusive; commission dates read in `--db-tz`). Inside each window it
+collects the assembly's `experiments` (dated by the Europe/Paris timestamp
+in the pupitre filename) and live `overview_records` (`merged_into IS NULL`,
+dated by `t0` in UTC) with all files of their `sources_*` columns. Records
+whose date cannot be determined are excluded with a warning;
+`sources_hybrid_*`/`sources_*_runlog` files are skipped (no on-disk layout
+defined yet, see `../PLAN_archive_magnet_hybrid_runlog.md`).
+
+Archive members keep their path relative to the records root
+(`srv-data-install/<housing>/…txt`, `pbsurv/<housing>/<Overview|Fichiers_*>/…tdms`),
+so the archive extracts straight into a records tree. Each file is stored
+once even when several records reference it. Files missing on disk are
+listed and skipped; the script exits non-zero if none exist. Compression is
+xz (better than zstd on TDMS files, see `../PLAN_archive_magnet_data.md`),
+via the system `xz -T0` when available, else Python's single-threaded
+`lzma`. Two manifests are appended at the archive root:
+
+- `MANIFEST_<magnet>.md5` — `md5sum -c` format; after extracting, run
+  `md5sum -c MANIFEST_<magnet>.md5` to verify every file.
+- `MANIFEST_<magnet>.csv` — provenance, one row per (record, file):
+  `assembly, record_kind, record_name, source_type, path, size_bytes, md5,
+  status` (`archived`/`missing`).
+
+```bash
+python to_duckdb/demos/archive_magnet_data.py --magnet M10Bitters --dry-run
+python to_duckdb/demos/archive_magnet_data.py --magnet M19061901 \
+    --db to_duckdb/magnetdb.duckdb --output stage/M19061901.tar.xz
+tar -xJf stage/M19061901.tar.xz -C /path/to/records && \
+    (cd /path/to/records && md5sum -c MANIFEST_M19061901.md5)
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--magnet` | *(required)* | Magnet name (`magnets.name`) |
+| `--db` | `test-magnetdb.duckdb` | Target DuckDB file |
+| `--db-tz` | `UTC` | Timezone of `commissioned_at`/`decommissioned_at` in the DB |
+| `--records-base` | parent of python_magnetrun's `PUPITRE_DATA_DIR` | Root of the records tree |
+| `--output` | `<magnet>.tar.xz` | Output archive |
+| `--level` | `6` | xz compression preset (0–9) |
+| `--dry-run` | off | Print the selection and the CSV manifest to stdout; write no archive |
+
+---
+
 ## Building `Data/unmatched_users.csv`
 
 This file is a report of `EXPERIENCES_LOG` acronyms that `users_table_demo.py`
