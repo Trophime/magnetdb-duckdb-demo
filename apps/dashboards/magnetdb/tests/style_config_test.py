@@ -96,7 +96,7 @@ def test_apply_style_marker_symbol_without_every_shows_every_point():
 
 
 def test_resolve_field_override_unset_returns_none():
-    assert plot._resolve_field_override("SomeGroup", "SomeSensor") is None
+    assert plot._resolve_field_override("SomeGroup", "SomeSensor", plot.StyleConfig()) is None
 
 
 def test_resolve_file_type_key_pupitre_and_pigbrother():

@@ -10,7 +10,7 @@ die() {
 : "${RECORDS_MOUNT:=$HOME/LNCMIG-Data/records}"
 : "${DUCKDB_NAME:=magnetdb.duckdb}"
 : "${DUCKDB_DIR:=$HOME/duckdb}"
-: "${SUPERVISION_DATA_DIR:=$HOME/github/magnetdb-duckdb-demo/Data}"
+: "${SUPERVISION_DATA_DIR:=$HOME/duckdb/Data}"
 : "${DOCKER_REGISTRY:=}"
 : "${DOCKER_IMAGE:=trophime/magnetdb-dashboard:dev}"
 IMAGE_REF="${DOCKER_REGISTRY:+${DOCKER_REGISTRY}/}${DOCKER_IMAGE}"
@@ -66,6 +66,6 @@ docker run --rm \
     -e "MAGNETDB_RECORDS_DIR=/mnt/LNCMIG-Data/records" \
     -v "$DUCKDB_DIR:/data/duckdb" \
     -v "$RECORDS_MOUNT:/mnt/LNCMIG-Data/records" \
-    -v "$HOME/.config/magnetdb:/home/jovyan/.config/magnetdb" \
+    -v "$HOME/.config/magnetdb:/home/jovyan/.config/magnetdb:ro" \
     -p 8050:8050 \
     "$IMAGE_REF"

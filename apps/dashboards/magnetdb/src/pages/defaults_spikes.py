@@ -626,6 +626,7 @@ def update_groups(selected_record, selected_incident, selected_db, include_archi
     Input("ds-style-version", "data"),
     State("ds-group-entries", "data"),
     State({"type": "ds-dynamic-graph", "index": ALL}, "relayoutData"),
+    State("user-style", "data"),
 )
 def update_graphs(
     selected_record,
@@ -640,6 +641,7 @@ def update_graphs(
     _style_version,
     group_entries,
     all_relayout_data,
+    user_style,
 ):
     """Rebuild every group's figure from its checked sensors, centered on the selected incident.
 
@@ -674,6 +676,9 @@ def update_graphs(
         :func:`~magnetdb_analysis.get_overview_group_entries` mapping.
     all_relayout_data : list of dict
         Each graph's current ``relayoutData``, for zoom preservation.
+    user_style : dict or None
+        This browser's own style changes (``user-style`` store), layered over
+        the server style via :func:`~magnetdb_plot.merge_style_config`.
 
     Returns
     -------
@@ -757,6 +762,7 @@ def update_graphs(
         for filename in _data_files(regular_files, event_files, selected_incident)
     }
     group_entries = group_entries or {}
+    style_config = plot.merge_style_config(plot._STYLE_CONFIG, user_style)
     figures = []
 
     for sensor_id, sensor_values in zip(all_sensor_ids, all_sensor_values):
@@ -786,6 +792,7 @@ def update_graphs(
             group_name=group_name,
             event_files=event_files,
             record_t0_utc=record_t0_utc,
+            style_config=style_config,
         )
 
         # Trace names read "SUPERVISION - supervision:teb" (create_annotated_plot's

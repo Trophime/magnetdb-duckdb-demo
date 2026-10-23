@@ -1,6 +1,6 @@
 # Plan — `demos/archive_magnet_data.py`: per-magnet data archive
 
-Status: **proposed** (2026-10-18) — not yet approved/implemented.
+Status: **implemented** (2026-10-22).
 
 ## Goal
 
@@ -83,8 +83,10 @@ compression is worthwhile. Benchmark on local sample files
      falls in `[start, end]`.
    - Live overview records (`merged_into IS NULL`) of the assembly whose
      `t0` (UTC) falls in `[start, end]`.
-   - Records with an unparseable timestamp / NULL `t0` are kept with a
-     warning (they do belong to the assembly).
+   - Records with an unparseable timestamp / NULL `t0` cannot be placed in
+     the window → excluded with a warning. (None exist today: 0
+     unparseable `experiments.file`; the 37 NULL-`t0` overview rows in the
+     test DB all have `assembly_name IS NULL`.)
 3. **Path resolution** as in *Findings*; already-absolute stored paths used
    as-is; hybrid/runlog sources counted and reported as skipped. Each
    unique file archived once (a pupitre file is often both an experiment
@@ -149,11 +151,12 @@ compression is worthwhile. Benchmark on local sample files
   `decommissioned_at` means "until today".
 - Hybrid/runlog sources skipped with a warning for now; follow-up plan to
   be written.
-- Manifest with md5 checksums of archived files.
+- Manifest with md5 checksums of archived files: two files (`.md5` for
+  verification, `.csv` for provenance).
+- Records without a usable timestamp are excluded with a warning.
 
-## Assumptions / open questions
+## Assumptions
 
-- Two manifest files (`.md5` for verification, `.csv` for provenance) —
-  could be reduced to one.
 - Window bounds are inclusive.
-- Records without a usable timestamp are kept (with a warning), not dropped.
+- `overview_records.t0` is always UTC (its storage convention), independent
+  of `--db-tz`.

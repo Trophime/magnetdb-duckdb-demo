@@ -436,25 +436,51 @@ def _load_default_style_config() -> StyleConfig:
     return StyleConfig()
 
 
+# Server-side (site) style, loaded once and never written at runtime: per-user
+# changes live in the browser (`user-style` store) and are layered on top of
+# it via merge_style_config().
 _STYLE_CONFIG = _load_default_style_config()
-FILE_TYPE_STYLES = _STYLE_CONFIG.file_type_styles
-FIELD_STYLE_OVERRIDES = _STYLE_CONFIG.field_overrides
 
 
-def reload_style_config() -> None:
-    """Re-resolve the style config from disk and refresh the module-level globals.
+def merge_style_config(base: StyleConfig, user_data: dict | None) -> StyleConfig:
+    """Layer a user's style changes (the browser ``user-style`` store) over *base*.
 
-    Called by the style-editor modal's Save action so the running app picks up
-    changes immediately, without a restart.
+    Parameters
+    ----------
+    base : StyleConfig
+        Server-side style (bundled ``style.json`` and site override).
+    user_data : dict or None
+        Partial ``style.json``-shaped dict: source-type keys (e.g.
+        ``"pupitre"``) mapping to the properties to change, plus an optional
+        ``"field_overrides"`` mapping group names to per-sensor overrides.
+
+    Returns
+    -------
+    StyleConfig
+        *base* itself if *user_data* is empty; otherwise a new config where
+        each source-type style is updated property by property and each user
+        group in ``field_overrides`` replaces the base group as a whole.
+        Unknown source-type keys are ignored.
+
+    Raises
+    ------
+    TypeError, KeyError, AttributeError
+        If *user_data* is malformed (e.g. unknown style property, or a
+        non-dict where a dict is expected).
     """
-    global _STYLE_CONFIG, FILE_TYPE_STYLES, FIELD_STYLE_OVERRIDES
-    _STYLE_CONFIG = _load_default_style_config()
-    FILE_TYPE_STYLES = _STYLE_CONFIG.file_type_styles
-    FIELD_STYLE_OVERRIDES = _STYLE_CONFIG.field_overrides
+    if not user_data:
+        return base
+    data = base.to_dict()
+    for key, value in user_data.items():
+        if key == "field_overrides":
+            data["field_overrides"].update(value)
+        elif key in data:
+            data[key] = {**data[key], **value}
+    return StyleConfig.from_dict(data)
 
 
 def resolve_file_type_key(filename: str) -> str | None:
-    """Return the FILE_TYPE_STYLES key for *filename* ('pupitre' or a pigbrother mode).
+    """Return the :class:`FileTypeStyles` key for *filename* ('pupitre' or a pigbrother mode).
 
     Parameters
     ----------
@@ -477,14 +503,14 @@ def resolve_file_type_key(filename: str) -> str | None:
     return classify_pigbrother_file(filename)
 
 
-def _resolve_file_style(filename: str) -> TraceStyle | None:
-    """Return the FILE_TYPE_STYLES entry for *filename*, or None if unresolved.
+def _resolve_file_style(filename: str, config: StyleConfig) -> TraceStyle | None:
+    """Return *config*'s source-type style for *filename*, or None if unresolved.
 
     None (rather than a fallback style) lets callers keep Plotly's default
     per-trace color cycling for filenames that don't map to a known type,
     e.g. an unrecognised extension or a synthetic/composite name.
     """
-    return FILE_TYPE_STYLES.get(resolve_file_type_key(filename))
+    return config.file_type_styles.get(resolve_file_type_key(filename))
 
 
 def _short_file_label(filename: str) -> str:
@@ -496,9 +522,11 @@ def _short_file_label(filename: str) -> str:
     return f"{file_type.capitalize()} {dt_local:%d/%m %H:%M}"
 
 
-def _resolve_field_override(group_name: str, sensor: str) -> FieldStyleOverride | None:
-    """Return the FIELD_STYLE_OVERRIDES entry for (*group_name*, *sensor*), or None if unset."""
-    return FIELD_STYLE_OVERRIDES.get(group_name, {}).get(sensor)
+def _resolve_field_override(
+    group_name: str, sensor: str, config: StyleConfig
+) -> FieldStyleOverride | None:
+    """Return *config*'s field override for (*group_name*, *sensor*), or None if unset."""
+    return config.field_overrides.get(group_name, {}).get(sensor)
 
 
 def _apply_style(
@@ -571,7 +599,16 @@ def _display_x_series(df, x_col: str):
     return series_utc_to_local_naive(df[x_col]) if x_col == "timestamp" else df[x_col]
 
 
-def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", mrun=None, group_name: str = "") -> go.Figure:
+def create_plot(
+    df,
+    x_col: str,
+    y_cols: list,
+    method: str,
+    filename: str = "",
+    mrun=None,
+    group_name: str = "",
+    style_config: StyleConfig | None = None,
+) -> go.Figure:
     """Downsample *df* and build a single-file Plotly figure (Pupitre or PigBrother).
 
     Parameters
@@ -592,6 +629,10 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
         Used to resolve the y-axis symbol and unit.
     group_name : str, optional
         Data group, shown in the title.
+    style_config : StyleConfig, optional
+        Trace styles to use, typically the server style merged with the
+        user's own (see :func:`merge_style_config`). Defaults to the server
+        style alone.
 
     Returns
     -------
@@ -639,12 +680,14 @@ def create_plot(df, x_col: str, y_cols: list, method: str, filename: str = "", m
     fig = go.Figure()
 
     # 2b. Style (color/dash/width/alpha) selon le type de fichier
-    style = _resolve_file_style(filename)
+    if style_config is None:
+        style_config = _STYLE_CONFIG
+    style = _resolve_file_style(filename, style_config)
 
     # 3. Traitement robuste des colonnes (Gère 'Groupe/Capteur' ET 'Capteur')
     for sensor in y_cols:
         target_col = None
-        override = _resolve_field_override(group_name, sensor)
+        override = _resolve_field_override(group_name, sensor, style_config)
 
         # Convertit les valeurs de ce capteur vers l'unité de l'axe (target_unit)
         # si le groupe force une unité commune (GROUP_UNIT_OVERRIDES).
@@ -782,7 +825,7 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
         sensors = item['sensors']
         lag_val = item['lag']
         group_name = item.get('group_name', "")
-        style = _resolve_file_style(file)
+        style = _resolve_file_style(file, _STYLE_CONFIG)
 
         if df_raw is None or df_raw.empty or not sensors:
             continue
@@ -878,7 +921,7 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
 
                     # TRACER UNE COURBE NORMALE
                     else:
-                        override = _resolve_field_override(group_name, sensor)
+                        override = _resolve_field_override(group_name, sensor, _STYLE_CONFIG)
                         fig.add_trace(go.Scatter(
                             x=x_data,
                             y=sub_df[target_col],
@@ -914,7 +957,9 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
     return fig
 
 
-def _add_incident_overlays(fig: go.Figure, event_files: list, x_col: str, record_t0_utc) -> None:
+def _add_incident_overlays(
+    fig: go.Figure, event_files: list, x_col: str, record_t0_utc, style_config: StyleConfig
+) -> None:
     """Add one dashed full-height overlay line per incident file to *fig*, in place.
 
     Positions come from the filename alone (never from loading the incident
@@ -938,6 +983,8 @@ def _add_incident_overlays(fig: go.Figure, event_files: list, x_col: str, record
         silently (the caller is responsible for surfacing one warning).
     record_t0_utc : :class:`~pandas.Timestamp` or None
         Naive-UTC ``t=0`` reference, required only for ``x_col="t"``.
+    style_config : StyleConfig
+        Source-type styles giving each overlay line its color.
     """
     event_counters: dict[str, int] = {}
     for file in event_files:
@@ -972,7 +1019,7 @@ def _add_incident_overlays(fig: go.Figure, event_files: list, x_col: str, record
                 else:
                     hover = label
 
-        style = _resolve_file_style(file)
+        style = _resolve_file_style(file, style_config)
         color = style.color if style else "red"
 
         fig.add_shape(
@@ -1033,6 +1080,7 @@ def create_annotated_plot(
     group_name: str = "",
     event_files: list | None = None,
     record_t0_utc=None,
+    style_config: StyleConfig | None = None,
 ) -> go.Figure:
     """Single-subplot overlay of several files' data for one group.
 
@@ -1058,6 +1106,10 @@ def create_annotated_plot(
     record_t0_utc : :class:`~pandas.Timestamp`, optional
         Naive-UTC ``t=0`` reference for placing *event_files* when
         ``x_col="t"``; unused for ``x_col="timestamp"``.
+    style_config : StyleConfig, optional
+        Trace styles to use, typically the server style merged with the
+        user's own (see :func:`merge_style_config`). Defaults to the server
+        style alone.
 
     Returns
     -------
@@ -1071,6 +1123,8 @@ def create_annotated_plot(
         return go.Figure()
 
     ylabel, target_unit = annotated_axis_unit(files_data, group_name)
+    if style_config is None:
+        style_config = _STYLE_CONFIG
 
     fig = go.Figure()
     downsample_method = 'none' if (not method or method in ['raw data', 'raw', 'none']) else method
@@ -1084,7 +1138,7 @@ def create_annotated_plot(
         if df_raw is None or df_raw.empty or not sensors:
             continue
 
-        style = _resolve_file_style(file)
+        style = _resolve_file_style(file, style_config)
         file_label = _short_file_label(file)
 
         if downsample_method == 'none':
@@ -1116,7 +1170,7 @@ def create_annotated_plot(
                 _, sensor_unit = resolve_sensor_unit(mrun_obj, sensor, item.get('native_group', group_name))
             y_data = np.asarray(convert_values_to_unit(sub_df[target_col], sensor_unit, target_unit))
 
-            override = _resolve_field_override(group_name, sensor)
+            override = _resolve_field_override(group_name, sensor, style_config)
             fig.add_trace(go.Scatter(
                 x=x_data,
                 y=y_data,
@@ -1130,7 +1184,7 @@ def create_annotated_plot(
             ))
 
     if event_files:
-        _add_incident_overlays(fig, event_files, x_col, record_t0_utc)
+        _add_incident_overlays(fig, event_files, x_col, record_t0_utc, style_config)
 
     x_label_mapping = {'t': 't(s)', 'timestamp': 'Date / Time (local)'}
     fig.update_layout(

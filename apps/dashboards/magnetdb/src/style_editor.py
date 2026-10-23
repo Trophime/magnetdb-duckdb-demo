@@ -2,21 +2,31 @@
 
 Each page (`file_viewer.py`, `overview_records.py`) places one gear button per
 group block via :func:`gear_button`, one shared modal via
-:func:`modal_component`, and wires the open/save/reset/cancel callbacks once
-at import time via :func:`register_callbacks`, passing its own id prefix and a
-`context_fn` that resolves which raw sensor names and source-type keys are
-relevant to a given group in that page's current state.
+:func:`modal_component`, and wires the open/save/reset/reset-all/export/
+import/cancel callbacks once at import time via :func:`register_callbacks`,
+passing its own id prefix and a `context_fn` that resolves which raw sensor
+names and source-type keys are relevant to a given group in that page's
+current state.
+
+Changes are never written to the server: they go to the app-wide
+``user-style`` store (browser localStorage, see ``magnetdb_app.py``), a
+partial ``style.json``-shaped dict layered over the server style by
+:func:`magnetdb_plot.merge_style_config`.
 """
+
+import base64
+import copy
+import json
 
 import dash
 import dash_bootstrap_components as dbc
 import i18n
 import magnetdb_plot as plot
-from dash import ALL, MATCH, Input, Output, State, ctx, dcc, html
+from dash import ALL, MATCH, Input, Output, State, ctx, dcc, html, no_update
 from dash.exceptions import PreventUpdate
 
 # Plotly/d3's default qualitative "category10" palette — the same 10 colors
-# FILE_TYPE_STYLES' six source-type defaults are already drawn from, plus the
+# FileTypeStyles' source-type defaults are already drawn from, plus the
 # four remaining ones, so the swatch picker stays visually consistent with
 # colors already used elsewhere in the dashboard.
 _COLOR_PALETTE = [
@@ -121,15 +131,40 @@ def modal_component(id_prefix: str):
         [
             dcc.Store(id=f"{id_prefix}-style-modal-group"),
             dcc.Store(id=f"{id_prefix}-style-version", data=0),
+            dcc.Download(id=f"{id_prefix}-style-export"),
             dbc.Modal(
                 [
                     dbc.ModalHeader(dbc.ModalTitle(id=f"{id_prefix}-style-modal-title")),
-                    dbc.ModalBody(html.Div(id=f"{id_prefix}-style-modal-body")),
+                    dbc.ModalBody(
+                        [
+                            html.Div(id=f"{id_prefix}-style-import-error"),
+                            html.Div(id=f"{id_prefix}-style-modal-body"),
+                        ]
+                    ),
                     dbc.ModalFooter(
                         [
+                            dcc.ConfirmDialogProvider(
+                                dbc.Button(
+                                    "Reset all", color="danger", outline=True, n_clicks=0,
+                                ),
+                                id=f"{id_prefix}-style-reset-all",
+                                message=(
+                                    "Discard all your style changes? "
+                                    "Export them first to keep a copy."
+                                ),
+                            ),
                             dbc.Button(
                                 "Reset", id=f"{id_prefix}-style-reset-btn",
                                 color="secondary", outline=True, n_clicks=0,
+                            ),
+                            dbc.Button(
+                                "Export", id=f"{id_prefix}-style-export-btn",
+                                color="secondary", outline=True, n_clicks=0,
+                            ),
+                            dcc.Upload(
+                                dbc.Button("Import", color="secondary", outline=True),
+                                id=f"{id_prefix}-style-import",
+                                accept=".json,application/json",
                             ),
                             dbc.Button(
                                 "Cancel", id=f"{id_prefix}-style-cancel-btn",
@@ -188,9 +223,11 @@ def _color_cell(id_prefix: str, sensor: str, color: str):
     )
 
 
-def _field_row(id_prefix: str, group_name: str, sensor: str, source_key: str | None):
-    style = plot.FILE_TYPE_STYLES.get(source_key)
-    override = plot._resolve_field_override(group_name, sensor)
+def _field_row(
+    id_prefix: str, group_name: str, sensor: str, source_key: str | None, config: plot.StyleConfig
+):
+    style = config.file_type_styles.get(source_key)
+    override = plot._resolve_field_override(group_name, sensor, config)
 
     color = (override.color if override else None) or (style.color if style else "#1f77b4")
     dash_value = (override.dash if override else None) or (style.dash if style else "solid")
@@ -229,8 +266,8 @@ def _field_row(id_prefix: str, group_name: str, sensor: str, source_key: str | N
     )
 
 
-def _source_opacity_row(id_prefix: str, source_key: str):
-    style = plot.FILE_TYPE_STYLES.get(source_key)
+def _source_opacity_row(id_prefix: str, source_key: str, config: plot.StyleConfig):
+    style = config.file_type_styles.get(source_key)
     opacity = style.opacity if style else 1.0
     return html.Div(
         [
@@ -245,7 +282,7 @@ def _source_opacity_row(id_prefix: str, source_key: str):
     )
 
 
-def _build_modal_body(id_prefix: str, group_name: str, field_rows, source_keys):
+def _build_modal_body(id_prefix: str, group_name: str, field_rows, source_keys, config):
     field_rows = list(dict(field_rows).items())
     if not field_rows:
         return html.Div("No fields available for this group.")
@@ -261,28 +298,63 @@ def _build_modal_body(id_prefix: str, group_name: str, field_rows, source_keys):
         ],
         style={"display": "flex", "gap": "8px", "marginBottom": "8px"},
     )
-    rows = [_field_row(id_prefix, group_name, sensor, source_key) for sensor, source_key in field_rows]
+    rows = [
+        _field_row(id_prefix, group_name, sensor, source_key, config)
+        for sensor, source_key in field_rows
+    ]
     sections = [html.H6(f"Field styles — {i18n._(group_name)}"), header, *rows]
 
     if source_keys:
         sections += [
             html.Hr(),
             html.H6("Opacity by source"),
-            *[_source_opacity_row(id_prefix, key) for key in source_keys],
+            *[_source_opacity_row(id_prefix, key, config) for key in source_keys],
         ]
     return html.Div(sections)
 
 
-def _updated_file_type_styles(opacity_map: dict) -> plot.FileTypeStyles:
-    data = plot.FILE_TYPE_STYLES.to_dict()
+def _saved_user_layer(user_layer, group_name: str, overrides: dict, opacity_map: dict) -> dict:
+    """Return a copy of *user_layer* with *group_name*'s overrides replaced and source opacities set."""
+    saved = copy.deepcopy(user_layer or {})
+    saved.setdefault("field_overrides", {})[group_name] = {
+        sensor: override.to_dict() for sensor, override in overrides.items()
+    }
     for source_key, opacity in opacity_map.items():
-        if source_key in data and opacity is not None:
-            data[source_key]["opacity"] = opacity
-    return plot.FileTypeStyles.from_dict(data)
+        if opacity is not None:
+            saved[source_key] = {**saved.get(source_key, {}), "opacity": opacity}
+    return saved
+
+
+def _reset_group(user_layer, group_name: str) -> dict:
+    """Return a copy of *user_layer* without *group_name*'s field overrides."""
+    reset = copy.deepcopy(user_layer or {})
+    reset.get("field_overrides", {}).pop(group_name, None)
+    return reset
+
+
+def _export_json(user_layer) -> str:
+    """Return *user_layer* as the content of the exported ``magnetdb-style.json`` file."""
+    return json.dumps(user_layer or {}, indent=2)
+
+
+def _parse_import(contents: str) -> dict:
+    """Decode a ``dcc.Upload`` data URL into a validated user layer; raise ValueError if malformed."""
+    try:
+        data = json.loads(base64.b64decode(contents.split(",", 1)[1]))
+        if not isinstance(data, dict):
+            raise ValueError("expected a JSON object")
+        plot.merge_style_config(plot.StyleConfig(), data)
+    except (ValueError, TypeError, KeyError, AttributeError, IndexError) as exc:
+        raise ValueError(f"Not a valid style file: {exc}") from exc
+    return data
 
 
 def register_callbacks(id_prefix: str, context_fn, extra_states: list | None = None):
-    """Register the open/save/reset/cancel callbacks for one page's style editor.
+    """Register the open/save/reset/reset-all/export/import/cancel callbacks for one page's style editor.
+
+    Save, Reset, Reset all and Import write the browser's ``user-style``
+    store and bump the page's ``{id_prefix}-style-version`` store, which the
+    page's figure callback uses as its redraw trigger.
 
     Parameters
     ----------
@@ -304,18 +376,21 @@ def register_callbacks(id_prefix: str, context_fn, extra_states: list | None = N
         Output(f"{id_prefix}-style-modal-group", "data"),
         Output(f"{id_prefix}-style-modal-body", "children"),
         Output(f"{id_prefix}-style-modal-title", "children"),
+        Output(f"{id_prefix}-style-import-error", "children"),
         Input({"type": f"{id_prefix}-style-gear", "index": ALL}, "n_clicks"),
+        State("user-style", "data"),
         *extra_states,
         prevent_initial_call=True,
     )
-    def _open_style_modal(all_clicks, *extra_values):
+    def _open_style_modal(all_clicks, user_style, *extra_values):
         triggered = ctx.triggered_id
         if not isinstance(triggered, dict) or not ctx.triggered or not ctx.triggered[0]["value"]:
             raise PreventUpdate
         group_name = triggered["index"]
         field_rows, source_keys = context_fn(group_name, *extra_values)
-        body = _build_modal_body(id_prefix, group_name, field_rows, source_keys)
-        return True, group_name, body, f"Style — {i18n._(group_name)}"
+        config = plot.merge_style_config(plot._STYLE_CONFIG, user_style)
+        body = _build_modal_body(id_prefix, group_name, field_rows, source_keys, config)
+        return True, group_name, body, f"Style — {i18n._(group_name)}", None
 
     @dash.callback(
         Output({"type": f"{id_prefix}-field-color", "sensor": MATCH}, "value"),
@@ -341,6 +416,7 @@ def register_callbacks(id_prefix: str, context_fn, extra_states: list | None = N
     @dash.callback(
         Output(f"{id_prefix}-style-modal", "is_open", allow_duplicate=True),
         Output(f"{id_prefix}-style-version", "data", allow_duplicate=True),
+        Output("user-style", "data", allow_duplicate=True),
         Input(f"{id_prefix}-style-save-btn", "n_clicks"),
         State(f"{id_prefix}-style-modal-group", "data"),
         State({"type": f"{id_prefix}-field-color", "sensor": ALL}, "value"),
@@ -356,13 +432,14 @@ def register_callbacks(id_prefix: str, context_fn, extra_states: list | None = N
         State({"type": f"{id_prefix}-source-opacity", "source": ALL}, "value"),
         State({"type": f"{id_prefix}-source-opacity", "source": ALL}, "id"),
         State(f"{id_prefix}-style-version", "data"),
+        State("user-style", "data"),
         prevent_initial_call=True,
     )
     def _save_style(
         n_clicks, group_name,
         color_vals, color_ids, dash_vals, dash_ids, width_vals, width_ids,
         marker_vals, marker_ids, every_vals, every_ids,
-        opacity_vals, opacity_ids, version,
+        opacity_vals, opacity_ids, version, user_style,
     ):
         if not n_clicks or not group_name:
             raise PreventUpdate
@@ -374,8 +451,7 @@ def register_callbacks(id_prefix: str, context_fn, extra_states: list | None = N
         every_map = dict(zip([i["sensor"] for i in every_ids], every_vals))
         opacity_map = dict(zip([i["source"] for i in opacity_ids], opacity_vals))
 
-        field_overrides = dict(plot.FIELD_STYLE_OVERRIDES)
-        field_overrides[group_name] = {
+        overrides = {
             sensor: plot.FieldStyleOverride(
                 color=color_map.get(sensor),
                 dash=dash_map.get(sensor),
@@ -386,33 +462,65 @@ def register_callbacks(id_prefix: str, context_fn, extra_states: list | None = N
             for sensor in color_map
         }
 
-        config = plot.StyleConfig(
-            file_type_styles=_updated_file_type_styles(opacity_map),
-            field_overrides=field_overrides,
-        )
-        plot.save_style_config(config, plot.USER_STYLE_CONFIG_PATH)
-        plot.reload_style_config()
-
-        return False, (version or 0) + 1
+        saved = _saved_user_layer(user_style, group_name, overrides, opacity_map)
+        return False, (version or 0) + 1, saved
 
     @dash.callback(
         Output(f"{id_prefix}-style-modal", "is_open", allow_duplicate=True),
         Output(f"{id_prefix}-style-version", "data", allow_duplicate=True),
+        Output("user-style", "data", allow_duplicate=True),
         Input(f"{id_prefix}-style-reset-btn", "n_clicks"),
         State(f"{id_prefix}-style-modal-group", "data"),
         State(f"{id_prefix}-style-version", "data"),
+        State("user-style", "data"),
         prevent_initial_call=True,
     )
-    def _reset_style_group(n_clicks, group_name, version):
+    def _reset_style_group(n_clicks, group_name, version, user_style):
         if not n_clicks or not group_name:
             raise PreventUpdate
-        if group_name in plot.FIELD_STYLE_OVERRIDES:
-            field_overrides = {
-                k: v for k, v in plot.FIELD_STYLE_OVERRIDES.items() if k != group_name
-            }
-            config = plot.StyleConfig(
-                file_type_styles=plot.FILE_TYPE_STYLES, field_overrides=field_overrides
-            )
-            plot.save_style_config(config, plot.USER_STYLE_CONFIG_PATH)
-            plot.reload_style_config()
-        return False, (version or 0) + 1
+        return False, (version or 0) + 1, _reset_group(user_style, group_name)
+
+    @dash.callback(
+        Output(f"{id_prefix}-style-modal", "is_open", allow_duplicate=True),
+        Output(f"{id_prefix}-style-version", "data", allow_duplicate=True),
+        Output("user-style", "data", allow_duplicate=True),
+        Input(f"{id_prefix}-style-reset-all", "submit_n_clicks"),
+        State(f"{id_prefix}-style-version", "data"),
+        prevent_initial_call=True,
+    )
+    def _reset_all_styles(submit_n_clicks, version):
+        if not submit_n_clicks:
+            raise PreventUpdate
+        return False, (version or 0) + 1, {}
+
+    @dash.callback(
+        Output(f"{id_prefix}-style-export", "data"),
+        Input(f"{id_prefix}-style-export-btn", "n_clicks"),
+        State("user-style", "data"),
+        prevent_initial_call=True,
+    )
+    def _export_styles(n_clicks, user_style):
+        if not n_clicks:
+            raise PreventUpdate
+        return dcc.send_string(_export_json(user_style), "magnetdb-style.json")
+
+    @dash.callback(
+        Output(f"{id_prefix}-style-modal", "is_open", allow_duplicate=True),
+        Output(f"{id_prefix}-style-version", "data", allow_duplicate=True),
+        Output("user-style", "data", allow_duplicate=True),
+        Output(f"{id_prefix}-style-import-error", "children", allow_duplicate=True),
+        # Cleared after each upload so picking the same file again re-triggers.
+        Output(f"{id_prefix}-style-import", "contents"),
+        Input(f"{id_prefix}-style-import", "contents"),
+        State(f"{id_prefix}-style-version", "data"),
+        prevent_initial_call=True,
+    )
+    def _import_styles(contents, version):
+        if not contents:
+            raise PreventUpdate
+        try:
+            imported = _parse_import(contents)
+        except ValueError as exc:
+            alert = dbc.Alert(str(exc), color="danger", dismissable=True)
+            return no_update, no_update, no_update, alert, None
+        return False, (version or 0) + 1, imported, None, None
