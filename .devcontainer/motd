@@ -1,13 +1,27 @@
-Welcome to M1S2 Hifimagnet projects development environment!
+Welcome to the MagnetDB duckdb demonstrator development environment!
 
-Base image: docker.io/trophime/magnettools:trixie
+Base image: debian:trixie (no MagnetTools: hoop-stress commands unavailable)
 
 Available tools:
   - Python with scientific computing libraries
   - Jupyter notebooks (Voila on port 8866)
 
-Workspace: /workspaces/2026-m1-hifimagnet
-Datasets: /LNCMIG-Data/records
+Workspace: /workspaces/magnetdb-duckdb-demo
+Datasets:  /mnt/LNCMIG-Data/records  (host: ~/magnetdb-duckdb-data/records)
+DuckDB:    /data/duckdb              (host: ~/magnetdb-duckdb-data/duckdb)
+CSV data:  /workspaces/magnetdb-duckdb-demo/Data  (repo Data/, not in git)
+           SUPERVISION: Data/bdd.csv
+
+Data needed (ask LNCMI staff for it):
+  - Data-csv.tgz      -> repo root:            tar -xzf Data-csv.tgz
+                         (CSV data incl. SUPERVISION Data/bdd.csv)
+  - <name>.duckdb     -> host ~/magnetdb-duckdb-data/duckdb   (/data/duckdb here)
+  - <magnet>.tar.xz   -> host ~/magnetdb-duckdb-data/records  (/mnt/LNCMIG-Data/records here)
+                         tar -xJf <magnet>.tar.xz -C ~/magnetdb-duckdb-data/records
+Files added later appear here immediately, no rebuild needed.
 
 !!! Do not forget to start the python virtualenv !!!:
-source .venv/bin/activate
+source /home/myuser/.venvs/magnetdb/bin/activate
+(Debian python3, isolated venv: no system site-packages)
+
+The workspace .venv belongs to the host: do not use it here.

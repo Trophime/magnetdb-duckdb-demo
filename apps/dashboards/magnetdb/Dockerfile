@@ -1,65 +1,49 @@
 # ---- Dockerfile ----
-# NOTE: build context must be the repo root, since this image needs the
-# python_magnetrun / python_magnetcooling git submodules alongside it:
+# Build context must be the repo root (needs the python_magnetcooling /
+# python_magnetrun submodules):
 #   docker build -f apps/dashboards/magnetdb/Dockerfile -t magnetdb-dashboard .
-ARG BASE_IMAGE=trophime/magnettools:trixie
+ARG BASE_IMAGE=python:3.13-slim-trixie
 FROM ${BASE_IMAGE}
 
-# get the default from BASE_IMAGE (trophime/magnetdb)
-ARG USERNAME=jovyan
-ARG USER_UID=1000
-ARG USER_GID=100
+ARG APP_UID=1000
+ARG APP_GID=100
 
-# The base image may already default to a non-root user; regain root for
-# package installs and user/group administration below.
-USER root
+COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /uvx /bin/
 
-# Keep Python from writing .pyc files / buffering stdout (cleaner logs)
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+# git: python_magnetrun pulls nptdms from a git URL
+RUN apt-get update && apt-get install -y --no-install-recommends git git-lfs \
+    && rm -rf /var/lib/apt/lists/*
 
-# System deps only if needed (e.g. for pandas/numpy wheels on slim images)
-# Uncomment if you hit build errors on numpy/pandas:
-# RUN apt-get update && apt-get install -y --no-install-recommends \
-#     build-essential \
-#     && rm -rf /var/lib/apt/lists/*
+# No named user: the app only needs a writable $HOME (~/.config/magnetdb,
+# matplotlib cache); 1777 so any --user override still works
+ENV HOME=/home/app \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    UV_NO_CACHE=1 \
+    UV_PYTHON_DOWNLOADS=never \
+    VIRTUAL_ENV=/app/venv \
+    PATH="/app/venv/bin:$PATH"
+RUN mkdir -p /home/app && chmod 1777 /home/app
 
-# Create group/user first so the venv and all installs are owned by the app user
-RUN if ! getent group "${USERNAME}" > /dev/null 2>&1; then \
-        groupadd --non-unique --gid "${USER_GID}" "${USERNAME}"; \
-    fi && \
-    if ! id "${USERNAME}" > /dev/null 2>&1; then \
-        useradd --non-unique --uid "${USER_UID}" --gid "${USER_GID}" --create-home "${USERNAME}"; \
-    fi && \
-    mkdir -p /app && chown "${USER_UID}:${USER_GID}" /app
-
-USER ${USERNAME}
 WORKDIR /app
 
-# venv owned by the app user; pip and egg_info writes succeed without privilege issues
-RUN python3 -m venv /app/venv
-ENV PATH="/app/venv/bin:$PATH"
+# Isolated venv (no system site-packages): only what is installed below is visible
+RUN uv venv --python /usr/local/bin/python3 /app/venv
 
-# Install deps first so Docker caches this layer when only app code changes
-COPY --chown=${USERNAME}:${USERNAME} apps/dashboards/magnetdb/pyproject.toml .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir . gunicorn
+# magnetcooling listed explicitly so magnetrun's python_magnetcooling[fitting]
+# dep resolves to the local submodule instead of PyPI
+COPY apps/dashboards/magnetdb/pyproject.toml ./dashboard/
+COPY python_magnetcooling/ ./python_magnetcooling/
+COPY python_magnetrun/ ./python_magnetrun/
+RUN uv pip install ./dashboard gunicorn \
+    "./python_magnetcooling[fitting]" \
+    "./python_magnetrun[signal,dash,hybrid]"
 
-# python_magnetrun depends on python_magnetcooling[fitting]; install it first
-# from the local submodule so python_magnetrun's install doesn't try (and fail)
-# to fetch it from PyPI.
-COPY --chown=${USERNAME}:${USERNAME} python_magnetcooling/ ./python_magnetcooling/
-RUN pip install --no-cache-dir "./python_magnetcooling[fitting]"
-
-COPY --chown=${USERNAME}:${USERNAME} python_magnetrun/ ./python_magnetrun/
-RUN pip install --no-cache-dir "./python_magnetrun[signal,dash,hybrid]"
-
-# Now copy the actual app code
-COPY --chown=${USERNAME}:${USERNAME} apps/dashboards/magnetdb/src/ ./src/
+COPY apps/dashboards/magnetdb/src/ ./src/
+COPY --chmod=755 apps/dashboards/magnetdb/entrypoint.sh ./src/
 WORKDIR /app/src
 
-COPY --chown=${USERNAME}:${USERNAME} apps/dashboards/magnetdb/entrypoint.sh .
-RUN chmod +x entrypoint.sh
+USER ${APP_UID}:${APP_GID}
 
 ENV PORT=8050 \
     WORKERS=1 \
@@ -69,10 +53,8 @@ ENV PORT=8050 \
 EXPOSE 8050
 
 # MAGNETDB_DB_PATH and MAGNETDB_RECORDS_DIR must be supplied at `docker run`
-# time (-e MAGNETDB_DB_PATH=... -v host/duckdb:...  -v host/records:/mnt/...)
-# since the duckdb file and the records tree are data, not image content.
-# PORT, WORKERS, THREADS, and TIMEOUT are also runtime-overridable via -e,
-# e.g. -e WORKERS=3 -e THREADS=2; defaults above match prior fixed values.
+# time since the duckdb file and the records tree are data, not image content
+# (see README). PORT, WORKERS, THREADS, and TIMEOUT are runtime-overridable via -e.
 
 # entrypoint.sh execs gunicorn so it stays PID 1 and receives SIGTERM directly
 ENTRYPOINT ["./entrypoint.sh"]

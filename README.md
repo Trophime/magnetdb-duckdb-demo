@@ -25,19 +25,37 @@ isolate the DuckDB-based tooling and demo apps.
 
 ## Getting started
 
-This repo is set up as a VS Code dev container.
+This repo ships two VS Code dev containers (*Reopen in Container* asks which one):
+
+| Dev container | For | MagnetTools | Data |
+|---|---|---|---|
+| `.devcontainer/devcontainer.json` — "MagnetDB duckdb demonstrator (no magnettools)" | students, interns | no (hoop-stress commands unavailable) | provided by LNCMI staff, see below |
+| `.devcontainer/local/devcontainer.json` — "Magnet DuckDB Dashboard demo (LNCMI, local mount)" | LNCMI staff | yes, from the local `magnettools-db:trixie-1.2.6` image | LNCMI records (rclone mount), `~/duckdb` |
+
+**Windows:** install WSL2 (Ubuntu), clone the repo *inside* WSL and open it
+from there (`code .` in the WSL shell). The dev containers need a Linux or
+macOS host shell; a clone in a Windows folder will not work.
 
 ```bash
+git clone --recurse-submodules https://github.com/Trophime/magnetdb-duckdb-demo.git
+# or, in an existing clone:
 git submodule update --init --recursive
 ```
 
-Then reopen the folder in the dev container, or run the setup script
-manually:
+### Data for the student dev container
 
-```bash
-./.devcontainer/setup-basic.sh
-source .venv/bin/activate
-```
+Ask LNCMI staff for:
+
+- `Data-csv.tgz` — CSV data, including SUPERVISION `Data/bdd.csv`;
+  extract it at the repo root: `tar -xzf Data-csv.tgz`
+- a `.duckdb` file → `~/magnetdb-duckdb-data/duckdb/`
+- records archives `<magnet>.tar.xz` →
+  `tar -xJf <magnet>.tar.xz -C ~/magnetdb-duckdb-data/records`
+
+Files added later show up in the running container immediately; no rebuild needed.
+
+The container creates its venv in `/home/myuser/.venvs/magnetdb`
+(`.devcontainer/setup-uv.sh`); see the welcome message for details.
 
 For the database CLI and schema reference, see
 [to_duckdb/README.md](to_duckdb/README.md).

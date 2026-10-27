@@ -11,7 +11,7 @@ From the repo root, the quickest path is the devcontainer setup script,
 which initializes submodules and creates a venv with everything installed:
 
 ```bash
-.devcontainer/setup-basic.sh
+.devcontainer/setup-uv.sh
 source .venv/bin/activate
 ```
 
@@ -23,9 +23,6 @@ pip install "./python_magnetcooling[fitting]"
 pip install "./python_magnetrun[signal,dash,hybrid]"
 pip install "./apps/dashboards/magnetdb[test]"
 ```
-
-See [pyproject.toml](pyproject.toml) for notes on the `magnettools`
-dependency (Debian package vs. local source build).
 
 > [!IMPORTANT] This setup is intended for development and interactive use on Debian-based systems or WSL only.
 >  For production deployment, consider using the Docker setup described below.
@@ -90,7 +87,7 @@ share them, and **Reset all** to drop them. See [PLOT_STYLE.md](PLOT_STYLE.md).
 When running in Docker, `~/.config/magnetdb/` resolves inside the
 container (the app user's home there), so a host override only takes
 effect if you mount it in, read-only, e.g.
-`-v ~/.config/magnetdb:/home/jovyan/.config/magnetdb:ro` — see the `docker run`
+`-v ~/.config/magnetdb:/home/app/.config/magnetdb:ro` — see the `docker run`
 example below, which includes this mount.
 
 The language and database preferences are browser cookies, not files, so
@@ -134,14 +131,13 @@ The build accepts these `--build-arg` overrides:
 
 | Arg | Default | Purpose |
 |---|---|---|
-| `BASE_IMAGE` | `trophime/magnettools:trixie` | Base image to build from |
-| `USERNAME` | `jovyan` | App user created in the image |
-| `USER_UID` | `1000` | UID for that user |
-| `USER_GID` | `100` | GID for that user |
+| `BASE_IMAGE` | `python:3.13-slim-trixie` | Base image to build from |
+| `APP_UID` | `1000` | UID the app runs as (no named user; `HOME=/home/app`) |
+| `APP_GID` | `100` | GID the app runs as |
 
 ```bash
 docker build -f apps/dashboards/magnetdb/Dockerfile \
-    --build-arg BASE_IMAGE=trophime/magnettools:bookworm \
+    --build-arg BASE_IMAGE=python:3.14-slim-trixie \
     -t magnetdb-dashboard .
 ```
 
@@ -157,7 +153,7 @@ docker run \
     -e MAGNETDB_RECORDS_DIR=/data/records \
     -v /path/to/to_duckdb:/data/duckdb \
     -v /path/to/records:/data/records \
-    -v ~/.config/magnetdb:/home/jovyan/.config/magnetdb:ro \
+    -v ~/.config/magnetdb:/home/app/.config/magnetdb:ro \
     -p 8050:8050 \
     magnetdb-dashboard
 ```

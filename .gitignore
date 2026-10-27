@@ -107,6 +107,7 @@ celerybeat.pid
 # Environments
 .env
 .venv
+.venv-systempackage
 env/
 venv/
 .venv311/

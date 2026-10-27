@@ -40,3 +40,6 @@ docs/_build/
 !README.md
 stage/
 to_duckdb/
+
+# Local environment (direnv)
+**/.envrc

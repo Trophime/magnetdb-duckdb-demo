@@ -1,12 +1,33 @@
 {
-  "name": "M1S2 Hifimagnet projects (local mount)",
+  "name": "Magnet DuckDB Dashboard demo (LNCMI, local mount)",
   "build": {
     "dockerfile": "../Dockerfile",
     "context": "..",
+    "target": "with-magnettools",
     "args": {
-      "BASE_IMAGE": "trophime/magnettools:trixie"
+      "BASE_IMAGE": "debian:trixie",
+      "MAGNETTOOLS_IMAGE": "magnettools-db:trixie-1.2.6"
     }
   },
+
+  // venvs live outside the workspace so they never mix with the host's .venv;
+  // Debian's python3 (3.13): every dependency has a cp313 wheel
+  "containerEnv": {
+    "VENV_DIR": "/home/myuser/.venvs/magnetdb",
+    "VENV_PYTHON": "/usr/bin/python3",
+    // same data layout as scripts/run_docker.sh
+    "MAGNETDB_DB_PATH": "/data/duckdb/${localEnv:DUCKDB_NAME:magnetdb.duckdb}",
+    "MAGNETDB_DB_DIR": "/data/duckdb",
+    "MAGNETDB_RECORDS_DIR": "/mnt/LNCMIG-Data/records",
+    "MAGNETDB_SUPERVISION_BDD_CSV": "${containerWorkspaceFolder}/Data/bdd.csv",
+    // host ~/.config/python_magnetrun/data_dirs.json holds host paths: not mounted
+    "MAGNETRUN_PUPITRE_DATA_DIR": "/mnt/LNCMIG-Data/records/srv-data-install",
+    "MAGNETRUN_PIGBROTHER_DATA_DIR": "/mnt/LNCMIG-Data/records/pbsurv",
+    "MAGNETRUN_HYBRID_DATA_DIR": "/mnt/LNCMIG-Data/records/CEA"
+  },
+
+  // runs on the host: checks records (python_magnetrun setup) and duckdb exist
+  "initializeCommand": "bash \"${localWorkspaceFolder}/.devcontainer/check-host-data.sh\"",
 
   "runArgs": [
     "--cap-add=SYS_PTRACE",
@@ -24,7 +45,9 @@
 
   "mounts": [
     "source=${localEnv:HOME}/LNCMIG-Data/records,target=/mnt/LNCMIG-Data/records,type=bind,consistency=cached",
-    "source=${localEnv:HOME}/github/hifimagnet-projects,target=/home/myuser/hifimagnet-projects,type=bind,consistency=cached"
+    "source=${localEnv:HOME}/github/hifimagnet-projects,target=/home/myuser/hifimagnet-projects,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/duckdb,target=/data/duckdb,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.config/magnetdb,target=/home/myuser/.config/magnetdb,type=bind,readonly"
   ],
 
   "customizations": {
@@ -34,13 +57,13 @@
         "ms-toolsai.jupyter"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python"
+        "python.defaultInterpreterPath": "/home/myuser/.venvs/magnetdb/bin/python"
       }
     }
   },
 
-  "postCreateCommand": "chmod +x .devcontainer/setup-basic.sh && ./.devcontainer/setup-basic.sh",
-  "postStartCommand": "[ -d .venv ] || (chmod +x .devcontainer/setup-basic.sh && ./.devcontainer/setup-basic.sh)",
+  "postCreateCommand": "chmod +x .devcontainer/setup-uv.sh && ./.devcontainer/setup-uv.sh",
+  "postStartCommand": "[ -d \"$VENV_DIR\" ] || (chmod +x .devcontainer/setup-uv.sh && ./.devcontainer/setup-uv.sh)",
 
   // Add a remote user (see Dockerfile) 
   // and use it as the default user. On Linux, the container user's GID/UIDs
@@ -50,8 +73,9 @@
   // If you change the user in the Dockerfile, make sure to update this value.
   "remoteUser": "myuser",
 
-  "forwardPorts": [8866],
-  "portsAttributes": {
-    "8866": { "label": "Voila App" }
-  }
+  //"forwardPorts": [8866, 8050],
+  //"portsAttributes": {
+  //  "8866": { "label": "Voila App" },
+  //  "8050": { "label": "MagnetDB Dashboard" }
+  //}
 }

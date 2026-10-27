@@ -7,17 +7,23 @@
 #
 # Install with:  pip install .[test,notebook,cli]
 #
-# ── magnettools ────────────────────────────────────────────────────────────
-# magnettools is a pybind11 C++ extension. Two installation paths are
-# supported:
+# ── magnettools (optional) ─────────────────────────────────────────────────
+# magnettools is a pybind11 C++ extension, needed only by the hoop-stress
+# computations (stress_map.py, `magnetdb.py hoop-stress ...`); everything
+# else works without it. It is not on PyPI, hence not declared below.
+# Three installation paths are supported:
 #
-# Option A — Debian package (no build required, recommended for most users):
-#   The Debian package python3-magnettools is already installed at system
-#   level. Create the venv WITH --system-site-packages so Python picks it up:
+# Option A — magnettools-db image (what the devcontainer does):
+#   install libmagnettools1 from the image's local apt repository
+#   (/opt/magnettools/debs), then the wheel matching your Python:
+#     pip install /opt/magnettools/wheels/magnettools-*-cp3XX-*.whl
+#
+# Option B — Debian package python3-magnettools (Debian's python3 only).
+#   Create the venv WITH --system-site-packages so Python picks it up:
 #     python3 -m venv --system-site-packages venv
 #     pip install .[test,notebook,cli]
 #
-# Option B — Local source build from ../my-magnettools/Python:
+# Option C — Local source build from ../my-magnettools/Python:
 #   Requires the C++ dev headers first (one-time, needs sudo):
 #     sudo apt install libmagnettools-dev
 #   Then install it separately into any venv:

@@ -1,7 +1,36 @@
 #!/bin/bash
 set -euo pipefail
 
-echo "⚡ Starting UV-powered Isolated Setup..."
+# Usage: .devcontainer/setup-uv.sh [--system-site-packages]
+#
+#   (default)               isolated venv in ${VENV_DIR:-.venv}, on
+#                           ${VENV_PYTHON:-3.14} (a version or an interpreter
+#                           path, passed to `uv venv --python`); installs the
+#                           magnettools wheel when the magnettools-db files
+#                           are present (devcontainer)
+#   --system-site-packages  venv in ${VENV_DIR:-.venv}-systempackage on
+#                           /usr/bin/python3 with system site-packages
+#                           (python3-magnettools in the devcontainer)
+#
+# The devcontainer sets VENV_DIR outside the workspace, so host and container
+# venvs never mix, and VENV_PYTHON=/usr/bin/python3 (Debian's 3.13).
+
+SYSTEM_SITE=false
+case "${1:-}" in
+    "") ;;
+    --system-site-packages) SYSTEM_SITE=true ;;
+    *)
+        echo "Usage: $0 [--system-site-packages]" >&2
+        exit 1
+        ;;
+esac
+
+VENV="${VENV_DIR:-.venv}"
+if $SYSTEM_SITE; then
+    VENV="${VENV}-systempackage"
+fi
+
+echo "⚡ Starting UV-powered Isolated Setup in $VENV..."
 
 # --- Safeguards ---
 
@@ -43,27 +72,39 @@ for pkg in python_magnetgeo python_magnetcooling python_magnetrun python_magnets
     fi
 done
 
+# uv skips bytecode compilation by default: the first import would then
+# compile pandas, dash, ... on the fly and look like a hang
+export UV_COMPILE_BYTECODE="${UV_COMPILE_BYTECODE:-1}"
+
 # --- Step 1: Create or reuse venv ---
-if [[ -d ".venv" ]]; then
-    cfg=".venv/pyvenv.cfg"
+if [[ -d "$VENV" ]]; then
+    cfg="$VENV/pyvenv.cfg"
     if [[ ! -f "$cfg" ]]; then
-        echo "❌ .venv exists but pyvenv.cfg is missing — broken venv." >&2
-        echo "   Remove it with: rm -rf .venv" >&2
+        echo "❌ $VENV exists but pyvenv.cfg is missing — broken venv." >&2
+        echo "   Remove it with: rm -rf $VENV" >&2
         exit 1
     fi
-    if ! grep -qi "include-system-site-packages = true" "$cfg"; then
-        echo "❌ Existing .venv was NOT created with --system-site-packages." >&2
-        echo "   Remove it with: rm -rf .venv  then rerun this script." >&2
+    if grep -qi "include-system-site-packages = true" "$cfg"; then
+        has_system_site=true
+    else
+        has_system_site=false
+    fi
+    if [[ "$has_system_site" != "$SYSTEM_SITE" ]]; then
+        echo "❌ Existing $VENV has include-system-site-packages = $has_system_site, expected $SYSTEM_SITE." >&2
+        echo "   Remove it with: rm -rf $VENV  then rerun this script." >&2
         exit 1
     fi
-    echo "ℹ️  Virtual environment already exists with system-site-packages, reusing it."
+    echo "ℹ️  Virtual environment $VENV already exists, reusing it."
+elif $SYSTEM_SITE; then
+    echo "🐍 Creating virtual environment with uv (system site-packages)..."
+    uv venv --python /usr/bin/python3 --system-site-packages "$VENV"
 else
     echo "🐍 Creating virtual environment with uv..."
-    uv venv --system-site-packages
+    uv venv --python "${VENV_PYTHON:-3.14}" "$VENV"
 fi
 
 # shellcheck source=/dev/null
-source .venv/bin/activate
+source "$VENV/bin/activate"
 
 # --- Step 2: Install interactive tools ---
 echo "📦 Installing Jupyter and Voila..."
@@ -73,9 +114,28 @@ uv pip install ipyfilechooser ipywidgets voila pandas
 echo "🛠️  Linking development submodules..."
 uv pip install -e "./python_magnetgeo"
 uv pip install -e "./python_magnetcooling[fitting]"
-uv pip install -e "./python_magnetrun[signal,hybrid]"
+uv pip install -e "./python_magnetrun[signal,dash,hybrid]"
 uv pip install -e "./python_magnetsetup"
 
-echo "✅ UV Setup Complete! Your environment is isolated but has access to system site packages."
+# --- Step 4: Install the magnettools wheel (optional, devcontainer only) ---
+# libmagnettools1 comes from the image; never mix the wheel with
+# python3-magnettools, hence not in the system site-packages venv.
+if ! $SYSTEM_SITE && [[ -d /opt/magnettools/wheels ]]; then
+    cp_tag=$(python -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')
+    wheels=(/opt/magnettools/wheels/magnettools-*-"$cp_tag"-*.whl)
+    if [[ -f "${wheels[0]}" ]]; then
+        echo "🧲 Installing magnettools wheel ${wheels[0]##*/}..."
+        uv pip install "${wheels[0]}"
+    else
+        echo "⚠️  No magnettools wheel for $cp_tag in /opt/magnettools/wheels: hoop-stress commands unavailable." >&2
+    fi
+fi
+
+# --- Step 5: Install to_duckdb library and dashboard app dependencies ---
+echo "📊 Installing to_duckdb and the magnetdb dashboard..."
+uv pip install "./to_duckdb[test,notebook,cli]"
+uv pip install "./apps/dashboards/magnetdb[test]"
+
+echo "✅ UV Setup Complete! Activate it with: source $VENV/bin/activate"
 
 deactivate

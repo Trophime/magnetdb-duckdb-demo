@@ -1,0 +1,23 @@
+Welcome to the MagnetDB duckdb demonstrator development environment (LNCMI)!
+
+Base image: debian:trixie + MagnetTools from magnettools-db:trixie-1.2.6
+
+Available tools:
+  - Python with scientific computing libraries
+  - Jupyter notebooks (Voila on port 8866)
+
+Workspace: /workspaces/magnetdb-duckdb-demo
+Datasets:  /mnt/LNCMIG-Data/records
+DuckDB:    /data/duckdb
+Projects:  /home/myuser/hifimagnet-projects
+CSV data:  /workspaces/magnetdb-duckdb-demo/Data  (repo Data/, not in git)
+           SUPERVISION: Data/bdd.csv
+
+!!! Do not forget to start the python virtualenv !!!:
+source /home/myuser/.venvs/magnetdb/bin/activate
+(Debian python3 + magnettools wheel, isolated venv: no system site-packages)
+
+The workspace .venv belongs to the host: do not use it here.
+Optional: .devcontainer/setup-uv.sh --system-site-packages creates
+/home/myuser/.venvs/magnetdb-systempackage
+(Debian python3 + python3-magnettools, uses system site-packages).

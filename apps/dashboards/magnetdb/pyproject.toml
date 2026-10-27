@@ -7,21 +7,7 @@
 #
 # Install with:  pip install .[test]
 #
-# ── magnettools ────────────────────────────────────────────────────────────
-# magnettools is a pybind11 C++ extension. Two installation paths are
-# supported:
-#
-# Option A — Debian package (no build required, recommended for most users):
-#   The Debian package python3-magnettools is already installed at system
-#   level. Create the venv WITH --system-site-packages so Python picks it up:
-#     python3 -m venv --system-site-packages venv
-#     pip install .[test]
-#
-# Option B — Local source build from ../../../my-magnettools/Python:
-#   Requires the C++ dev headers first (one-time, needs sudo):
-#     sudo apt install libmagnettools-dev
-#   Then install it separately into any venv:
-#     pip install -e ../../../my-magnettools/Python
+# The dashboard does not use magnettools.
 #
 # ── Local packages (editable installs from sibling directories) ─────────────
 #   python_magnetgeo, python_magnetcooling, python_magnetrun,
