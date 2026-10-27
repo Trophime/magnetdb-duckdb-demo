@@ -2,7 +2,6 @@
 
 import argparse
 
-import magnettools.magnettools as mt
 import pandas as pd
 import polars as pl
 import pytest
@@ -10,6 +9,13 @@ import pytest
 import stress_map
 from python_magnetrun.magnetdata_base import _make_ureg
 from stress_map import _assert_current_units, _section_index_at_z, compute_fatigue, compute_stress_stats
+
+try:
+    import magnettools.magnettools as mt
+except ImportError:
+    mt = None
+
+requires_magnettools = pytest.mark.skipif(mt is None, reason="magnettools not installed")
 
 
 def test_assert_current_units_passes_for_ampere():
@@ -86,17 +92,20 @@ def _three_section_group():
     return elements
 
 
+@requires_magnettools
 def test_section_index_at_z_default_picks_centered_section():
     elements = _three_section_group()
     assert _section_index_at_z(elements, [0, 1, 2]) == 1
 
 
+@requires_magnettools
 def test_section_index_at_z_nonzero_z0_picks_matching_end_section():
     elements = _three_section_group()
     assert _section_index_at_z(elements, [0, 1, 2], z0=0.279) == 2
     assert _section_index_at_z(elements, [0, 1, 2], z0=-0.279) == 0
 
 
+@requires_magnettools
 def test_section_index_at_z_falls_back_to_closest_when_no_section_contains_z0():
     elements = mt.VectorOfBitters()
     elements.append(mt.BitterMagnet(0.34, 0.20, 0.02, 1000.0, -0.279))  # idx 0: [-0.289,-0.269]

@@ -278,6 +278,17 @@ the binding, make it an optional extra with a lazy import.
 
 ## Phase 2 — magnetdb-duckdb-demo (this repo)
 
+> **Note (2026-10-26):** the devcontainer, dashboard image and `setup-uv.sh`
+> parts are now covered by [PLAN_magnettools_optional.md](PLAN_magnettools_optional.md),
+> which departs from this section: magnettools is optional in to_duckdb
+> (hoop-stress only); the dashboard image is `python:3.13-slim-trixie`
+> without magnettools; the devcontainer is `debian:trixie` +
+> `COPY --from=magnettools-db:trixie-1.2.6`; `setup-uv.sh` uses
+> `uv pip install` (`setup-basic.sh` kept); venvs live in
+> `$VENV_DIR=/home/myuser/.venvs/magnetdb` (+ `.venv-systempackage`).
+> The root `pyproject.toml`, `uv.lock`, `bump-magnettools.sh` and CI below
+> remain to do.
+
 uv migration onto the [common pattern](#downstream-consumption-pattern-common-to-all-consumers):
 
 - Devcontainer image: `.devcontainer/Dockerfile` takes `ARG BASE_IMAGE`, and

@@ -41,8 +41,6 @@ import tempfile
 from pathlib import Path
 
 import duckdb
-import magnettools.Bmap as bmap
-import magnettools.magnettools as mt
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -53,8 +51,16 @@ from populate import _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
 from python_magnetrun.magnetdata import load_magnetdata
 from python_magnetrun.runetl import prepareData
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
-from python_magnetsetup.ana import assembly_setup
 from python_magnetsetup.config import appenv
+
+# magnettools (also imported by python_magnetsetup.ana) is optional: only the
+# hoop-stress computations need it, and load_magnettools() checks for it.
+try:
+    import magnettools.Bmap as bmap
+    import magnettools.magnettools as mt
+    from python_magnetsetup.ana import assembly_setup
+except ImportError:
+    bmap = mt = assembly_setup = None
 
 # ---------------------------------------------------------------------------
 # Step 1 — Build config dict from DuckDB
@@ -673,12 +679,37 @@ def prepare_geometry_directory(
 
 
 def load_magnettools(config: dict, tempdir: Path, debug: bool = False) -> tuple:
-    """
-    Call magnet_setup() from python_magnetsetup with the prepared directory,
-    returning (Tubes, Helices, OHelices, BMagnets, UMagnets, Shims).
+    """Load the MagnetTools objects of an assembly.
 
-    This is identical to the body of get_magnet_data() in object_geometries.py.
+    Calls ``assembly_setup()`` from python_magnetsetup with the prepared
+    directory. This is identical to the body of ``get_magnet_data()`` in
+    object_geometries.py.
+
+    Parameters
+    ----------
+    config : dict
+        Assembly configuration, with a ``"magnets"`` list.
+    tempdir : Path
+        Directory prepared by :func:`prepare_geometry_directory`.
+    debug : bool, optional
+        Forwarded to ``assembly_setup()``.
+
+    Returns
+    -------
+    tuple
+        ``(Tubes, Helices, OHelices, BMagnets, UMagnets, Shims)``.
+
+    Raises
+    ------
+    ImportError
+        If magnettools is not installed.
     """
+    if assembly_setup is None:
+        raise ImportError(
+            "magnettools is required for hoop-stress computations: install "
+            "python3-magnettools, or libmagnettools1 and the magnettools wheel "
+            "from the magnettools-db image."
+        )
     data_dir = str(tempdir / "data")
     env = appenv(
         envfile=None,
