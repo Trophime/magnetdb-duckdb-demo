@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Usage: run_docker.sh [IMAGE]   (IMAGE overrides $DOCKER_IMAGE)
 set -euo pipefail
 
 die() {
@@ -12,7 +13,7 @@ die() {
 : "${DUCKDB_DIR:=$HOME/duckdb}"
 : "${SUPERVISION_DATA_DIR:=$(dirname "$(readlink -f "$0")")/../Data}"
 : "${DOCKER_REGISTRY:=}"
-: "${DOCKER_IMAGE:=trophime/magnetdb-dashboard:dev}"
+DOCKER_IMAGE="${1:-${DOCKER_IMAGE:-trophime/magnetdb-dashboard:dev}}"
 IMAGE_REF="${DOCKER_REGISTRY:+${DOCKER_REGISTRY}/}${DOCKER_IMAGE}"
 
 # need to get duckdb from nextcloud
@@ -22,14 +23,18 @@ command -v docker >/dev/null 2>&1 || die "docker is not installed or not on PATH
 
 [ -f "$DUCKDB_DIR/$DUCKDB_NAME" ] || die "$DUCKDB_DIR/$DUCKDB_NAME not found."
 
-read -r -p "Check for a newer $IMAGE_REF? [y/N] " reply || reply=""
-case "$reply" in
-    [yY]*)
-        docker pull "$IMAGE_REF" || echo "Warning: docker pull failed; continuing with the local image (if any)." >&2
-        ;;
-    *)
-        ;;
-esac
+# A locally built image (never pulled/pushed) has no RepoDigests: nothing to pull.
+digests=$(docker image inspect -f '{{len .RepoDigests}}' "$IMAGE_REF" 2>/dev/null || true)
+if [ "$digests" != "0" ]; then
+    read -r -p "Check for a newer $IMAGE_REF? [y/N] " reply || reply=""
+    case "$reply" in
+        [yY]*)
+            docker pull "$IMAGE_REF" || echo "Warning: docker pull failed; continuing with the local image (if any)." >&2
+            ;;
+        *)
+            ;;
+    esac
+fi
 
 [ "$(systemctl --user show -p LoadState --value rclone-mount.service)" = "loaded" ] \
     || die "rclone-mount.service is not installed for this user (systemctl --user). It's required to mount $RECORDS_MOUNT — set it up first."

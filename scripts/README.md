@@ -71,7 +71,12 @@ the command line is taken from the current directory.
 
 Starts the dashboard container on <http://localhost:8050/>. It needs `docker`,
 the `rclone-mount.service` user unit (which only mounts the records tree on an
-LNCMI VLAN or the LNCMI VPN), and asks whether to pull a newer image first.
+LNCMI VLAN or the LNCMI VPN), and asks whether to pull a newer image first
+(skipped for a locally built image, which has no registry to pull from).
+
+```bash
+scripts/run_docker.sh [IMAGE]   # e.g. scripts/run_docker.sh magnetdb-dashboard:dev
+```
 
 Configuration through environment variables:
 
@@ -82,7 +87,7 @@ Configuration through environment variables:
 | `RECORDS_MOUNT` | `~/LNCMIG-Data/records` |
 | `SUPERVISION_DATA_DIR` | `~/github/magnetdb-duckdb-demo/Data` |
 | `DOCKER_REGISTRY` | *(empty)* |
-| `DOCKER_IMAGE` | `trophime/magnetdb-dashboard:dev` |
+| `DOCKER_IMAGE` | `trophime/magnetdb-dashboard:dev` (overridden by the `IMAGE` argument) |
 
 To serve a database built by `build_from_scratch.sh`, copy it into
 `$DUCKDB_DIR` or point `DUCKDB_DIR` / `DUCKDB_NAME` at it.
