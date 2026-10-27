@@ -1,0 +1,24 @@
+# Route everything to the dashboard container started by scripts/run_docker.sh.
+# No DNS name yet, hence PathPrefix; `tls: {}` without a certificate makes
+# Traefik serve its built-in self-signed one.
+http:
+  routers:
+    dashboard:
+      rule: "PathPrefix(`/`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - dashboard-auth
+      service: dashboard
+      tls: {}
+
+  middlewares:
+    dashboard-auth:
+      basicAuth:
+        usersFile: /etc/traefik/htpasswd
+
+  services:
+    dashboard:
+      loadBalancer:
+        servers:
+          - url: "http://magnetdb-dashboard:8050"

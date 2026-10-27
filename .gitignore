@@ -221,3 +221,6 @@ to_duckdb.old
 *.wal
 *.old
 
+
+# Traefik basicAuth accounts (scripts/run_traefik.sh), never committed
+scripts/traefik/htpasswd
