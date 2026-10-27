@@ -2432,10 +2432,10 @@ def get_research_areas(db_path=None):
 
 
 def get_users(db_path=None):
-    """Return the list of distinct user acronyms defined in ``users``, sorted.
+    """Return the distinct user acronyms defined in ``users``, oldest activity first.
 
-    Duplicate acronyms (rows sharing the same acronym) are collapsed to a
-    single entry; any found are printed as a diagnostic.
+    An acronym spans several sessions (rows); it is ranked by its latest
+    session start (``MAX(hstart)``), ties broken by acronym.
 
     Parameters
     ----------
@@ -2445,19 +2445,17 @@ def get_users(db_path=None):
     Returns
     -------
     list of str
-        Distinct, sorted user acronyms.
+        Distinct user acronyms, sorted by ascending latest session start.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        acronyms = conn.execute(
-            "SELECT acronym FROM users WHERE acronym IS NOT NULL"
-        ).df()["acronym"]
-
-    counts = acronyms.value_counts()
-    duplicates = sorted(counts[counts > 1].index)
-    # if duplicates:
-    #     print(f"[get_users] duplicate acronym(s) found: {duplicates}")
-
-    return sorted(counts.index)
+        query = """
+            SELECT acronym
+            FROM users
+            WHERE acronym IS NOT NULL
+            GROUP BY acronym
+            ORDER BY MAX(hstart), acronym
+        """
+        return conn.execute(query).df()["acronym"].tolist()
 
 
 def get_session_years(db_path=None):

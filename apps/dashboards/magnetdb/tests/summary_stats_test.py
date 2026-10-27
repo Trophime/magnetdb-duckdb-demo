@@ -259,3 +259,19 @@ def test_get_files_for_assembly_ascending_timestamp():
 
 def test_get_session_years_ascending_from_users_hstart():
     assert db.get_session_years(DB_PATH) == [str(y) for y in range(2018, 2027)]
+
+
+def test_get_users_ascending_latest_session_start():
+    import duckdb
+
+    with duckdb.connect(DB_PATH, read_only=True) as conn:
+        latest = dict(
+            conn.execute(
+                "SELECT acronym, MAX(hstart) FROM users"
+                " WHERE acronym IS NOT NULL GROUP BY acronym"
+            ).fetchall()
+        )
+    users = db.get_users(DB_PATH)
+    assert sorted(users) == sorted(latest)
+    starts = [latest[u] for u in users]
+    assert starts == sorted(starts)

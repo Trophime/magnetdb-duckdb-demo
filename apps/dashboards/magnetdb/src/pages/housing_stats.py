@@ -393,7 +393,8 @@ def load_commissioning_history(db_path=None, assemblies_in_year=None):
     -------
     dict of str -> list of dict
         Housing name -> list of ``{"Assembly", "Status", "Commissioned",
-        "Decommissioned"}`` dicts, ascending by ``Commissioned`` (NULLs last).
+        "Decommissioned"}`` dicts, most recently commissioned first (NULLs
+        last).
         ``Commissioned``/``Decommissioned`` are converted to
         :data:`db.DISPLAY_TZ` for display.
     """
@@ -408,7 +409,7 @@ def load_commissioning_history(db_path=None, assemblies_in_year=None):
             decommissioned_at AS Decommissioned
         FROM assemblies
         WHERE housing IS NOT NULL
-        ORDER BY housing, commissioned_at NULLS LAST
+        ORDER BY housing, commissioned_at DESC NULLS LAST
     """).fetchdf()
     con.close()
 

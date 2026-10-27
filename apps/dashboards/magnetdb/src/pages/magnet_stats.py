@@ -129,7 +129,8 @@ def load_overview_records(db_path=None):
     -------
     :class:`~pandas.DataFrame`
         One row per overview record, with ``Overview Record``, ``Assembly``,
-        ``Housing``, ``Mode``, ``t0``, and ``Stats`` columns.
+        ``Housing``, ``Mode``, ``t0``, and ``Stats`` columns, most recent
+        ``t0`` first (NULLs last).
     """
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
@@ -144,7 +145,7 @@ def load_overview_records(db_path=None):
                 array_to_string(COALESCE(sources_stats, []), ', ') AS "Stats"
             FROM overview_records
             WHERE merged_into IS NULL
-            ORDER BY t0 NULLS LAST, filename
+            ORDER BY t0 DESC NULLS LAST, filename
         """).fetchdf()
 
     con.close()
@@ -374,6 +375,7 @@ def _build_page_content(
         Inclusive ``Experiment`` date bounds (``"YYYY-MM-DD"``) from the
         Experiments table's date-range picker. Only the returned table rows
         are restricted to this range; figures and summary use the full *df*.
+        Table rows are ordered most recent ``Experiment`` first.
 
     Returns
     -------
@@ -404,7 +406,7 @@ def _build_page_content(
 
     table_source_df = selectors.filter_by_date_range(
         df, "Experiment", table_start_date, table_end_date
-    )
+    ).sort_values("Experiment", ascending=False, kind="stable")
     table_df = table_source_df.drop(columns=["File"])
     table_df["Experiment"] = table_source_df.apply(experiment_link, axis=1)
     table_df["Magnet"] = table_source_df.apply(magnet_link, axis=1)

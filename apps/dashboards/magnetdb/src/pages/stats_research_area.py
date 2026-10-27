@@ -54,7 +54,7 @@ def _no_data_message(text):
 
 
 def _experiments_section(exp_df):
-    """Build the "Matching experiments" accordion content for a filtered dataframe."""
+    """Build the "Matching experiments" accordion content for a filtered dataframe, newest first."""
     if exp_df.empty:
         return _no_data_message(i18n._("No experiments found for the current filters."))
     source_df = exp_df.rename(
@@ -66,6 +66,7 @@ def _experiments_section(exp_df):
         }
     )
     source_df["Experiment"] = pd.to_datetime(source_df["Experiment"])
+    source_df = source_df.sort_values("Experiment", ascending=False, kind="stable")
     source_df["Housing"] = source_df["Assembly"].str.extract(r"^(M\d+)")
 
     table_df = source_df.drop(columns=["File"])
@@ -85,7 +86,7 @@ def _experiments_section(exp_df):
 
 
 def _overview_records_section(ov_df):
-    """Build the "Matching overview records" accordion content for a filtered dataframe."""
+    """Build the "Matching overview records" accordion content for a filtered dataframe, newest first."""
     if ov_df.empty:
         return _no_data_message(i18n._("No overview records found for the current filters."))
     source_df = ov_df.rename(
@@ -97,6 +98,7 @@ def _overview_records_section(ov_df):
             "stats": "Stats",
         }
     )
+    source_df = source_df.sort_values("t0", ascending=False, kind="stable")
 
     table_df = source_df[
         ["Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats"]
@@ -278,13 +280,14 @@ def update_filter_options(selected_db):
     -------
     tuple of (list of str, list of str, list of str, list of str)
         Options (with a leading :data:`selectors.ALL`) for the research
-        area, housing, year (newest first) and user filters.
+        area, housing, year (newest first) and user (latest session first)
+        filters.
     """
     return (
         [selectors.ALL] + db.get_research_areas(db_path=selected_db),
         [selectors.ALL] + db.get_housings(db_path=selected_db),
         [selectors.ALL] + selectors.newest_first(db.get_session_years(db_path=selected_db)),
-        [selectors.ALL] + db.get_users(db_path=selected_db),
+        [selectors.ALL] + selectors.newest_first(db.get_users(db_path=selected_db)),
     )
 
 
