@@ -665,13 +665,7 @@ def update_housing_stats(selected_db, selected_year):
         year_filter = int(selected_year)
         assemblies_in_year = db.assemblies_active_in_year(assemblies_meta, year_filter)
 
-    year_range = db.assemblies_year_range(assemblies_meta)
-    if year_range is not None:
-        year_options = [selectors.ALL] + [
-            str(y) for y in range(year_range[0], year_range[1] + 1)
-        ]
-    else:
-        year_options = [selectors.ALL]
+    year_options = selectors.year_options(db.assemblies_year_range(assemblies_meta))
 
     section_summary_df = (
         load_housing_summary(selected_db, assembly_names=assemblies_in_year)

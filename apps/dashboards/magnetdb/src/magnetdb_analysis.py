@@ -2460,6 +2460,30 @@ def get_users(db_path=None):
     return sorted(counts.index)
 
 
+def get_session_years(db_path=None):
+    """Return the distinct calendar years of user sessions defined in ``users``, ascending.
+
+    Parameters
+    ----------
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Years of ``users.hstart`` (sessions without a start are skipped),
+        matching the ``year`` filter of :func:`get_research_area_stats`.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT DISTINCT CAST(EXTRACT(YEAR FROM hstart) AS INTEGER) AS year
+            FROM users
+            WHERE hstart IS NOT NULL
+            ORDER BY year
+        """
+        return [str(y) for y in conn.execute(query).df()["year"]]
+
+
 def get_research_area_stats(housing=None, year=None, research_area=None, user=None, db_path=None):
     """Return per-research-area usage statistics from the ``users`` table.
 

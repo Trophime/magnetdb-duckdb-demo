@@ -334,12 +334,7 @@ def update_filter_options(selected_db):
     housing_options = [selectors.ALL] + db.get_housings(selected_db)
 
     assemblies_meta = db.load_assemblies_meta(selected_db)
-    year_range = db.assemblies_year_range(assemblies_meta)
-    year_options = (
-        [selectors.ALL] + [str(y) for y in range(year_range[0], year_range[1] + 1)]
-        if year_range is not None
-        else [selectors.ALL]
-    )
+    year_options = selectors.year_options(db.assemblies_year_range(assemblies_meta))
 
     status_options = [selectors.ALL] + db.get_distinct_statuses("assemblies")
 
@@ -359,7 +354,7 @@ def update_assembly_options(selected_db, selected_housing, selected_year, select
     if not selected_db:
         return [], None
 
-    all_assemblies = db.get_all_assemblies(selected_db)
+    all_assemblies = selectors.newest_first(db.get_all_assemblies(selected_db))
 
     assemblies_in_year = None
     if selected_year and selected_year != selectors.ALL:
@@ -428,7 +423,9 @@ def update_record_options(selected_assembly, selected_db, current_record):
     if not selected_assembly or not selected_db:
         return [], None
 
-    records = db.get_overview_records_for_assembly(selected_assembly, selected_db)
+    records = selectors.newest_first(
+        db.get_overview_records_for_assembly(selected_assembly, selected_db)
+    )
     options = [
         {
             "label": f"{r['t0']} — {r['filename']}" if r.get("t0") else r["filename"],
@@ -458,7 +455,7 @@ def update_incident_options(selected_record, selected_db, current_incident):
         return [], None
 
     event_files = list(info["sources_default"]) + list(info["sources_spike"])
-    incidents = _list_incidents(event_files)
+    incidents = selectors.newest_first(_list_incidents(event_files))
     if not incidents:
         return [], None
 

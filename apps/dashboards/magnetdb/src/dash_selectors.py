@@ -337,6 +337,46 @@ def aggregate_filter(id, label, options=None, style=None, value=None):
     )
 
 
+def newest_first(items):
+    """Return date-ordered dropdown entries with the most recent first.
+
+    Data helpers (e.g. :func:`magnetdb_analysis.get_all_assemblies`) return
+    oldest-first lists, which also drive chart category order; dropdowns
+    reverse them at option-building time instead.
+
+    Parameters
+    ----------
+    items : list
+        Entries sorted oldest first.
+
+    Returns
+    -------
+    list
+        A new list with *items* in reverse order; *items* is left unchanged.
+    """
+    return list(reversed(items))
+
+
+def year_options(year_range):
+    """Build a Year filter's options, most recent year first.
+
+    Parameters
+    ----------
+    year_range : tuple of int, optional
+        Inclusive ``(min_year, max_year)``, as returned by
+        :func:`magnetdb_analysis.assemblies_year_range`.
+
+    Returns
+    -------
+    list of str
+        :data:`ALL` followed by every year of *year_range*, newest first;
+        just ``[ALL]`` when *year_range* is ``None``.
+    """
+    if year_range is None:
+        return [ALL]
+    return [ALL] + newest_first([str(y) for y in range(year_range[0], year_range[1] + 1)])
+
+
 def date_range_filter(id, label, style=None):
     """Build a labeled, clearable date-range picker for filtering a table's rows.
 

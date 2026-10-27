@@ -172,12 +172,7 @@ def update_filter_options(selected_db):
     housing_options = [selectors.ALL] + db.get_housings(selected_db)
 
     assemblies_meta = db.load_assemblies_meta(selected_db)
-    year_range = db.assemblies_year_range(assemblies_meta)
-    year_options = (
-        [selectors.ALL] + [str(y) for y in range(year_range[0], year_range[1] + 1)]
-        if year_range is not None
-        else [selectors.ALL]
-    )
+    year_options = selectors.year_options(db.assemblies_year_range(assemblies_meta))
 
     status_options = [selectors.ALL] + db.get_distinct_statuses("assemblies")
 
@@ -199,7 +194,7 @@ def update_assembly_dropdown(
     if not selected_db:
         return [], None
 
-    all_assemblies = db.get_all_assemblies(selected_db)
+    all_assemblies = selectors.newest_first(db.get_all_assemblies(selected_db))
 
     assemblies_in_year = None
     if selected_year and selected_year != selectors.ALL:
@@ -240,7 +235,7 @@ def update_file_dropdown(selected_assembly, selected_db):
     if not selected_assembly:
         return []
 
-    files = db.get_stats_files_for_assembly(selected_assembly, selected_db)
+    files = selectors.newest_first(db.get_stats_files_for_assembly(selected_assembly, selected_db))
     return [{"label": f, "value": f} for f in files]
 
 

@@ -608,7 +608,7 @@ def update_magnet_stats(
     )
     magnet_options = [selectors.ALL] + [
         m
-        for m in db.get_all_magnets(selected_db)
+        for m in selectors.newest_first(db.get_all_magnets(selected_db))
         if names_with_status is None or m in names_with_status
     ]
 

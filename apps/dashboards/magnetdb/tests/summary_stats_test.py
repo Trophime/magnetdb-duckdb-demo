@@ -255,3 +255,7 @@ def test_get_files_for_assembly_ascending_timestamp():
     timestamps = [db.parse_magnet_filename(f) for f in files]
     assert len(files) > 1
     assert timestamps == sorted(timestamps)
+
+
+def test_get_session_years_ascending_from_users_hstart():
+    assert db.get_session_years(DB_PATH) == [str(y) for y in range(2018, 2027)]

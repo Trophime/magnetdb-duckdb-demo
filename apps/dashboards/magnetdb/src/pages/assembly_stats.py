@@ -674,7 +674,7 @@ def update_assembly_stats(
         )
 
     df = load_data(selected_db)
-    all_assemblies = db.get_all_assemblies(selected_db)
+    all_assemblies = selectors.newest_first(db.get_all_assemblies(selected_db))
     assemblies_meta = db.load_assemblies_meta(selected_db)
 
     assemblies_in_year = None
@@ -683,13 +683,7 @@ def update_assembly_stats(
             assemblies_meta, int(selected_year)
         )
 
-    year_range = db.assemblies_year_range(assemblies_meta)
-    if year_range is not None:
-        year_options = [selectors.ALL] + [
-            str(y) for y in range(year_range[0], year_range[1] + 1)
-        ]
-    else:
-        year_options = [selectors.ALL]
+    year_options = selectors.year_options(db.assemblies_year_range(assemblies_meta))
 
     status_options = [selectors.ALL] + db.get_distinct_statuses("assemblies")
     assemblies_with_status = (

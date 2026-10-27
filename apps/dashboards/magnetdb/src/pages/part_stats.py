@@ -913,7 +913,9 @@ def update_part_stats(
     )
     all_parts = db.get_all_parts(selected_db, types=PART_TYPES)
     part_options = [selectors.ALL] + [
-        p for p in all_parts if names_with_status is None or p in names_with_status
+        p
+        for p in selectors.newest_first(all_parts)
+        if names_with_status is None or p in names_with_status
     ]
 
     plot_df = df[df["Part"] == selected_part] if selected_part != selectors.ALL else df

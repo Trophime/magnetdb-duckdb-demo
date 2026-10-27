@@ -177,7 +177,6 @@ def layout(**kwargs):
                     selectors.aggregate_filter(
                         "ra-year",
                         i18n._("Year"),
-                        options=["2022", "2023", "2024", "2025", "2026"],
                         style={"width": "250px"},
                     ),
                     selectors.aggregate_filter(
@@ -262,11 +261,12 @@ def layout(**kwargs):
 @callback(
     Output("ra-research-area", "options"),
     Output("ra-housing", "options"),
+    Output("ra-year", "options"),
     Output("ra-user", "options"),
     Input("dd-database", "value"),
 )
 def update_filter_options(selected_db):
-    """Populate the research area / housing / user filters from the selected database.
+    """Populate the research area / housing / year / user filters from the selected database.
 
     Parameters
     ----------
@@ -276,13 +276,14 @@ def update_filter_options(selected_db):
 
     Returns
     -------
-    tuple of (list of str, list of str, list of str)
+    tuple of (list of str, list of str, list of str, list of str)
         Options (with a leading :data:`selectors.ALL`) for the research
-        area, housing and user filters.
+        area, housing, year (newest first) and user filters.
     """
     return (
         [selectors.ALL] + db.get_research_areas(db_path=selected_db),
         [selectors.ALL] + db.get_housings(db_path=selected_db),
+        [selectors.ALL] + selectors.newest_first(db.get_session_years(db_path=selected_db)),
         [selectors.ALL] + db.get_users(db_path=selected_db),
     )
 
