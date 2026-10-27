@@ -3,8 +3,11 @@ compute_exp_stats.py
 ====================
 Ingest per-file experiment statistics into DuckDB.
 
-For each experiments file not yet processed this script:
-  1. Loads the record file (via python_magnetrun or pandas fallback).
+For each experiments file not yet processed (files checked as 'unreadable',
+or with fewer than 2 data rows, by check_experiment_files.py are left out)
+this script:
+  1. Loads the record file (via python_magnetrun or pandas fallback); rows
+     from the first corrupt timestamp on (crash tail) are dropped.
   2. Computes per-run scalar stats   → exp_run_scalars
        'energy_j'            = sum(Ptot[W] * dt)  (Ptot stored in MW, ×1e6)
        'heat_extracted_j'    = sum((tsb - teb) * Q_m3s * rho_cp * dt)
@@ -119,6 +122,10 @@ def load_file(path: Path) -> tuple[pd.DataFrame, dict] | None:
                 first = fh.readline().rstrip("\n").split("\t")
             skiprows = 0 if FIELD_COL in first else 1
             df = pd.read_csv(path, sep="\t", skiprows=skiprows, low_memory=False)
+            if "Date" in df.columns and "Time" in df.columns:
+                from python_magnetrun.utils.validation import count_valid_pupitre_rows
+
+                df = df.iloc[: count_valid_pupitre_rows(df["Date"], df["Time"])]
             units = {}
         except Exception as exc:
             print(f"  [ERROR] cannot read {path.name}: {exc}")
@@ -138,12 +145,32 @@ def load_file(path: Path) -> tuple[pd.DataFrame, dict] | None:
 
 
 def get_experiments(con, assembly_name: str) -> pd.DataFrame:
+    """Experiments of *assembly_name* that have statistics to compute.
+
+    Leaves out files checked as ``unreadable`` and files with fewer than 2
+    data rows (``file_checks.rows_read``): a single row has no time span.
+    Experiments not checked yet are kept.
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open connection.
+    assembly_name : str
+        Assembly name.
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        Columns ``id``, ``name``, ``file``, ``housing``, ordered by name.
+    """
     return con.execute(
         """
         SELECT e.id, e.name, e.file, s.housing
         FROM experiments e
         JOIN assemblies s ON s.name = e.assembly_name
         WHERE e.assembly_name = ?
+          AND e.file_integrity IS DISTINCT FROM 'unreadable'
+          AND COALESCE(CAST(e.file_checks->>'rows_read' AS INTEGER), 2) >= 2
         ORDER BY e.name
         """,
         [assembly_name],

@@ -129,6 +129,14 @@ CREATE TABLE IF NOT EXISTS experiments (
     assembly_name VARCHAR REFERENCES assemblies(name),
     status      VARCHAR DEFAULT 'pending'
 );
+-- File quality, kept separate from status (processing tokens).
+-- header_class:   full | short | data | empty  (line 1 of the pupitre file)
+-- file_integrity: ok | truncated | unreadable
+-- file_checks:    reason, rows read, rows dropped, ...
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS header_class    VARCHAR;
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS file_integrity  VARCHAR;
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS file_checks     JSON DEFAULT '{}';
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS file_checked_at TIMESTAMP;
 
 CREATE SEQUENCE IF NOT EXISTS operationaldata_id_seq START 1;
 

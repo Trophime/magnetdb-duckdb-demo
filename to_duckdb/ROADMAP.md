@@ -1,5 +1,7 @@
 # to_duckdb — Roadmap
 
+> Workspace-level view (all tracks, status as of 2026-10-16): [../ROADMAP.md](../ROADMAP.md). This file is the detailed `to_duckdb` history up to 2026-08-21.
+
 Status: draft — all 3 open questions now have a concrete path forward (see
 "Open Questions" below), none is a true blocker anymore: processing-status
 flag (Q3) and plateaux (Q2, direction decided, a few implementation details

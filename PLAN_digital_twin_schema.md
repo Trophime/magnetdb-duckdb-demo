@@ -540,6 +540,14 @@ other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
   established** (inflated by "data" lines; first `MagnetCode` line
   2018-01-20). To be measured with the reader's own classification in
   phase 2.
+  **Measured by step E** (2026-10-22, `magnetdb-2026-10-08.duckdb`, 6483
+  experiments, i.e. files linked to an assembly): `full` M9 1815, M10 1490,
+  M8 162, M5 68, M7 11; `short` 2927; `empty` 7; `data` 0 (the M10
+  2011/2013 data-line files are not in `experiments`). `file_integrity`:
+  12 `truncated` (11 corrupt tails, 1 incomplete last line), 10
+  `unreadable` (header-only). M10 `2020.10.13 - 11:38:15.txt`, first
+  `unreadable` (binary tail, invalid UTF-8), is `truncated` since
+  [PLAN_pupitre_binary_tail.md](PLAN_pupitre_binary_tail.md).
 - **Reconciliation and precedence:** when a conf/MySQL configuration and a
   pupitre header both exist for a run, overlapping fields are compared. For
   its own experiment the **pupitre header wins** (written with the run); the
@@ -563,13 +571,26 @@ other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
 
   - `file_integrity` (user, 2026-10-07): `ok` = read completely;
     `truncated` = broken but recovered by python_magnetrun reading up to the
-    point of failure (`fromtxt` with `on_bad_lines="warn"`, detected by
-    `check_pupitre_truncation`), data partial; `unreadable` = cannot be read
+    point of failure, data partial; `unreadable` = cannot be read
     (`FileFormatError`: header only, missing `Date`/`Time`, …), no data.
-  - python_magnetrun must **report** truncation: today
-    `check_pupitre_truncation`'s result is only logged
-    (`magnetdata_pandas.py` / `magnetdata_polars.py` `fromtxt`); e.g. a
-    `truncated` flag on the loaded data object. Part of step E.
+  - **Recovery up to the point of failure** (2026-10-22): `on_bad_lines="warn"`
+    alone does not do it. A crash leaves the end of the file as NUL padding
+    followed by rows from an older run still on the disk, and those lines
+    usually have an acceptable field count. Example: M10
+    `2024.12.05 - 11:16:02.txt` ends with rows of
+    `2014.07.27 - 19:17:04.txt`, giving `field_max` = 182.4 T. python_magnetrun
+    now drops every row from the first one whose `Date`/`Time` does not parse
+    or is more than 1 h earlier than the row before
+    (`count_valid_pupitre_rows`). The 1 h tolerance keeps the end of summer
+    time (M9 `2018.10.27 - 18:12:19.txt` steps back 3599 s).
+  - python_magnetrun **reports** it: `truncated` (file does not end cleanly,
+    see `check_pupitre_truncation`, or rows dropped) and `rows_dropped` on
+    the loaded data object, pandas and polars.
+  - Filled by `to_duckdb/check_experiment_files.py`; `compute_exp_stats.py`
+    leaves out `unreadable` files.
+  - A crash tail of binary data (invalid UTF-8) is cut before parsing —
+    see [PLAN_pupitre_binary_tail.md](PLAN_pupitre_binary_tail.md) (done
+    2026-10-22).
   - Kept separate from `experiments.status`, which holds processing tokens
     (`STATS DONE`, `HOOP STRESS DONE`).
   - **"Proper" header (open question #29, resolved 2026-10-08):** defined
@@ -1166,7 +1187,7 @@ implementation.**
 | Step | Work | Depends on | Blockers | Approval |
 |---|---|---|---|---|
 | 0 | Reconcile the plan documents | — | — | **Done** 2026-10-07 |
-| E | File quality on `experiments` (`header_class`, `file_integrity` ok / truncated / unreadable, `file_checks`; python_magnetrun reports truncation) — see L2 "Pupitre header reader" | — | none | Plan to write, then approval |
+| E | File quality on `experiments` (`header_class`, `file_integrity` ok / truncated / unreadable, `file_checks`; python_magnetrun reports truncation) — see L2 "Pupitre header reader" | — | none | **Done** 2026-10-22 (approved 2026-10-22); filled in `magnetdb-2026-10-08.duckdb` |
 | S1 | Signature regime robustness study ([PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md)), incl. a robust pupitre `Field` signature | — | before running: where the tooling lives; library fixes vs local work-arounds; RDP vs PELT; 3–4 test file pairs to pick. Deferred by that plan (2026-08-11): the "one pupitre file → several pigbrother files" case (no discovery logic in that direction yet) | **Methodology approved** 2026-08-11; execution choices to decide |
 | S2 | Fill `overview_records.signatures`, `plateaux`, `sync_info` with real `Signature` output (replacing the placeholder `_extract_signatures` in python_magnetrun `analysis/processing.py`); per-experiment `Field` signature (existing work: `stage/` writes `overview_experiments.field_signature` with a hand-picked `FIELD_THRESHOLD = 0.1`) | S1; 2a for channel names — the lag computation (`_compute_lag_correlation`) looks up pupitre current channels by their post-ETL names (`IH`/`IB` via `get_pupitre_current_channel`): use the spec's names, or the raw `Idcct*` columns | none beyond its dependencies | Plan to write, then approval |
 | S3 | `teb` as a time series: an ETL step shifting pupitre `teb` by the lag stored in `sync_info` (for magnet cooling modeling; signature plan "Related future work"). **Assumption to flag:** one clock offset per pupitre file, borrowed from the current-channel lag — no pigbrother temperature to verify it against | S2 (lag in `sync_info`), 2a (spec path) | none beyond its dependencies | Plan to write, then approval |

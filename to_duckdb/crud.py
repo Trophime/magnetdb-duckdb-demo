@@ -1588,7 +1588,8 @@ def insert_experiments(
                 continue
 
             con.execute(
-                "INSERT INTO experiments VALUES (?,?,?,?,?,'pending')",
+                "INSERT INTO experiments (id, name, description, file, assembly_name, status) "
+                "VALUES (?,?,?,?,?,'pending')",
                 [
                     next_id + i,
                     rec.get("name") or file_name,
