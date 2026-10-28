@@ -8,6 +8,9 @@ import magnetdb_plot as plot
 import pandas as pd
 
 DB_PATH = str(Path(__file__).resolve().parents[4] / "to_duckdb" / "test-magnetdb.duckdb")
+DB_2026_10_08_PATH = str(
+    Path(__file__).resolve().parents[4] / "to_duckdb" / "magnetdb-2026-10-08.duckdb"
+)
 
 _PUPITRE_FILE = "2025.12.02 - 14:30:46.txt"
 _TDMS_FILE = "M9_Overview_251202-1430.tdms"
@@ -146,6 +149,21 @@ def test_get_database_summary_restricts_to_assembly_names():
     assert manips["total"] == 9
     assert manips["from_date"] == pd.Timestamp("2018-02-21 10:18:00")
     assert manips["to_date"] == pd.Timestamp("2018-05-18 16:56:00")
+
+
+def test_get_database_summary_manips_by_year_housing():
+    by_year_housing = db.get_database_summary(DB_2026_10_08_PATH)["manips"]["by_year_housing"]
+    df = by_year_housing.set_index(["year", "housing"])
+    exp_cols = ["n", "with_exp", "without_exp", "no_hstop"]
+    ov_cols = ["n", "with_ov", "without_ov", "no_hstop"]
+
+    assert (df["with_exp"] + df["without_exp"] + df["no_hstop"] == df["n"]).all()
+    assert (df["with_ov"] + df["without_ov"] + df["no_hstop"] == df["n"]).all()
+    assert df.loc[(2018, "M10"), exp_cols].tolist() == [280, 227, 30, 23]
+    assert df.loc[(2022, "M9"), ov_cols].tolist() == [196, 175, 20, 1]
+    # Housing with no assemblies in the DB: kept, never linked.
+    assert df.loc[(2021, "M3"), exp_cols].tolist() == [32, 0, 30, 2]
+    assert df.loc[2022, exp_cols].sum().tolist() == [469, 372, 86, 11]
 
 
 def test_get_housing_file_summary_unfiltered_covers_all_housings():

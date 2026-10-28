@@ -5,6 +5,7 @@ import pandas as pd
 from dash import dcc, html
 from dash.dash_table import DataTable
 from experiment_links import file_viewer_href, magnet_link
+from natsort import natsorted
 
 ALL = "All"
 
@@ -177,6 +178,59 @@ def _year_housing_pivot_table(by_year_housing):
     )
 
 
+def _manips_year_housing_table(by_year_housing):
+    """Build a captioned year x housing `DataTable` of manip cells.
+
+    Each cell reads ``"n (exp with / without | ov with / without | no HStop)"``.
+
+    Parameters
+    ----------
+    by_year_housing : :class:`~pandas.DataFrame`
+        ``manips["by_year_housing"]`` from
+        :func:`magnetdb_analysis.get_database_summary`.
+
+    Returns
+    -------
+    :class:`~dash.html.Div`
+        Caption and table: one row per year, a ``Total`` column summed over
+        housings, then one column per housing (natsorted); cells with no
+        manip are left blank.
+    """
+    count_cols = ["n", "with_exp", "without_exp", "with_ov", "without_ov", "no_hstop"]
+    totals = by_year_housing.groupby("year")[count_cols].sum().reset_index()
+    cells = pd.concat([by_year_housing, totals.assign(housing="Total")])
+    cells["cell"] = [
+        "{} ({} / {} | {} / {} | {})".format(*(i18n.format_number(v, precision=0) for v in row))
+        for row in cells[count_cols].itertuples(index=False)
+    ]
+    housings = natsorted(by_year_housing["housing"].unique())
+    table_df = (
+        cells.pivot(index="year", columns="housing", values="cell")
+        .reindex(columns=["Total", *housings])
+        .fillna("")
+        .reset_index()
+        .rename(columns={"year": "Year"})
+    )
+    return html.Div(
+        [
+            html.Div(
+                i18n._(
+                    "Manips (experiments with / without | overview records with / without | no HStop)"
+                ),
+                style={"fontWeight": "bold"},
+            ),
+            DataTable(
+                columns=[{"name": c, "id": c} for c in table_df.columns],
+                data=table_df.to_dict("records"),
+                sort_action="native",
+                style_table={"overflowX": "auto"},
+                style_cell={"textAlign": "center", "padding": "6px"},
+                style_header={"fontWeight": "bold"},
+            ),
+        ]
+    )
+
+
 def database_summary_banner(summary):
     """Render the shared DB-wide (or assembly-scoped) counts summary.
 
@@ -190,7 +244,10 @@ def database_summary_banner(summary):
     :class:`~dash.html.Div`
         One line per category (housings, assemblies, magnets, parts,
         manips), plus a collapsed `html.Details` per category (experiments,
-        overview records) holding a year x housing pivot `DataTable`.
+        overview records) holding a year x housing pivot `DataTable`. For
+        DB-wide summaries the manips line is itself a collapsed
+        `html.Details`, with the registered total in its title, holding the
+        table from :func:`_manips_year_housing_table`.
     """
     housings, assemblies, magnets, parts = (
         summary["housings"],
@@ -245,18 +302,33 @@ def database_summary_banner(summary):
         )
 
     manips = summary["manips"]
+    manips_by_year_housing = manips["by_year_housing"]
+    has_manips_table = manips_by_year_housing is not None and not manips_by_year_housing.empty
     if manips["from_date"] is None:
-        lines.append(html.Div(i18n._("Manips: {n}").format(n=manips["total"])))
+        manips_text = i18n._("Manips: {n}").format(n=manips["total"])
     else:
+        dates = {
+            "from_date": i18n.format_date(manips["from_date"]),
+            "to_date": i18n.format_date(manips["to_date"]),
+        }
+        if has_manips_table:
+            manips_text = i18n._(
+                "Manips: {total} registered, {n} unique users ({from_date} → {to_date})"
+            ).format(total=manips_by_year_housing["n"].sum(), n=manips["total"], **dates)
+        else:
+            manips_text = i18n._("Manips: {n} unique users ({from_date} → {to_date})").format(
+                n=manips["total"], **dates
+            )
+
+    if has_manips_table:
         lines.append(
-            html.Div(
-                i18n._("Manips: {n} unique users ({from_date} → {to_date})").format(
-                    n=manips["total"],
-                    from_date=i18n.format_date(manips["from_date"]),
-                    to_date=i18n.format_date(manips["to_date"]),
-                )
+            html.Details(
+                [html.Summary(manips_text), _manips_year_housing_table(manips_by_year_housing)],
+                open=False,
             )
         )
+    else:
+        lines.append(html.Div(manips_text))
 
     return html.Div(lines)
 

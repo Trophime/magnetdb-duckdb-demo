@@ -1899,7 +1899,15 @@ def get_database_summary(db_path=None, assembly_names=None):
         only (``merged_into IS NULL``).
         ``manips`` : dict with ``total`` (unique ``users.acronym`` reachable
         via an in-scope linked experiment or overview record), ``from_date``,
-        ``to_date`` (``None`` if nothing matches).
+        ``to_date`` (``None`` if nothing matches), ``by_year_housing`` (a
+        :class:`~pandas.DataFrame` with one row per ``users`` row's
+        ``hstart`` year and housing — every housing, including those with no
+        assemblies in the DB — and columns ``year``, ``housing``, ``n``,
+        ``with_exp``/``without_exp`` (non-empty / empty ``experiments_ids``),
+        ``with_ov``/``without_ov`` (same for ``overview_records_ids``),
+        ``no_hstop`` (sessions with no ``hstop``, never linked and excluded
+        from the ``without_*`` counts); ``None`` when *assembly_names* is
+        given).
     """
     scoped = assembly_names is not None
 
@@ -2036,10 +2044,38 @@ def get_database_summary(db_path=None, assembly_names=None):
     manip_date_parts = [s for s in (exp_link_dates, ov_link_dates) if not s.empty]
     manip_dates = pd.concat(manip_date_parts) if manip_date_parts else pd.Series(dtype="datetime64[ns]")
     manip_acronyms = set(exp_link_df["acronym"]) | set(ov_link_df["acronym"])
+    # One manip per users row (overlapping M9i/M9e sessions are already merged
+    # into one row). DB-wide only: unlinked rows cannot be tied to an assembly.
+    manips_by_year_housing = None
+    if not scoped:
+        with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+            manips_by_year_housing = conn.execute(
+                """
+                SELECT
+                    CAST(EXTRACT(YEAR FROM hstart) AS INTEGER) AS year,
+                    housing,
+                    COUNT(*) AS n,
+                    COUNT(*) FILTER (WHERE len(experiments_ids) > 0) AS with_exp,
+                    COUNT(*) FILTER (
+                        WHERE hstop IS NOT NULL AND coalesce(len(experiments_ids), 0) = 0
+                    ) AS without_exp,
+                    COUNT(*) FILTER (WHERE len(overview_records_ids) > 0) AS with_ov,
+                    COUNT(*) FILTER (
+                        WHERE hstop IS NOT NULL AND coalesce(len(overview_records_ids), 0) = 0
+                    ) AS without_ov,
+                    COUNT(*) FILTER (WHERE hstop IS NULL) AS no_hstop
+                FROM users
+                WHERE hstart IS NOT NULL AND housing IS NOT NULL
+                GROUP BY ALL
+                ORDER BY year, housing
+                """
+            ).df()
+
     manips = {
         "total": len(manip_acronyms),
         "from_date": manip_dates.min() if not manip_dates.empty else None,
         "to_date": manip_dates.max() if not manip_dates.empty else None,
+        "by_year_housing": manips_by_year_housing,
     }
 
     return {
