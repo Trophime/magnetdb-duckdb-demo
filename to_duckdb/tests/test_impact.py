@@ -39,10 +39,12 @@ def two_assemblies(con):
     processed and one unprocessed experiment, B one processed experiment."""
     insert_material(con, MATERIAL_COPPER, verbose=False)
     insert_material(con, MATERIAL_STEEL, verbose=False)
-    insert_part(con, {"name": "H_A", "type": "helix", "material_name": "MAT_COPPER"}, verbose=False)
-    insert_part(con, {"name": "H_B", "type": "helix", "material_name": "MAT_STEEL"}, verbose=False)
-    insert_magnet(con, {"name": "MAG_A"}, "insert", verbose=False)
-    insert_magnet(con, {"name": "MAG_B"}, "insert", verbose=False)
+    insert_part(con, {"name": "H_A", "type": "helix", "material_name": "MAT_COPPER",
+                      "manufactured_at": "2020-01-01"}, verbose=False)
+    insert_part(con, {"name": "H_B", "type": "helix", "material_name": "MAT_STEEL",
+                      "manufactured_at": "2020-01-01"}, verbose=False)
+    insert_magnet(con, {"name": "MAG_A", "assembled_at": "2020-01-01"}, "insert", verbose=False)
+    insert_magnet(con, {"name": "MAG_B", "assembled_at": "2020-01-01"}, "insert", verbose=False)
     insert_magnet_part_row(con, "MAG_A", "H_A", 0, 1)
     insert_magnet_part_row(con, "MAG_B", "H_B", 0, 1)
     for assembly, magnet in (("A", "MAG_A"), ("B", "MAG_B")):

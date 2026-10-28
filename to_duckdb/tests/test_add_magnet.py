@@ -174,6 +174,32 @@ def test_add_magnet_validate_part_missing_material(tmp_path):
     assert any("material" in e for e in errors)
 
 
+def test_add_magnet_rejects_undated_part_and_writes_nothing(tmp_path, capsys):
+    """H_JSON_01 has no coded name: without a JSON date the fallback fails."""
+    data = copy.deepcopy(MAGNET_JSON)
+    del data["parts"][0]["manufactured_at"]
+    db = tmp_path / "test.duckdb"
+    with pytest.raises(SystemExit):
+        add_magnet(data, db)
+    assert "Part 'H_JSON_01': no manufactured_at in JSON" in capsys.readouterr().out
+    assert not db.exists()
+
+
+def test_add_magnet_dry_run_rejects_undated_magnet(tmp_path, capsys):
+    data = copy.deepcopy(MAGNET_JSON)
+    del data["assembled_at"]
+    with pytest.raises(SystemExit):
+        add_magnet(data, tmp_path / "test.duckdb", dry_run=True)
+    assert "Magnet 'MAG_JSON': no assembled_at in JSON" in capsys.readouterr().out
+
+
+def test_add_magnet_validate_reports_unparsable_date():
+    data = copy.deepcopy(MAGNET_JSON)
+    data["parts"][1]["manufactured_at"] = "01/01/2020"
+    errors = _validate_magnet(data)
+    assert any("R_JSON_01" in e and "is not a date" in e for e in errors)
+
+
 # ---------------------------------------------------------------------------
 # Type inference
 # ---------------------------------------------------------------------------

@@ -74,19 +74,19 @@ def _build_hoop_assembly(con):
     ordering across same-type magnets, and exclusion of non-coil parts
     (RING_NEW).
     """
-    insert_part(con, {"name": "H_NEW", "type": "helix"}, verbose=False)
-    insert_part(con, {"name": "RING_NEW", "type": "ring"}, verbose=False)
-    insert_part(con, {"name": "H_OLD", "type": "helix"}, verbose=False)
-    insert_part(con, {"name": "B_ONE", "type": "bitter"}, verbose=False)
+    insert_part(con, {"name": "H_NEW", "type": "helix", "manufactured_at": "2020-01-01"}, verbose=False)
+    insert_part(con, {"name": "RING_NEW", "type": "ring", "manufactured_at": "2020-01-01"}, verbose=False)
+    insert_part(con, {"name": "H_OLD", "type": "helix", "manufactured_at": "2020-01-01"}, verbose=False)
+    insert_part(con, {"name": "B_ONE", "type": "bitter", "manufactured_at": "2020-01-01"}, verbose=False)
 
-    insert_magnet(con, {"name": "MAG_NEW"}, "insert", verbose=False)
+    insert_magnet(con, {"name": "MAG_NEW", "assembled_at": "2020-01-01"}, "insert", verbose=False)
     insert_magnet_part_row(con, "MAG_NEW", "H_NEW", 0, 1)
     insert_magnet_part_row(con, "MAG_NEW", "RING_NEW", 1, None)
 
-    insert_magnet(con, {"name": "MAG_OLD"}, "insert", verbose=False)
+    insert_magnet(con, {"name": "MAG_OLD", "assembled_at": "2020-01-01"}, "insert", verbose=False)
     insert_magnet_part_row(con, "MAG_OLD", "H_OLD", 0, 1)
 
-    insert_magnet(con, {"name": "MAG_B"}, "bitters", verbose=False)
+    insert_magnet(con, {"name": "MAG_B", "assembled_at": "2020-01-01"}, "bitters", verbose=False)
     insert_magnet_part_row(con, "MAG_B", "B_ONE", 0, 1)
 
     insert_assembly(con, {"name": "HOOP_ASSEMBLY", "status": "in_operation"}, verbose=False)
@@ -138,14 +138,14 @@ def test_resolve_z0_by_type_defaults_to_zero(hoop_assembly):
 
 
 def test_resolve_z0_by_type_reflects_assembly_magnets_z_offset(con):
-    insert_part(con, {"name": "H_NEW", "type": "helix"}, verbose=False)
-    insert_part(con, {"name": "H_OLD", "type": "helix"}, verbose=False)
-    insert_part(con, {"name": "B_ONE", "type": "bitter"}, verbose=False)
-    insert_magnet(con, {"name": "MAG_NEW"}, "insert", verbose=False)
+    insert_part(con, {"name": "H_NEW", "type": "helix", "manufactured_at": "2020-01-01"}, verbose=False)
+    insert_part(con, {"name": "H_OLD", "type": "helix", "manufactured_at": "2020-01-01"}, verbose=False)
+    insert_part(con, {"name": "B_ONE", "type": "bitter", "manufactured_at": "2020-01-01"}, verbose=False)
+    insert_magnet(con, {"name": "MAG_NEW", "assembled_at": "2020-01-01"}, "insert", verbose=False)
     insert_magnet_part_row(con, "MAG_NEW", "H_NEW", 0, 1)
-    insert_magnet(con, {"name": "MAG_OLD"}, "insert", verbose=False)
+    insert_magnet(con, {"name": "MAG_OLD", "assembled_at": "2020-01-01"}, "insert", verbose=False)
     insert_magnet_part_row(con, "MAG_OLD", "H_OLD", 0, 1)
-    insert_magnet(con, {"name": "MAG_B"}, "bitters", verbose=False)
+    insert_magnet(con, {"name": "MAG_B", "assembled_at": "2020-01-01"}, "bitters", verbose=False)
     insert_magnet_part_row(con, "MAG_B", "B_ONE", 0, 1)
     insert_assembly(con, {"name": "HOOP_ASSEMBLY", "status": "in_operation"}, verbose=False)
     insert_assembly_magnets(
@@ -821,7 +821,7 @@ def _build_part_history_assemblies(con):
     """Part 'H_NEW' recorded on two experiments across two different assemblies
     (ASSEMBLY_A, ASSEMBLY_B). Returns (exp_a_id, exp_b_id).
     """
-    insert_part(con, {"name": "H_NEW", "type": "helix"}, verbose=False)
+    insert_part(con, {"name": "H_NEW", "type": "helix", "manufactured_at": "2020-01-01"}, verbose=False)
     insert_assembly(con, {"name": "ASSEMBLY_A", "status": "in_operation"}, verbose=False)
     insert_assembly(con, {"name": "ASSEMBLY_B", "status": "in_operation"}, verbose=False)
     insert_experiments(con, "ASSEMBLY_A", [{"name": "expA", "file": "expA.txt"}], verbose=False)
@@ -891,7 +891,7 @@ def test_part_history_stats_aggregates_bin_stats_and_fatigue_across_assemblies(p
 
 
 def test_part_history_stats_empty_for_part_with_no_recorded_data(con):
-    insert_part(con, {"name": "H_UNUSED", "type": "helix"}, verbose=False)
+    insert_part(con, {"name": "H_UNUSED", "type": "helix", "manufactured_at": "2020-01-01"}, verbose=False)
 
     stats = part_history_stats("H_UNUSED", "", con=con)
 
@@ -975,7 +975,7 @@ def test_build_part_history_series_warns_and_skips_pre_rename_parquet(
 
 
 def test_build_part_history_series_returns_none_when_no_data(con, tmp_path):
-    insert_part(con, {"name": "H_UNUSED", "type": "helix"}, verbose=False)
+    insert_part(con, {"name": "H_UNUSED", "type": "helix", "manufactured_at": "2020-01-01"}, verbose=False)
 
     out_path = build_part_history_series("H_UNUSED", "", str(tmp_path), con=con, verbose=False)
 
@@ -997,7 +997,7 @@ def test_part_history_fatigue_matches_concatenated_rainflow_when_experiments_idl
     fatigue stats exactly matches rainflow-counting the full chronologically
     concatenated series -- confirmed against real multi-experiment DB data
     for this same reason (see docs/hoop-stress.md)."""
-    insert_part(con, {"name": "H_FAT", "type": "helix"}, verbose=False)
+    insert_part(con, {"name": "H_FAT", "type": "helix", "manufactured_at": "2020-01-01"}, verbose=False)
     insert_assembly(con, {"name": "ASSEMBLY_F", "status": "in_operation"}, verbose=False)
     insert_experiments(con, "ASSEMBLY_F", [
         {"name": "exp1", "file": "exp1.txt"},

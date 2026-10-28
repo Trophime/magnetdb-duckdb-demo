@@ -240,6 +240,7 @@ class TestDeleteMaterial:
             "type": "helix",
             "status": "in_operation",
             "material_name": "MA20072304",
+            "manufactured_at": "2020-01-01",
         }, verbose=False)
         delete_material(con, "MA20072304")
         out = capsys.readouterr().out
