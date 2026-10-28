@@ -69,10 +69,20 @@ the command line is taken from the current directory.
 
 ## `run_docker.sh`
 
-Starts the dashboard container on <http://localhost:8050/>. It needs `docker`,
-the `rclone-mount.service` user unit (which only mounts the records tree on an
-LNCMI VLAN or the LNCMI VPN), and asks whether to pull a newer image first
-(skipped for a locally built image, which has no registry to pull from).
+Starts the dashboard container `magnetdb-dashboard` on
+<http://localhost:8050/> (this machine only; see `run_traefik.sh` for access
+from another machine). It needs `docker` and the records tree mounted at
+`$RECORDS_MOUNT`: when it is not mounted yet, the script starts the
+`rclone-mount.service` user unit (which only mounts it on an LNCMI VLAN or the
+LNCMI VPN). It asks whether to pull a newer image first (skipped for a locally
+built image, which has no registry to pull from).
+
+The database folder, the records and `bdd.csv` are mounted read-only; the
+dashboard writes nothing on the host (style and selected database live in the
+browser). `~/.config/magnetdb/` (site-wide `style.json` / `group_order.json`
+override) is mounted read-only when it exists. The script warns when
+`$SUPERVISION_DATA_DIR/bdd.csv` or `$DUCKDB_DIR/hoop_parquet/` is missing. The
+container joins the `magnetdb` Docker network, created if needed.
 
 ```bash
 scripts/run_docker.sh [IMAGE]   # e.g. scripts/run_docker.sh magnetdb-dashboard:dev
@@ -90,7 +100,35 @@ Configuration through environment variables:
 | `DOCKER_IMAGE` | `trophime/magnetdb-dashboard:dev` (overridden by the `IMAGE` argument) |
 
 To serve a database built by `build_from_scratch.sh`, copy it into
-`$DUCKDB_DIR` or point `DUCKDB_DIR` / `DUCKDB_NAME` at it.
+`$DUCKDB_DIR` or point `DUCKDB_DIR` / `DUCKDB_NAME` at it. Since the folder
+is read-only in the container, `CHECKPOINT` the database first (no `.wal`
+next to it).
+
+## `run_traefik.sh`
+
+Starts a Traefik container `magnetdb-traefik` in front of the dashboard
+started by `run_docker.sh`, so that another LNCMI machine can load it over
+HTTPS with a login: `https://<this machine's IP>:8443/`. Traefik serves its
+built-in self-signed certificate (the browser warns once per Traefik start)
+and asks for a login from `scripts/traefik/htpasswd` (never committed). The
+dashboard itself stays on `127.0.0.1:8050`.
+
+```bash
+printf '%s:%s\n' tester "$(openssl passwd -apr1)" > scripts/traefik/htpasswd   # once
+scripts/run_docker.sh magnetdb-dashboard:local   # first, in another terminal
+scripts/run_traefik.sh
+docker stop magnetdb-traefik                      # when the test is over
+```
+
+Docker-published ports bypass ufw: while it runs, port 8443 is open on every
+interface. Configuration in `scripts/traefik/` (`traefik.yml`, `dynamic.yml`:
+file provider only, Traefik's own dashboard off) and through environment
+variables:
+
+| Variable | Default |
+|---|---|
+| `TRAEFIK_IMAGE` | `traefik:v3.6.7` |
+| `TRAEFIK_PORT` | `8443` |
 
 ## `list_assembly_configs.sh`
 

@@ -45,6 +45,7 @@ PART_HELIX = {
     "geometry": None,
     "cad": None,
     "design_office_reference": "HL-TEST",
+    "manufactured_at": "2020-01-01",
 }
 
 PART_RING = {
@@ -55,6 +56,7 @@ PART_RING = {
     "geometry": None,
     "cad": None,
     "design_office_reference": "",
+    "manufactured_at": "2020-01-01",
 }
 
 MAGNET_DATA = {
@@ -62,6 +64,7 @@ MAGNET_DATA = {
     "status": "in_operation",
     "design_office_reference": "MAG-TEST-001",
     "geometry": None,
+    "assembled_at": "2020-01-01",
 }
 
 ASSEMBLY_DATA = {
@@ -78,6 +81,7 @@ MAGNET_JSON = {
     "name": "MAG_JSON",
     "status": "in_operation",
     "design_office_reference": "",
+    "assembled_at": "2020-01-01",
     "parts": [
         {
             "name": "H_JSON_01",
@@ -85,6 +89,7 @@ MAGNET_JSON = {
             "status": "in_stock",
             "design_office_reference": "",
             "geometry": None,
+            "manufactured_at": "2020-01-01",
             "material": {**MATERIAL_COPPER, "name": "MAT_JSON_CU"},
         },
         {
@@ -93,6 +98,7 @@ MAGNET_JSON = {
             "status": "in_stock",
             "design_office_reference": "",
             "geometry": None,
+            "manufactured_at": "2020-01-01",
             "material": {**MATERIAL_STEEL, "name": "MAT_JSON_SS"},
         },
     ],

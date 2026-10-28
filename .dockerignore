@@ -43,3 +43,8 @@ to_duckdb/
 
 # Local environment (direnv)
 **/.envrc
+
+# Data: never in the image (mounted at run time)
+Data/
+**/*.tgz
+**/*.duckdb*

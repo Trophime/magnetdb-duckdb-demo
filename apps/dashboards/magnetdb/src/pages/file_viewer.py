@@ -894,7 +894,8 @@ def sync_zoom_home(relayout_data_list, graph_ids):
     elif "xaxis.autorange" in relayout_data:
         autoscale = True
 
-        # Cas D : Autre événement
+    # Cas D : Autre événement
+    else:
         raise PreventUpdate
 
     for g_id in graph_ids:

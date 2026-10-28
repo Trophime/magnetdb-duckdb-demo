@@ -19,6 +19,8 @@ view_material(con, name)
 delete_material(con, name)
 insert_part(con, part, verbose)
 insert_magnet(con, data, magnet_type, verbose)
+resolve_manufactured_at(part)
+resolve_assembled_at(magnet)
 insert_magnet_parts(con, magnet_name, parts, verbose)
 insert_magnet_part_row(con, magnet_name, part_name, rank, coil_index)
 check_geometry_data(con, name)
@@ -620,7 +622,10 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
     """Insert a part row; skip silently if it already exists.
 
     ``part`` may carry ``material_name`` (seeds format) or a nested
-    ``material.name`` dict (JSON-export format).
+    ``material.name`` dict (JSON-export format). ``manufactured_at`` comes
+    from :func:`resolve_manufactured_at`: the JSON value, else the date
+    coded in the name (printing a ``[WARN]``); a part with neither raises
+    ``ValueError`` and is not inserted.
     """
     name = part["name"]
     try:
@@ -631,6 +636,9 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
             return
         material_name = part.get("material_name") or (part.get("material") or {}).get("name")
         _check_material_exists(con, material_name)
+        manufactured_at, warnings = resolve_manufactured_at(part)
+        for warning in warnings:
+            print(warning)
         geometry_data = part.get("geometry_data") or load_geometry_json(part.get("geometry") or part.get("geometry_config"))
         status = _valid_lifecycle_status(part.get("status") or LifecycleStatus.IN_STOCK.value)
         con.execute(
@@ -648,7 +656,7 @@ def insert_part(con, part: dict, verbose: bool = True) -> None:
                 geometry_data,
                 part.get("cad") or None,
                 part.get("design_office_reference") or None,
-                manufactured_at_from_name(name),
+                manufactured_at,
             ],
         )
         if verbose:
@@ -738,7 +746,12 @@ def update_part_from_json(con, data: dict, dry_run: bool = False, verbose: bool 
 
 
 def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> None:
-    """Insert a magnet row; skip silently if it already exists."""
+    """Insert a magnet row; skip silently if it already exists.
+
+    ``assembled_at`` comes from :func:`resolve_assembled_at`: the JSON
+    value, else the date coded in the name (printing a ``[WARN]``); a magnet
+    with neither raises ``ValueError`` and is not inserted.
+    """
     name = data["name"]
     try:
         if exists(con, "magnets", name):
@@ -746,6 +759,9 @@ def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> No
                 print(f"  ~ magnet    {name}  (already exists, skipped)")
             _log_operation(con, "insert", "magnets", name)
             return
+        assembled_at, warnings = resolve_assembled_at(data)
+        for warning in warnings:
+            print(warning)
         geometry_data = data.get("geometry_data") or load_geometry_json(data.get("geometry") or data.get("geometry_config"))
         status = _valid_lifecycle_status(data.get("status") or LifecycleStatus.IN_STOCK.value)
         con.execute(
@@ -762,7 +778,7 @@ def insert_magnet(con, data: dict, magnet_type: str, verbose: bool = True) -> No
                 data.get("geometry") or None,
                 geometry_data,
                 data.get("design_office_reference") or None,
-                assembled_at_from_name(name),
+                assembled_at,
             ],
         )
         if verbose:
@@ -852,7 +868,7 @@ def _reclaim_reused_parts(con, new_magnet_name: str, part_names: list[str], verb
     An old magnet's already-closed assembly link (explicit
     ``decommissioned_at``) is never reopened or overridden.
     """
-    retire_at = _fallback_decommission_at(assembled_at_from_name(new_magnet_name))
+    retire_at = _fallback_decommission_at(_magnet_assembled_at(con, new_magnet_name))
 
     old_magnets: dict[str, None] = {}
     for part_name in part_names:
@@ -905,7 +921,10 @@ def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool 
     Each newly-linked part (not one already present, skipped as a
     duplicate) is then promoted to ``in_operation`` via
     :func:`update_part_status` — attaching a part to a magnet commits it,
-    independent of whether that magnet is ever linked to an assembly.
+    independent of whether that magnet is ever linked to an assembly. The
+    event is dated with the magnet's stored ``assembled_at``, and a
+    ``[WARN]`` is printed when the part's ``manufactured_at`` falls on a
+    later day (the part is linked anyway).
 
     Raises
     ------
@@ -958,6 +977,7 @@ def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool 
                     "it first."
                 )
 
+    magnet_assembled_at = _magnet_assembled_at(con, magnet_name)
     coil_counter = 0
     inserted = 0
     skipped = 0
@@ -982,17 +1002,34 @@ def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool 
             [magnet_name, part_name, rank, coil_index],
         )
         inserted += 1
+        _warn_part_made_after_magnet(con, part_name, magnet_name, magnet_assembled_at)
 
         update_part_status(
             con, part_name, LifecycleStatus.IN_OPERATION.value,
             description=f"Attached to magnet '{magnet_name}'.",
-            changed_at=assembled_at_from_name(magnet_name), verbose=verbose,
+            changed_at=magnet_assembled_at, verbose=verbose,
         )
 
     if verbose:
         print(
             f"  + magnet_parts  {inserted} inserted,  {skipped} already present"
             f"  ({coil_counter} coil channel(s))"
+        )
+
+
+def _warn_part_made_after_magnet(
+    con, part_name: str, magnet_name: str, magnet_assembled_at: str | None
+) -> None:
+    """Print a ``[WARN]`` if *part_name* was manufactured on a later day than *magnet_name* was assembled."""
+    row = con.execute("SELECT type, manufactured_at FROM parts WHERE name = ?", [part_name]).fetchone()
+    if row is None or row[1] is None or magnet_assembled_at is None:
+        return
+    part_type, manufactured_at = row
+    made, assembled = manufactured_at.date(), date.fromisoformat(magnet_assembled_at[:10])
+    if made > assembled:
+        print(
+            f"  [WARN] {part_type} '{part_name}' made {made.isoformat()}, after magnet "
+            f"'{magnet_name}' assembled {assembled.isoformat()}."
         )
 
 
@@ -1122,6 +1159,142 @@ def assembled_at_from_name(name: str) -> str | None:
 def manufactured_at_from_name(name: str) -> str | None:
     """Derive a part's manufacture date from its coded ``name`` (``[HR]YYMMDDXX``)."""
     return _date_from_coded_name(name, "[HR]")
+
+
+# Plausible range for manufacture/assembly dates; the earliest real one is
+# 1993-08-23 (M5Bi).
+EARLIEST_PLAUSIBLE_DATE = date(1980, 1, 1)
+_JSON_DATE_FORMATS = ("%Y-%m-%d", "%Y-%m-%d %H:%M:%S")
+
+
+def _parse_json_date(value: str) -> datetime | None:
+    """Parse a ``YYYY-MM-DD[ HH:MM:SS]`` string, or return None if it doesn't match."""
+    for fmt in _JSON_DATE_FORMATS:
+        try:
+            return datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _check_plausible(entity: str, name: str, field: str, value: str, day: date) -> None:
+    """Raise ValueError if *day* is before :data:`EARLIEST_PLAUSIBLE_DATE` or after today."""
+    if not EARLIEST_PLAUSIBLE_DATE <= day <= date.today():
+        raise ValueError(
+            f"{entity.capitalize()} '{name}': {field} {value} is outside the plausible "
+            f"range {EARLIEST_PLAUSIBLE_DATE.isoformat()} – today."
+        )
+
+
+def _resolve_date(
+    entity: str, name: str, field: str, json_value, name_value: str | None
+) -> tuple[str, list[str]]:
+    """Pick the JSON date or the name-derived fallback, with warnings; raise if neither."""
+    warnings: list[str] = []
+    raw = parse_timestamp(json_value)
+    if raw is None:
+        if name_value is None:
+            raise ValueError(
+                f"{entity.capitalize()} '{name}': no {field} in JSON and none can be "
+                f"derived from its name — add \"{field}\" to its JSON."
+            )
+        _check_plausible(entity, name, field, name_value, date.fromisoformat(name_value))
+        warnings.append(
+            f"  [WARN] {entity} '{name}': no {field} in JSON — using {name_value} from its name."
+        )
+        return name_value, warnings
+
+    raw = raw.strip()
+    parsed = _parse_json_date(raw)
+    if parsed is None:
+        raise ValueError(
+            f"{entity.capitalize()} '{name}': {field} {raw!r} is not a date "
+            "(expected YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)."
+        )
+    _check_plausible(entity, name, field, raw, parsed.date())
+    if name_value is not None and parsed.date().isoformat() != name_value:
+        warnings.append(
+            f"  [WARN] {entity} '{name}': {field} {raw} in JSON differs from {name_value} "
+            "in its name — using the JSON value."
+        )
+    return raw, warnings
+
+
+def resolve_manufactured_at(part: dict) -> tuple[str, list[str]]:
+    """Resolve a part's ``manufactured_at`` from its JSON, falling back to its coded name.
+
+    Parameters
+    ----------
+    part : dict
+        Part JSON payload; ``name`` and the optional ``manufactured_at``
+        (``YYYY-MM-DD`` or ``YYYY-MM-DD HH:MM:SS``; ``null``, ``""`` and
+        ``"None"`` count as missing) are consulted.
+
+    Returns
+    -------
+    tuple of (str, list of str)
+        The date to store, and the ``[WARN]`` lines to print: one when the
+        name-derived fallback (:func:`manufactured_at_from_name`) is used,
+        or when the JSON date differs from the name-derived one (the JSON
+        date wins).
+
+    Raises
+    ------
+    ValueError
+        If there is no JSON date and the name is not coded, if the JSON
+        date does not parse, or if the date is before
+        :data:`EARLIEST_PLAUSIBLE_DATE` or after today.
+    """
+    name = part.get("name", "")
+    return _resolve_date(
+        "part", name, "manufactured_at", part.get("manufactured_at"), manufactured_at_from_name(name)
+    )
+
+
+def resolve_assembled_at(magnet: dict) -> tuple[str, list[str]]:
+    """Resolve a magnet's ``assembled_at`` from its JSON, falling back to its coded name.
+
+    Parameters
+    ----------
+    magnet : dict
+        Magnet JSON payload; ``name`` and the optional ``assembled_at``
+        (``YYYY-MM-DD`` or ``YYYY-MM-DD HH:MM:SS``; ``null``, ``""`` and
+        ``"None"`` count as missing) are consulted.
+
+    Returns
+    -------
+    tuple of (str, list of str)
+        The date to store, and the ``[WARN]`` lines to print: one when the
+        name-derived fallback (:func:`assembled_at_from_name`) is used, or
+        when the JSON date differs from the name-derived one (the JSON date
+        wins).
+
+    Raises
+    ------
+    ValueError
+        If there is no JSON date and the name is not coded, if the JSON
+        date does not parse, or if the date is before
+        :data:`EARLIEST_PLAUSIBLE_DATE` or after today.
+    """
+    name = magnet.get("name", "")
+    return _resolve_date(
+        "magnet", name, "assembled_at", magnet.get("assembled_at"), assembled_at_from_name(name)
+    )
+
+
+def _magnet_assembled_at(con, name: str) -> str | None:
+    """Stored ``assembled_at`` of *name*, as a bare date when its time is midnight (or None).
+
+    The bare form keeps :func:`_fallback_decommission_at`'s ``07:00`` anchor
+    for date-only values, exactly as for a name-derived date.
+    """
+    row = con.execute("SELECT assembled_at FROM magnets WHERE name = ?", [name]).fetchone()
+    if row is None or row[0] is None:
+        return None
+    value = row[0]
+    if value.time() == datetime.min.time():
+        return value.date().isoformat()
+    return value.isoformat(sep=" ")
 
 
 def _fallback_decommission_at(reference) -> str | None:
@@ -1480,6 +1653,10 @@ def insert_assembly_magnets(
     *assembly_name* is currently active (see :func:`_assembly_is_active`),
     the magnet (and its parts) cascade from ``in_stock`` to ``in_operation``
     (the commissioning cascade).
+
+    A ``[WARN]`` is printed when a newly linked magnet's ``assembled_at``
+    falls on a later day than the link's ``commissioned_at`` (the entry's
+    own, else *assembly_name*'s); the magnet is linked anyway.
     """
     try:
         _insert_assembly_magnets(con, assembly_name, magnet_entries, verbose=verbose)
@@ -1493,6 +1670,22 @@ def insert_assembly_magnets(
             status="error", details={"error": str(exc)},
         )
         raise
+
+
+def _warn_magnet_assembled_after_commissioning(
+    con, magnet_name: str, assembly_name: str, commissioned_at
+) -> None:
+    """Print a ``[WARN]`` if *magnet_name* was assembled on a later day than *commissioned_at*."""
+    assembled_at = _magnet_assembled_at(con, magnet_name)
+    if assembled_at is None or not commissioned_at:
+        return
+    assembled = date.fromisoformat(assembled_at[:10])
+    commissioned = date.fromisoformat(str(commissioned_at)[:10])
+    if assembled > commissioned:
+        print(
+            f"  [WARN] magnet '{magnet_name}' assembled {assembled.isoformat()}, after assembly "
+            f"'{assembly_name}' commissioned {commissioned.isoformat()}."
+        )
 
 
 def _insert_assembly_magnets(
@@ -1516,6 +1709,10 @@ def _insert_assembly_magnets(
                 print(f"  ~ magnet    {magnet_name}  (already linked, skipped)")
             continue
 
+        _warn_magnet_assembled_after_commissioning(
+            con, magnet_name, assembly_name,
+            parse_timestamp(extra.get("commissioned_at")) or assembly_commissioned_at,
+        )
         link_decommissioned_at = parse_timestamp(extra.get("decommissioned_at"))
 
         if link_decommissioned_at is None:

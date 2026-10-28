@@ -246,6 +246,45 @@ Notes:
 
 ---
 
+## Part and magnet dates in JSON
+
+`parts.manufactured_at` and `magnets.assembled_at` are read from the part /
+magnet JSON (`magnet add`, and `assembly add` for the magnets it resolves):
+
+```json
+{ "name": "M9Bi",      "type": "bitter", "manufactured_at": "2013-01-19", ... }
+{ "name": "M9Bitters", "assembled_at": "2013-01-29", "parts": ["M9_Bi", "M9_Be"] }
+```
+
+Format: `YYYY-MM-DD` or `YYYY-MM-DD HH:MM:SS`; `null`, `""` and `"None"`
+count as missing. The value is resolved by `crud.resolve_manufactured_at` /
+`crud.resolve_assembled_at`:
+
+| Case | Result |
+|---|---|
+| JSON date present and valid | used |
+| no JSON date, coded name (`[HR]YYMMDDXX` part, `MYYMMDDXX` magnet) | date from the name, with a `[WARN]` |
+| no JSON date, uncoded name (e.g. `M9Bitters`) | error — nothing written for that magnet |
+| JSON date not in the format above | error |
+| date before 1980-01-01 or after today | error |
+| JSON date and name date both present but different | JSON date used, with a `[WARN]` |
+
+`magnet add` checks these before writing anything (also with `--dry-run`),
+so an error leaves the database untouched.
+
+Two ordering checks only print a `[WARN]` (the link is made anyway), comparing
+calendar days:
+
+- a part linked to a magnet was manufactured after the magnet was assembled;
+- a magnet linked to an assembly was assembled after the assembly was
+  commissioned.
+
+The magnet's stored `assembled_at` also dates the status events written while
+linking: a part's "Attached to magnet", and the "Superseded by" retirement
+(and automatic assembly closure) when a part is reclaimed from another magnet.
+
+---
+
 ## Material JSON format
 
 The JSON produced by `python_magnetapi` for a material record:

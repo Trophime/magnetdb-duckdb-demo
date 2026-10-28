@@ -30,6 +30,8 @@ from crud import (
     manufactured_at_from_name,
     merge_duplicate_pupitre_records,
     parse_timestamp,
+    resolve_assembled_at,
+    resolve_manufactured_at,
     resolve_overview_assembly,
     update_assembly_from_json,
     update_assembly_magnet,
@@ -53,6 +55,11 @@ from tests.conftest import (
     PART_RING,
     ASSEMBLY_DATA,
 )
+
+
+def _undated(data: dict, field: str) -> dict:
+    """Copy of a fixture dict without its JSON date *field*, so the name-derived date applies."""
+    return {k: v for k, v in data.items() if k != field}
 
 
 # ---------------------------------------------------------------------------
@@ -174,18 +181,64 @@ def test_insert_part_rejects_unknown_material(con):
     assert exists(con, "parts", "HELIX_01") is False
 
 
-def test_insert_part_sets_manufactured_at_from_conforming_name(con):
+def test_insert_part_sets_manufactured_at_from_conforming_name(con, capsys):
+    """Without a JSON date, the coded name is the fallback — and it warns."""
     insert_material(con, MATERIAL_COPPER, verbose=False)
-    insert_part(con, {**PART_HELIX, "name": "H23012001"}, verbose=False)
+    insert_part(con, {**_undated(PART_HELIX, "manufactured_at"), "name": "H23012001"}, verbose=False)
     row = con.execute("SELECT manufactured_at FROM parts WHERE name = 'H23012001'").fetchone()
     assert str(row[0]) == "2023-01-20 00:00:00"
+    out = capsys.readouterr().out
+    assert "[WARN] part 'H23012001': no manufactured_at in JSON" in out
+    assert "using 2023-01-20 from its name" in out
 
 
-def test_insert_part_leaves_manufactured_at_null_for_non_conforming_name(con):
+def test_insert_part_rejects_missing_manufactured_at_for_non_conforming_name(con):
+    """No JSON date and no coded name: the fallback fails, nothing is written."""
     insert_material(con, MATERIAL_COPPER, verbose=False)
-    insert_part(con, {**PART_HELIX, "name": "M9Bi"}, verbose=False)
+    with pytest.raises(ValueError, match="no manufactured_at in JSON and none can be derived"):
+        insert_part(con, {**_undated(PART_HELIX, "manufactured_at"), "name": "M9Bi"}, verbose=False)
+    assert exists(con, "parts", "M9Bi") is False
+
+
+def test_insert_part_uses_manufactured_at_from_json(con, capsys):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "name": "M9Bi", "manufactured_at": "2013-01-19"}, verbose=False)
     row = con.execute("SELECT manufactured_at FROM parts WHERE name = 'M9Bi'").fetchone()
-    assert row[0] is None
+    assert str(row[0]) == "2013-01-19 00:00:00"
+    assert "[WARN]" not in capsys.readouterr().out
+
+
+def test_insert_part_keeps_time_of_day_from_json(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(
+        con, {**PART_HELIX, "name": "HybridSupra", "manufactured_at": "2021-12-25 08:00:00"}, verbose=False
+    )
+    row = con.execute("SELECT manufactured_at FROM parts WHERE name = 'HybridSupra'").fetchone()
+    assert str(row[0]) == "2021-12-25 08:00:00"
+
+
+def test_insert_part_json_date_wins_over_name_and_warns(con, capsys):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "name": "H23012001", "manufactured_at": "2023-01-21"}, verbose=False)
+    row = con.execute("SELECT manufactured_at FROM parts WHERE name = 'H23012001'").fetchone()
+    assert str(row[0]) == "2023-01-21 00:00:00"
+    out = capsys.readouterr().out
+    assert "[WARN] part 'H23012001': manufactured_at 2023-01-21 in JSON differs from 2023-01-20" in out
+
+
+@pytest.mark.parametrize("value", ["20/01/2023", "2023-13-01", "yesterday"])
+def test_insert_part_rejects_unparsable_manufactured_at(con, value):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    with pytest.raises(ValueError, match="is not a date"):
+        insert_part(con, {**PART_HELIX, "manufactured_at": value}, verbose=False)
+    assert exists(con, "parts", PART_HELIX["name"]) is False
+
+
+@pytest.mark.parametrize("value", ["1979-12-31", "2999-01-01"])
+def test_insert_part_rejects_implausible_manufactured_at(con, value):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    with pytest.raises(ValueError, match="outside the plausible range"):
+        insert_part(con, {**PART_HELIX, "manufactured_at": value}, verbose=False)
 
 
 def test_insert_part_ignores_created_at_for_manufactured_at(con):
@@ -193,7 +246,7 @@ def test_insert_part_ignores_created_at_for_manufactured_at(con):
     insert_material(con, MATERIAL_COPPER, verbose=False)
     insert_part(
         con,
-        {**PART_HELIX, "name": "H23012001", "created_at": "1999-01-01T00:00:00Z"},
+        {**_undated(PART_HELIX, "manufactured_at"), "name": "H23012001", "created_at": "1999-01-01T00:00:00Z"},
         verbose=False,
     )
     row = con.execute("SELECT manufactured_at FROM parts WHERE name = 'H23012001'").fetchone()
@@ -254,23 +307,39 @@ def test_insert_magnet_rejects_invalid_status(con):
         insert_magnet(con, {**MAGNET_DATA, "status": "bogus"}, "insert", verbose=False)
 
 
-def test_insert_magnet_sets_assembled_at_from_conforming_name(con):
-    insert_magnet(con, {**MAGNET_DATA, "name": "M23012001"}, "insert", verbose=False)
+def test_insert_magnet_sets_assembled_at_from_conforming_name(con, capsys):
+    """Without a JSON date, the coded name is the fallback — and it warns."""
+    insert_magnet(con, {**_undated(MAGNET_DATA, "assembled_at"), "name": "M23012001"}, "insert", verbose=False)
     row = con.execute("SELECT assembled_at FROM magnets WHERE name = 'M23012001'").fetchone()
     assert str(row[0]) == "2023-01-20 00:00:00"
+    assert "[WARN] magnet 'M23012001': no assembled_at in JSON" in capsys.readouterr().out
 
 
-def test_insert_magnet_leaves_assembled_at_null_for_non_conforming_name(con):
-    insert_magnet(con, {**MAGNET_DATA, "name": "M9Bitters"}, "insert", verbose=False)
+def test_insert_magnet_rejects_missing_assembled_at_for_non_conforming_name(con):
+    """No JSON date and no coded name: the fallback fails, nothing is written."""
+    with pytest.raises(ValueError, match="no assembled_at in JSON and none can be derived"):
+        insert_magnet(con, {**_undated(MAGNET_DATA, "assembled_at"), "name": "M9Bitters"}, "insert", verbose=False)
+    assert exists(con, "magnets", "M9Bitters") is False
+
+
+def test_insert_magnet_uses_assembled_at_from_json(con, capsys):
+    insert_magnet(con, {**MAGNET_DATA, "name": "M9Bitters", "assembled_at": "2013-01-29"}, "insert", verbose=False)
     row = con.execute("SELECT assembled_at FROM magnets WHERE name = 'M9Bitters'").fetchone()
-    assert row[0] is None
+    assert str(row[0]) == "2013-01-29 00:00:00"
+    assert "[WARN]" not in capsys.readouterr().out
+
+
+def test_insert_magnet_rejects_implausible_assembled_at(con):
+    with pytest.raises(ValueError, match="outside the plausible range"):
+        insert_magnet(con, {**MAGNET_DATA, "assembled_at": "2999-01-01"}, "insert", verbose=False)
+    assert exists(con, "magnets", MAGNET_DATA["name"]) is False
 
 
 def test_insert_magnet_ignores_created_at_for_assembled_at(con):
     """The JSON export's own created_at must not influence assembled_at."""
     insert_magnet(
         con,
-        {**MAGNET_DATA, "name": "M23012001", "created_at": "1999-01-01T00:00:00Z"},
+        {**_undated(MAGNET_DATA, "assembled_at"), "name": "M23012001", "created_at": "1999-01-01T00:00:00Z"},
         "insert",
         verbose=False,
     )
@@ -361,7 +430,7 @@ def test_insert_magnet_parts_reuse_retires_old_magnet_and_closes_its_assembly(co
     the new magnet."""
     insert_material(con, MATERIAL_COPPER, verbose=False)
     insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
-    insert_magnet(con, {**MAGNET_DATA, "name": "M19061901", "status": "in_stock"}, "insert", verbose=False)
+    insert_magnet(con, {**_undated(MAGNET_DATA, "assembled_at"), "name": "M19061901", "status": "in_stock"}, "insert", verbose=False)
     insert_magnet_parts(con, "M19061901", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
     insert_assembly(con, {
         "name": "OLD_A", "housing": "M9",
@@ -370,7 +439,7 @@ def test_insert_magnet_parts_reuse_retires_old_magnet_and_closes_its_assembly(co
     insert_assembly_magnets(con, "OLD_A", ["M19061901"], verbose=False)
     assert con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "in_operation"
 
-    insert_magnet(con, {**MAGNET_DATA, "name": "M20022001", "status": "in_stock"}, "insert", verbose=False)
+    insert_magnet(con, {**_undated(MAGNET_DATA, "assembled_at"), "name": "M20022001", "status": "in_stock"}, "insert", verbose=False)
     insert_magnet_parts(con, "M20022001", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
 
     assert con.execute("SELECT status FROM magnets WHERE name = 'M19061901'").fetchone()[0] == "retired"
@@ -390,7 +459,7 @@ def test_insert_magnet_parts_reuse_does_not_override_explicit_decommissioned_at(
     reclaiming the part must not touch it."""
     insert_material(con, MATERIAL_COPPER, verbose=False)
     insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
-    insert_magnet(con, {**MAGNET_DATA, "name": "M19061901", "status": "in_stock"}, "insert", verbose=False)
+    insert_magnet(con, {**_undated(MAGNET_DATA, "assembled_at"), "name": "M19061901", "status": "in_stock"}, "insert", verbose=False)
     insert_magnet_parts(con, "M19061901", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
     insert_assembly(con, {
         "name": "OLD_A", "housing": "M9",
@@ -402,7 +471,7 @@ def test_insert_magnet_parts_reuse_does_not_override_explicit_decommissioned_at(
         "WHERE assembly_name = 'OLD_A' AND magnet_name = 'M19061901'"
     )
 
-    insert_magnet(con, {**MAGNET_DATA, "name": "M20022001", "status": "in_stock"}, "insert", verbose=False)
+    insert_magnet(con, {**_undated(MAGNET_DATA, "assembled_at"), "name": "M20022001", "status": "in_stock"}, "insert", verbose=False)
     insert_magnet_parts(con, "M20022001", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
 
     assert con.execute("SELECT status FROM magnets WHERE name = 'M19061901'").fetchone()[0] == "retired"
@@ -432,6 +501,104 @@ def test_insert_magnet_parts_rejection_writes_zero_rows(con):
         insert_magnet_parts(con, "MAG_01", parts, verbose=False)
     count = con.execute("SELECT COUNT(*) FROM magnet_parts WHERE magnet_name = 'MAG_01'").fetchone()[0]
     assert count == 0
+
+
+def test_insert_magnet_parts_warns_when_part_made_after_magnet(con, capsys):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock", "manufactured_at": "2021-03-04"}, verbose=False)
+    insert_magnet(con, MAGNET_DATA, "insert", verbose=False)  # assembled 2020-01-01
+    insert_magnet_parts(con, "MAG_01", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+    assert (
+        "[WARN] helix 'HELIX_01' made 2021-03-04, after magnet 'MAG_01' assembled 2020-01-01."
+        in capsys.readouterr().out
+    )
+    # a warning only: the part is still linked
+    assert con.execute("SELECT 1 FROM magnet_parts WHERE part_name = 'HELIX_01'").fetchone() is not None
+
+
+def test_insert_magnet_parts_same_day_part_does_not_warn(con, capsys):
+    """Dates are compared by day: a part made at 08:00 on the assembly day is fine."""
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock", "manufactured_at": "2020-01-01 08:00:00"}, verbose=False)
+    insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
+    insert_magnet_parts(con, "MAG_01", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+    assert "[WARN]" not in capsys.readouterr().out
+
+
+def test_insert_magnet_parts_dates_attach_event_with_stored_assembled_at(con):
+    """An uncoded magnet's JSON assembled_at (not the import time) dates the part's attach event."""
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock", "manufactured_at": "2013-01-19"}, verbose=False)
+    insert_magnet(con, {**MAGNET_DATA, "name": "M9Bitters", "assembled_at": "2013-01-29"}, "insert", verbose=False)
+    insert_magnet_parts(con, "M9Bitters", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+    history = json.loads(con.execute("SELECT status_history FROM parts WHERE name = 'HELIX_01'").fetchone()[0])
+    attach = [e for e in history if e["description"] == "Attached to magnet 'M9Bitters'."]
+    assert attach and attach[0]["date"] == "2013-01-29"
+
+
+def test_insert_magnet_parts_reuse_retires_with_stored_assembled_at(con):
+    """Reclaiming a part for an uncoded magnet uses its JSON assembled_at for the retirement."""
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock", "manufactured_at": "2019-01-01"}, verbose=False)
+    insert_magnet(con, {**MAGNET_DATA, "name": "OLD_MAG", "status": "in_stock", "assembled_at": "2019-06-19"},
+                  "insert", verbose=False)
+    insert_magnet_parts(con, "OLD_MAG", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+    insert_assembly(con, {
+        "name": "OLD_A", "housing": "M9",
+        "commissioned_at": "2019-06-19 08:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    insert_assembly_magnets(con, "OLD_A", ["OLD_MAG"], verbose=False)
+
+    insert_magnet(con, {**MAGNET_DATA, "name": "NEW_MAG", "status": "in_stock", "assembled_at": "2020-02-20"},
+                  "insert", verbose=False)
+    insert_magnet_parts(con, "NEW_MAG", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+
+    a_decommissioned_at = con.execute(
+        "SELECT decommissioned_at FROM assemblies WHERE name = 'OLD_A'"
+    ).fetchone()[0]
+    assert a_decommissioned_at.isoformat() == "2020-02-20T07:00:00"
+    history = json.loads(con.execute("SELECT status_history FROM magnets WHERE name = 'OLD_MAG'").fetchone()[0])
+    retired = [e for e in history if e["status"] == "retired"]
+    assert retired and retired[0]["date"] == "2020-02-20 07:00:00"
+
+
+def test_insert_assembly_magnets_warns_when_magnet_assembled_after_commissioning(con, capsys):
+    insert_magnet(con, {**MAGNET_DATA, "assembled_at": "2025-06-01"}, "insert", verbose=False)
+    insert_assembly(con, ASSEMBLY_DATA, verbose=False)  # commissioned 2025-01-01
+    insert_assembly_magnets(con, "ASSEMBLY_01", ["MAG_01"], verbose=False)
+    assert (
+        "[WARN] magnet 'MAG_01' assembled 2025-06-01, after assembly 'ASSEMBLY_01' commissioned 2025-01-01."
+        in capsys.readouterr().out
+    )
+    assert con.execute("SELECT 1 FROM assembly_magnets WHERE magnet_name = 'MAG_01'").fetchone() is not None
+
+
+def test_insert_assembly_magnets_does_not_warn_for_magnet_assembled_before(con, capsys):
+    insert_magnet(con, MAGNET_DATA, "insert", verbose=False)  # assembled 2020-01-01
+    insert_assembly(con, ASSEMBLY_DATA, verbose=False)
+    insert_assembly_magnets(con, "ASSEMBLY_01", ["MAG_01"], verbose=False)
+    assert "[WARN]" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# resolve_manufactured_at() / resolve_assembled_at()
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", [None, "None", "null", ""])
+def test_resolve_manufactured_at_treats_empty_values_as_missing(value):
+    with pytest.raises(ValueError, match="none can be derived"):
+        resolve_manufactured_at({"name": "M9Bi", "manufactured_at": value})
+
+
+def test_resolve_manufactured_at_returns_json_value_without_warning():
+    assert resolve_manufactured_at({"name": "M9Bi", "manufactured_at": "2013-01-19"}) == ("2013-01-19", [])
+
+
+def test_resolve_assembled_at_falls_back_to_name_with_warning():
+    value, warnings = resolve_assembled_at({"name": "M23012001"})
+    assert value == "2023-01-20"
+    assert warnings == ["  [WARN] magnet 'M23012001': no assembled_at in JSON — using 2023-01-20 from its name."]
 
 
 # ---------------------------------------------------------------------------

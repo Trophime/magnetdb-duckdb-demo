@@ -115,6 +115,8 @@ from crud import (
     merge_duplicate_pupitre_records,
     parse_timestamp,
     print_geometry_check,
+    resolve_assembled_at,
+    resolve_manufactured_at,
     resolve_overview_assembly,
     update_assembly_from_json,
     update_assembly_magnet,
@@ -370,6 +372,11 @@ def _validate_magnet(data: dict) -> list[str]:
     errors = []
     if not data.get("name"):
         errors.append("Missing top-level 'name'")
+    else:
+        try:
+            resolve_assembled_at(data)
+        except ValueError as exc:
+            errors.append(str(exc))
     if not data.get("parts"):
         errors.append("'parts' list is empty or missing")
     for i, part in enumerate(data.get("parts", [])):
@@ -378,6 +385,11 @@ def _validate_magnet(data: dict) -> list[str]:
             continue
         if not part.get("name"):
             errors.append(f"Part[{i}] is missing 'name'")
+        else:
+            try:
+                resolve_manufactured_at(part)
+            except ValueError as exc:
+                errors.append(str(exc))
         if not part.get("type"):
             errors.append(f"Part '{part.get('name', i)}' is missing 'type'")
         if not part.get("material") or not part["material"].get("name"):

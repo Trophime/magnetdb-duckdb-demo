@@ -1,0 +1,17 @@
+# Static configuration of the dashboard proxy (scripts/run_traefik.sh).
+# File provider only (no docker.sock); Traefik's own API/dashboard is off.
+log:
+  level: INFO
+
+accessLog: {}
+
+api:
+  dashboard: false
+
+entryPoints:
+  websecure:
+    address: ":8443"
+
+providers:
+  file:
+    filename: /etc/traefik/dynamic.yml

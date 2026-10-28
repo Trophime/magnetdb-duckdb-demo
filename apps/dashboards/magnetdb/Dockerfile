@@ -43,6 +43,9 @@ COPY apps/dashboards/magnetdb/src/ ./src/
 COPY --chmod=755 apps/dashboards/magnetdb/entrypoint.sh ./src/
 WORKDIR /app/src
 
+# *.mo are gitignored: compile them here, or the UI silently falls back to English
+RUN pybabel compile -d locales -D magnetdb
+
 USER ${APP_UID}:${APP_GID}
 
 ENV PORT=8050 \
