@@ -4,7 +4,9 @@ Status: proposed 2026-10-22, revised the same day after exploring the limits
 (see [Limits explored](#limits-explored-2026-10-22)), then after the
 file-quality commits of 2026-10-22 afternoon (`4caf41c`, `17c16f9`, `b3344bd`
 in `python_magnetrun`; [PLAN_pupitre_binary_tail.md](PLAN_pupitre_binary_tail.md)).
-**Approved and implemented 2026-10-22 (not committed)**; verification results
+**Approved and implemented 2026-10-22**, committed 2026-10-28 in
+`python_magnetrun` as `b75b6a9` ("explore session to link pupitre/pigbrother
+data"; the parent repo does not record that submodule commit yet); verification results
 and open issues in [NOTES_session_records_checks.md](NOTES_session_records_checks.md).
 Follow-up step R (runlog path fix, [below](#follow-up-step-r-pigbrother-runlog-path-proposed-2026-10-23))
 is **proposed, awaiting approval**.
