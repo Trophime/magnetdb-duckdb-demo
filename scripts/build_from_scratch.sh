@@ -19,6 +19,12 @@ Rebuild the MagnetDB DuckDB database, or run only the steps from --from to --to
   -h, --help   show this help
 
 Steps: ${STEPS[*]}
+
+Runs with the active Python environment (the 'python' on PATH), which must
+provide duckdb: activate the project venv first, or use
+'uv run --project to_duckdb scripts/build_from_scratch.sh ...'.
+Exit status is 1 if any step failed, including failed assembly files
+(the build goes on after those); 0 otherwise.
 EOF
 }
 
@@ -63,6 +69,19 @@ if [ "$FROM" != create ] && [ ! -f "$DB" ]; then
     echo "Error: $DB not found; use --db." >&2
     exit 1
 fi
+
+# the build uses whatever 'python' the caller's environment provides (venv, uv, ...)
+if ! python -c "import duckdb" 2>/dev/null; then
+    cat >&2 <<EOF
+Error: $(command -v python || echo "'python' (not found)") cannot import duckdb.
+Run the build inside the project environment, e.g.
+  source .venv/bin/activate && scripts/build_from_scratch.sh ...
+  uv run --project to_duckdb scripts/build_from_scratch.sh ...   (with uv)
+EOF
+    exit 1
+fi
+# set by steps that report a failure but let the build go on
+BUILD_FAILED=0
 
 echo "Building $DB (steps $FROM → $TO, log: $LOG)"
 echo "### run $(date '+%F %T') --from $FROM --to $TO" >> "$LOG"
@@ -243,7 +262,7 @@ if wanted assemblies; then
     n_failed=0
     for file in $(../scripts/list_assembly_configs.sh "$JSON"); do
         echo -n "  $file"
-        if python magnetdb.py assembly add "$JSON/$file" --db "$DB" >> "$LOG" 2>&1; then
+        if python magnetdb.py assembly add "$JSON/$file" --status-file "$STATUS_FILE" --db "$DB" >> "$LOG" 2>&1; then
             echo -e ": \033[32mOK\033[0m"
         else
             echo -e ": \033[31mERROR\033[0m"
@@ -251,7 +270,7 @@ if wanted assemblies; then
         fi
     done
     title "Load assemblies"
-    if [ "$n_failed" -eq 0 ]; then ok; else failed "$n_failed file(s), "; fi
+    if [ "$n_failed" -eq 0 ]; then ok; else failed "$n_failed file(s), "; BUILD_FAILED=1; fi
 else
     title "Load assemblies"
     not_run
@@ -302,6 +321,11 @@ section link-users "Link users" python demos/users_table_demo.py --link-only --d
 
 # Check users that are not linked (nor associated with any records -- either experiments or overview records)
 section unlinked-users "List unlinked users" python demos/list_users_unlinked.py --db $DB
+
+if [ "$BUILD_FAILED" -ne 0 ]; then
+    echo -e "\033[31mBuild finished with failures\033[0m (see $LOG)"
+    exit 1
+fi
 
 # update magnet/part status retro-actively
 # get DB coverage from Valentin work

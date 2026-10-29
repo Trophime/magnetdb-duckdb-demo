@@ -1,0 +1,270 @@
+Ring suggestions: 8 target magnet(s), 102 slot(s), tolerance ±0.1 mm
+Excluded rings (never used): R26021101 [M25032101], R26021102 [M25032101], R26021103 [M25032101], R26021104 [M25032101], R26021105 [M25032101], R26021106 [M25032101], R26021107 [M25032101], R26021108 [M25032101], R26021109 [M25032101], R26021110 [M25032101], R26021111 [M25032101], R26021112 [M25032101], R26021113 [M25032101]
+
+== M09052601  (2009-05-26 → 2024-12-06)
+  H1H2    H09052601/H09070201  →  R26021001 [-]  (ring in no magnet)
+            alternatives: R20061903 [M25012001] would die in M09052601; R26021015 [M23012001] overlaps M23012001
+  H2H3    H09070201/H09070901  →  R26021002 [-]  (ring in no magnet)
+            alternatives: R20061904 [M25012001] would die in M09052601; R26021016 [M23012001] overlaps M23012001
+  H3H4    H09070901/H09040701  →  R26102901 (placeholder: no usable real ring)
+            alternatives: R20061901 [M25012001] would die in M09052601; R26021003 [M19071101] overlaps M19071101; R26021017 [M23012001] overlaps M23012001
+  H4H5    H09040701/H08070805  →  R26021030 [-]  (ring in no magnet)
+            alternatives: R20061902 [M25012001] would die in M09052601; R26021004 [M19071101] overlaps M19071101; R26021018 [M23012001] overlaps M23012001
+  H5H6    H08070805/H08070806  →  R26102903 (placeholder: no usable real ring)
+            alternatives: R26021005 [M19071101] overlaps M19071101; R26021019 [M23012001] overlaps M23012001; R26021031 [M25012001] would die in M09052601
+  H6H7    H08070806/H08070807  →  R26102905 (placeholder: no usable real ring)
+            alternatives: R21040901 [M25012001] would die in M09052601; R26021020 [M23012001] overlaps M23012001
+  H7H8    H08070807/H08070808  →  R26102907 (placeholder: no usable real ring)
+            alternatives: R26021007 [M19071101] overlaps M19071101; R26021021 [M23012001] overlaps M23012001; R26021033 [M25012001] would die in M09052601
+  H8H9    H08070808/H08070809  →  R26102909 (placeholder: no usable real ring)
+            alternatives: R26021008 [M19071101] overlaps M19071101; R26021022 [M23012001] overlaps M23012001; R26021034 [M25012001] would die in M09052601
+  H9H10   H08070809/H08060601  →  R26102911 (placeholder: no usable real ring)
+            alternatives: R26021009 [M19071101] overlaps M19071101; R26021023 [M23012001] overlaps M23012001; R26021035 [M25012001] would die in M09052601; R26021042 [M19020601, M20092801] overlaps M19020601
+  H10H11  H08060601/H08060602  →  R26102913 (placeholder: no usable real ring)
+            alternatives: R26021010 [M19071101] overlaps M19071101; R26021024 [M23012001] overlaps M23012001; R26021036 [M25012001] would die in M09052601; R26021043 [M19020601, M20092801] overlaps M19020601
+  H11H12  H08060602/H08060603  →  R26102915 (placeholder: no usable real ring)
+            alternatives: R26021011 [M19071101] overlaps M19071101; R26021025 [M23012001] overlaps M23012001; R26021037 [M25012001] would die in M09052601; R26021044 [M19020601, M20092801] overlaps M19020601
+  H12H13  H08060603/H08060604  →  R26102917 (placeholder: no usable real ring)
+            alternatives: R26021012 [M19071101] overlaps M19071101; R26021026 [M23012001] overlaps M23012001; R26021038 [M25012001] would die in M09052601; R26021045 [M19020601, M20092801] overlaps M19020601
+  H13H14  H08060604/H08060605  →  R26021014 [-]  (ring in no magnet)
+            alternatives: R26021013 [M19071101] overlaps M19071101; R26021027 [M23012001] overlaps M23012001; R26021028 [-] given to M12082401 H13H14; R26021039 [M25012001] would die in M09052601; R26021040 [-] given to M19061901 H13H14; R26021046 [M19020601, M20092801] overlaps M19020601; R26021047 [-] not chosen (tie-break)
+
+== M12082401  (2012-08-24 → 2024-12-10)
+  H1H2    H12082401/H12082402  →  R26102919 (placeholder: no usable real ring)
+            alternatives: R20061903 [M25012001] given to M18110501 H1H2; R26021001 [-] given to M09052601 H1H2; R26021015 [M23012001] overlaps M23012001
+  H2H3    H12082402/H12082403  →  R26102920 (placeholder: no usable real ring)
+            alternatives: R20061904 [M25012001] given to M18110501 H2H3; R26021002 [-] given to M09052601 H2H3; R26021016 [M23012001] overlaps M23012001
+  H3H4    H12082403/H12082404  →  R26102902 (placeholder: no usable real ring)
+            alternatives: R20061901 [M25012001] given to M18110501 H3H4; R26021003 [M19071101] overlaps M19071101; R26021017 [M23012001] overlaps M23012001
+  H4H5    H12082404/H12082405  →  R26102921 (placeholder: no usable real ring)
+            alternatives: R20061902 [M25012001] given to M18110501 H4H5; R26021004 [M19071101] overlaps M19071101; R26021018 [M23012001] overlaps M23012001; R26021030 [-] given to M09052601 H4H5
+  H5H6    H12082405/H12082406  →  R26102904 (placeholder: no usable real ring)
+            alternatives: R26021005 [M19071101] overlaps M19071101; R26021019 [M23012001] overlaps M23012001; R26021031 [M25012001] given to M19061901 H5H6
+  H6H7    H12082406/H12082407  →  R26102906 (placeholder: no usable real ring)
+            alternatives: R21040901 [M25012001] given to M18110501 H6H7; R26021020 [M23012001] overlaps M23012001
+  H7H8    H12082407/H12082408  →  R26102908 (placeholder: no usable real ring)
+            alternatives: R26021007 [M19071101] overlaps M19071101; R26021021 [M23012001] overlaps M23012001; R26021033 [M25012001] given to M19061901 H7H8
+  H8H9    H12082408/H12082701  →  R26102910 (placeholder: no usable real ring)
+            alternatives: R26021008 [M19071101] overlaps M19071101; R26021022 [M23012001] overlaps M23012001; R26021034 [M25012001] given to M19061901 H8H9
+  H9H10   H12082701/H12082801  →  R26102912 (placeholder: no usable real ring)
+            alternatives: R26021009 [M19071101] overlaps M19071101; R26021023 [M23012001] overlaps M23012001; R26021035 [M25012001] given to M19061901 H9H10; R26021042 [M19020601, M20092801] overlaps M19020601
+  H10H11  H12082801/H12082802  →  R26102914 (placeholder: no usable real ring)
+            alternatives: R26021010 [M19071101] overlaps M19071101; R26021024 [M23012001] overlaps M23012001; R26021036 [M25012001] given to M19061901 H10H11; R26021043 [M19020601, M20092801] overlaps M19020601
+  H11H12  H12082802/H12082803  →  R26102916 (placeholder: no usable real ring)
+            alternatives: R26021011 [M19071101] overlaps M19071101; R26021025 [M23012001] overlaps M23012001; R26021037 [M25012001] given to M19061901 H11H12; R26021044 [M19020601, M20092801] overlaps M19020601
+  H12H13  H12082803/H12082804  →  R26102918 (placeholder: no usable real ring)
+            alternatives: R26021012 [M19071101] overlaps M19071101; R26021026 [M23012001] overlaps M23012001; R26021038 [M25012001] given to M19061901 H12H13; R26021045 [M19020601, M20092801] overlaps M19020601
+  H13H14  H12082804/H13091701  →  R26021028 [-]  (ring in no magnet)
+            alternatives: R26021013 [M19071101] overlaps M19071101; R26021014 [-] given to M09052601 H13H14; R26021027 [M23012001] overlaps M23012001; R26021039 [M25012001] given to M23072801 H13H14; R26021040 [-] given to M19061901 H13H14; R26021046 [M19020601, M20092801] overlaps M19020601; R26021047 [-] not chosen (tie-break)
+
+== M15061601  (2015-06-16 → 2019-07-11)
+  H1H2    H13102101/H15012901  →  R26021029 [-]  (ring in no magnet)
+  H2H3    H15012901/H15013001  →  R26021004 [M19071101]  (handover with M19071101)
+            alternatives: R20061902 [M25012001] given to M18110501 H4H5; R26021018 [M23012001] not chosen (tie-break); R26021030 [-] given to M09052601 H4H5
+  H3H4    H15013001/H08070801  →  R26021005 [M19071101]  (handover with M19071101)
+            alternatives: R26021019 [M23012001] given to M18110501 H5H6; R26021031 [M25012001] given to M19061901 H5H6
+  H4H5    H08070801/H10011201  →  R26021020 [M23012001]  (no overlap with M23012001)
+            alternatives: R21040901 [M25012001] given to M18110501 H6H7
+  H5H6    H10011201/H08070810  →  R26021007 [M19071101]  (handover with M19071101)
+            alternatives: R26021021 [M23012001] given to M18110501 H7H8; R26021033 [M25012001] given to M19061901 H7H8
+  H6H7    H08070810/H08070811  →  R26021008 [M19071101]  (handover with M19071101)
+            alternatives: R26021022 [M23012001] given to M18110501 H8H9; R26021034 [M25012001] given to M19061901 H8H9
+  H7H8    H08070811/H08060606  →  R26021009 [M19071101]  (handover with M19071101)
+            alternatives: R26021023 [M23012001] not chosen (tie-break); R26021035 [M25012001] given to M19061901 H9H10; R26021042 [M19020601, M20092801] overlaps M19020601
+  H8H9    H08060606/H08060607  →  R26021010 [M19071101]  (handover with M19071101)
+            alternatives: R26021024 [M23012001] not chosen (tie-break); R26021036 [M25012001] given to M19061901 H10H11; R26021043 [M19020601, M20092801] overlaps M19020601
+  H9H10   H08060607/H08060608  →  R26021011 [M19071101]  (handover with M19071101)
+            alternatives: R26021025 [M23012001] not chosen (tie-break); R26021037 [M25012001] given to M19061901 H11H12; R26021044 [M19020601, M20092801] overlaps M19020601
+  H10H11  H08060608/H08060609  →  R26021012 [M19071101]  (handover with M19071101)
+            alternatives: R26021026 [M23012001] not chosen (tie-break); R26021038 [M25012001] given to M19061901 H12H13; R26021045 [M19020601, M20092801] overlaps M19020601
+  H11H12  H08060609/H10011501  →  R26021013 [M19071101]  (handover with M19071101)
+            alternatives: R26021014 [-] given to M09052601 H13H14; R26021027 [M23012001] not chosen (tie-break); R26021028 [-] given to M12082401 H13H14; R26021039 [M25012001] not chosen (tie-break); R26021040 [-] given to M19061901 H13H14; R26021046 [M19020601, M20092801] overlaps M19020601; R26021047 [-] not chosen (tie-break)
+
+== M18110501  (2018-11-05 → 2019-02-06)
+  H1H2    H15101601/H15061703  →  R20061903 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021001 [-] given to M09052601 H1H2; R26021015 [M23012001] not chosen (tie-break)
+  H2H3    H15061703/H15061801  →  R20061904 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021002 [-] given to M09052601 H2H3; R26021016 [M23012001] not chosen (tie-break)
+  H3H4    H15061801/H15100501  →  R20061901 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021003 [M19071101] not chosen (tie-break); R26021017 [M23012001] not chosen (tie-break)
+  H4H5    H15100501/H15101501  →  R20061902 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021004 [M19071101] given to M15061601 H2H3; R26021018 [M23012001] not chosen (tie-break); R26021030 [-] given to M09052601 H4H5
+  H5H6    H15101501/H18060101  →  R26021019 [M23012001]  (no overlap with M23012001)
+            alternatives: R26021005 [M19071101] given to M15061601 H3H4; R26021031 [M25012001] not chosen (tie-break)
+  H6H7    H18060101/H18012501  →  R21040901 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021020 [M23012001] given to M15061601 H4H5
+  H7H8    H18012501/H18051801  →  R26021021 [M23012001]  (no overlap with M23012001)
+            alternatives: R26021007 [M19071101] given to M15061601 H5H6; R26021033 [M25012001] not chosen (tie-break)
+  H8H9    H18051801/H14061901  →  R26021022 [M23012001]  (no overlap with M23012001)
+            alternatives: R26021008 [M19071101] given to M15061601 H6H7; R26021034 [M25012001] not chosen (tie-break)
+  H9H10   H14061901/H14062701  →  R26021042 [M19020601, M20092801]  (handover with M19020601)
+            alternatives: R26021009 [M19071101] given to M15061601 H7H8; R26021023 [M23012001] not chosen (tie-break); R26021035 [M25012001] not chosen (tie-break)
+  H10H11  H14062701/H14062001  →  R26021043 [M19020601, M20092801]  (handover with M19020601)
+            alternatives: R26021010 [M19071101] given to M15061601 H8H9; R26021024 [M23012001] not chosen (tie-break); R26021036 [M25012001] not chosen (tie-break)
+  H11H12  H14062001/H10061701  →  R26021044 [M19020601, M20092801]  (handover with M19020601)
+            alternatives: R26021011 [M19071101] given to M15061601 H9H10; R26021025 [M23012001] not chosen (tie-break); R26021037 [M25012001] not chosen (tie-break)
+  H12H13  H10061701/H10061702  →  R26021045 [M19020601, M20092801]  (handover with M19020601)
+            alternatives: R26021012 [M19071101] given to M15061601 H10H11; R26021026 [M23012001] not chosen (tie-break); R26021038 [M25012001] not chosen (tie-break)
+  H13H14  H10061702/H14072201  →  R26021046 [M19020601, M20092801]  (handover with M19020601)
+            alternatives: R26021013 [M19071101] given to M15061601 H11H12; R26021014 [-] given to M09052601 H13H14; R26021027 [M23012001] not chosen (tie-break); R26021028 [-] given to M12082401 H13H14; R26021039 [M25012001] not chosen (tie-break); R26021040 [-] not chosen (tie-break); R26021047 [-] not chosen (tie-break)
+
+== M19061901  (2019-06-19 → 2020-02-20)
+  H1H2    H15101601/H15061703  →  R20061903 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021001 [-] given to M09052601 H1H2; R26021015 [M23012001] not chosen (tie-break)
+  H2H3    H15061703/H15061801  →  R20061904 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021002 [-] given to M09052601 H2H3; R26021016 [M23012001] not chosen (tie-break)
+  H3H4    H15061801/H15100501  →  R20061901 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021003 [M19071101] overlaps M19071101; R26021017 [M23012001] not chosen (tie-break)
+  H4H5    H15100501/H15101501  →  R20061902 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021004 [M19071101] overlaps M19071101; R26021018 [M23012001] not chosen (tie-break); R26021030 [-] given to M09052601 H4H5
+  H5H6    H15101501/H18060101  →  R26021031 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021005 [M19071101] overlaps M19071101; R26021019 [M23012001] not chosen (tie-break)
+  H6H7    H18060101/H18012501  →  R21040901 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021020 [M23012001] given to M15061601 H4H5
+  H7H8    H18012501/H18051801  →  R26021033 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021007 [M19071101] overlaps M19071101; R26021021 [M23012001] not chosen (tie-break)
+  H8H9    H18051801/H19060601  →  R26021034 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021008 [M19071101] overlaps M19071101; R26021022 [M23012001] not chosen (tie-break)
+  H9H10   H19060601/H19060602  →  R26021035 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021009 [M19071101] overlaps M19071101; R26021023 [M23012001] not chosen (tie-break); R26021042 [M19020601, M20092801] not chosen (tie-break)
+  H10H11  H19060602/H19061201  →  R26021036 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021010 [M19071101] overlaps M19071101; R26021024 [M23012001] not chosen (tie-break); R26021043 [M19020601, M20092801] not chosen (tie-break)
+  H11H12  H19061201/H19060603  →  R26021037 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021011 [M19071101] overlaps M19071101; R26021025 [M23012001] not chosen (tie-break); R26021044 [M19020601, M20092801] not chosen (tie-break)
+  H12H13  H19060603/H10061702  →  R26021038 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021012 [M19071101] overlaps M19071101; R26021026 [M23012001] not chosen (tie-break); R26021045 [M19020601, M20092801] not chosen (tie-break)
+  H13H14  H10061702/H10061703  →  R26021040 [-]  (ring in no magnet)
+            alternatives: R26021013 [M19071101] overlaps M19071101; R26021014 [-] given to M09052601 H13H14; R26021027 [M23012001] not chosen (tie-break); R26021028 [-] given to M12082401 H13H14; R26021039 [M25012001] not chosen (tie-break); R26021046 [M19020601, M20092801] not chosen (tie-break); R26021047 [-] not chosen (tie-break)
+
+== M20022001  (2020-02-20 → 2022-01-18)
+  H1H2    H15101601/H15061703  →  R20061903 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021001 [-] given to M09052601 H1H2; R26021015 [M23012001] not chosen (tie-break)
+  H2H3    H15061703/H15061801  →  R20061904 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021002 [-] given to M09052601 H2H3; R26021016 [M23012001] not chosen (tie-break)
+  H3H4    H15061801/H15100501  →  R20061901 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021003 [M19071101] overlaps M19071101; R26021017 [M23012001] not chosen (tie-break)
+  H4H5    H15100501/H15101501  →  R20061902 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021004 [M19071101] overlaps M19071101; R26021018 [M23012001] not chosen (tie-break); R26021030 [-] given to M09052601 H4H5
+  H5H6    H15101501/H18060101  →  R26021031 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021005 [M19071101] overlaps M19071101; R26021019 [M23012001] not chosen (tie-break)
+  H6H7    H18060101/H18012501  →  R21040901 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021020 [M23012001] not chosen (tie-break)
+  H7H8    H18012501/H18051801  →  R26021033 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021007 [M19071101] overlaps M19071101; R26021021 [M23012001] not chosen (tie-break)
+  H8H9    H18051801/H19060601  →  R26021034 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021008 [M19071101] overlaps M19071101; R26021022 [M23012001] not chosen (tie-break)
+  H9H10   H19060601/H19060602  →  R26021035 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021009 [M19071101] overlaps M19071101; R26021023 [M23012001] not chosen (tie-break); R26021042 [M19020601, M20092801] overlaps M20092801
+  H10H11  H19060602/H19061201  →  R26021036 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021010 [M19071101] overlaps M19071101; R26021024 [M23012001] not chosen (tie-break); R26021043 [M19020601, M20092801] overlaps M20092801
+  H11H12  H19061201/H19060603  →  R26021037 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021011 [M19071101] overlaps M19071101; R26021025 [M23012001] not chosen (tie-break); R26021044 [M19020601, M20092801] overlaps M20092801
+  H12H13  H19060603/H20011501  →  R26021038 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021012 [M19071101] overlaps M19071101; R26021026 [M23012001] not chosen (tie-break); R26021045 [M19020601, M20092801] overlaps M20092801
+  H13H14  H20011501/H20020501  →  R26021040 [-]  (ring in no magnet)
+            alternatives: R26021013 [M19071101] overlaps M19071101; R26021014 [-] given to M09052601 H13H14; R26021027 [M23012001] not chosen (tie-break); R26021028 [-] given to M12082401 H13H14; R26021039 [M25012001] not chosen (tie-break); R26021046 [M19020601, M20092801] overlaps M20092801; R26021047 [-] not chosen (tie-break)
+
+== M22011801  (2022-01-18 → 2023-07-28)
+  H1H2    H15101601/H15061703  →  R20061903 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021001 [-] given to M09052601 H1H2; R26021015 [M23012001] overlaps M23012001
+  H2H3    H15061703/H15061801  →  R20061904 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021002 [-] given to M09052601 H2H3; R26021016 [M23012001] overlaps M23012001
+  H3H4    H15061801/H15100501  →  R20061901 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021003 [M19071101] overlaps M19071101; R26021017 [M23012001] overlaps M23012001
+  H4H5    H15100501/H15101501  →  R20061902 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021004 [M19071101] overlaps M19071101; R26021018 [M23012001] overlaps M23012001; R26021030 [-] given to M09052601 H4H5
+  H5H6    H15101501/H18060101  →  R26021031 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021005 [M19071101] overlaps M19071101; R26021019 [M23012001] overlaps M23012001
+  H6H7    H18060101/H18012501  →  R21040901 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021020 [M23012001] overlaps M23012001
+  H7H8    H18012501/H18051801  →  R26021033 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021007 [M19071101] overlaps M19071101; R26021021 [M23012001] overlaps M23012001
+  H8H9    H18051801/H19060601  →  R26021034 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021008 [M19071101] overlaps M19071101; R26021022 [M23012001] overlaps M23012001
+  H9H10   H19060601/H19060602  →  R26021035 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021009 [M19071101] overlaps M19071101; R26021023 [M23012001] overlaps M23012001; R26021042 [M19020601, M20092801] overlaps M20092801
+  H10H11  H19060602/H19061201  →  R26021036 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021010 [M19071101] overlaps M19071101; R26021024 [M23012001] overlaps M23012001; R26021043 [M19020601, M20092801] overlaps M20092801
+  H11H12  H19061201/H19060603  →  R26021037 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021011 [M19071101] overlaps M19071101; R26021025 [M23012001] overlaps M23012001; R26021044 [M19020601, M20092801] overlaps M20092801
+  H12H13  H19060603/H20011501  →  R26021038 [M25012001]  (no overlap with M25012001)
+            alternatives: R26021012 [M19071101] overlaps M19071101; R26021026 [M23012001] overlaps M23012001; R26021045 [M19020601, M20092801] overlaps M20092801
+  H13H14  H20011501/H14072201  →  R26021040 [-]  (ring in no magnet)
+            alternatives: R26021013 [M19071101] overlaps M19071101; R26021014 [-] given to M09052601 H13H14; R26021027 [M23012001] overlaps M23012001; R26021028 [-] given to M12082401 H13H14; R26021039 [M25012001] not chosen (tie-break); R26021046 [M19020601, M20092801] overlaps M20092801; R26021047 [-] not chosen (tie-break)
+
+== M23072801  (2023-07-28 → 2025-01-20)
+  H1H2    H15011301/H21091001  →  R20061903 [M25012001]  (handover with M25012001)
+            alternatives: R26021001 [-] given to M09052601 H1H2; R26021015 [M23012001] overlaps M23012001
+  H2H3    H21091001/H15061801  →  R20061904 [M25012001]  (handover with M25012001)
+            alternatives: R26021002 [-] given to M09052601 H2H3; R26021016 [M23012001] overlaps M23012001
+  H3H4    H15061801/H15100501  →  R20061901 [M25012001]  (handover with M25012001)
+            alternatives: R26021003 [M19071101] overlaps M19071101; R26021017 [M23012001] overlaps M23012001
+  H4H5    H15100501/H19052301  →  R20061902 [M25012001]  (handover with M25012001)
+            alternatives: R26021004 [M19071101] overlaps M19071101; R26021018 [M23012001] overlaps M23012001; R26021030 [-] given to M09052601 H4H5
+  H5H6    H19052301/H19101001  →  R26021031 [M25012001]  (handover with M25012001)
+            alternatives: R26021005 [M19071101] overlaps M19071101; R26021019 [M23012001] overlaps M23012001
+  H6H7    H19101001/H18012501  →  R21040901 [M25012001]  (handover with M25012001)
+            alternatives: R26021020 [M23012001] overlaps M23012001
+  H7H8    H18012501/H18051801  →  R26021033 [M25012001]  (handover with M25012001)
+            alternatives: R26021007 [M19071101] overlaps M19071101; R26021021 [M23012001] overlaps M23012001
+  H8H9    H18051801/H19060601  →  R26021034 [M25012001]  (handover with M25012001)
+            alternatives: R26021008 [M19071101] overlaps M19071101; R26021022 [M23012001] overlaps M23012001
+  H9H10   H19060601/H19060602  →  R26021035 [M25012001]  (handover with M25012001)
+            alternatives: R26021009 [M19071101] overlaps M19071101; R26021023 [M23012001] overlaps M23012001; R26021042 [M19020601, M20092801] overlaps M20092801
+  H10H11  H19060602/H19061201  →  R26021036 [M25012001]  (handover with M25012001)
+            alternatives: R26021010 [M19071101] overlaps M19071101; R26021024 [M23012001] overlaps M23012001; R26021043 [M19020601, M20092801] overlaps M20092801
+  H11H12  H19061201/H19060603  →  R26021037 [M25012001]  (handover with M25012001)
+            alternatives: R26021011 [M19071101] overlaps M19071101; R26021025 [M23012001] overlaps M23012001; R26021044 [M19020601, M20092801] overlaps M20092801
+  H12H13  H19060603/H20011501  →  R26021038 [M25012001]  (handover with M25012001)
+            alternatives: R26021012 [M19071101] overlaps M19071101; R26021026 [M23012001] overlaps M23012001; R26021045 [M19020601, M20092801] overlaps M20092801
+  H13H14  H20011501/H14072201  →  R26021039 [M25012001]  (handover with M25012001)
+            alternatives: R26021013 [M19071101] overlaps M19071101; R26021014 [-] given to M09052601 H13H14; R26021027 [M23012001] overlaps M23012001; R26021028 [-] given to M12082401 H13H14; R26021040 [-] not chosen (tie-break); R26021046 [M19020601, M20092801] overlaps M20092801; R26021047 [-] not chosen (tie-break)
+
+Placeholders (21):
+  R26102901  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H3H4.yaml  drawing -  material MA26021002  manufactured_at 2009-05-26
+      fills: M09052601 H3H4
+  R26102902  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H3H4.yaml  drawing -  material MA26021002  manufactured_at 2012-08-24
+      fills: M12082401 H3H4
+  R26102903  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H5H6.yaml  drawing HL-27-033-C  material MA26021002  manufactured_at 2009-05-26
+      fills: M09052601 H5H6
+  R26102904  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H5H6.yaml  drawing HL-27-033-C  material MA26021002  manufactured_at 2012-08-24
+      fills: M12082401 H5H6
+  R26102905  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H6H7.yaml  drawing HL-27-034-C  material MA21040901  manufactured_at 2009-05-26
+      fills: M09052601 H6H7
+  R26102906  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H6H7.yaml  drawing HL-27-034-C  material MA21040901  manufactured_at 2012-08-24
+      fills: M12082401 H6H7
+  R26102907  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H7H8.yaml  drawing HL-27-035-C  material MA26021002  manufactured_at 2009-05-26
+      fills: M09052601 H7H8
+  R26102908  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H7H8.yaml  drawing HL-27-035-C  material MA26021002  manufactured_at 2012-08-24
+      fills: M12082401 H7H8
+  R26102909  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H8H9.yaml  drawing HL-27-036-C  material MA26021002  manufactured_at 2009-05-26
+      fills: M09052601 H8H9
+  R26102910  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H8H9.yaml  drawing HL-27-036-C  material MA26021002  manufactured_at 2012-08-24
+      fills: M12082401 H8H9
+  R26102911  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H9H10.yaml  drawing HL-27-037-C  material MA26021002  manufactured_at 2009-05-26
+      fills: M09052601 H9H10
+  R26102912  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H9H10.yaml  drawing HL-27-037-C  material MA26021002  manufactured_at 2012-08-24
+      fills: M12082401 H9H10
+  R26102913  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H10H11.yaml  drawing HL-27-038-C  material MA26021002  manufactured_at 2009-05-26
+      fills: M09052601 H10H11
+  R26102914  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H10H11.yaml  drawing HL-27-038-C  material MA26021002  manufactured_at 2012-08-24
+      fills: M12082401 H10H11
+  R26102915  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H11H12.yaml  drawing HL-27-039-C  material MA26021002  manufactured_at 2009-05-26
+      fills: M09052601 H11H12
+  R26102916  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H11H12.yaml  drawing HL-27-039-C  material MA26021002  manufactured_at 2012-08-24
+      fills: M12082401 H11H12
+  R26102917  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H12H13.yaml  drawing HL-27-040-C  material MA26021002  manufactured_at 2009-05-26
+      fills: M09052601 H12H13
+  R26102918  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-27/Ring-H12H13.yaml  drawing HL-27-040-C  material MA26021002  manufactured_at 2012-08-24
+      fills: M12082401 H12H13
+  R26102919  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-29/Ring-H1H2.yaml  drawing HL-27-029-G  material MA20072301  manufactured_at 2012-08-24
+      fills: M12082401 H1H2
+  R26102920  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-29/Ring-H2H3.yaml  drawing HL-27-030-E  material MA20072301  manufactured_at 2012-08-24
+      fills: M12082401 H2H3
+  R26102921  geometry /home/LNCMI-G/christophe.trophime/github/hifimagnet-projects/HL-29/Ring-H4H5.yaml  drawing HL-27-032-C  material MA20072303  manufactured_at 2012-08-24
+      fills: M12082401 H4H5
+
+Existing rule violations:
+  none
+
+Summary: 81 slot(s) with a real ring, 21 placeholder(s) over 21 slot(s), 0 empty slot(s).

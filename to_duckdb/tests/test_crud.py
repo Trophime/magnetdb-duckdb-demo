@@ -562,6 +562,75 @@ def test_insert_magnet_parts_reuse_retires_with_stored_assembled_at(con):
     assert retired and retired[0]["date"] == "2020-02-20 07:00:00"
 
 
+def _old_magnet_in_open_assembly(con):
+    """OLD_MAG (assembled 2019-06-19, open link in OLD_A) holds HELIX_01; NEW_MAG is assembled 2020-02-20."""
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock", "manufactured_at": "2019-01-01"}, verbose=False)
+    insert_magnet(con, {**MAGNET_DATA, "name": "OLD_MAG", "status": "in_stock", "assembled_at": "2019-06-19"},
+                  "insert", verbose=False)
+    insert_magnet_parts(con, "OLD_MAG", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+    insert_assembly(con, {
+        "name": "OLD_A", "housing": "M9",
+        "commissioned_at": "2019-06-19 08:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    insert_assembly_magnets(con, "OLD_A", ["OLD_MAG"], verbose=False)
+    insert_magnet(con, {**MAGNET_DATA, "name": "NEW_MAG", "status": "in_stock", "assembled_at": "2020-02-20"},
+                  "insert", verbose=False)
+
+
+def _magnet_history(con, name):
+    return json.loads(con.execute("SELECT status_history FROM magnets WHERE name = ?", [name]).fetchone()[0])
+
+
+def test_insert_magnet_parts_reuse_applies_known_retirement_instead_of_superseded(con):
+    _old_magnet_in_open_assembly(con)
+    known = {"OLD_MAG": {"magnet": "OLD_MAG", "status": "retired", "description": "Known retirement.",
+                         "changed_at": "2019-12-01 07:00:00"}}
+
+    insert_magnet_parts(con, "NEW_MAG", [{"name": "HELIX_01", "type": "helix"}], verbose=False,
+                        known_statuses=known)
+
+    history = _magnet_history(con, "OLD_MAG")
+    assert [(e["status"], e["date"], e["description"]) for e in history if e["status"] == "retired"] == [
+        ("retired", "2019-12-01 07:00:00", "Known retirement.")
+    ]
+    assert not any("Superseded" in e["description"] for e in history)
+    assert con.execute(
+        "SELECT decommissioned_at FROM assemblies WHERE name = 'OLD_A'"
+    ).fetchone()[0].isoformat() == "2019-12-01T07:00:00"
+    assert con.execute(
+        "SELECT 1 FROM magnet_parts WHERE magnet_name = 'NEW_MAG' AND part_name = 'HELIX_01'"
+    ).fetchone() is not None
+
+
+def test_insert_magnet_parts_reuse_of_known_dead_magnet_part_raises(con):
+    _old_magnet_in_open_assembly(con)
+    known = {"OLD_MAG": {"magnet": "OLD_MAG", "status": "dead", "dead_parts": "ALL",
+                         "description": "Incident.", "changed_at": "2019-12-01 07:00:00"}}
+
+    with pytest.raises(ValueError, match="'dead'"):
+        insert_magnet_parts(con, "NEW_MAG", [{"name": "HELIX_01", "type": "helix"}], verbose=False,
+                            known_statuses=known)
+
+    assert con.execute("SELECT status FROM magnets WHERE name = 'OLD_MAG'").fetchone()[0] == "dead"
+    assert con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "dead"
+    assert con.execute("SELECT COUNT(*) FROM magnet_parts WHERE magnet_name = 'NEW_MAG'").fetchone()[0] == 0
+    assert not any("Superseded" in e["description"] for e in _magnet_history(con, "OLD_MAG"))
+
+
+def test_insert_magnet_parts_known_status_after_new_magnet_still_supersedes(con):
+    _old_magnet_in_open_assembly(con)
+    known = {"OLD_MAG": {"magnet": "OLD_MAG", "status": "retired", "changed_at": "2021-01-01 07:00:00"}}
+
+    insert_magnet_parts(con, "NEW_MAG", [{"name": "HELIX_01", "type": "helix"}], verbose=False,
+                        known_statuses=known)
+
+    retired = [e for e in _magnet_history(con, "OLD_MAG") if e["status"] == "retired"]
+    assert [(e["date"], e["description"]) for e in retired] == [
+        ("2020-02-20 07:00:00", "Superseded by magnet 'NEW_MAG'.")
+    ]
+
+
 def test_insert_assembly_magnets_warns_when_magnet_assembled_after_commissioning(con, capsys):
     insert_magnet(con, {**MAGNET_DATA, "assembled_at": "2025-06-01"}, "insert", verbose=False)
     insert_assembly(con, ASSEMBLY_DATA, verbose=False)  # commissioned 2025-01-01

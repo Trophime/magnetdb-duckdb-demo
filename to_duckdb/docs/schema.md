@@ -283,6 +283,15 @@ The magnet's stored `assembled_at` also dates the status events written while
 linking: a part's "Attached to magnet", and the "Superseded by" retirement
 (and automatic assembly closure) when a part is reclaimed from another magnet.
 
+`assembly add --status-file magnet_status.json` (used by
+`scripts/build_from_scratch.sh`) changes that reclaim: when the magnet holding
+the part has a known `retired`/`dead` entry in the file dated on or before the
+new magnet's `assembled_at`, it gets that entry (status, date, description,
+`dead_parts`) instead of "Superseded by", and its open assembly links close at
+that date. The parts of a dead magnet die with it, so reusing one is refused
+and the assembly file fails to load. `magnet update-status-from-file` later
+skips the entries already applied this way.
+
 ---
 
 ## Material JSON format

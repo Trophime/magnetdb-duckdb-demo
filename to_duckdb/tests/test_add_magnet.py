@@ -250,3 +250,49 @@ def test_add_magnet_cli(tmp_path, monkeypatch, capsys):
     magnetdb.main()
 
     assert _count(db_path, "magnets") == 1
+
+
+# ---------------------------------------------------------------------------
+# All-or-nothing (PLAN_atomic_load.md)
+# ---------------------------------------------------------------------------
+
+
+def _magnet_reusing_ring(name="MAG_B", assembled_at="2021-01-01"):
+    """A magnet with a new helix and MAG_JSON's ring R_JSON_01."""
+    helix, ring = MAGNET_JSON["parts"]
+    return {"name": name, "status": "in_stock", "design_office_reference": "", "assembled_at": assembled_at,
+            "parts": [{**copy.deepcopy(helix), "name": f"H_{name}"}, copy.deepcopy(ring)]}
+
+
+def test_add_magnet_failure_writes_nothing_and_logs_error(tmp_path, capsys):
+    db = tmp_path / "test.duckdb"
+    add_magnet(MAGNET_JSON, db)
+    with duckdb.connect(str(db)) as con:
+        con.execute("UPDATE parts SET status = 'dead' WHERE name = 'R_JSON_01'")
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        add_magnet(_magnet_reusing_ring(), db)
+
+    assert exc.value.code == 1
+    assert "Error:" in capsys.readouterr().out
+    assert _fetch_one(db, "SELECT COUNT(*) FROM magnets WHERE name = 'MAG_B'")[0] == 0
+    assert _fetch_one(db, "SELECT COUNT(*) FROM parts WHERE name = 'H_MAG_B'")[0] == 0
+    assert _fetch_one(db, "SELECT COUNT(*) FROM magnet_parts WHERE magnet_name = 'MAG_B'")[0] == 0
+    assert _fetch_one(
+        db, "SELECT COUNT(*) FROM operation_log WHERE record_name = 'MAG_B' AND status = 'error'"
+    )[0] >= 1
+
+
+def test_add_magnet_failure_rolls_back_reclaim_of_old_holder(tmp_path):
+    db = tmp_path / "test.duckdb"
+    add_magnet(MAGNET_JSON, db)  # MAG_JSON in operation, holds R_JSON_01
+    known = {"MAG_JSON": {"magnet": "MAG_JSON", "status": "dead", "dead_parts": "ALL",
+                          "changed_at": "2020-06-01 07:00:00"}}
+
+    with pytest.raises(SystemExit):
+        add_magnet(_magnet_reusing_ring(), db, known_statuses=known)
+
+    assert _fetch_one(db, "SELECT status FROM magnets WHERE name = 'MAG_JSON'")[0] == "in_operation"
+    assert _fetch_one(db, "SELECT status FROM parts WHERE name = 'R_JSON_01'")[0] == "in_operation"
+    assert _fetch_one(db, "SELECT COUNT(*) FROM magnets WHERE name = 'MAG_B'")[0] == 0

@@ -539,6 +539,44 @@ def test_cli_magnet_update_status_from_file_applies_in_file_order(tmp_path, monk
     assert [event["description"] for event in history][-1] == "Superseded."
 
 
+def test_cli_magnet_update_status_from_file_skips_already_applied_entry(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+    path = _status_file(tmp_path, [
+        {"magnet": "MAG_JSON", "status": "retired", "description": "Known.", "changed_at": "2024-06-01 07:00:00"},
+    ])
+    _run(monkeypatch, "magnet", "update-status-from-file", str(path), "--db", str(db))
+    capsys.readouterr()
+
+    _run(monkeypatch, "magnet", "update-status-from-file", str(path), "--db", str(db))
+
+    assert "already applied" in capsys.readouterr().out
+    history = json.loads(_fetch_one(db, "SELECT status_history FROM magnets WHERE name = 'MAG_JSON'")[0])
+    assert [e["description"] for e in history].count("Known.") == 1
+
+
+def test_cli_assembly_add_status_file_applies_known_retirement_on_reuse(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)  # MAG_JSON (in operation, assembled 2020-01-01) holds R_JSON_01
+    helix, ring = MAGNET_JSON["parts"]
+    new_magnet = {"name": "MAG_NEW", "status": "in_stock", "design_office_reference": "",
+                  "assembled_at": "2021-01-01", "parts": [{**helix, "name": "H_NEW_01"}, ring]}
+    (tmp_path / "MAG_NEW.json").write_text(json.dumps(new_magnet))
+    assembly = {**ASSEMBLY_JSON, "name": "A_NEW", "commissioned_at": "2021-01-02 08:00:00",
+                "magnets": ["MAG_NEW"], "records": []}
+    (tmp_path / "A_NEW.json").write_text(json.dumps(assembly))
+    path = _status_file(tmp_path, [
+        {"magnet": "MAG_JSON", "status": "retired", "description": "Known.", "changed_at": "2020-06-01 07:00:00"},
+    ])
+
+    _run(monkeypatch, "assembly", "add", str(tmp_path / "A_NEW.json"), "--status-file", str(path),
+         "--db", str(db))
+
+    history = json.loads(_fetch_one(db, "SELECT status_history FROM magnets WHERE name = 'MAG_JSON'")[0])
+    assert [(e["status"], e["date"], e["description"]) for e in history][-1] == (
+        "retired", "2020-06-01 07:00:00", "Known.")
+    assert not any("Superseded" in e["description"] for e in history)
+    assert _fetch_one(db, "SELECT 1 FROM magnet_parts WHERE magnet_name = 'MAG_NEW' AND part_name = 'R_JSON_01'")
+
+
 def test_cli_magnet_update_status_from_file_dead_parts_all(tmp_path, monkeypatch):
     db = _db_with_magnet(tmp_path)
     path = _status_file(tmp_path, [{"magnet": "MAG_JSON", "status": "dead", "dead_parts": "ALL"}])

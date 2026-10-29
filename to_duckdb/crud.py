@@ -855,7 +855,9 @@ def update_magnet_from_json(con, data: dict, dry_run: bool = False, verbose: boo
     )
 
 
-def _reclaim_reused_parts(con, new_magnet_name: str, part_names: list[str], verbose: bool = True) -> None:
+def _reclaim_reused_parts(
+    con, new_magnet_name: str, part_names: list[str], verbose: bool = True, known_statuses: dict | None = None
+) -> None:
     """Retire whichever still-active magnet(s) currently hold *part_names*
     and close their open assembly link(s), freeing the parts for reuse by
     *new_magnet_name*.
@@ -867,6 +869,13 @@ def _reclaim_reused_parts(con, new_magnet_name: str, part_names: list[str], verb
     check then raises for that case, same as before this function existed.
     An old magnet's already-closed assembly link (explicit
     ``decommissioned_at``) is never reopened or overridden.
+
+    When *known_statuses* (magnet name → ``magnet_status.json`` entry) has a
+    ``retired``/``dead`` entry for the old magnet dated on or before
+    *new_magnet_name*'s assembly, that known status is applied (with its own
+    date, description and ``dead_parts``) instead of "Superseded", and the
+    open links close at that date. A dead holder's dead parts then fail the
+    caller's in-stock check: dead parts cannot be reused.
     """
     retire_at = _fallback_decommission_at(_magnet_assembled_at(con, new_magnet_name))
 
@@ -883,11 +892,29 @@ def _reclaim_reused_parts(con, new_magnet_name: str, part_names: list[str], verb
             old_magnets.setdefault(old_magnet, None)
 
     for old_magnet in old_magnets:
-        update_magnet_status(
-            con, old_magnet, LifecycleStatus.RETIRED.value,
-            description=f"Superseded by magnet '{new_magnet_name}'.",
-            changed_at=retire_at, verbose=verbose,
-        )
+        known = (known_statuses or {}).get(old_magnet)
+        known_at = parse_timestamp(known.get("changed_at")) if known else None
+        if (
+            known_at and retire_at
+            and known["status"] in (LifecycleStatus.RETIRED.value, LifecycleStatus.DEAD.value)
+            and known_at[:10] <= str(retire_at)[:10]
+        ):
+            dead_parts = known.get("dead_parts")
+            update_magnet_status(
+                con, old_magnet, known["status"],
+                description=known.get("description", ""),
+                changed_at=known_at, attachments=known.get("attachments"),
+                dead_parts=["ALL"] if dead_parts == "ALL" else dead_parts,
+                verbose=verbose,
+            )
+            status, close_at = known["status"], known_at
+        else:
+            update_magnet_status(
+                con, old_magnet, LifecycleStatus.RETIRED.value,
+                description=f"Superseded by magnet '{new_magnet_name}'.",
+                changed_at=retire_at, verbose=verbose,
+            )
+            status, close_at = LifecycleStatus.RETIRED.value, retire_at
         open_links = con.execute(
             "SELECT assembly_name FROM assembly_magnets "
             "WHERE magnet_name = ? AND decommissioned_at IS NULL",
@@ -895,13 +922,15 @@ def _reclaim_reused_parts(con, new_magnet_name: str, part_names: list[str], verb
         ).fetchall()
         for (open_assembly,) in open_links:
             decommission_assembly(
-                con, open_assembly, decommissioned_at=retire_at,
-                description=f"Auto-closed: magnet '{old_magnet}' retired.",
+                con, open_assembly, decommissioned_at=close_at,
+                description=f"Auto-closed: magnet '{old_magnet}' {status}.",
                 verbose=verbose,
             )
 
 
-def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool = True) -> None:
+def insert_magnet_parts(
+    con, magnet_name: str, parts: list[dict], verbose: bool = True, known_statuses: dict | None = None
+) -> None:
     """Link parts to a magnet, computing coil_index for helix/bitter parts.
 
     ``parts`` must be a list of part dicts, each with at least ``name`` and
@@ -926,11 +955,32 @@ def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool 
     ``[WARN]`` is printed when the part's ``manufactured_at`` falls on a
     later day (the part is linked anyway).
 
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open connection.
+    magnet_name : str
+        Magnet the parts are linked to.
+    parts : list of dict
+        Part dicts with at least ``name`` and ``type``, in rank order.
+    verbose : bool, optional
+        Print status lines.
+    known_statuses : dict, optional
+        Magnet name → ``magnet_status.json`` entry. A holder with a known
+        retirement or death dated on or before this magnet's assembly gets
+        that status instead of "Superseded" (see
+        :func:`_reclaim_reused_parts`); parts that died with it are refused.
+
+    Returns
+    -------
+    None
+
     Raises
     ------
     ValueError
         If a part is not found, or its status is not ``"in_stock"`` and no
-        active holder can be reclaimed for it.
+        active holder can be reclaimed for it (including a part that died
+        with its known-dead holder).
     """
     part_names = [p["name"] for p in parts]
     if part_names:
@@ -958,7 +1008,7 @@ def insert_magnet_parts(con, magnet_name: str, parts: list[dict], verbose: bool 
             if status_by_name[p] != LifecycleStatus.IN_STOCK.value and p not in already_linked
         ]
         if non_in_stock:
-            _reclaim_reused_parts(con, magnet_name, non_in_stock, verbose=verbose)
+            _reclaim_reused_parts(con, magnet_name, non_in_stock, verbose=verbose, known_statuses=known_statuses)
             status_by_name = dict(
                 con.execute(
                     f"SELECT name, status FROM parts WHERE name IN ({placeholders})",

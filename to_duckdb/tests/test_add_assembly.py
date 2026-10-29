@@ -311,3 +311,56 @@ def test_update_magnet_cli_missing_row_exits(tmp_path, monkeypatch):
     )
     with pytest.raises(SystemExit):
         magnetdb.main()
+
+
+# ---------------------------------------------------------------------------
+# All-or-nothing (PLAN_atomic_load.md)
+# ---------------------------------------------------------------------------
+
+
+def _write_magnet(tmp_path, name, ring_name):
+    helix, ring = MAGNET_JSON["parts"]
+    data = {"name": name, "status": "in_stock", "design_office_reference": "", "assembled_at": "2021-01-01",
+            "parts": [{**copy.deepcopy(helix), "name": f"H_{name}"}, {**copy.deepcopy(ring), "name": ring_name}]}
+    (tmp_path / f"{name}.json").write_text(json.dumps(data))
+
+
+def _assembly(name, magnets):
+    return {**copy.deepcopy(ASSEMBLY_JSON), "name": name, "magnets": magnets, "records": []}
+
+
+def test_add_assembly_failing_magnet_leaves_nothing(tmp_path, capsys):
+    db = _db_with_magnet(tmp_path)
+    with duckdb.connect(str(db)) as con:
+        con.execute("UPDATE parts SET status = 'dead' WHERE name = 'R_JSON_01'")
+    _write_magnet(tmp_path, "MAG_OK", "R_OK")
+    _write_magnet(tmp_path, "MAG_BAD", "R_JSON_01")  # dead ring
+
+    with pytest.raises(SystemExit) as exc:
+        add_assembly(_assembly("A_FAIL", ["MAG_OK", "MAG_BAD"]), db, magnet_dir=tmp_path)
+
+    assert exc.value.code == 1
+    assert "Error:" in capsys.readouterr().out
+    for table, column, name in [("magnets", "name", "MAG_OK"), ("magnets", "name", "MAG_BAD"),
+                                ("parts", "name", "R_OK"), ("assemblies", "name", "A_FAIL")]:
+        assert _fetch_one(db, f"SELECT COUNT(*) FROM {table} WHERE {column} = ?", [name])[0] == 0
+    assert _fetch_one(
+        db, "SELECT COUNT(*) FROM operation_log WHERE record_name = 'A_FAIL' AND status = 'error'"
+    )[0] == 1
+
+
+def test_add_assembly_failing_records_leave_nothing(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    _write_magnet(tmp_path, "MAG_OK", "R_OK")
+
+    def fail(*args, **kwargs):
+        raise ValueError("bad record")
+
+    monkeypatch.setattr(magnetdb, "insert_experiments", fail)
+    data = {**_assembly("A_FAIL", ["MAG_OK"]), "records": ASSEMBLY_JSON["records"]}
+
+    with pytest.raises(SystemExit):
+        add_assembly(data, db, magnet_dir=tmp_path)
+
+    assert _fetch_one(db, "SELECT COUNT(*) FROM magnets WHERE name = 'MAG_OK'")[0] == 0
+    assert _fetch_one(db, "SELECT COUNT(*) FROM assemblies WHERE name = 'A_FAIL'")[0] == 0

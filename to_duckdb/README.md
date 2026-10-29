@@ -23,6 +23,7 @@ to_duckdb/
 ├── query_cumstats.py            ← query cumulative stats by site / magnet / part
 ├── stress_map.py                ← hoop-stress analysis library (geometry, plots)
 ├── impact.py                    ← impact of updates on stored results (stale marking)
+├── suggest_rings.py             ← propose rings for insert magnets that have none
 ├── conftest.py                  ← pytest fixtures
 ├── docs/
 │   ├── loading.md               ← adding magnets, assemblies, materials
@@ -88,7 +89,7 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | `part view/update/update-status` | View a part, refresh descriptive/geometry fields (including the material of a linked part) from JSON, or change lifecycle status | [loading.md](docs/loading.md), [below](#tracking-the-impact-of-updates) |
 | `magnet add/view/update/delete` | Manage magnets; `add` refuses an existing magnet whose parts differ | [loading.md](docs/loading.md) |
 | `magnet update-status/update-status-from-file` | Change a magnet's lifecycle status, or apply a JSON list of `{magnet, status, dead_parts, description, changed_at, attachments}` changes in file order (stops at the first rejected one) | [schema.md](docs/schema.md) |
-| `assembly add/view/update/delete` | Manage assemblies + experiment records | [loading.md](docs/loading.md) |
+| `assembly add/view/update/delete` | Manage assemblies + experiment records; `add --status-file` applies known retirements/deaths when parts are reused | [loading.md](docs/loading.md), [schema.md](docs/schema.md) |
 | `assembly update-magnet` | Patch positional/temporal AssemblyMagnet fields | [loading.md](docs/loading.md) |
 | `housing view` | List housing configs | [loading.md](docs/loading.md#housing-configs) |
 | `experiments view` | List experiment records | [populate.md](docs/populate.md#experiments-view) |
@@ -238,6 +239,43 @@ reprocess with `--magnet-type all` (the default).
 Known gaps and next steps (angles, magnet bores, updating the inputs that
 have no `update` command yet, …) are listed in
 [PLAN_update_impact_tracking.md](../PLAN_update_impact_tracking.md#follow-ups-not-in-this-plan-each-needs-its-own-plan-and-approval).
+
+---
+
+## Rings for insert magnets — `suggest_rings.py`
+
+Some insert magnets have helices but no rings. `suggest_rings.py` proposes a
+ring for each gap between consecutive helices (H1H2, H2H3, …), taken from the
+ring JSON files when one fits, otherwise a placeholder ring. Rules and
+background: [PLAN_insert_rings.md](../PLAN_insert_rings.md).
+
+- **Fit**: every radius within `--tolerance` (default 0.1 mm) of helix i's
+  `r` followed by helix i+1's `r`, and the same drawing number, revision
+  letter ignored, as the closest `Ring-*.yaml`.
+- **Sharing**: a ring never goes to two magnets whose lifetimes overlap
+  (`assembled_at` → first `retired`/`dead` event; an end on the next start
+  date is a handover and is allowed). Real rings are used first; placeholders
+  are shared by magnets that do not overlap. They are named
+  `R<YYMMDD><NN>` with the creation date, like the other ring files, and
+  their description starts with "IA guessed".
+- **Excluded**: rings held by `EXCLUDED_HOLDERS` (`M25032101`) are never used.
+
+Targets are insert magnets with no ring, neither in the database nor in their
+JSON. The database is only read; build it from the current JSON first (e.g.
+`scripts/build_from_scratch.sh --to statuses --db <scratch>`).
+
+```bash
+# Report: choice per slot, alternatives with the magnets holding them,
+# placeholders, excluded rings, existing violations
+python suggest_rings.py --db ../magnetdb-scratch --json-dir ../../hifimagnet-projects/magnetdb.json
+
+# Insert the rings after the last helix of each target JSON and create the
+# placeholder ring files; a second run finds no target and changes nothing
+python suggest_rings.py --db ../magnetdb-scratch --json-dir ../../hifimagnet-projects/magnetdb.json --write
+```
+
+`--magnet NAME` restricts the run to one target. The ring geometry files are
+searched under the parent of `--json-dir`.
 
 ---
 

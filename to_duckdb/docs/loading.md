@@ -92,6 +92,11 @@ python magnetdb.py magnet add M25032101.json --input-dir $JSON \
 
 The magnet type (`insert`, `bitters`, `hybrid`) is inferred automatically from the part types. The operation is **idempotent**.
 
+The load is **all or nothing**: materials, parts, the magnet and its part
+links are written in one transaction. If any step fails (e.g. a part that is
+`dead`), nothing is written, the error is recorded in `operation_log`, and the
+command prints `Error: …` and exits 1.
+
 ### Inspect and manage magnets
 
 ```bash
@@ -118,6 +123,12 @@ python magnetdb.py assembly add M10_M19071101_13.json \
 ```
 
 The operation is **idempotent**: running it twice with the same JSON is safe.
+
+The whole file is loaded **all or nothing**: the missing magnets it loads,
+the assembly, its magnet links and its records are written in one
+transaction. If any of them fails, nothing from the file is written
+(including status changes made while reclaiming reused parts), the error is
+recorded in `operation_log`, and the command prints `Error: …` and exits 1.
 
 Two guards refuse a load (exit status 1, nothing written):
 

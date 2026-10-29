@@ -409,7 +409,16 @@ def _add_magnet(
     dry_run: bool = False,
     part_dir=None,
     geometry_path=None,
+    known_statuses=None,
+    con=None,
 ) -> None:
+    """Validate a magnet JSON and load it with its parts, all or nothing.
+
+    *known_statuses* goes to :func:`~crud.insert_magnet_parts`. With *con*
+    (an open connection inside the caller's transaction) the writes use it
+    and the caller commits or rolls back; otherwise a failed load writes
+    nothing, logs the error and exits 1.
+    """
     # db_path is created by DuckDB if absent — intentional: `magnet add` bootstraps the DB.
     # `_add_assembly` requires the file to exist because an assembly depends on prior magnet records.
     db_path = Path(db_path)
@@ -439,9 +448,12 @@ def _add_magnet(
         print(f"Validation errors:\n  • {exc}")
         sys.exit(1)
 
-    if db_path.exists():
-        with duckdb.connect(str(db_path), read_only=True) as chk:
-            conflicts = _magnet_conflicts(chk, data)
+    if con is not None or db_path.exists():
+        if con is not None:
+            conflicts = _magnet_conflicts(con, data)
+        else:
+            with duckdb.connect(str(db_path), read_only=True) as chk:
+                conflicts = _magnet_conflicts(chk, data)
         if conflicts:
             print(f"Magnet '{data['name']}' already exists with different content:")
             for c in conflicts:
@@ -458,29 +470,55 @@ def _add_magnet(
         print(f"  materials: {len(mats)}")
         return
 
+    if con is not None:
+        _write_magnet(con, data, parts, magnet_type, known_statuses, db_path.name)
+        return
+
     with duckdb.connect(str(db_path)) as con:
         ensure_schema(con)
-        print(f"\nAdding magnet '{data['name']}' to {db_path.name} …\n")
-
-        seen_materials: set[str] = set()
-        for part in parts:
-            mat = part.get("material", {})
-            mat_name = mat.get("name")
-            if mat_name and mat_name not in seen_materials:
-                insert_material(con, mat)
-                seen_materials.add(mat_name)
-
-        print()
-        for part in parts:
-            insert_part(con, part)
-
-        print()
-        insert_magnet(con, data, magnet_type)
-
-        print()
-        insert_magnet_parts(con, data["name"], parts)
+        _all_or_nothing(con, "magnets", data["name"],
+                        lambda: _write_magnet(con, data, parts, magnet_type, known_statuses, db_path.name))
 
     print("\nDone.")
+
+
+def _write_magnet(con, data: dict, parts: list, magnet_type: str, known_statuses, db_name: str) -> None:
+    """Insert a validated magnet's materials, parts, row and part links on *con*."""
+    print(f"\nAdding magnet '{data['name']}' to {db_name} …\n")
+
+    seen_materials: set[str] = set()
+    for part in parts:
+        mat = part.get("material", {})
+        mat_name = mat.get("name")
+        if mat_name and mat_name not in seen_materials:
+            insert_material(con, mat)
+            seen_materials.add(mat_name)
+
+    print()
+    for part in parts:
+        insert_part(con, part)
+
+    print()
+    insert_magnet(con, data, magnet_type)
+
+    print()
+    insert_magnet_parts(con, data["name"], parts, known_statuses=known_statuses)
+
+
+def _all_or_nothing(con, table: str, record_name: str, write) -> None:
+    """Run *write* in one transaction; on an error roll back, log it, print it and exit 1."""
+    con.begin()
+    try:
+        write()
+    except Exception as exc:
+        con.rollback()
+        _log_operation(con, "insert", table, record_name, status="error", details={"error": str(exc)})
+        print(f"Error: {exc}\nNothing written for '{record_name}'.")
+        sys.exit(1)
+    except BaseException:  # sys.exit from a validation step inside *write*
+        con.rollback()
+        raise
+    con.commit()
 
 
 def _magnet_name(entry) -> str:
@@ -565,18 +603,20 @@ def _assembly_conflicts(con, data: dict) -> list[str]:
 
 
 def _ensure_magnets(
-    magnet_entries: list, db_path: Path, magnet_dir: Path, dry_run: bool = False
+    magnet_entries: list, db_path: Path, magnet_dir: Path, dry_run: bool = False, known_statuses=None, con=None
 ) -> list[str]:
-    """Auto-load magnets absent from the DB; returns a list of error strings."""
+    """Auto-load magnets absent from the DB (with *known_statuses*, on *con* if given); returns error strings."""
     names = [_magnet_name(e) for e in magnet_entries]
     if not names:
         return []
 
     placeholders = ", ".join("?" * len(names))
-    with duckdb.connect(str(db_path)) as chk:
-        rows = chk.execute(
-            f"SELECT name FROM magnets WHERE name IN ({placeholders})", names
-        ).fetchall()
+    query = f"SELECT name FROM magnets WHERE name IN ({placeholders})"
+    if con is not None:
+        rows = con.execute(query, names).fetchall()
+    else:
+        with duckdb.connect(str(db_path)) as chk:
+            rows = chk.execute(query, names).fetchall()
     present = {r[0] for r in rows}
 
     errors = []
@@ -592,11 +632,16 @@ def _ensure_magnets(
             continue
         print(f"  ~ magnet '{name}' not in DB — loading from {json_path.name} …")
         _add_magnet(load_json(json_path), db_path, dry_run=dry_run,
-                    part_dir=json_path.parent)
+                    part_dir=json_path.parent, known_statuses=known_statuses, con=con)
     return errors
 
 
-def _add_assembly(data: dict, db_path, dry_run: bool = False, magnet_dir=None) -> None:
+def _add_assembly(data: dict, db_path, dry_run: bool = False, magnet_dir=None, known_statuses=None) -> None:
+    """Load an assembly, loading its missing magnets first with *known_statuses*.
+
+    Everything (missing magnets, assembly, magnet links, records) is written
+    in one transaction: a failure writes nothing, logs the error and exits 1.
+    """
     db_path = Path(db_path)
     magnet_dir = Path(magnet_dir) if magnet_dir else Path(".")
 
@@ -616,25 +661,12 @@ def _add_assembly(data: dict, db_path, dry_run: bool = False, magnet_dir=None) -
             print(f"  • {e}")
         sys.exit(1)
 
-    with duckdb.connect(str(db_path), read_only=True) as chk:
-        conflicts = _assembly_conflicts(chk, data)
-    if conflicts:
-        print(f"Assembly '{data['name']}' already exists with different content:")
-        for c in conflicts:
-            print(f"  • {c}")
-        print("Nothing written. Re-adding only accepts identical content.")
-        sys.exit(1)
-
-    missing_errors = _ensure_magnets(
-        data.get("magnets", []), db_path, magnet_dir, dry_run=dry_run
-    )
-    if missing_errors:
-        print("Errors resolving magnets:")
-        for e in missing_errors:
-            print(f"  • {e}")
-        sys.exit(1)
-
     if dry_run:
+        with duckdb.connect(str(db_path), read_only=True) as chk:
+            _exit_on_assembly_conflicts(chk, data)
+        _exit_on_missing_magnets(_ensure_magnets(
+            data.get("magnets", []), db_path, magnet_dir, dry_run=True, known_statuses=known_statuses
+        ))
         magnet_names = [_magnet_name(e) for e in data.get("magnets", [])]
         print("[dry-run] Validation passed. Would insert:")
         print(f"  assembly     : {data['name']}  [{data.get('housing', '?')}]")
@@ -643,17 +675,47 @@ def _add_assembly(data: dict, db_path, dry_run: bool = False, magnet_dir=None) -
 
     with duckdb.connect(str(db_path)) as con:
         ensure_schema(con)
-        assembly_name = data["name"]
-        print(f"\nAdding assembly '{assembly_name}' to {db_path.name} …\n")
-
-        insert_assembly(con, data)
-        insert_assembly_magnets(con, assembly_name, data.get("magnets", []))
-
-        records = data.get("records") or []
-        if records:
-            insert_experiments(con, assembly_name, records)
+        _exit_on_assembly_conflicts(con, data)
+        _all_or_nothing(con, "assemblies", data["name"],
+                        lambda: _write_assembly(con, data, db_path, magnet_dir, known_statuses))
 
     print("\nDone.")
+
+
+def _exit_on_assembly_conflicts(con, data: dict) -> None:
+    """Exit 1 if *data*'s assembly already exists with different content."""
+    conflicts = _assembly_conflicts(con, data)
+    if conflicts:
+        print(f"Assembly '{data['name']}' already exists with different content:")
+        for c in conflicts:
+            print(f"  • {c}")
+        print("Nothing written. Re-adding only accepts identical content.")
+        sys.exit(1)
+
+
+def _exit_on_missing_magnets(missing_errors: list[str]) -> None:
+    """Exit 1 if some magnets could not be resolved."""
+    if missing_errors:
+        print("Errors resolving magnets:")
+        for e in missing_errors:
+            print(f"  • {e}")
+        sys.exit(1)
+
+
+def _write_assembly(con, data: dict, db_path: Path, magnet_dir: Path, known_statuses) -> None:
+    """Load the missing magnets, then the assembly, its magnet links and records, on *con*."""
+    _exit_on_missing_magnets(_ensure_magnets(
+        data.get("magnets", []), db_path, magnet_dir, known_statuses=known_statuses, con=con
+    ))
+    assembly_name = data["name"]
+    print(f"\nAdding assembly '{assembly_name}' to {db_path.name} …\n")
+
+    insert_assembly(con, data)
+    insert_assembly_magnets(con, assembly_name, data.get("magnets", []))
+
+    records = data.get("records") or []
+    if records:
+        insert_experiments(con, assembly_name, records)
 
 
 # ---------------------------------------------------------------------------
@@ -839,6 +901,9 @@ def cmd_magnet_update_status_from_file(args) -> None:
     The whole file is checked before any change is made. Changes are then
     applied one by one with :func:`~crud.update_magnet_status`; the first
     rejected change stops the run, leaving the changes before it applied.
+    An entry already applied (the magnet has that status and a history
+    event with that status and ``changed_at``, e.g. set by ``assembly add
+    --status-file``) is skipped, so no duplicate event is logged.
 
     Parameters
     ----------
@@ -865,8 +930,13 @@ def cmd_magnet_update_status_from_file(args) -> None:
         sys.exit(1)
 
     changes = _load_status_changes(json_path)
+    skipped = 0
     with duckdb.connect(str(db_path)) as con:
         for i, change in enumerate(changes, start=1):
+            if _status_change_applied(con, change):
+                print(f"  ~ magnet    {change['magnet']}  {change['status']} at {change['changed_at']} (already applied)")
+                skipped += 1
+                continue
             dead_parts = change.get("dead_parts")
             if dead_parts == "ALL":
                 dead_parts = ["ALL"]
@@ -882,7 +952,20 @@ def cmd_magnet_update_status_from_file(args) -> None:
                 print(f"Error: entry {i} ({change['magnet']}): {exc}")
                 print(f"Stopped: {i - 1} of {len(changes)} status change(s) applied.")
                 sys.exit(1)
-    print(f"{len(changes)} status change(s) applied.")
+    print(f"{len(changes) - skipped} status change(s) applied."
+          + (f" {skipped} already applied." if skipped else ""))
+
+
+def _status_change_applied(con, change: dict) -> bool:
+    """True if the magnet already has *change*'s status, logged at *change*'s ``changed_at``."""
+    changed_at = parse_timestamp(change.get("changed_at"))
+    row = con.execute("SELECT status, status_history FROM magnets WHERE name = ?", [change["magnet"]]).fetchone()
+    if not changed_at or not row or row[0] != change["status"]:
+        return False
+    return any(
+        e.get("status") == change["status"] and e.get("date") == changed_at
+        for e in json.loads(row[1] or "[]")
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -908,7 +991,16 @@ def cmd_assembly_add(args) -> None:
             f"the file name and the 'name' field must match. Nothing written."
         )
         sys.exit(1)
-    _add_assembly(data, args.db, dry_run=args.dry_run, magnet_dir=magnet_dir)
+    known_statuses = None
+    if args.status_file:
+        status_path = Path(args.status_file)
+        if not status_path.exists():
+            print(f"Error: '{status_path}' not found.")
+            sys.exit(1)
+        known_statuses = {}
+        for change in _load_status_changes(status_path):
+            known_statuses.setdefault(change["magnet"], change)
+    _add_assembly(data, args.db, dry_run=args.dry_run, magnet_dir=magnet_dir, known_statuses=known_statuses)
 
 
 def cmd_assembly_view(args) -> None:
@@ -1986,6 +2078,9 @@ def build_parser() -> argparse.ArgumentParser:
     s_add.add_argument("--magnet-dir",
                        help="Directory for <magnet_name>.json files "
                             "(default: same dir as the JSON file)")
+    s_add.add_argument("--status-file",
+                       help="magnet_status.json: a magnet whose parts are reused gets its known "
+                            "retirement/death (if dated before the new magnet) instead of 'Superseded'")
     s_add.add_argument("--dry-run", action="store_true",
                        help="Validate and preview without writing")
 
