@@ -942,6 +942,33 @@ def test_insert_assembly_magnets_commissions_magnet_and_parts(con):
     assert con.execute("SELECT status FROM parts WHERE name = 'HELIX_01'").fetchone()[0] == "in_operation"
 
 
+def _last_event_date(con, table, name):
+    history = json.loads(
+        con.execute(f"SELECT status_history FROM {table} WHERE name = ?", [name]).fetchone()[0]
+    )
+    return history[-1]["date"]
+
+
+@pytest.mark.parametrize("entry, expected", [
+    ("MAG_01", "2025-01-01 00:00:00"),
+    ({"name": "MAG_01", "commissioned_at": "2025-03-01 08:00:00"}, "2025-03-01 08:00:00"),
+])
+def test_insert_assembly_magnets_commissioning_events_use_commissioned_at(con, entry, expected):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
+    insert_magnet_part_row(con, "MAG_01", "HELIX_01", 0, 1)
+    insert_assembly(con, {
+        "name": "A1", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+
+    insert_assembly_magnets(con, "A1", [entry], verbose=False)
+
+    assert _last_event_date(con, "magnets", "MAG_01") == expected
+    assert _last_event_date(con, "parts", "HELIX_01") == expected
+
+
 def test_insert_assembly_magnets_no_cascade_when_assembly_not_active(con):
     insert_magnet(con, {k: v for k, v in MAGNET_DATA.items() if k != "status"}, "insert", verbose=False)
     insert_assembly(con, {

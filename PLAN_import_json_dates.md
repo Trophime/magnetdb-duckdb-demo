@@ -25,7 +25,8 @@ warnings.
   [`crud.py:855`](to_duckdb/crud.py#L855) ("Superseded" plus automatic
   closure of the assembly). For Bitters names it is `None`, so those events
   get the import time. This is where the `2026-10-08T10:3x` entries in
-  `status_history` come from.
+  `status_history` come from, together with a third path missed here (see
+  "Addendum").
 - `magnetdb-2026-10-08.duckdb`: 9 / 23 magnets and 12 / 172 parts have no
   date. All of them are Bitters or supra items.
 - Source JSON (`hifimagnet-projects/magnetdb.json/`, fixed 2026-10-28, not
@@ -123,3 +124,18 @@ Assumptions:
   should drop to 0.
 - Give `M09052601` and `M12082401` a real `assembled_at` in their JSON to
   remove the 8 helix ordering warnings.
+
+## Addendum (2026-10-29): "Commissioned into assembly" events
+
+The scratch build `magnetdb-scratch` (`--to statuses`, after this plan) still
+had 8 magnet events dated with the import time: every magnet of the 4
+active assemblies (`M5_A140101_00`, `M8_A230919_00`, `M9_A260707_00`,
+`M10_A260930_00`), all "Commissioned into assembly …". The commissioning
+cascade in `_insert_assembly_magnets` called `_set_magnet_status` without
+`changed_at`, so the event, and any event it cascades to the parts, got
+`datetime.now()`.
+
+Fixed: the event is now dated with the link's `commissioned_at`, else the
+assembly's, the same date the magnet-after-commissioning warning uses. Tests:
+`test_insert_assembly_magnets_commissioning_events_use_commissioned_at`
+(both cases) in `to_duckdb/tests/test_crud.py`. The next rebuild picks it up.

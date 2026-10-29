@@ -1709,9 +1709,11 @@ def _insert_assembly_magnets(
                 print(f"  ~ magnet    {magnet_name}  (already linked, skipped)")
             continue
 
+        link_commissioned_at = (
+            parse_timestamp(extra.get("commissioned_at")) or parse_timestamp(assembly_commissioned_at)
+        )
         _warn_magnet_assembled_after_commissioning(
-            con, magnet_name, assembly_name,
-            parse_timestamp(extra.get("commissioned_at")) or assembly_commissioned_at,
+            con, magnet_name, assembly_name, link_commissioned_at,
         )
         link_decommissioned_at = parse_timestamp(extra.get("decommissioned_at"))
 
@@ -1761,6 +1763,7 @@ def _insert_assembly_magnets(
                 _set_magnet_status(
                     con, magnet_name, LifecycleStatus.IN_OPERATION.value,
                     description=f"Commissioned into assembly '{assembly_name}'.",
+                    changed_at=link_commissioned_at,
                     verbose=verbose,
                 )
 
