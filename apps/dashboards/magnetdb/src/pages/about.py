@@ -23,39 +23,60 @@ def layout(**kwargs):
             html.H1(i18n._("About")),
             html.Div(id="about-summary"),
             html.Br(),
-            html.H3(i18n._("Operation log")),
-            html.Div(
+            html.Details(
                 [
-                    selectors.aggregate_filter(
-                        "about-log-table-filter", i18n._("Table"), style={"width": "250px"}
+                    html.Summary(
+                        f"📋 {i18n._('Operation log')}",
+                        style={"fontWeight": "bold", "cursor": "pointer"},
                     ),
-                    selectors.aggregate_filter(
-                        "about-log-operation-filter",
-                        i18n._("Operation"),
-                        style={"width": "250px"},
-                    ),
-                    selectors.aggregate_filter(
-                        "about-log-status-filter",
-                        i18n._("Status"),
-                        style={"width": "150px"},
-                    ),
-                    selectors.date_range_filter(
-                        "about-log-date-filter",
-                        i18n._("Filter by date"),
-                        style={"width": "300px"},
+                    html.Div(
+                        [
+                            html.Div(
+                                [
+                                    selectors.aggregate_filter(
+                                        "about-log-table-filter",
+                                        i18n._("Table"),
+                                        style={"width": "250px"},
+                                    ),
+                                    selectors.aggregate_filter(
+                                        "about-log-operation-filter",
+                                        i18n._("Operation"),
+                                        style={"width": "250px"},
+                                    ),
+                                    selectors.aggregate_filter(
+                                        "about-log-status-filter",
+                                        i18n._("Status"),
+                                        style={"width": "150px"},
+                                    ),
+                                    selectors.date_range_filter(
+                                        "about-log-date-filter",
+                                        i18n._("Filter by date"),
+                                        style={"width": "300px"},
+                                    ),
+                                ],
+                                style={"display": "flex", "gap": "30px", "marginBottom": "15px"},
+                            ),
+                            DataTable(
+                                id="about-log-table",
+                                columns=log_table_columns(),
+                                data=[],
+                                page_size=20,
+                                sort_action="native",
+                                style_table={"overflowX": "auto"},
+                                style_cell={"textAlign": "center", "padding": "6px"},
+                                style_header={"fontWeight": "bold"},
+                            ),
+                        ],
+                        style={"padding": "10px"},
                     ),
                 ],
-                style={"display": "flex", "gap": "30px", "marginBottom": "15px"},
-            ),
-            DataTable(
-                id="about-log-table",
-                columns=log_table_columns(),
-                data=[],
-                page_size=20,
-                sort_action="native",
-                style_table={"overflowX": "auto"},
-                style_cell={"textAlign": "center", "padding": "6px"},
-                style_header={"fontWeight": "bold"},
+                id="about-log",
+                open=False,
+                style={
+                    "border": "1px solid #ddd",
+                    "borderRadius": "8px",
+                    "marginBottom": "10px",
+                },
             ),
         ],
         style={"padding": "20px"},
