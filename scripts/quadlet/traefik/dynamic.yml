@@ -1,0 +1,31 @@
+# Server variant of scripts/traefik/dynamic.yml (installed as ~/traefik/dynamic.yml).
+# Served with a certificate signed by python_magnetdb's mkcert CA, valid for both names:
+# the host's own DNS name (no client setup) and dashboard.magnetdb-dev.local (/etc/hosts entry).
+http:
+  routers:
+    dashboard:
+      rule: "Host(`calcul18.lncmig.local`) || Host(`dashboard.magnetdb-dev.local`)"
+      entryPoints:
+        - websecure
+      middlewares:
+        - dashboard-auth
+      service: dashboard
+      tls: {}
+
+  middlewares:
+    dashboard-auth:
+      basicAuth:
+        usersFile: /etc/traefik/htpasswd
+
+  services:
+    dashboard:
+      loadBalancer:
+        servers:
+          - url: "http://magnetdb-dashboard:8050"
+
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/certs/dashboard.magnetdb-dev.local.pem
+        keyFile: /etc/traefik/certs/dashboard.magnetdb-dev.local-key.pem

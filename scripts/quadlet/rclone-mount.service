@@ -1,0 +1,28 @@
+# Read-only mount of the LNCMI records for the magnetdb user (systemd user unit).
+# Install: ~/.config/systemd/user/, then `systemctl --user enable --now rclone-mount`.
+# Needs the `srv-data-install` remote in ~/.config/rclone/rclone.conf and
+# `user_allow_other` in /etc/fuse.conf: under keep-id, crun sets up the container's
+# mounts as container root, a subordinate uid that FUSE refuses without allow_other.
+[Unit]
+Description=Read-only rclone mount of the LNCMI records
+# network-online.target is a system unit; this is Podman's user-level equivalent
+Wants=podman-user-wait-network-online.service
+After=podman-user-wait-network-online.service
+
+[Service]
+Type=notify
+ExecStartPre=/usr/bin/mkdir -p %h/LNCMIG-Data/records
+ExecStart=/usr/bin/rclone mount srv-data-install:/mnt/pve/DATA %h/LNCMIG-Data/records \
+    --read-only \
+    --allow-other \
+    --vfs-cache-mode full \
+    --vfs-cache-max-age 24h \
+    --vfs-cache-max-size 10G \
+    --buffer-size 32M
+# -z: a plain -u fails while a reader is busy and leaves a dead mount behind
+ExecStop=/bin/fusermount3 -uz %h/LNCMIG-Data/records
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
