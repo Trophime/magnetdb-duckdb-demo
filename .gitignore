@@ -224,3 +224,7 @@ to_duckdb.old
 
 # Traefik basicAuth accounts (scripts/run_traefik.sh), never committed
 scripts/traefik/htpasswd
+
+# Server deployment notes with LNCMI infrastructure details (public repo), kept local
+PLAN_dashboard_server_deployment.md
+NOTES_python_magnetdb_deployment.md
