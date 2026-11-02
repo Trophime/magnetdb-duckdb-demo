@@ -387,31 +387,56 @@ another case (`Log_` instead of `LOG_`). Callers pass the Overview directory
 and is not set. So the log is never found: `pigbrother_runlog` is empty in
 every summary and session record.
 
+**Decisions (2026-11-02):**
+
+- `pigbrother_runlog_dir` is built as `<pigbrother_datadir>/log`.
+- `data_dirs.PIGBROTHER_RUNLOG_DIR` defaults to `<PIGBROTHER_DATA_DIR>/log`
+  too (still overridable by `MAGNETRUN_PIGBROTHER_RUNLOG_DIR` /
+  `data_dirs.json["pigbrother_runlog"]`).
+- `PIGBROTHER_LOG_FILENAME` becomes `Log_ACQ_ENET.txt`, matched exactly.
+
 **Files affected** (`python_magnetrun` submodule):
 
-- **Edit** `python_magnetrun/analysis/loaders.py`: `_discover_runlogs`
-  searches, in order, the explicit `pigbrother_runlog_dir`,
-  `data_dirs.PIGBROTHER_RUNLOG_DIR` when set, then `<pigbrother_datadir>/log`;
-  in each, it matches `LOG_ACQ_ENET.txt` case-insensitively.
-- **Edit** `tests/analysis/test_loaders.py`: tests for the search order and the
-  case-insensitive match.
-- **Edit** `python_magnetrun/runlogs/README.md`: real location and name of the
-  file.
-
-No caller needs to change: they keep passing the Overview directory, and the
-`<pigbrother_datadir>/log` fallback finds the file.
+- **Edit** `python_magnetrun/runlogs/pigbrother.py`:
+  `PIGBROTHER_LOG_FILENAME = "Log_ACQ_ENET.txt"`; module docstring and CLI
+  help: real name and location (`pbsurv/log/Log_ACQ_ENET.txt`).
+- **Edit** `python_magnetrun/data_dirs.py`: `PIGBROTHER_RUNLOG_DIR` defaults to
+  `<PIGBROTHER_DATA_DIR>/log` (empty when `PIGBROTHER_DATA_DIR` is empty);
+  docstring updated.
+- **Edit** `python_magnetrun/analysis/loaders.py`: `FileDiscovery.__init__`
+  defaults `pigbrother_runlog_dir` to `<pigbrother_datadir>/log` (today:
+  `pigbrother_datadir`), derived from the instance's own `pigbrother_datadir`
+  so a custom data directory gets its own `log/`; docstrings (class, `FileSet`)
+  updated to the new name.
+- **Edit** `python_magnetrun/analysis/processing.py`: `process_overview_file`
+  and `process_archive_file` stop passing the Overview/Archive directory as
+  `pigbrother_runlog_dir`, so the default applies.
+- **Edit** `python_magnetrun/analysis/sessions.py`: the `magnetrun sessions`
+  command stops passing `<pigbrother_datadir>/<housing>/Overview`, so the
+  default applies.
+- **Edit** `tests/analysis/test_loaders.py`: `test_init_default` expects
+  `<pigbrother_datadir>/log`; new discovery tests.
+- **Edit** (text only) `python_magnetrun/runlogs/__init__.py`,
+  `python_magnetrun/runlogs/README.md`, `docs/source/api.md`,
+  `marimo/10_magnetrun_pigbrother.py` (placeholder path and labels): real name
+  and location.
 
 **Approach and checks:**
 
-1. Tests first (fake trees under `tmp_path`): file at
-   `<pigbrother_datadir>/log/Log_ACQ_ENET.txt` found; explicit directory wins
-   over the fallback; no file → empty list, as today. → verify: they fail
-   before the change, pass after; `tests/analysis` still passes.
-2. Implement in `_discover_runlogs`. → verify: `ruff check` clean.
+1. Tests first (fake tree under `tmp_path`): with only `pigbrother_datadir`
+   given, `<pigbrother_datadir>/log/Log_ACQ_ENET.txt` is found; an explicit
+   `pigbrother_runlog_dir` is still used as given; no file → empty list, as
+   today; `PIGBROTHER_RUNLOG_DIR` resolves to `<PIGBROTHER_DATA_DIR>/log` when
+   no override is set. → verify: they fail before the change, pass after.
+2. Change the constant, `data_dirs.py` and `loaders.py`, then remove the
+   directory arguments in `processing.py` and `sessions.py`. → verify:
+   `ruff check` clean on changed files; full `python_magnetrun` test suite
+   passes.
 3. Real data: `magnetrun sessions` on one month (e.g. M9, July 2025) and
    `magnetrun analysis` on one overview. → verify: `pigbrother_runlog` lists
    `…/pbsurv/log/Log_ACQ_ENET.txt`.
-4. Update `runlogs/README.md`.
+4. Update the texts (docstrings, CLI help, README, `api.md`, notebook) →
+   verify: no `LOG_ACQ_ENET` left (`grep`); Sphinx build still 0 warnings.
 
 **Assumptions and open questions:**
 
@@ -425,6 +450,11 @@ No caller needs to change: they keep passing the Overview directory, and the
 3. **Share access.** The file sits on the network share; a first read failed
    once with "Input/output error" on 2026-10-22, then worked. No retry is
    added.
+4. **Exact filename match.** A file still named `LOG_ACQ_ENET.txt` elsewhere
+   (e.g. in a test fixture or a copy) would no longer be found. On 2026-11-02,
+   searching `~/LNCMIG-Data/records` 4 levels deep found only
+   `pbsurv/log/Log_ACQ_ENET.txt` (and the unrelated
+   `Configuration_ACQ_ENET.txt`); a few directories were not readable.
 
 ## Related
 
