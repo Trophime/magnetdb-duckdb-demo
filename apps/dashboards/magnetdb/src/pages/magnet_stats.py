@@ -252,7 +252,7 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
 
 
 def _assembly_history_section(selected_magnet, history):
-    """Build the "Assembly history" accordion for the selected magnet, ascending by commissioning date."""
+    """Build the "Assembly history" accordion for the selected magnet, newest commissioning date first (undated last)."""
     if not selected_magnet or selected_magnet == selectors.ALL:
         return html.Div(
             i18n._("Select a magnet above to see its assembly history."),
@@ -265,6 +265,8 @@ def _assembly_history_section(selected_magnet, history):
             style={"color": "#888", "fontStyle": "italic"},
         )
 
+    # history is oldest first, undated last: reverse, then move undated back to the end.
+    history = sorted(selectors.newest_first(history), key=lambda h: pd.isna(h["commissioned_at"]))
     history = [
         {
             **h,

@@ -307,7 +307,7 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
 
 
 def _magnet_history_section(selected_part, db_path):
-    """Build the "Magnet history" accordion for the selected part, ascending by magnets.assembled_at."""
+    """Build the "Magnet history" accordion for the selected part, newest magnets.assembled_at first (undated last)."""
     if not selected_part or selected_part == selectors.ALL:
         return html.Div(
             i18n._("Select a part above to see its magnet history."),
@@ -321,6 +321,8 @@ def _magnet_history_section(selected_part, db_path):
             style={"color": "#888", "fontStyle": "italic"},
         )
 
+    # history is oldest first, undated last: reverse, then move undated back to the end.
+    history = sorted(selectors.newest_first(history), key=lambda h: pd.isna(h["assembled_at"]))
     history = [
         {
             **h,
@@ -343,7 +345,7 @@ def _magnet_history_section(selected_part, db_path):
 
 
 def _assembly_history_section(selected_part, history):
-    """Build the "Assembly history" accordion for the selected part, ascending by assemblies.commissioned_at."""
+    """Build the "Assembly history" accordion for the selected part, newest assemblies.commissioned_at first (undated last)."""
     if not selected_part or selected_part == selectors.ALL:
         return html.Div(
             i18n._("Select a part above to see its assembly history."),
@@ -356,6 +358,8 @@ def _assembly_history_section(selected_part, history):
             style={"color": "#888", "fontStyle": "italic"},
         )
 
+    # history is oldest first, undated last: reverse, then move undated back to the end.
+    history = sorted(selectors.newest_first(history), key=lambda h: pd.isna(h["commissioned_at"]))
     history = [
         {
             **h,
