@@ -5,7 +5,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
 
     python magnetdb.py list                  [--db ...]
 
-    python magnetdb.py check [--db ...] [--entity part|magnet|assembly|experiment|operationaldata|all]
+    python magnetdb.py check [--db ...] [--entity part|magnet|assembly|experiment|operationaldata|dates|all]
                              [--name NAME] [--fix]
 
     python magnetdb.py db create            [--db ...]
@@ -1916,8 +1916,10 @@ def build_parser() -> argparse.ArgumentParser:
     _db_arg(check_p)
     check_p.add_argument(
         "--entity", dest="check_entity", default="all",
-        choices=["all", "part", "magnet", "assembly", "experiment", "operationaldata"],
-        help="Restrict the check to one entity type (default: all)",
+        choices=["all", "part", "magnet", "assembly", "experiment", "operationaldata", "dates"],
+        help="Restrict the check to one entity type (default: all). "
+             "'dates' lists rows with a missing or unparseable date, with "
+             "a hint on how to set it; it is not part of 'all'.",
     )
     check_p.add_argument(
         "--name", default=None,
@@ -1928,7 +1930,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="For parts: load missing geometry_data from the part's geometry "
              "file. For magnets: refresh the stored geometry_problem (the "
              "outcome of rebuilding the geometry from the parts); "
-             "magnets.geometry_data is never written.",
+             "magnets.geometry_data is never written. "
+             "No effect on 'dates' (report-only).",
     )
 
     # ── db ───────────────────────────────────────────────────────────────────

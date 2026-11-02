@@ -247,6 +247,7 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
+        style_data_conditional=selectors.missing_date_style("t0"),
     )
 
 
@@ -282,6 +283,7 @@ def _assembly_history_section(selected_magnet, history):
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
+        style_data_conditional=selectors.missing_date_style("commissioned_at", status_column="status"),
     )
 
 
@@ -345,6 +347,7 @@ def _parts_section(selected_magnet, db_path):
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
+        style_data_conditional=selectors.missing_date_style("Manufactured"),
     )
 
 
@@ -533,6 +536,7 @@ def layout(magnet=None, **kwargs):
                                 style_table={"overflowX": "auto"},
                                 style_cell={"textAlign": "center", "padding": "6px"},
                                 style_header={"fontWeight": "auto"},
+                                style_data_conditional=selectors.missing_date_style("Experiment"),
                             ),
                         ],
                         style={"padding": "10px"},

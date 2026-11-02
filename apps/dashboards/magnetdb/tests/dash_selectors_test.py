@@ -49,6 +49,40 @@ def test_magnets_table_highlights_magnet_with_geometry_problem(monkeypatch):
 
 def test_magnets_table_without_geometry_problem_has_no_highlight(monkeypatch):
     table = _magnets_table(monkeypatch, {"M9Bitters": None})
-    assert not table.style_data_conditional
+    assert not [r for r in table.style_data_conditional if r.get("backgroundColor") == selectors.GEOMETRY_PROBLEM_COLOR]
     assert table.tooltip_data == [{}]
     assert "geometry_problem" not in table.data[0]
+
+
+def test_missing_date_style_one_blank_rule_per_column():
+    assert selectors.missing_date_style("t0", "Assembled") == [
+        {"if": {"filter_query": "{t0} is blank", "column_id": "t0"},
+         "backgroundColor": selectors.MISSING_DATE_COLOR},
+        {"if": {"filter_query": "{Assembled} is blank", "column_id": "Assembled"},
+         "backgroundColor": selectors.MISSING_DATE_COLOR},
+    ]
+
+
+def test_missing_date_style_experiment_column_matches_nat_label():
+    (rule,) = selectors.missing_date_style("Experiment")
+    assert rule["if"] == {"filter_query": '{Experiment} contains "NaT"', "column_id": "Experiment"}
+
+
+def test_missing_date_style_exempts_in_study_rows():
+    (rule,) = selectors.missing_date_style("Commissioned", status_column="Status")
+    assert rule["if"] == {
+        "filter_query": '{Commissioned} is blank && {Status} != "in_study"',
+        "column_id": "Commissioned",
+    }
+
+
+def test_missing_date_color_differs_from_geometry_problem_color():
+    assert selectors.MISSING_DATE_COLOR == "#fff3cd"
+    assert selectors.MISSING_DATE_COLOR != selectors.GEOMETRY_PROBLEM_COLOR
+
+
+def test_magnets_table_highlights_blank_assembled_and_keeps_geometry_rule(monkeypatch):
+    table = _magnets_table(monkeypatch, {"M9Bitters": "no parts"})
+    colors = [r["backgroundColor"] for r in table.style_data_conditional]
+    assert colors == [selectors.GEOMETRY_PROBLEM_COLOR, selectors.MISSING_DATE_COLOR]
+    assert table.style_data_conditional[1]["if"]["column_id"] == "Assembled"

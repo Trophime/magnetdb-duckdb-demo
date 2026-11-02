@@ -13,6 +13,42 @@ ALL = "All"
 # (``magnets.geometry_problem`` set by to_duckdb).
 GEOMETRY_PROBLEM_COLOR = "#f8d7da"
 
+# Background of a date cell left empty (date not set in the database).
+MISSING_DATE_COLOR = "#fff3cd"
+
+
+def missing_date_style(*columns, status_column=None):
+    """Build ``style_data_conditional`` rules highlighting blank date cells.
+
+    Parameters
+    ----------
+    *columns : str
+        Date column ids. Dates are rendered by :func:`i18n.format_date`,
+        which gives ``""`` for a missing date, so the rule is
+        ``{col} is blank``. The ``Experiment`` markdown column shows
+        ``"NaT"`` when the experiment name does not parse (see
+        :func:`experiment_links.experiment_link`), so its rule matches that.
+    status_column : str, optional
+        Column holding the assembly status; when given, rows whose status
+        is ``in_study`` are not highlighted (no commissioning date yet is
+        normal for them).
+
+    Returns
+    -------
+    list[dict]
+        One rule per column, in :data:`MISSING_DATE_COLOR`, to append to a
+        `DataTable`'s ``style_data_conditional``.
+    """
+    rules = []
+    for col in columns:
+        query = f'{{{col}}} contains "NaT"' if col == "Experiment" else f"{{{col}}} is blank"
+        if status_column:
+            query += f' && {{{status_column}}} != "in_study"'
+        rules.append(
+            {"if": {"filter_query": query, "column_id": col}, "backgroundColor": MISSING_DATE_COLOR}
+        )
+    return rules
+
 
 def graph(figure=None, **kwargs):
     """:class:`~dash.dcc.Graph` pre-configured with the current language's Plotly.js locale.
@@ -538,7 +574,8 @@ def magnets_table_section(assembly_name, db_path=None):
         if the assembly has none, or a `DataTable` with Magnet / Description
         / Type / Composition / Status / Assembled columns. A magnet whose
         geometry cannot be rebuilt from its parts has its Magnet cell in
-        :data:`GEOMETRY_PROBLEM_COLOR`, with the error as tooltip.
+        :data:`GEOMETRY_PROBLEM_COLOR`, with the error as tooltip; an empty
+        Assembled cell is in :data:`MISSING_DATE_COLOR`.
     """
     if not assembly_name or assembly_name == ALL:
         return html.Div(
@@ -585,7 +622,8 @@ def magnets_table_section(assembly_name, db_path=None):
             }
             for name, problem in problems.items()
             if problem
-        ],
+        ]
+        + missing_date_style("Assembled"),
         tooltip_data=[
             {"Magnet": {"value": problem, "type": "text"}} if problem else {}
             for problem in problems.values()

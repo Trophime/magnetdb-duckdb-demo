@@ -302,6 +302,7 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
+        style_data_conditional=selectors.missing_date_style("t0"),
     )
 
 
@@ -337,6 +338,7 @@ def _magnet_history_section(selected_part, db_path):
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
+        style_data_conditional=selectors.missing_date_style("assembled_at"),
     )
 
 
@@ -372,6 +374,7 @@ def _assembly_history_section(selected_part, history):
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
+        style_data_conditional=selectors.missing_date_style("commissioned_at", status_column="status"),
     )
 
 
@@ -720,6 +723,7 @@ def layout(part=None, **kwargs):
                                 style_table={"overflowX": "auto"},
                                 style_cell={"textAlign": "center", "padding": "6px"},
                                 style_header={"fontWeight": "bold"},
+                                style_data_conditional=selectors.missing_date_style("Experiment"),
                             ),
                             selectors.graph(id="part-stats-fatigue-cycles-fig"),
                             selectors.graph(id="part-stats-fatigue-range3-fig"),
@@ -817,6 +821,7 @@ def layout(part=None, **kwargs):
                                 style_table={"overflowX": "auto"},
                                 style_cell={"textAlign": "center", "padding": "6px"},
                                 style_header={"fontWeight": "auto"},
+                                style_data_conditional=selectors.missing_date_style("Experiment"),
                             ),
                         ],
                         style={"padding": "10px"},

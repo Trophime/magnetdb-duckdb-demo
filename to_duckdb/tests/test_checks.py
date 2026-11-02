@@ -6,6 +6,7 @@ import pytest
 from checks import (
     _ENTITY_CHECKS,
     check_assemblies,
+    check_dates,
     check_experiments,
     check_magnets,
     check_operationaldata,
@@ -389,6 +390,137 @@ def test_entity_checks_fixes_parts_before_magnets(con_populated):
     """entity='all' --fix must load parts' geometry_data before the magnets'
     geometry is rebuilt from it."""
     assert list(_ENTITY_CHECKS)[:2] == ["part", "magnet"]
+
+
+def test_run_checks_all_skips_dates(con_populated):
+    con_populated.execute("UPDATE magnets SET assembled_at = NULL WHERE name = 'MAG_01'")
+    results = run_checks(con_populated, entity="all")
+    assert not any("assembled_at" in p for r in results for p in r["problems"])
+    assert not any("dated" in r["name"] for r in results)
+
+
+# ---------------------------------------------------------------------------
+# check_dates
+# ---------------------------------------------------------------------------
+
+
+def _link_assembly_magnet(con, assembly="ASSEMBLY_01", magnet="MAG_01"):
+    con.execute(
+        "INSERT INTO assembly_magnets (assembly_name, magnet_name) VALUES (?, ?)",
+        [assembly, magnet],
+    )
+
+
+def _add_overview_record(con, filename, t0=None, merged_into=None):
+    con.execute(
+        "INSERT INTO overview_records (filename, housing, t0, merged_into) VALUES (?, 'M10', ?, ?)",
+        [filename, t0, merged_into],
+    )
+
+
+def test_check_dates_fully_dated_db_gives_only_ok_summaries(con_populated):
+    results = check_dates(con_populated)
+    assert results
+    assert all(r["ok"] for r in results)
+    assert _result_for(results, "assembled_at: 1 row(s) dated")["entity"] == "magnet"
+    assert _result_for(results, "manufactured_at: 2 row(s) dated")["entity"] == "part"
+    assert _result_for(results, "commissioned_at: 1 row(s) dated")["entity"] == "assembly"
+
+
+def test_check_dates_reports_magnet_without_assembled_at(con_populated):
+    _link_assembly_magnet(con_populated)
+    con_populated.execute("UPDATE magnets SET assembled_at = NULL WHERE name = 'MAG_01'")
+    mag = _result_for(check_dates(con_populated), "MAG_01")
+    assert mag["entity"] == "magnet" and not mag["ok"]
+    (problem,) = mag["problems"]
+    assert "assembled_at is not set" in problem
+    assert "first assembly ASSEMBLY_01 commissioned 2025-01-01" in problem
+    assert "magnet update" in problem
+
+
+def test_check_dates_reports_part_without_manufactured_at(con_populated):
+    _link_assembly_magnet(con_populated)
+    con_populated.execute("UPDATE parts SET manufactured_at = NULL WHERE name = 'HELIX_01'")
+    part = _result_for(check_dates(con_populated), "HELIX_01")
+    assert part["entity"] == "part" and not part["ok"]
+    (problem,) = part["problems"]
+    assert "manufactured_at is not set" in problem
+    assert "first assembly ASSEMBLY_01 commissioned 2025-01-01" in problem
+    assert "part update" in problem
+
+
+def test_check_dates_reports_overview_record_without_t0(con_populated):
+    _add_overview_record(con_populated, "M10_Overview_220422-0930")
+    _add_overview_record(con_populated, "M10_Overview_220423-1000", merged_into="M10_Overview_220422-0930")
+    results = check_dates(con_populated)
+    rec = _result_for(results, "M10_Overview_220422-0930")
+    assert rec["entity"] == "overview_record" and not rec["ok"]
+    (problem,) = rec["problems"]
+    assert "t0 is not set" in problem
+    assert "suggested: 2022-04-22 09:30" in problem
+    assert "populate overview-records-infer" in problem
+    assert not any(r["name"] == "M10_Overview_220423-1000" for r in results)
+
+
+def test_check_dates_reports_assembly_without_commissioned_at(con_populated):
+    insert_experiments(con_populated, "ASSEMBLY_01",
+                        [{"name": "exp1", "file": "M10_2024.03.05---10:20:30.txt"}], verbose=False)
+    con_populated.execute(
+        "UPDATE assemblies SET commissioned_at = NULL WHERE name = 'ASSEMBLY_01'"
+    )
+    asm = _result_for(check_dates(con_populated), "ASSEMBLY_01")
+    assert asm["entity"] == "assembly" and not asm["ok"]
+    (problem,) = asm["problems"]
+    assert "commissioned_at is not set" in problem
+    assert "earliest experiment: 2024-03-05" in problem
+    assert "assembly update" in problem
+
+
+def test_check_dates_in_study_assembly_without_commissioned_at_is_exempt(con_populated):
+    con_populated.execute(
+        "UPDATE assemblies SET commissioned_at = NULL, status = 'in_study' WHERE name = 'ASSEMBLY_01'"
+    )
+    results = check_dates(con_populated)
+    assert all(r["ok"] for r in results)
+    assert not any(r["name"] == "ASSEMBLY_01" for r in results)
+
+
+def test_check_dates_reports_experiment_with_unparseable_file_timestamp(con_populated):
+    insert_experiments(
+        con_populated, "ASSEMBLY_01",
+        [{"name": "good", "file": "M10_2024.03.05---10:20:30.txt"},
+         {"name": "bad", "file": "not_a_timestamp.txt"},
+         {"name": "nofile", "file": "nofile"}],
+        verbose=False,
+    )
+    con_populated.execute("UPDATE experiments SET file = NULL WHERE name = 'nofile'")
+    results = check_dates(con_populated)
+    bad = [r for r in results if r["entity"] == "experiment" and not r["ok"]]
+    assert len(bad) == 1
+    assert bad[0]["name"].startswith("bad (id=")
+    assert "not_a_timestamp.txt" in bad[0]["problems"][0]
+    assert _result_for(results, "file timestamp: 1 row(s) dated")["entity"] == "experiment"
+
+
+def test_check_dates_name_filter(con_populated):
+    con_populated.execute("UPDATE parts SET manufactured_at = NULL")
+    results = check_dates(con_populated, name="HELIX_01")
+    assert [r["name"] for r in results if not r["ok"]] == ["HELIX_01"]
+
+
+def test_check_dates_fix_writes_nothing(con_populated):
+    con_populated.execute("UPDATE magnets SET assembled_at = NULL WHERE name = 'MAG_01'")
+    _add_overview_record(con_populated, "M10_Overview_220422-0930")
+    n_log = con_populated.execute("SELECT count(*) FROM operation_log").fetchone()[0]
+    results = run_checks(con_populated, entity="dates", fix=True)
+    assert any(not r["ok"] for r in results)
+    assert con_populated.execute(
+        "SELECT assembled_at FROM magnets WHERE name = 'MAG_01'"
+    ).fetchone()[0] is None
+    assert con_populated.execute(
+        "SELECT t0 FROM overview_records WHERE filename = 'M10_Overview_220422-0930'"
+    ).fetchone()[0] is None
+    assert con_populated.execute("SELECT count(*) FROM operation_log").fetchone()[0] == n_log
 
 
 def test_print_check_report_returns_false_on_problems(con_populated, capsys):

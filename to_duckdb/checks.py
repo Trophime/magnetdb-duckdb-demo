@@ -337,6 +337,162 @@ def check_operationaldata(
 
 
 # ---------------------------------------------------------------------------
+# dates
+# ---------------------------------------------------------------------------
+
+
+def _first_commissioned(con, query: str, name: str) -> str:
+    """Return the ``"first assembly <name> commissioned <date>"`` hint for *query*'s first row."""
+    row = con.execute(query, [name]).fetchone()
+    if row is None:
+        return "not in any commissioned assembly"
+    return f"first assembly {row[0]} commissioned {row[1]:%Y-%m-%d}"
+
+
+def _date_results(entity: str, column: str, n_checked: int, problems: list[dict]) -> list[dict]:
+    """Return *problems* plus one OK summary row for the dated rows of *column*."""
+    n_dated = n_checked - len(problems)
+    summary = [{"entity": entity, "name": f"{column}: {n_dated} row(s) dated", "ok": True, "problems": []}]
+    return problems + (summary if n_dated else [])
+
+
+def _problem(entity: str, name: str, message: str) -> dict:
+    return {"entity": entity, "name": name, "ok": False, "problems": [message]}
+
+
+def check_dates(con, name: str | None = None) -> list[dict]:
+    """Report rows whose date is missing or unparseable; never writes.
+
+    Checks ``magnets.assembled_at``, ``parts.manufactured_at``,
+    ``overview_records.t0`` (live rows only), ``assemblies.commissioned_at``
+    (``in_study`` assemblies exempt) and the timestamp parsed from
+    ``experiments.file`` (rows without a file are left to
+    :func:`check_experiments`). Each undated row gets one problem with a
+    hint on how to fix it; each date column with dated rows gets one OK
+    summary row instead of one row per object.
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open connection; only read.
+    name : str, optional
+        Restrict every check to the row with this name (magnet, part,
+        overview-record filename, assembly or experiment name).
+
+    Returns
+    -------
+    list[dict]
+        Result dicts ``{"entity", "name", "ok", "problems"}``.
+    """
+    from crud import _parse_overview_filename
+    from python_magnetrun.utils.timestamps import parse_filename_timestamp
+
+    def rows(query: str, name_column: str) -> list[tuple]:
+        if name:
+            query += f" AND {name_column} = ?"
+        return con.execute(query + f" ORDER BY {name_column}", [name] if name else []).fetchall()
+
+    results: list[dict] = []
+
+    magnets = rows("SELECT name, assembled_at FROM magnets WHERE TRUE", "name")
+    problems = [
+        _problem(
+            "magnet", magnet,
+            "assembled_at is not set ("
+            + _first_commissioned(
+                con,
+                "SELECT s.name, s.commissioned_at FROM assembly_magnets am "
+                "JOIN assemblies s ON s.name = am.assembly_name "
+                "WHERE am.magnet_name = ? AND s.commissioned_at IS NOT NULL "
+                "ORDER BY s.commissioned_at LIMIT 1",
+                magnet,
+            )
+            + "; set it with 'magnet update')",
+        )
+        for magnet, assembled_at in magnets
+        if assembled_at is None
+    ]
+    results += _date_results("magnet", "assembled_at", len(magnets), problems)
+
+    parts = rows("SELECT name, manufactured_at FROM parts WHERE TRUE", "name")
+    problems = [
+        _problem(
+            "part", part,
+            "manufactured_at is not set ("
+            + _first_commissioned(
+                con,
+                "SELECT s.name, s.commissioned_at FROM magnet_parts mp "
+                "JOIN assembly_magnets am ON am.magnet_name = mp.magnet_name "
+                "JOIN assemblies s ON s.name = am.assembly_name "
+                "WHERE mp.part_name = ? AND s.commissioned_at IS NOT NULL "
+                "ORDER BY s.commissioned_at LIMIT 1",
+                part,
+            )
+            + "; set it with 'part update')",
+        )
+        for part, manufactured_at in parts
+        if manufactured_at is None
+    ]
+    results += _date_results("part", "manufactured_at", len(parts), problems)
+
+    records = rows(
+        "SELECT filename, t0 FROM overview_records WHERE merged_into IS NULL", "filename"
+    )
+    problems = []
+    for filename, t0 in records:
+        if t0 is not None:
+            continue
+        _, suggested = _parse_overview_filename(filename)
+        hint = f"suggested: {suggested:%Y-%m-%d %H:%M} from filename; " if suggested else ""
+        problems.append(
+            _problem(
+                "overview_record", filename,
+                f"t0 is not set ({hint}run 'magnetdb.py populate overview-records-infer')",
+            )
+        )
+    results += _date_results("overview_record", "t0", len(records), problems)
+
+    assemblies = rows(
+        "SELECT name, commissioned_at FROM assemblies WHERE status != 'in_study'", "name"
+    )
+    problems = []
+    for assembly, commissioned_at in assemblies:
+        if commissioned_at is not None:
+            continue
+        stamps = [
+            ts
+            for (file,) in con.execute(
+                "SELECT file FROM experiments WHERE assembly_name = ? AND file IS NOT NULL",
+                [assembly],
+            ).fetchall()
+            if (ts := parse_filename_timestamp(Path(file).name)) is not None
+        ]
+        hint = f"earliest experiment: {min(stamps):%Y-%m-%d}" if stamps else "no dated experiment"
+        problems.append(
+            _problem(
+                "assembly", assembly,
+                f"commissioned_at is not set ({hint}; set it with 'assembly update')",
+            )
+        )
+    results += _date_results("assembly", "commissioned_at", len(assemblies), problems)
+
+    experiments = rows(
+        "SELECT name, id, file FROM experiments WHERE file IS NOT NULL", "name"
+    )
+    problems = [
+        _problem(
+            "experiment", f"{exp_name or '?'} (id={exp_id})",
+            f"no timestamp can be parsed from file '{file}'",
+        )
+        for exp_name, exp_id, file in experiments
+        if parse_filename_timestamp(Path(file).name) is None
+    ]
+    results += _date_results("experiment", "file timestamp", len(experiments), problems)
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # orchestration + reporting
 # ---------------------------------------------------------------------------
 
@@ -346,11 +502,18 @@ _ENTITY_CHECKS = {
     "assembly": lambda con, name, fix: check_assemblies(con, name),
     "experiment": lambda con, name, fix: check_experiments(con, name),
     "operationaldata": lambda con, name, fix: check_operationaldata(con, name),
+    "dates": lambda con, name, fix: check_dates(con, name),
 }
+
+# Run only when asked for by name, not by ``entity="all"``.
+_EXPLICIT_ONLY_CHECKS = {"dates"}
 
 
 def run_checks(con, entity: str = "all", name: str | None = None, fix: bool = False) -> list[dict]:
     """Run the requested entity check(s) and return the combined results list.
+
+    ``entity="all"`` runs every check except ``"dates"``, which runs only
+    when named. ``fix`` has no effect on ``"dates"`` (report-only).
 
     Raises
     ------
@@ -362,8 +525,9 @@ def run_checks(con, entity: str = "all", name: str | None = None, fix: bool = Fa
         if name is not None:
             raise ValueError("--name requires a specific --entity, not 'all'.")
         results = []
-        for check_fn in _ENTITY_CHECKS.values():
-            results.extend(check_fn(con, None, fix))
+        for key, check_fn in _ENTITY_CHECKS.items():
+            if key not in _EXPLICIT_ONLY_CHECKS:
+                results.extend(check_fn(con, None, fix))
         return results
 
     check_fn = _ENTITY_CHECKS.get(entity)

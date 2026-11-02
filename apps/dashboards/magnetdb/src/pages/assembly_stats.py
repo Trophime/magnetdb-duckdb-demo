@@ -304,6 +304,7 @@ def _overview_records_section(overview_df, start_date=None, end_date=None):
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
+        style_data_conditional=selectors.missing_date_style("t0"),
     )
 
 
@@ -602,6 +603,7 @@ def layout(assembly=None, **kwargs):
                                 style_table={"overflowX": "auto"},
                                 style_cell={"textAlign": "center", "padding": "6px"},
                                 style_header={"fontWeight": "auto"},
+                                style_data_conditional=selectors.missing_date_style("Experiment"),
                             ),
                         ],
                         style={"padding": "10px"},

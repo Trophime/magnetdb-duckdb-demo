@@ -594,6 +594,7 @@ def _housing_section(
                 style_table={"overflowX": "auto"},
                 style_cell={"textAlign": "center", "padding": "6px"},
                 style_header={"fontWeight": "bold"},
+                style_data_conditional=selectors.missing_date_style("Commissioned", status_column="Status"),
             ),
             html.Br(),
             dcc.Link(i18n._("View all assemblies →"), href="/assembly_stats"),

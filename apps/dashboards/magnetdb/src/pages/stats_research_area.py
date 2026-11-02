@@ -82,6 +82,7 @@ def _experiments_section(exp_df):
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
+        style_data_conditional=selectors.missing_date_style("Experiment"),
     )
 
 
@@ -115,6 +116,7 @@ def _overview_records_section(ov_df):
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
+        style_data_conditional=selectors.missing_date_style("t0"),
     )
 
 

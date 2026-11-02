@@ -140,6 +140,15 @@ down the pipeline:
   [Magnet geometry](#magnet-geometry)).
 - **experiments** / **operationaldata** — flags rows whose `file` is unset or
   doesn't exist on disk.
+- **dates** (only with `--entity dates`, not part of a plain `check`) — lists
+  rows with a missing date: `magnets.assembled_at`, `parts.manufactured_at`,
+  live `overview_records.t0`, `assemblies.commissioned_at` (`in_study`
+  assemblies exempt), and experiments whose `file` has no parsable
+  timestamp. Each comes with a hint (first commissioned assembly, earliest
+  experiment, `t0` from the filename + `populate overview-records-infer`).
+  Date columns with no gaps print one OK summary line. Report-only:
+  `--fix` changes nothing here; set the dates with `magnet update`,
+  `part update` or `assembly update`.
 
 ```bash
 # Check everything
@@ -148,6 +157,9 @@ python magnetdb.py check --db $DB
 # Restrict to one entity, or one named object
 python magnetdb.py check --db $DB --entity magnet
 python magnetdb.py check --db $DB --entity magnet --name M19071101
+
+# Rows with a missing date (report-only)
+python magnetdb.py check --db $DB --entity dates
 
 # Load a part's geometry_data from its geometry file, where missing
 python magnetdb.py check --db $DB --entity part --fix
