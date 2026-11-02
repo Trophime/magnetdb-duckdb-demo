@@ -1,7 +1,7 @@
 # Plan: rebuildable magnet geometry (check, warning, dashboard colour)
 
-Status: **implemented** (2026-11-02); the dashboard look awaits the user's
-check (step 5).
+Status: **done** (2026-11-02); the dashboard look (step 5) was confirmed by
+the user.
 
 ## Goal
 
