@@ -970,3 +970,154 @@ def test_cli_db_drop_table_missing_db_exits(tmp_path, monkeypatch):
     with pytest.raises(SystemExit):
         _run(monkeypatch, "db", "drop-table",
              "--db", str(tmp_path / "nope.duckdb"), "--table", "materials", "--yes")
+
+
+# ---------------------------------------------------------------------------
+# operation_log coverage (PLAN_operation_log_coverage.md)
+# ---------------------------------------------------------------------------
+
+
+def _log_rows(db_path, table_name):
+    with duckdb.connect(str(db_path), read_only=True) as con:
+        return con.execute(
+            "SELECT operation, record_name, status, details FROM operation_log "
+            "WHERE table_name = ? ORDER BY id",
+            [table_name],
+        ).fetchall()
+
+
+def test_cli_db_create_logs_operation_log_row(tmp_path, monkeypatch):
+    db = tmp_path / "new.duckdb"
+    _run(monkeypatch, "db", "create", "--db", str(db))
+    assert _log_rows(db, "database") == [("create", "new.duckdb", "ok", None)]
+
+
+def test_cli_db_drop_table_logs_operation_log_row(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+    _add_junk_tables(db, "JUNK1")
+
+    _run(monkeypatch, "db", "drop-table", "--db", str(db), "--table", "JUNK1", "--yes")
+
+    rows = _log_rows(db, "JUNK1")
+    assert [(op, rec, status) for op, rec, status, _ in rows] == [("drop_table", "JUNK1", "ok")]
+    assert json.loads(rows[0][3]) == {"rows": 2}
+
+
+def test_cli_db_drop_table_refuses_operation_log_without_force(tmp_path, monkeypatch, capsys):
+    db = _db_with_magnet(tmp_path)
+
+    with pytest.raises(SystemExit) as exc:
+        _run(monkeypatch, "db", "drop-table", "--db", str(db), "--table", "operation_log", "--yes")
+
+    assert exc.value.code == 1
+    assert "--force" in capsys.readouterr().out
+    assert "operation_log" in _tables(db)
+
+
+def test_cli_db_drop_table_operation_log_with_force(tmp_path, monkeypatch):
+    db = _db_with_magnet(tmp_path)
+
+    _run(monkeypatch, "db", "drop-table", "--db", str(db), "--table", "operation_log", "--yes", "--force")
+
+    assert "operation_log" not in _tables(db)
+
+
+def test_cli_populate_overview_records_from_archive_logs_operation_log_row(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
+
+    from python_magnetrun.analysis.loaders import FileSet
+    from python_magnetrun.analysis.processing import OverviewRecord
+
+    ok_path = tmp_path / "M10_Archive_250115-1200.tdms"
+    bad_path = tmp_path / "M10_Archive_250116-1200.tdms"
+
+    def fake_find_and_register(assembly, db_path, db_tz, dry_run, type_filter, records_base, pbsurv):
+        return [(ok_path, datetime(2025, 1, 15, 12, 0, 0), "Archive"),
+                (bad_path, datetime(2025, 1, 16, 12, 0, 0), "Archive")]
+
+    def fake_process_archive_file(path, config):
+        if path == str(bad_path):
+            raise RuntimeError("unreadable archive")
+        return OverviewRecord(
+            filename="M10_Archive_250115-1200", housing="M10", mode="Archive",
+            t0=datetime(2025, 1, 15, 12, 0, 0), duration=1800.0,
+            sources=FileSet(archive=[path]),
+        )
+
+    monkeypatch.setattr("magnetdb._tdms_find_and_register", fake_find_and_register)
+    monkeypatch.setattr(
+        "python_magnetrun.analysis.processing.process_archive_file", fake_process_archive_file
+    )
+
+    _run(monkeypatch, "populate", "overview-records-from-archive",
+         "--assembly", "ASSEMBLY_JSON_01", "--db", str(db))
+
+    rows = [(op, rec, status) for op, rec, status, _ in _log_rows(db, "overview_records")]
+    assert rows == [("populate", ok_path.name, "ok"), ("populate", bad_path.name, "error")]
+
+
+def test_cli_populate_overview_records_from_json_logs_operation_log_row(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
+    json_path = tmp_path / "M10_summary-2025.json"
+    json_path.write_text(json.dumps([_summary_json_record("M10_Overview_250115-1200", duration=60.0)]))
+
+    _run(monkeypatch, "populate", "overview-records-from-json", str(json_path), "--db", str(db))
+
+    rows = [(op, rec, status) for op, rec, status, _ in _log_rows(db, "overview_records")]
+    assert rows == [("populate", "M10_Overview_250115-1200", "ok")]
+
+
+def test_cli_populate_overview_records_infer_logs_one_summary_row(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)  # ASSEMBLY_JSON_01, housing M10, commissioned 2025-01-01
+    with duckdb.connect(str(db)) as con:
+        for filename in ("M10_Overview_250115-1200", "not-an-overview-name"):
+            con.execute(
+                "INSERT INTO overview_records (filename, duration, sources_overview, sources_pupitre) "
+                "VALUES (?, 60.0, [], [])",
+                [filename],
+            )
+
+    _run(monkeypatch, "populate", "overview-records-infer", "--db", str(db))
+
+    rows = _log_rows(db, "overview_records")
+    assert [(op, status) for op, _rec, status, _ in rows] == [("infer", "ok")]
+    details = json.loads(rows[0][3])
+    assert details["results"] == {"resolved": 1, "bad_filename": 1}
+    assert details["resolved"] == ["M10_Overview_250115-1200"]
+    assert "merges" in details
+
+
+# Every subcommand needs a logging decision: a new one missing from both sets
+# fails here.
+_LOGGED_SUBCOMMANDS = {
+    ("check", None),  # with --fix
+    ("db", "create"), ("db", "drop-table"),
+    ("material", "add"), ("material", "delete"), ("material", "update"),
+    ("part", "update"), ("part", "update-status"),
+    ("magnet", "add"), ("magnet", "update"), ("magnet", "delete"),
+    ("magnet", "update-status"), ("magnet", "update-status-from-file"),
+    ("assembly", "add"), ("assembly", "update"), ("assembly", "delete"),
+    ("assembly", "update-magnet"), ("assembly", "decommission"),
+    ("site", "add"), ("site", "delete"), ("site", "update-magnet"),
+    ("populate", "operationaldata"), ("populate", "experiments"),
+    ("populate", "overview-records"), ("populate", "overview-records-from-archive"),
+    ("populate", "overview-records-from-json"), ("populate", "overview-records-infer"),
+    ("hoop-stress", "compute"),
+}
+_READ_ONLY_SUBCOMMANDS = {
+    ("list", None),
+    ("material", "view"), ("part", "view"), ("magnet", "view"), ("magnet", "check-geometry"),
+    ("assembly", "view"), ("site", "view"), ("housing", "view"),
+    ("experiments", "view"), ("operationaldata", "view"), ("log", "view"),
+    ("overview-records", "view"),
+    ("hoop-stress", "barchart"), ("hoop-stress", "history"), ("hoop-stress", "stats"),
+    ("hoop-stress", "fatigue"), ("hoop-stress", "part-history"),
+}
+_NOT_APPLICABLE_SUBCOMMANDS = {("db", "delete")}  # removes the DB, log included
+
+
+def test_every_subcommand_has_a_logging_decision():
+    import magnetdb
+
+    decided = _LOGGED_SUBCOMMANDS | _READ_ONLY_SUBCOMMANDS | _NOT_APPLICABLE_SUBCOMMANDS
+    assert set(magnetdb._DISPATCH) == decided

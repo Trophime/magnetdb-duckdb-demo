@@ -424,6 +424,40 @@ def test_insert_magnet_parts_rejects_non_in_stock_part(con):
         insert_magnet_parts(con, "MAG_01", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
 
 
+def _magnet_parts_log(con):
+    return con.execute(
+        "SELECT operation, record_name, status, details FROM operation_log "
+        "WHERE table_name = 'magnet_parts' ORDER BY id"
+    ).fetchall()
+
+
+def test_insert_magnet_parts_logs_operation_log_row(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_material(con, MATERIAL_STEEL, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_stock"}, verbose=False)
+    insert_part(con, {**PART_RING, "status": "in_stock"}, verbose=False)
+    insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
+
+    parts = [{"name": "HELIX_01", "type": "helix"}, {"name": "RING_01", "type": "ring"}]
+    insert_magnet_parts(con, "MAG_01", parts, verbose=False)
+
+    rows = _magnet_parts_log(con)
+    assert [(op, rec, status) for op, rec, status, _ in rows] == [("insert", "MAG_01", "ok")]
+    assert json.loads(rows[0][3]) == {"parts": ["HELIX_01", "RING_01"], "inserted": 2, "already_present": 0}
+
+
+def test_insert_magnet_parts_logs_error_row(con):
+    insert_material(con, MATERIAL_COPPER, verbose=False)
+    insert_part(con, {**PART_HELIX, "status": "in_operation"}, verbose=False)
+    insert_magnet(con, MAGNET_DATA, "insert", verbose=False)
+    with pytest.raises(ValueError):
+        insert_magnet_parts(con, "MAG_01", [{"name": "HELIX_01", "type": "helix"}], verbose=False)
+
+    rows = _magnet_parts_log(con)
+    assert [(op, rec, status) for op, rec, status, _ in rows] == [("insert", "MAG_01", "error")]
+    assert "not 'in_stock'" in json.loads(rows[0][3])["error"]
+
+
 def test_insert_magnet_parts_reuse_retires_old_magnet_and_closes_its_assembly(con):
     """A part already held by another still-active magnet is reclaimed: the
     old magnet is retired, its open assembly link is auto-closed (fallback

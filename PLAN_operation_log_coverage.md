@@ -1,5 +1,9 @@
 # Plan: every state-changing `magnetdb.py` subcommand writes to `operation_log`
 
+Status: **done** (2026-11-02), audit refreshed the same day (see
+[Refresh](#refresh-2026-11-02)); results under
+[Verification results](#verification-results-2026-11-02).
+
 ## Goal
 
 Every `magnetdb.py` subcommand that changes the database appends at least
@@ -47,31 +51,63 @@ left to write to. Unchanged.
 | G7 | `populate overview-records-infer` | `infer_overview_record_fields` (`UPDATE` `t0`/`assembly_name`/`housing`/`duration`/…, `mode`) and `merge_duplicate_pupitre_records` (`UPDATE ... merged_into`); nothing logged |
 | G8 | `hoop-stress compute` | `compute_hoop_stats.compute_hoop_stress_history`: `hoop_stress_processed`, `hoop_stress_bin_stats`, `hoop_stress_fatigue(_bins)`, `experiments.status`; nothing logged |
 
+## Refresh (2026-11-02)
+
+Re-audited against the code after
+[`PLAN_magnet_geometry_check.md`](PLAN_magnet_geometry_check.md) and the
+all-or-nothing loading ([`PLAN_atomic_load.md`](PLAN_atomic_load.md)):
+
+- `_DISPATCH` has the same subcommands as on 2026-10-23.
+- **G1 is smaller.** `check --fix` on magnets no longer writes
+  `magnets.geometry_data`; it refreshes `magnets.geometry_problem` through
+  `magnet_geometry.refresh_geometry_problem`, which logs. Only the part fix
+  (raw `UPDATE parts SET geometry_data` in `checks.check_parts`) is left.
+  It now goes through `crud.update_part_from_json` rather than
+  `_apply_update` directly, so the fix also gets the geometry hook (the
+  holders' `geometry_problem` is refreshed in the same transaction).
+- **Already covered:** `crud._reclaim_reused_parts` (`assembly add
+  --status-file`) writes only through `update_magnet_status` and
+  `decommission_assembly`, which log; `magnetdb._all_or_nothing` logs its
+  errors.
+- **G2–G8 unchanged:** still no `_log_operation` call.
+- Manual check (step 8) on a copy of `magnetdb-2026-10-29.duckdb`, where
+  `M10_Overview_220422-0930` still has no `t0`.
+
+Decisions (open questions 1–5, answered 2026-11-02):
+
+1. Read-only subcommands are not logged.
+2. `db drop-table operation_log` is **refused unless `--force`** (with
+   `--force`: dropped, nothing logged for it, warning printed).
+3. `check --fix` geometry fixes mark hoop-stress results stale.
+4. `populate overview-records-infer`: **one summary row per run** (counts,
+   and the changed records in `details`), not one row per record.
+5. `hoop-stress compute`: one row per assembly run.
+
 ## Files affected
 
-1. `to_duckdb/checks.py` — edit (G1). Write the `geometry_data` fixes
-   through `crud._apply_update` (`fields={"geometry_data": loaded}`), which
-   logs `{"changes": {"geometry_data": "changed"}}` in the same transaction
-   as the write. `geometry_data` *is* a hoop-stress input, so any existing
-   results get marked stale (correct: their geometry input changed).
+1. `to_duckdb/checks.py` — edit (G1). Write the part `geometry_data` fix
+   through `crud.update_part_from_json` (see [Refresh](#refresh-2026-11-02)),
+   which logs `{"changes": {"geometry_data": "changed"}}` in the same
+   transaction as the write. `geometry_data` *is* a hoop-stress input, so
+   any existing results get marked stale (correct: their geometry input
+   changed).
 2. `to_duckdb/crud.py` — edit.
    - G2: `insert_magnet_parts` logs one `insert` / `magnet_parts` row
      (record = magnet name, `details={"parts": [...]}`), `error` row on
      failure — same shape as `insert_assembly_magnets`.
-   - G7: `infer_overview_record_fields` logs one `infer` /
-     `overview_records` row per call with `details={"result": <resolved |
-     bad_filename | no_assembly_match | not_found>, "changes": {...}}`;
-     `merge_duplicate_pupitre_records` logs one `merge` /
-     `overview_records` row per merge (record = kept filename,
-     `details={"merged": [...]}`).
+   - G7: one `infer` / `overview_records` summary row per
+     `populate overview-records-infer` run (decision 4), with the counts
+     per result (`resolved`, `bad_filename`, `no_assembly_match`,
+     `not_found`), the changed records and the merges in `details`.
    - Docstrings updated (NumPy style) to mention the log row.
 3. `to_duckdb/magnetdb.py` — edit.
    - G3: `cmd_db_create` logs one `create` / `database` row after
      `ensure_schema`, only when the file was newly created.
    - G4: `cmd_db_drop_table` logs one `drop_table` row per table
      (`details={"rows": count}`) in the same transaction as the `DROP`.
-     Dropping `operation_log` itself cannot be logged into itself: print a
-     warning and log nothing for that table (see open question 2).
+     Dropping `operation_log` itself is refused unless `--force`
+     (decision 2); with `--force` it is dropped with a warning and nothing
+     is logged for it.
    - G5 / G6: `cmd_populate_overview_records_from_archive` and
      `cmd_populate_overview_records_from_json` log one `populate` /
      `overview_records` row per file/record, `ok` or `error` — same
@@ -113,10 +149,34 @@ per the earlier plans' step 0).
    mocked as in existing `test_compute_hoop_stats.py`).
 7. Full suite → verify: `$PY -m pytest` matches the baseline plus the new
    tests.
-8. Manual, on a scratchpad **copy** of `magnetdb-2026-10-08.duckdb`:
+8. Manual, on a scratchpad **copy** of `magnetdb-2026-10-29.duckdb`:
    `populate overview-records-infer` (fixes `M10_Overview_220422-0930`),
    then `log view --table overview_records` shows the `infer` row → the
    real DB is not touched.
+
+### Verification results (2026-11-02)
+
+1. Baseline: 639 passed (after `PLAN_magnet_geometry_check.md`).
+2. 14 new tests: the 12 gap tests failed, the coverage guard and the
+   hoop dry-run test passed.
+3–6. All gaps fixed; `to_duckdb` suite: **653 passed**.
+8. Manual check **skipped**: `M10_Overview_220422-0930` has a
+   `sources_pupitre` file, and inference reads it (for `teb`/`bp`) through
+   the rclone data mount, which was failing. The infer CLI path, summary row
+   included, is covered by
+   `test_cli_populate_overview_records_infer_logs_one_summary_row`.
+
+How each gap is logged:
+
+| # | Row(s) |
+|---|---|
+| G1 | `check --fix` part fix → `crud.update_part_from_json` → `update` / `parts` (`geometry_data: "changed"`) |
+| G2 | `insert` / `magnet_parts` / magnet (`parts`, `inserted`, `already_present`), or `error`; the body moved to `crud._link_magnet_parts` |
+| G3 | `create` / `database` / file name |
+| G4 | `drop_table` / table / table (`rows`), in the `DROP`'s transaction; `operation_log` needs `--force` and is not logged |
+| G5, G6 | `populate` / `overview_records` / file, `ok` or `error` |
+| G7 | one `infer` / `overview_records` / `overview-records-infer` row per run (`results` counts, `resolved` list, `merges`) |
+| G8 | `compute` / `hoop_stress_processed` / assembly (`bin_config`, `processed`, `skipped`, `errors`), `error` + message when the run aborts; none on a dry run |
 
 ## Assumptions & open questions
 

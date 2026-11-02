@@ -76,6 +76,18 @@ def test_check_parts_fix_reports_unfixable_when_load_fails(con_populated, monkey
     assert any("could not be auto-fixed" in p for p in helix["problems"])
 
 
+def test_check_parts_fix_logs_operation_log_row(con_populated, monkeypatch):
+    monkeypatch.setattr("checks.load_geometry_json", lambda path: '{"__classname__": "Helix"}')
+    con_populated.execute("UPDATE parts SET geometry = '/fake/HELIX_01.yaml' WHERE name = 'HELIX_01'")
+    check_parts(con_populated, fix=True)
+    rows = con_populated.execute(
+        "SELECT status, details FROM operation_log "
+        "WHERE table_name = 'parts' AND record_name = 'HELIX_01' AND operation = 'update'"
+    ).fetchall()
+    assert [status for status, _ in rows] == ["ok"]
+    assert '"geometry_data": "changed"' in rows[0][1]
+
+
 def test_check_parts_fix_no_geometry_path_is_unfixable(con_populated):
     """HELIX_01 has geometry=None in con_populated — there's no file to load
     from, so --fix must report it as an ordinary problem, not attempt a load."""

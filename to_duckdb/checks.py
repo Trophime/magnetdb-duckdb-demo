@@ -14,7 +14,7 @@ validity pass stays cheap to import.
 
 from pathlib import Path
 
-from crud import load_geometry_json
+from crud import load_geometry_json, update_part_from_json
 from enums import AssemblyStatus, LifecycleStatus, MagnetType
 from magnet_geometry import geometry_problem, refresh_geometry_problem
 from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE
@@ -36,9 +36,11 @@ def check_parts(con, name: str | None = None, fix: bool = False) -> list[dict]:
 
     With ``fix=True``, a part that has a ``geometry`` file path but no cached
     ``geometry_data`` has it loaded via :func:`crud.load_geometry_json` and
-    written back to the DB. A part with no ``geometry`` path, or whose file
-    fails to load, cannot be auto-fixed and is reported as an ordinary
-    problem instead.
+    written back through :func:`crud.update_part_from_json`: logged in
+    ``operation_log``, hoop-stress results of the assemblies holding the part
+    marked stale, and its magnets' ``geometry_problem`` refreshed. A part
+    with no ``geometry`` path, or whose file fails to load, cannot be
+    auto-fixed and is reported as an ordinary problem instead.
     """
     query = "SELECT name, geometry, geometry_data, status FROM parts"
     params: list = []
@@ -58,10 +60,7 @@ def check_parts(con, name: str | None = None, fix: bool = False) -> list[dict]:
             elif fix:
                 loaded = load_geometry_json(geometry)
                 if loaded is not None:
-                    con.execute(
-                        "UPDATE parts SET geometry_data = ? WHERE name = ?",
-                        [loaded, part_name],
-                    )
+                    update_part_from_json(con, {"name": part_name, "geometry_data": loaded}, verbose=False)
                     print(f"  + part {part_name}: geometry_data loaded from '{geometry}'")
                 else:
                     problems.append(

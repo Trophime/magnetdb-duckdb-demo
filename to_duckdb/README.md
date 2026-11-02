@@ -237,6 +237,17 @@ Stale experiments can also be listed directly:
 `SELECT * FROM hoop_stress_processed WHERE stale_since IS NOT NULL`
 (`stale_reason` is the `operation_log.id` of the change).
 
+**What `log view` covers.** Every subcommand that changes the database
+appends at least one `operation_log` row (`ok`, or `error` with the message):
+`db create` / `drop-table`, every `add` / `update` / `delete` /
+`update-status` / `decommission`, `check --fix`, the `populate` commands
+(`overview-records-infer` as one summary row per run) and `hoop-stress
+compute` (one row per assembly run). Read-only commands (`view`, `list`,
+`check` without `--fix`, the hoop-stress plots) log nothing, and
+`db delete` removes the log with the file. `db drop-table operation_log` is
+refused unless `--force`. A test (`test_every_subcommand_has_a_logging_decision`)
+fails when a new subcommand is added without one of these decisions.
+
 **One bin configuration per experiment.** The stats tables carry no bin
 configuration, so configurations must not mix: `hoop-stress compute` with
 other `--bins` skips already-processed experiments with a warning, and

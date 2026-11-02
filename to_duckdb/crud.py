@@ -987,6 +987,10 @@ def insert_magnet_parts(
     ``[WARN]`` is printed when the part's ``manufactured_at`` falls on a
     later day (the part is linked anyway).
 
+    One ``insert`` / ``magnet_parts`` row is appended to ``operation_log``
+    (record = *magnet_name*, ``details`` = the parts and the inserted /
+    already-present counts), or an ``error`` row before re-raising.
+
     Parameters
     ----------
     con : duckdb.DuckDBPyConnection
@@ -1015,6 +1019,22 @@ def insert_magnet_parts(
         with its known-dead holder).
     """
     part_names = [p["name"] for p in parts]
+    try:
+        inserted, skipped = _link_magnet_parts(con, magnet_name, parts, part_names, verbose, known_statuses)
+        _log_operation(
+            con, "insert", "magnet_parts", magnet_name,
+            details={"parts": part_names, "inserted": inserted, "already_present": skipped},
+        )
+    except Exception as exc:
+        _log_operation(
+            con, "insert", "magnet_parts", magnet_name,
+            status="error", details={"error": str(exc)},
+        )
+        raise
+
+
+def _link_magnet_parts(con, magnet_name, parts, part_names, verbose, known_statuses) -> tuple[int, int]:
+    """Validate and insert the ``magnet_parts`` rows; return (inserted, already present)."""
     if part_names:
         placeholders = ", ".join("?" * len(part_names))
         status_by_name = dict(
@@ -1097,6 +1117,7 @@ def insert_magnet_parts(
             f"  + magnet_parts  {inserted} inserted,  {skipped} already present"
             f"  ({coil_counter} coil channel(s))"
         )
+    return inserted, skipped
 
 
 def _warn_part_made_after_magnet(

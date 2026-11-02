@@ -45,6 +45,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 from config import DEFAULT_DB
+from crud import _log_operation
 from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE
 from populate import _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
 from schema import ensure_schema
@@ -702,6 +703,24 @@ def _compute_dt(df: pd.DataFrame) -> pd.Series:
 # ---------------------------------------------------------------------------
 
 
+def _log_hoop_run(con, assembly_name: str, bins, results: dict, dry_run: bool, error: str | None = None) -> None:
+    """Append this run's ``compute`` / ``hoop_stress_processed`` row (none on a dry run)."""
+    if dry_run:
+        return
+    details = {
+        "bin_config": bins_to_key(bins),
+        "processed": results["new"],
+        "skipped": results["skipped"],
+        "errors": [name for name, _msg in results["errors"]] if error is None else [],
+    }
+    if error is not None:
+        details["error"] = error
+    _log_operation(
+        con, "compute", "hoop_stress_processed", assembly_name,
+        status="ok" if error is None else "error", details=details,
+    )
+
+
 def compute_hoop_stress_history(
     assembly_name: str,
     db_path: str,
@@ -733,6 +752,11 @@ def compute_hoop_stress_history(
     use_mrun       : pass to validate_fast_from_pupitre
     pupitre_datadir: root for pupitre files
     verbose        : print progress lines
+
+    Each run (not a dry run) appends one ``compute`` /
+    ``hoop_stress_processed`` row to ``operation_log`` (record = the
+    assembly; ``details`` = bin config, processed/skipped counts and the
+    experiments in error), with status ``error`` when the run aborts.
     """
     from stress_map import (
         load_assembly_config_from_duckdb,
@@ -753,6 +777,7 @@ def compute_hoop_stress_history(
     if experiments.empty:
         if verbose:
             print(f"[INFO] No experiments found for assembly '{assembly_name}'.")
+        _log_hoop_run(con, assembly_name, bins, {"new": 0, "skipped": 0, "errors": []}, dry_run)
         con.close()
         return {"new": 0, "skipped": 0, "errors": []}
 
@@ -761,6 +786,7 @@ def compute_hoop_stress_history(
         housing, magnet_configs = load_assembly_config_from_duckdb(assembly_name, db_path, con=con)
     except ValueError as exc:
         print(f"[ERROR] Cannot load assembly config for '{assembly_name}': {exc}")
+        _log_hoop_run(con, assembly_name, bins, {"new": 0, "skipped": 0, "errors": []}, dry_run, error=str(exc))
         con.close()
         return {"new": 0, "skipped": 0, "errors": [str(exc)]}
 
@@ -791,6 +817,7 @@ def compute_hoop_stress_history(
         )
     except Exception as exc:
         print(f"[ERROR] geometry prep for '{assembly_name}': {exc}")
+        _log_hoop_run(con, assembly_name, bins, results, dry_run, error=str(exc))
         con.close()
         return {"new": 0, "skipped": 0, "errors": [str(exc)]}
 
@@ -802,6 +829,7 @@ def compute_hoop_stress_history(
             data = load_magnettools(assembly_config, tmpdir_path)
         except Exception as exc:
             print(f"[ERROR] Cannot load magnettools for '{assembly_name}': {exc}")
+            _log_hoop_run(con, assembly_name, bins, results, dry_run, error=str(exc))
             con.close()
             return {"new": 0, "skipped": 0, "errors": [str(exc)]}
 
@@ -917,6 +945,7 @@ def compute_hoop_stress_history(
     finally:
         shutil.rmtree(tmpdir_path, ignore_errors=True)
 
+    _log_hoop_run(con, assembly_name, bins, results, dry_run)
     con.close()
 
     if verbose:

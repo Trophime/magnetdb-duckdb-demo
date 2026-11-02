@@ -81,6 +81,7 @@ import argparse
 import difflib
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 
 try:
@@ -221,6 +222,7 @@ def cmd_db_create(args) -> None:
         sys.exit(1)
     with duckdb.connect(str(db_path)) as con:
         ensure_schema(con)
+        _log_operation(con, "create", "database", db_path.name)
     print(f"Created database '{db_path}'.")
 
 
@@ -264,6 +266,11 @@ def cmd_db_drop_table(args) -> None:
             print("Nothing to drop.")
             return
 
+        if not args.force and any(table == "operation_log" for table, _ in to_drop):
+            print("Error: dropping 'operation_log' deletes the audit trail; "
+                  "pass --force to drop it anyway.")
+            sys.exit(1)
+
         if args.dry_run:
             for table, count in to_drop:
                 print(f"[DRY RUN] would drop '{table}' ({count} row(s))")
@@ -277,7 +284,14 @@ def cmd_db_drop_table(args) -> None:
                 return
 
         for table, count in to_drop:
+            con.begin()
             con.execute(f"DROP TABLE {table}")
+            if table == "operation_log":
+                print("[WARN] 'operation_log' dropped: the audit trail is gone and "
+                      "this drop is not logged.")
+            else:
+                _log_operation(con, "drop_table", table, table, details={"rows": count})
+            con.commit()
             print(f"Dropped '{table}' ({count} row(s)).")
 
 
@@ -1390,8 +1404,13 @@ def cmd_populate_overview_records_from_json(args) -> None:
                 insert_overview_record_from_dict(
                     con, rec_to_insert, assembly_name=assembly_name, verbose=True, upsert=args.reprocess
                 )
+                _log_operation(con, "populate", "overview_records", filename)
             except (ValueError, KeyError) as exc:
                 print(f"  [ERROR] {filename}: {exc}")
+                _log_operation(
+                    con, "populate", "overview_records", filename,
+                    status="error", details={"error": str(exc)},
+                )
 
     print("\nDone.")
 
@@ -1426,6 +1445,7 @@ def cmd_populate_overview_records_infer(args) -> None:
                 ).fetchall()
             ]
 
+    results: dict[str, str] = {}
     if not filenames:
         print("No overview_records rows to infer (all already have a assembly_name).")
     elif args.dry_run:
@@ -1435,14 +1455,22 @@ def cmd_populate_overview_records_infer(args) -> None:
         print(f"\nInferring {len(filenames)} overview_record(s) …\n")
         with duckdb.connect(str(db_path)) as con:
             for fname in filenames:
-                infer_overview_record_fields(con, fname, db_tz, verbose=True)
+                results[fname] = infer_overview_record_fields(con, fname, db_tz, verbose=True)
 
     if args.dry_run:
         return
 
     print("\nChecking for pupitre-duplicate overview_records …")
     with duckdb.connect(str(db_path)) as con:
-        merge_duplicate_pupitre_records(con, verbose=True, max_gap_seconds=args.max_gap_seconds)
+        merges = merge_duplicate_pupitre_records(con, verbose=True, max_gap_seconds=args.max_gap_seconds)
+        _log_operation(
+            con, "infer", "overview_records", "overview-records-infer",
+            details={
+                "results": dict(Counter(results.values())),
+                "resolved": [f for f, result in results.items() if result == "resolved"],
+                "merges": merges["merges"],
+            },
+        )
 
     print("\nDone.")
 
@@ -1576,9 +1604,16 @@ def cmd_populate_overview_records_from_archive(args) -> None:
                 with duckdb.connect(db_path) as con:
                     ensure_schema(con)
                     insert_fn(con, record, assembly_name=assembly_name, verbose=True)
+                    _log_operation(con, "populate", "overview_records", fpath.name)
                 already_covered.add(fpath.name)
             except Exception as exc:
                 print(f"  [ERROR] {fpath.name}: {exc}")
+                with duckdb.connect(db_path) as log_con:
+                    ensure_schema(log_con)
+                    _log_operation(
+                        log_con, "populate", "overview_records", fpath.name,
+                        status="error", details={"error": str(exc)},
+                    )
 
 
 # ---------------------------------------------------------------------------
@@ -1917,6 +1952,9 @@ def build_parser() -> argparse.ArgumentParser:
                          help="Skip confirmation prompt")
     db_drop.add_argument("--dry-run", action="store_true",
                          help="Show what would be dropped without writing anything.")
+    db_drop.add_argument("--force", action="store_true",
+                         help="Allow dropping 'operation_log' (the audit trail; its drop "
+                              "cannot be logged).")
 
     # ── material ─────────────────────────────────────────────────────────────
     mat_p = entity.add_parser("material", help="Manage materials.")

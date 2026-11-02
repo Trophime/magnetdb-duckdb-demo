@@ -647,6 +647,56 @@ def test_compute_hoop_stress_history_dry_run_writes_nothing(
         con.close()
 
 
+def _compute_log(db_path: str) -> list:
+    con = duckdb.connect(db_path, read_only=True)
+    try:
+        return con.execute(
+            "SELECT operation, record_name, status, details FROM operation_log "
+            "WHERE table_name = 'hoop_stress_processed' ORDER BY id"
+        ).fetchall()
+    finally:
+        con.close()
+
+
+def test_compute_hoop_stress_history_logs_one_row_per_run(
+    patched_hoop_pipeline, hoop_db_path, monkeypatch, tmp_path
+):
+    def fake_validate(data, exp_file, housing, magnet_type="all", use_mrun=False, assembly=None, z0_h=None, z0_b=None):
+        return pd.DataFrame({"t": [0.0, 1.0], "H1_fast": [10.0, 20.0]})
+
+    monkeypatch.setattr("stress_map.validate_fast_from_pupitre", fake_validate)
+    compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, parquet_dir=str(tmp_path / "pq"), verbose=False)
+
+    rows = _compute_log(hoop_db_path)
+    assert [(op, rec, status) for op, rec, status, _ in rows] == [("compute", "HOOP_ASSEMBLY", "ok")]
+    details = json.loads(rows[0][3])
+    assert details["processed"] == 2 and details["skipped"] == 0 and details["errors"] == []
+    assert details["bin_config"]
+
+
+def test_compute_hoop_stress_history_logs_error_row_on_geometry_failure(hoop_db_path, monkeypatch):
+    def fake_load_assembly_config_from_duckdb(assembly_name, db_path, con=None):
+        return "M9", [("MAG_NEW", {"geom": "MAG_NEW.yaml"}, None)]
+
+    def fake_prepare_geometry_directory(assembly_name, config, db_path, geometries_dir=None, con=None):
+        raise RuntimeError("geometry boom")
+
+    monkeypatch.setattr("stress_map.load_assembly_config_from_duckdb", fake_load_assembly_config_from_duckdb)
+    monkeypatch.setattr("stress_map.prepare_geometry_directory", fake_prepare_geometry_directory)
+    compute_hoop_stress_history("HOOP_ASSEMBLY", hoop_db_path, verbose=False)
+
+    rows = _compute_log(hoop_db_path)
+    assert [(op, rec, status) for op, rec, status, _ in rows] == [("compute", "HOOP_ASSEMBLY", "error")]
+    assert json.loads(rows[0][3])["error"] == "geometry boom"
+
+
+def test_compute_hoop_stress_history_dry_run_logs_nothing(patched_hoop_pipeline, hoop_db_path, tmp_path):
+    compute_hoop_stress_history(
+        "HOOP_ASSEMBLY", hoop_db_path, parquet_dir=str(tmp_path / "pq"), dry_run=True, verbose=False,
+    )
+    assert _compute_log(hoop_db_path) == []
+
+
 def _fake_validate_returning(sigma_by_call: list[list[float]]):
     """Fake validate_fast_from_pupitre: the n-th assembly run returns sigma_by_call[n] for every experiment."""
     state = {"run": -1, "seen": set()}
