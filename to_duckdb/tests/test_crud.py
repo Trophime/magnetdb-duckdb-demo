@@ -55,6 +55,7 @@ from tests.conftest import (
     PART_RING,
     ASSEMBLY_DATA,
 )
+from tests.test_magnet_geometry import SUPRA_GEOMETRY, add_supras_magnet
 
 
 def _undated(data: dict, field: str) -> dict:
@@ -1215,6 +1216,29 @@ def test_update_part_from_json_dry_run_does_not_write(con, capsys):
     row = con.execute("SELECT cad FROM parts WHERE name = 'HELIX_01'").fetchone()
     assert row[0] is None
     assert "dry-run" in capsys.readouterr().out
+
+
+def test_update_part_from_json_refuses_geometry_breaking_a_magnet(con):
+    add_supras_magnet(con)
+    broken = '{"__classname__": "Supra", "name": "broken"}'
+    with pytest.raises(ValueError, match="SUP_01"):
+        update_part_from_json(con, {"name": "SUPRA_01", "geometry_data": broken}, verbose=False)
+
+    assert con.execute("SELECT geometry_data FROM parts WHERE name = 'SUPRA_01'").fetchone()[0] == SUPRA_GEOMETRY
+    assert con.execute("SELECT geometry_problem FROM magnets WHERE name = 'SUP_01'").fetchone()[0] is None
+    assert con.execute(
+        "SELECT COUNT(*) FROM operation_log WHERE operation = 'update' AND record_name IN ('SUPRA_01', 'SUP_01')"
+    ).fetchone()[0] == 0
+
+
+def test_update_part_from_json_repair_clears_geometry_problem(con):
+    from magnet_geometry import refresh_geometry_problem
+
+    add_supras_magnet(con, geometry_data=None)
+    assert refresh_geometry_problem(con, "SUP_01")
+
+    update_part_from_json(con, {"name": "SUPRA_01", "geometry_data": SUPRA_GEOMETRY}, verbose=False)
+    assert con.execute("SELECT geometry_problem FROM magnets WHERE name = 'SUP_01'").fetchone()[0] is None
 
 
 # ---------------------------------------------------------------------------

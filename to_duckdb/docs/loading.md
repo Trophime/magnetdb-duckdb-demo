@@ -92,6 +92,12 @@ python magnetdb.py magnet add M25032101.json --input-dir $JSON \
 
 The magnet type (`insert`, `bitters`, `hybrid`) is inferred automatically from the part types. The operation is **idempotent**.
 
+Once its parts are linked, the magnet's geometry is rebuilt from them and the
+outcome stored in `magnets.geometry_problem`. If it cannot be rebuilt (e.g. a
+part without `geometry_data`), the command prints a `[WARN]` but still loads
+the magnet; the dashboard shows it in light red. See
+[schema.md — Magnet geometry](schema.md#magnet-geometry).
+
 The load is **all or nothing**: materials, parts, the magnet and its part
 links are written in one transaction. If any step fails (e.g. a part that is
 `dead`), nothing is written, the error is recorded in `operation_log`, and the

@@ -240,6 +240,7 @@ def _apply_update(
     label: str,
     dry_run: bool = False,
     verbose: bool = True,
+    after_write=None,
 ) -> dict:
     """Write the entries of *fields* that changed, log them and mark stale results.
 
@@ -268,6 +269,10 @@ def _apply_update(
         Report the changes and their impact without writing.
     verbose : bool, optional
         Print status lines and the impact report.
+    after_write : callable, optional
+        ``after_write(con)`` run inside the transaction right after the
+        write, not on a dry run. An exception it raises rolls everything
+        back and is re-raised.
 
     Returns
     -------
@@ -296,6 +301,8 @@ def _apply_update(
             f"UPDATE {table} SET {set_clause} WHERE {where}",
             [new for _old, new in changes.values()] + list(where_params),
         )
+        if after_write is not None:
+            after_write(con)
         report = _record_update(con, table, record_name, impact_key, changes)
         con.commit()
     except Exception:
@@ -683,6 +690,12 @@ def update_part_from_json(con, data: dict, dry_run: bool = False, verbose: bool 
     containing the part stale (see :mod:`impact`). Correcting the material
     of a part already linked to a magnet is supported.
 
+    When ``geometry_data`` is in the update, the geometry of every magnet
+    holding the part is rebuilt (see :mod:`magnet_geometry`) and its
+    ``magnets.geometry_problem`` refreshed, in the same transaction. The
+    update is refused if a magnet that could be rebuilt before no longer
+    can (not checked on a dry run).
+
     Parameters
     ----------
     con : duckdb.DuckDBPyConnection
@@ -706,8 +719,9 @@ def update_part_from_json(con, data: dict, dry_run: bool = False, verbose: bool 
     Raises
     ------
     ValueError
-        If the part is not found, or *data* sets ``material_name`` to a name
-        not present in ``materials``.
+        If the part is not found, *data* sets ``material_name`` to a name
+        not present in ``materials``, or the new ``geometry_data`` breaks a
+        magnet's geometry.
     """
     name = data["name"]
     if not exists(con, "parts", name):
@@ -734,9 +748,27 @@ def update_part_from_json(con, data: dict, dry_run: bool = False, verbose: bool 
             print(f"  ~ part      {name}  (no descriptive fields in JSON, nothing to update)")
         return
 
+    after_write = None
+    if "geometry_data" in fields and not dry_run:
+        from magnet_geometry import geometry_problem, refresh_geometry_problem
+
+        holders = [r[0] for r in con.execute(
+            "SELECT DISTINCT magnet_name FROM magnet_parts WHERE part_name = ? ORDER BY magnet_name", [name]
+        ).fetchall()]
+        rebuilt_before = {m for m in holders if geometry_problem(con, m) is None}
+
+        def after_write(con):
+            for magnet in holders:
+                problem = refresh_geometry_problem(con, magnet)
+                if problem and magnet in rebuilt_before:
+                    raise ValueError(
+                        f"Part '{name}': the new geometry_data breaks magnet '{magnet}' "
+                        f"({problem}) — nothing written."
+                    )
+
     _apply_update(
         con, "parts", "name = ?", [name], fields, record_name=name, impact_key=name,
-        label=f"part      {name}", dry_run=dry_run, verbose=verbose,
+        label=f"part      {name}", dry_run=dry_run, verbose=verbose, after_write=after_write,
     )
 
 

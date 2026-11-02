@@ -61,6 +61,10 @@ ALTER TABLE magnets ADD COLUMN IF NOT EXISTS geometry_data JSON;
 -- idempotent migration for databases that predate magnets.description
 ALTER TABLE magnets ADD COLUMN IF NOT EXISTS description VARCHAR;
 
+-- why the magnet's geometry cannot be rebuilt from its parts (NULL = it can);
+-- see magnet_geometry.py
+ALTER TABLE magnets ADD COLUMN IF NOT EXISTS geometry_problem VARCHAR;
+
 -- idempotent migrations for databases that predate status_history
 ALTER TABLE parts   ADD COLUMN IF NOT EXISTS status_history JSON DEFAULT '[]';
 ALTER TABLE magnets ADD COLUMN IF NOT EXISTS status_history JSON DEFAULT '[]';

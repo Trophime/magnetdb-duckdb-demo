@@ -112,12 +112,16 @@ exists, and `magnet add` refuses to change an existing magnet.
    (re-sync from the JSON) and `magnet update-part --angle`; accepted only
    for helix/ring parts of an `insert`; logged; one rebuild function
    replacing `stress_map.magnet_geometry_config_to_yaml` and
-   `checks._rebuild_magnet_assembly`. Used by 3D tools only, not by the
+   `magnet_geometry.rebuild_magnet_geometry` (formerly
+   `checks._rebuild_magnet_assembly`). Used by 3D tools only, not by the
    analytical model.
 4. **Magnet bores**: `magnets.innerbore` / `magnets.outerbore`, nullable
    (NULL = computed automatically).
-5. **Use `magnets.geometry_data` in the hoop-stress computation**: it is
-   read and then ignored (`stress_map.geometry_config_to_yaml`).
+5. ~~**Use `magnets.geometry_data` in the hoop-stress computation**: it is
+   read and then ignored (`stress_map.geometry_config_to_yaml`).~~
+   **Dropped** (2026-11-02, ROADMAP Q2): magnet and assembly geometry stay
+   unset and are always rebuilt from the parts; see
+   [`PLAN_magnet_geometry_check.md`](PLAN_magnet_geometry_check.md).
 6. **Portability of `parts.geometry`**: paths are absolute into a home
    directory.
 

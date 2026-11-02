@@ -294,6 +294,23 @@ skips the entries already applied this way.
 
 ---
 
+## Magnet geometry
+
+`parts.geometry_data` is the only geometry stored. `magnets.geometry_data`
+stays unset by design (and there is no assembly-level geometry column): a
+magnet's geometry is rebuilt from its parts, an assembly's from its magnets
+plus the `assembly_magnets` offsets.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `magnets.geometry_problem` | VARCHAR | NULL when the magnet's geometry can be rebuilt from its parts, else the rebuild error |
+
+It is written by `magnet add`, by `part update` when `geometry_data` changes,
+and by `check --fix`; see the README section
+[Magnet geometry](../README.md#magnet-geometry).
+
+---
+
 ## Material JSON format
 
 The JSON produced by `python_magnetapi` for a material record:

@@ -241,6 +241,17 @@ def test_add_magnet_rejects_mixed_coil_types(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_add_magnet_with_unbuildable_geometry_loads_and_warns(tmp_path, capsys):
+    """MAGNET_JSON's parts have no geometry: the magnet loads, with a warning."""
+    db = tmp_path / "test.duckdb"
+    add_magnet(MAGNET_JSON, db)
+    out = capsys.readouterr().out
+    assert _count(db, "magnets") == 1
+    problem = _fetch_one(db, "SELECT geometry_problem FROM magnets WHERE name = 'MAG_JSON'")[0]
+    assert problem and "H_JSON_01" in problem
+    assert "[WARN]" in out and "MAG_JSON" in out
+
+
 def test_add_magnet_cli(tmp_path, monkeypatch, capsys):
     json_path = tmp_path / "MAG_JSON.json"
     json_path.write_text(json.dumps(MAGNET_JSON))

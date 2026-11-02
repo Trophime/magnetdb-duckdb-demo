@@ -9,6 +9,10 @@ from natsort import natsorted
 
 ALL = "All"
 
+# Background of a magnet whose geometry cannot be rebuilt from its parts
+# (``magnets.geometry_problem`` set by to_duckdb).
+GEOMETRY_PROBLEM_COLOR = "#f8d7da"
+
 
 def graph(figure=None, **kwargs):
     """:class:`~dash.dcc.Graph` pre-configured with the current language's Plotly.js locale.
@@ -532,7 +536,9 @@ def magnets_table_section(assembly_name, db_path=None):
     :class:`~dash.html.Div` or :class:`dash.dash_table.DataTable`
         Placeholder text if no assembly is selected, a "no magnets" message
         if the assembly has none, or a `DataTable` with Magnet / Description
-        / Type / Composition / Status / Assembled columns.
+        / Type / Composition / Status / Assembled columns. A magnet whose
+        geometry cannot be rebuilt from its parts has its Magnet cell in
+        :data:`GEOMETRY_PROBLEM_COLOR`, with the error as tooltip.
     """
     if not assembly_name or assembly_name == ALL:
         return html.Div(
@@ -558,6 +564,7 @@ def magnets_table_section(assembly_name, db_path=None):
             "assembled_at": "Assembled",
         }
     )
+    problems = dict(zip(table_df["Magnet"], table_df.pop("geometry_problem")))
     table_df["Composition"] = table_df["Magnet"].map(composition).fillna("")
     table_df["Description"] = table_df["Description"].fillna("")
     table_df["Magnet"] = table_df.apply(magnet_link, axis=1)
@@ -571,6 +578,19 @@ def magnets_table_section(assembly_name, db_path=None):
         style_table={"overflowX": "auto"},
         style_cell={"textAlign": "center", "padding": "6px"},
         style_header={"fontWeight": "bold"},
+        style_data_conditional=[
+            {
+                "if": {"filter_query": f'{{Magnet}} contains "[{name}]"', "column_id": "Magnet"},
+                "backgroundColor": GEOMETRY_PROBLEM_COLOR,
+            }
+            for name, problem in problems.items()
+            if problem
+        ],
+        tooltip_data=[
+            {"Magnet": {"value": problem, "type": "text"}} if problem else {}
+            for problem in problems.values()
+        ],
+        tooltip_duration=None,
     )
 
 

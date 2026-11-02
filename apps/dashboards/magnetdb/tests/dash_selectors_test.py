@@ -26,3 +26,29 @@ def test_year_options_lists_years_newest_first_after_all():
 
 def test_year_options_without_range_is_all_only():
     assert selectors.year_options(None) == [selectors.ALL]
+
+
+def _magnets_table(monkeypatch, problems):
+    """Build the magnets table for magnets ``{name: geometry_problem}``."""
+    magnets = [
+        {"name": name, "type": "bitters", "status": "in_stock", "description": None,
+         "assembled_at": None, "geometry_problem": problem}
+        for name, problem in problems.items()
+    ]
+    monkeypatch.setattr(selectors.db, "get_magnets_for_assembly", lambda assembly, db_path=None: magnets)
+    monkeypatch.setattr(selectors.db, "get_magnet_part_composition", lambda names, db_path=None: {})
+    return selectors.magnets_table_section("M9_A260707_00")
+
+
+def test_magnets_table_highlights_magnet_with_geometry_problem(monkeypatch):
+    table = _magnets_table(monkeypatch, {"M9Bitters": "no parts", "M9Bitters-newBi08": None})
+    rules = [r for r in table.style_data_conditional if r.get("backgroundColor") == selectors.GEOMETRY_PROBLEM_COLOR]
+    assert [r["if"] for r in rules] == [{"filter_query": '{Magnet} contains "[M9Bitters]"', "column_id": "Magnet"}]
+    assert table.tooltip_data == [{"Magnet": {"value": "no parts", "type": "text"}}, {}]
+
+
+def test_magnets_table_without_geometry_problem_has_no_highlight(monkeypatch):
+    table = _magnets_table(monkeypatch, {"M9Bitters": None})
+    assert not table.style_data_conditional
+    assert table.tooltip_data == [{}]
+    assert "geometry_problem" not in table.data[0]

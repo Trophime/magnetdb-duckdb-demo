@@ -443,6 +443,7 @@ def layout(magnet=None, **kwargs):
                 ],
                 style={"display": "flex", "gap": "30px", "marginBottom": "15px"},
             ),
+            html.Div(id="magnet-stats-geometry-note"),
             html.Div(
                 id="magnet-stats-missing-banner",
                 style={"color": "#a94442", "fontWeight": "bold"},
@@ -562,6 +563,7 @@ def layout(magnet=None, **kwargs):
     Output("magnet-stats-assembly-history-details", "style"),
     Output("magnet-stats-parts", "children"),
     Output("magnet-stats-parts-details", "style"),
+    Output("magnet-stats-geometry-note", "children"),
     Input("dd-database", "value"),
     Input("magnet-stats-magnet-filter", "value"),
     Input("magnet-stats-status-filter", "value"),
@@ -595,6 +597,7 @@ def update_magnet_stats(
             hidden_style,
             "",
             hidden_style,
+            "",
         )
 
     df = load_data(selected_db)
@@ -680,6 +683,22 @@ def update_magnet_stats(
     )
 
     parts_section = _parts_section(selected_magnet, selected_db)
+    geometry_problem = db.get_geometry_problem(selected_magnet, selected_db) if magnet_selected else None
+    geometry_note = (
+        html.Div(
+            i18n._("The geometry of this magnet cannot be rebuilt from its parts: {problem}").format(
+                problem=geometry_problem
+            ),
+            style={
+                "backgroundColor": selectors.GEOMETRY_PROBLEM_COLOR,
+                "padding": "8px 12px",
+                "borderRadius": "6px",
+                "marginBottom": "10px",
+            },
+        )
+        if geometry_problem
+        else ""
+    )
     return (
         fig_field_on,
         fig_field_on_style,
@@ -693,4 +712,5 @@ def update_magnet_stats(
         assembly_history_details_style,
         parts_section,
         parts_details_style,
+        geometry_note,
     )

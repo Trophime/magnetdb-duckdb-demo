@@ -91,6 +91,7 @@ except ImportError:
 import duckdb
 from checks import print_check_report, run_checks
 from config import DEFAULT_DB
+from magnet_geometry import refresh_geometry_problem
 from crud import (
     _log_operation,
     _resolve_source_path,
@@ -196,6 +197,8 @@ def cmd_check(args) -> None:
         print(f"Error: '{db_path}' does not exist.")
         sys.exit(1)
     with duckdb.connect(str(db_path), read_only=not args.fix) as con:
+        if args.fix:
+            ensure_schema(con)
         try:
             results = run_checks(con, entity=args.check_entity, name=args.name, fix=args.fix)
         except ValueError as exc:
@@ -504,6 +507,10 @@ def _write_magnet(con, data: dict, parts: list, magnet_type: str, known_statuses
     print()
     insert_magnet_parts(con, data["name"], parts, known_statuses=known_statuses)
 
+    problem = refresh_geometry_problem(con, data["name"])
+    if problem:
+        print(f"  [WARN] magnet    {data['name']}: geometry cannot be rebuilt from parts: {problem}")
+
 
 def _all_or_nothing(con, table: str, record_name: str, write) -> None:
     """Run *write* in one transaction; on an error roll back, log it, print it and exit 1."""
@@ -745,6 +752,8 @@ def cmd_part_update(args) -> None:
         print(f"Error: '{db_path}' does not exist.")
         sys.exit(1)
     with duckdb.connect(str(db_path), read_only=args.dry_run) as con:
+        if not args.dry_run:
+            ensure_schema(con)
         try:
             update_part_from_json(con, load_json(json_path), dry_run=args.dry_run)
         except ValueError as exc:
@@ -1865,8 +1874,9 @@ def build_parser() -> argparse.ArgumentParser:
     # ── check ────────────────────────────────────────────────────────────────
     check_p = entity.add_parser(
         "check",
-        help="Validate database contents (geometry_data coverage, magnet type "
-             "consistency, experiment/operationaldata file existence).",
+        help="Validate database contents (parts' geometry_data, magnet geometry "
+             "rebuilt from parts, magnet type consistency, "
+             "experiment/operationaldata file existence).",
     )
     _db_arg(check_p)
     check_p.add_argument(
@@ -1881,8 +1891,9 @@ def build_parser() -> argparse.ArgumentParser:
     check_p.add_argument(
         "--fix", action="store_true",
         help="For parts: load missing geometry_data from the part's geometry "
-             "file. For magnets: reconstruct missing geometry_data from parts' "
-             "geometry_data. Both are written back to the DB.",
+             "file. For magnets: refresh the stored geometry_problem (the "
+             "outcome of rebuilding the geometry from the parts); "
+             "magnets.geometry_data is never written.",
     )
 
     # ── db ───────────────────────────────────────────────────────────────────

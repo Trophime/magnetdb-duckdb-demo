@@ -1,5 +1,6 @@
 """Unit tests for checks.py — magnetdb.py's `check` command backend."""
 
+import duckdb
 import pytest
 
 from checks import (
@@ -13,6 +14,7 @@ from checks import (
     run_checks,
 )
 from crud import insert_experiments
+from tests.test_magnet_geometry import SUPRA_GEOMETRY, add_supras_magnet
 
 
 def _result_for(results, name):
@@ -88,20 +90,52 @@ def test_check_parts_fix_no_geometry_path_is_unfixable(con_populated):
 # ---------------------------------------------------------------------------
 
 
-def test_check_magnets_reports_missing_geometry_data(con_populated):
-    results = check_magnets(con_populated)
-    mag = _result_for(results, "MAG_01")
-    assert not mag["ok"]
-    assert "geometry_data is not set" in mag["problems"]
+def test_check_magnets_ok_without_magnet_geometry_data(con):
+    """magnets.geometry_data stays unset by design: geometry is rebuilt from parts."""
+    add_supras_magnet(con)
+    mag = _result_for(check_magnets(con), "SUP_01")
+    assert mag["ok"], mag["problems"]
 
 
-def test_check_magnets_fix_reports_unfixable_when_parts_lack_geometry_data(con_populated):
-    """MAG_01's parts have geometry_data=None, so reconstruction can't succeed —
-    this must be reported as a problem, not raise."""
-    results = check_magnets(con_populated, fix=True)
-    mag = _result_for(results, "MAG_01")
+def test_check_magnets_reports_geometry_not_rebuildable(con_populated):
+    """MAG_01's parts have geometry_data=None, so its geometry can't be rebuilt."""
+    mag = _result_for(check_magnets(con_populated), "MAG_01")
     assert not mag["ok"]
-    assert any("could not be auto-fixed" in p for p in mag["problems"])
+    assert any("cannot be rebuilt" in p and "HELIX_01" in p for p in mag["problems"])
+
+
+def test_check_magnets_reports_out_of_date_stored_problem(con_populated):
+    mag = _result_for(check_magnets(con_populated), "MAG_01")
+    assert any("out of date" in p for p in mag["problems"])
+
+
+def test_check_magnets_fix_refreshes_stored_problem(con_populated):
+    mag = _result_for(check_magnets(con_populated, fix=True), "MAG_01")
+    stored = con_populated.execute(
+        "SELECT geometry_problem FROM magnets WHERE name = 'MAG_01'"
+    ).fetchone()[0]
+    assert stored and "HELIX_01" in stored
+    assert not any("out of date" in p for p in mag["problems"])
+    assert any("cannot be rebuilt" in p for p in mag["problems"])
+
+
+def test_check_magnets_fix_never_writes_magnet_geometry_data(con):
+    add_supras_magnet(con)
+    check_magnets(con, fix=True)
+    assert con.execute("SELECT geometry_data FROM magnets WHERE name = 'SUP_01'").fetchone()[0] is None
+
+
+def test_check_magnets_without_geometry_problem_column():
+    """A DB from before the column existed is checked without the stored-value comparison."""
+    old = duckdb.connect(":memory:")
+    old.execute("CREATE TABLE parts (name VARCHAR, type VARCHAR, status VARCHAR, geometry_data JSON)")
+    old.execute("CREATE TABLE magnets (name VARCHAR, type VARCHAR, status VARCHAR)")
+    old.execute("CREATE TABLE magnet_parts (magnet_name VARCHAR, part_name VARCHAR, rank INTEGER)")
+    old.execute("INSERT INTO parts VALUES ('SUPRA_01', 'supra', 'in_stock', ?)", [SUPRA_GEOMETRY])
+    old.execute("INSERT INTO magnets VALUES ('SUP_01', 'supras', 'in_stock')")
+    old.execute("INSERT INTO magnet_parts VALUES ('SUP_01', 'SUPRA_01', 0)")
+    mag = _result_for(check_magnets(old), "SUP_01")
+    assert mag["ok"], mag["problems"]
 
 
 def test_check_magnets_flags_invalid_type_without_raising(con_populated):
@@ -112,20 +146,9 @@ def test_check_magnets_flags_invalid_type_without_raising(con_populated):
     assert any("not a valid MagnetType" in p for p in mag["problems"])
 
 
-def test_check_magnets_fix_raises_for_invalid_type_missing_geometry_data(con_populated):
+def test_check_magnets_fix_reports_invalid_type_without_raising(con_populated):
     con_populated.execute("UPDATE magnets SET type = 'hybrid' WHERE name = 'MAG_01'")
-    with pytest.raises(ValueError):
-        check_magnets(con_populated, fix=True)
-
-
-def test_check_magnets_invalid_type_with_geometry_data_does_not_raise_on_fix(con_populated):
-    """If geometry_data is already present, --fix has nothing to do for this
-    magnet even if its type is bogus — only report the type problem."""
-    con_populated.execute(
-        "UPDATE magnets SET type = 'hybrid', geometry_data = '{}' WHERE name = 'MAG_01'"
-    )
-    results = check_magnets(con_populated, fix=True)
-    mag = _result_for(results, "MAG_01")
+    mag = _result_for(check_magnets(con_populated, fix=True), "MAG_01")
     assert not mag["ok"]
     assert any("not a valid MagnetType" in p for p in mag["problems"])
 
@@ -351,8 +374,8 @@ def test_run_checks_unknown_entity_raises(con_populated):
 
 
 def test_entity_checks_fixes_parts_before_magnets(con_populated):
-    """entity='all' --fix must reconstruct parts' geometry_data before
-    attempting magnet reconstruction, since magnets depend on it."""
+    """entity='all' --fix must load parts' geometry_data before the magnets'
+    geometry is rebuilt from it."""
     assert list(_ENTITY_CHECKS)[:2] == ["part", "magnet"]
 
 

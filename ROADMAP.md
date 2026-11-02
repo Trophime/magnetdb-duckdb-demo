@@ -70,9 +70,9 @@ rename Track A) is recorded in [to_duckdb/ROADMAP.md](to_duckdb/ROADMAP.md).
 | A8 | Scheduled populate (systemd timer + `--settle-seconds`) | [PLAN_scheduled_populate.md](to_duckdb/PLAN_scheduled_populate.md) | 💡 | S–M | A7 |
 | A9 | Pluggable user sources (CSV / SUPERVISION MySQL / userdb API) | [PLAN_users_multi_source.md](to_duckdb/PLAN_users_multi_source.md) | 📝 Phase 1; ⛔ Phases 2–3 | M | SUPERVISION schema, userdb API shape — see [Q9](#open-questions) |
 | A10 | EcoNRJ parameter inference (Tr, R, ImaxH, ImaxB) | [PLAN_econrj_parameter_inference.md](to_duckdb/PLAN_econrj_parameter_inference.md) | 💡 | M | meaning of `Tr`; fit granularity |
-| A11 | Update-impact follow-ups 1–7 (stale display, drift detection, insert angles, bores, use `magnets.geometry_data`, portable geometry paths, update coverage) | [PLAN_update_impact_tracking.md §Follow-ups](PLAN_update_impact_tracking.md) | 💡 each needs its own plan | S each | #1 feeds **C4**; #5 conflicts with A13 — see [Q2](#open-questions) |
+| A11 | Update-impact follow-ups 1–4, 6–7 (stale display, drift detection, insert angles, bores, portable geometry paths, update coverage); #5 dropped ([Q2](#open-questions)) | [PLAN_update_impact_tracking.md §Follow-ups](PLAN_update_impact_tracking.md) | 💡 each needs its own plan | S each | #1 feeds **C4** |
 | A12 | Processing-status flag for the remaining stages (fatigue, signatures, plateaux, …) | — none | 💡 partly done (stress stage via `hoop_stress_processed`) | S–M | B S2 (defines the signature/plateaux stages) |
-| A13 | Schema cleanup: drop `operationaldata`, `sum_x2_dt`, `exp_part_bin_stats`, maybe `magnets.geometry_data` | [to_duckdb/TODOs.md](to_duckdb/TODOs.md) | 💡 | ? | C4 (retire `part_stats.py` consumers first); [Q2](#open-questions) |
+| A13 | Schema cleanup: drop `operationaldata`, `sum_x2_dt`, `exp_part_bin_stats`, maybe `magnets.geometry_data` (unset by design since [Q2](#open-questions); still written by `magnet add --geometry`) | [to_duckdb/TODOs.md](to_duckdb/TODOs.md) | 💡 | ? | C4 (retire `part_stats.py` consumers first) |
 | A14 | Hoop-stress `--check` mode against `magnettools.Bmap.getHoop()` | [to_duckdb/TODOs.md](to_duckdb/TODOs.md) (POSTPONED) | ⛔ | S | fix in `~/github/my-magnettools`, then a reinstall — **F4** makes this routine |
 
 ---
@@ -334,9 +334,13 @@ They are listed here and **were not edited**.
 1. **D1** — should the superproject stay pinned on python_magnetrun's
    `spike/tdms-polars-benchmark` branch, or go back to `msite_to_assembly`
    once the spike ends?
-2. **A11 #5 vs A13** — update-impact follow-up 5 wants to *use*
+2. ~~**A11 #5 vs A13** — update-impact follow-up 5 wants to *use*
    `magnets.geometry_data` in the hoop-stress computation, while schema
-   cleanup lists it as vestigial. Which way?
+   cleanup lists it as vestigial. Which way?~~ **Resolved 2026-11-02:** A13.
+   Magnet and assembly geometry stay unset and are always rebuilt from the
+   parts; A11 #5 is dropped. Whether the rebuild works is checked and stored
+   in `magnets.geometry_problem`
+   ([PLAN_magnet_geometry_check.md](PLAN_magnet_geometry_check.md)).
 3. **C2** — now that Defaults & Spikes plots incident curves, is the
    click-to-load event view still wanted, or can it be marked superseded?
 4. **D14** — are the Dash/pywry/Textual GUI plans in `python_magnetrun/docs/`

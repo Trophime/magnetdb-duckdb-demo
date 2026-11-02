@@ -81,7 +81,7 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | Command | Description | Detail |
 |---------|-------------|--------|
 | `list` | List all objects in the DB | — |
-| `check [--entity ...] [--name ...] [--fix]` | Validate DB contents (geometry_data coverage, magnet type consistency, file existence) | below |
+| `check [--entity ...] [--name ...] [--fix]` | Validate DB contents (parts' geometry_data, magnet geometry rebuilt from parts, magnet type consistency, file existence) | below |
 | `db create` | Create DB and initialise schema | [loading.md](docs/loading.md) |
 | `db delete [--yes]` | Delete DB file | [loading.md](docs/loading.md) |
 | `db drop-table --table TABLE [TABLE ...] [--yes] [--dry-run]` | Drop one or more tables from the DB | [loading.md](docs/loading.md) |
@@ -131,9 +131,13 @@ down the pipeline:
 - **parts** — flags rows missing `geometry` and/or `geometry_data`. `--fix`
   can populate a part's `geometry_data` from its recorded `geometry` file
   path.
-- **magnets** — flags rows missing `geometry_data`, a `type` that isn't a
-  valid `MagnetType` (`insert`/`bitters`/`supras`), or a linked part whose
-  `type` doesn't belong to that magnet type.
+- **magnets** — rebuilds each magnet's geometry from its parts (as
+  `hoop-stress compute` does) and flags a magnet whose geometry cannot be
+  rebuilt, a stored `geometry_problem` that is out of date, a `type` that
+  isn't a valid `MagnetType` (`insert`/`bitters`/`supras`), or a linked part
+  whose `type` doesn't belong to that magnet type. `magnets.geometry_data`
+  is not checked: it stays unset by design (see
+  [Magnet geometry](#magnet-geometry)).
 - **experiments** / **operationaldata** — flags rows whose `file` is unset or
   doesn't exist on disk.
 
@@ -148,22 +152,40 @@ python magnetdb.py check --db $DB --entity magnet --name M19071101
 # Load a part's geometry_data from its geometry file, where missing
 python magnetdb.py check --db $DB --entity part --fix
 
-# Reconstruct missing magnets.geometry_data from parts' geometry_data
-# (requires every linked part to already have its own geometry_data)
+# Refresh the stored magnets.geometry_problem (adds the column to an older DB)
 python magnetdb.py check --db $DB --entity magnet --fix
 
 # Fix everything in one pass — parts are fixed before magnets, so a magnet
-# whose parts were only just repaired can be reconstructed in the same run
+# whose parts were only just repaired is rebuilt from them in the same run
 python magnetdb.py check --db $DB --fix
 ```
 
 `check` exits non-zero if any problem remains unresolved, so it can gate a
 setup script. `--fix` can populate `parts.geometry_data` from an
-already-recorded `geometry` file path, and `magnets.geometry_data` from
-parts that already have theirs; it never invents a missing `geometry` path
-itself for parts, experiments, or operationaldata, and it refuses (with a
-clear error) to "fix" a magnet whose `type` isn't a valid `MagnetType` —
-that's a data-inconsistency bug to fix by hand, not something to paper over.
+already-recorded `geometry` file path and refresh `magnets.geometry_problem`;
+it never writes `magnets.geometry_data`, never invents a missing `geometry`
+path for parts, experiments, or operationaldata, and never "fixes" a magnet
+whose `type` isn't a valid `MagnetType` — that's a data-inconsistency bug to
+fix by hand, not something to paper over.
+
+### Magnet geometry
+
+`parts.geometry_data` is the only geometry stored. A magnet's geometry is
+always rebuilt from its parts (`magnet_geometry.py`), and an assembly's from
+its magnets plus the `assembly_magnets` offsets (`stress_map.py`);
+`magnets.geometry_data` stays unset. Whether the rebuild works is stored in
+`magnets.geometry_problem` (NULL = it does, else the error), which the
+dashboard shows in light red:
+
+| When | What happens |
+|---|---|
+| `magnet add` (and the magnets loaded by `assembly add`) | rebuilt and stored; a failure prints `[WARN]` but the magnet is still loaded |
+| `part update` changing `geometry_data` | every magnet holding the part is rebuilt and stored, in the same transaction; the update is refused if a magnet that rebuilt before no longer does (not checked with `--dry-run`) |
+| `check --entity magnet` | rebuilt and compared with the stored value; `--fix` refreshes it |
+
+A change of the stored value is logged in `operation_log` as
+`{"geometry_problem": [old, new]}`. A DB built before this column existed
+reads as "no problem" until `check --fix` has run once.
 
 ---
 

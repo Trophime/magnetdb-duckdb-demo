@@ -243,11 +243,13 @@ def get_magnets_for_assembly(assembly_name, db_path=None):
     -------
     list of dict
         One entry per magnet, with ``name``, ``type``, ``status``,
-        ``description``, and ``assembled_at``, ordered by name.
+        ``description``, ``assembled_at`` and ``geometry_problem`` (see
+        :func:`get_geometry_problem`), ordered by name.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        query = """
-            SELECT m.name, m.type, m.status, m.description, m.assembled_at
+        query = f"""
+            SELECT m.name, m.type, m.status, m.description, m.assembled_at,
+                   {_geometry_problem_column(conn)} AS geometry_problem
             FROM assembly_magnets AS sm
             JOIN magnets AS m ON m.name = sm.magnet_name
             WHERE sm.assembly_name = ?
@@ -255,7 +257,44 @@ def get_magnets_for_assembly(assembly_name, db_path=None):
         """
         df = conn.execute(query, [assembly_name]).df()
     df["assembled_at"] = to_display_tz(df["assembled_at"])
+    df["geometry_problem"] = df["geometry_problem"].astype(object).where(df["geometry_problem"].notna(), None)
     return df.to_dict("records")
+
+
+def _geometry_problem_column(conn):
+    """SQL for ``magnets.geometry_problem``, or ``NULL`` for a DB from before the column."""
+    has_column = conn.execute(
+        "SELECT COUNT(*) FROM information_schema.columns "
+        "WHERE table_name = 'magnets' AND column_name = 'geometry_problem'"
+    ).fetchone()[0]
+    return "m.geometry_problem" if has_column else "NULL"
+
+
+def get_geometry_problem(magnet_name, db_path=None):
+    """Return why a magnet's geometry cannot be rebuilt from its parts.
+
+    The value is computed and stored by ``to_duckdb`` (``magnet add``,
+    ``part update``, ``check --fix``); the dashboard only reads it.
+
+    Parameters
+    ----------
+    magnet_name : str
+        ``magnets.name`` to look up.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    str or None
+        The stored rebuild error, or ``None`` if the geometry rebuilds (or
+        the DB predates ``magnets.geometry_problem``).
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        row = conn.execute(
+            f"SELECT {_geometry_problem_column(conn)} FROM magnets AS m WHERE m.name = ?",
+            [magnet_name],
+        ).fetchone()
+    return row[0] if row else None
 
 
 _COIL_PART_TYPES = ("helix", "bitter", "supra")
