@@ -135,3 +135,140 @@ keep that working, not yet decided between:
 
 This needs to be resolved before writing a concrete step-by-step
 implementation plan (Django migrations, ETL script, ongoing sync mechanism).
+
+## Follow-up discussion (2026-10-28)
+
+Not a decision: direction and costs, to settle before an execution plan.
+
+### Earlier question: one master per table group
+
+`materials`, `parts`, `magnets` and `assemblies`/`sites` exist in **both**
+databases, with different keys and status vocabularies; python_magnetdb's web
+UI writes them in Postgres, `to_duckdb` (`magnet add`, `assembly add`, …) in
+DuckDB. With two writers they drift, whatever happens to `experiments`. The
+Decision above only covers four tables.
+
+**Direction discussed (solution 1):** Postgres is the master of every entity
+and tracking table (concurrent writers, web UI, auth, audit); DuckDB keeps the
+stats tables only and reads entities from Postgres.
+
+### Third option for the open question: DuckDB `postgres` extension
+
+`ATTACH '…' (TYPE postgres, READ_ONLY)`: stats scripts and dashboard join the
+DuckDB stats tables with live Postgres tables. No sync job, no mirror. Costs:
+the dashboard depends on Postgres being up; the extension must be installed in
+the image at build time; deployment needs network access to Postgres (one host,
+one front: option A of `PLAN_dashboard_server_deployment.md`). The extension
+can also **write**: pointing `crud.py` at Postgres is a possible bridge, not an
+end state (two code paths with the same rules, writes bypass `audit_logs`).
+
+### Approach: rebuild Postgres from DuckDB
+
+DuckDB holds the consolidated data, so a **new** Postgres database is seeded
+from it rather than reconciled row by row with the current one.
+
+| Tool | Use |
+|---|---|
+| Seed script (`manage.py seed_from_duckdb`) | Initial load: DuckDB read-only, Django `bulk_create`, one transaction, re-runnable (drop + reseed) |
+| `magnetdb.py` features as API endpoints | Ongoing writes after the load; the business rules go into python_magnetdb (routes/actions), python_magnetapi (a REST client) gets the CLI wrappers |
+
+Phases:
+
+1. **A**: DuckDB stays master; Postgres is rebuilt from it on demand; entity tables read-only in the web UI.
+2. **B**: write commands ported to the API one by one.
+3. **C** (cutover): freeze `to_duckdb` writes, final seed, Postgres becomes master.
+
+Rebuilding also turns python_magnetdb's site → assembly rename
+(`prompts/plan-site-to-assembly-magnetdb.md`) into a schema change only, and
+allows one new initial migration instead of the 24 existing ones.
+
+### What moves to Postgres
+
+| Feature | DuckDB | Postgres today |
+|---|---|---|
+| Status | `LifecycleStatus`, `AssemblyStatus` (incl. `disassembled`) | One flat `Status` |
+| History | `status_history` JSON on parts, magnets, assemblies | None |
+| Entity dates | `parts.manufactured_at`, `magnets.assembled_at`, `assemblies.commissioned_at/decommissioned_at` | None |
+| Membership dates | `assembly_magnets.commissioned_at/decommissioned_at`; `magnet_parts` has `rank`/`coil_index`, no dates | `magnet_parts` and `site_magnets` both dated; `angle`, offsets |
+| Housing | `housing_config` + `assemblies.housing` | None |
+| Tracking | `experiments`, `operationaldata`, `overview_records` | Generic `records` |
+| Sessions | `users` (EXPERIENCES_LOG proposal sessions) | `users` = auth accounts |
+| Audit | `operation_log` | `audit_logs` |
+
+### `to_duckdb` features to port (`crud.py`, ~4000 lines)
+
+python_magnetapi today: `list`, `view`, `create`, `delete`, `setup`, `run`,
+`compute`, `process`, `site status`. Missing:
+
+- `update_*_from_json` with `--dry-run`;
+- `update_part_status`, `update_magnet_status`, `decommission_assembly` (+ report), `assembly update-magnet`;
+- date inference from names (`manufactured_at_from_name`, `assembled_at_from_name`, `resolve_*`);
+- housing import from python_magnetrun / export to JSON;
+- `populate` (`find_and_register_pupitre`/`tdms`, `infer_overview_record_fields`, `merge_duplicate_pupitre_records`): needs the records mount → Celery task in the worker, plus bulk endpoints (6483 experiments);
+- `check_*` (+ `--fix`) → model validation on the server.
+
+Stays in `to_duckdb`: `compute_op_stats`, `compute_exp_stats`,
+`compute_hoop_stats` (magnettools) and the stats tables.
+
+### Stale hoop-stress results across the two databases
+
+`impact.py`'s `HOOP_STRESS_INPUTS` already lists the source columns (material
+properties; `parts.material_name`, `geometry_data`; `magnets.geometry_data`;
+`assembly_magnets.z_offset`, `commissioned_at`).
+
+- **Change log by Postgres triggers (preferred):** `AFTER UPDATE … WHEN OLD.col IS DISTINCT FROM NEW.col` on those columns only, writing `change_events` (id, ts, table, key, fields, user). Catches every writer (web UI, API, SQL, seed). User: Django runs `SET LOCAL app.user = …` per transaction, the trigger reads `current_setting('app.user', true)`. `hoop-stress compute` reads the events since its cursor (kept in DuckDB), then runs the existing `affected_assemblies` / `mark_hoop_stale` with `stale_reason` = event id. Dry-run impact preview: an API endpoint, from Postgres alone (entities and experiments live there).
+- **Input fingerprint (alternative or safety net):** each `hoop_stress_processed` row stores a hash of its inputs; the stats job recomputes it from Postgres (`ATTACH`) and marks mismatches. No triggers, no reason recorded.
+- Not recommended: `updated_at` comparison (too coarse), Django signals only (miss bulk/SQL writes), `LISTEN/NOTIFY` (needs a daemon).
+
+### Step 0b: target schema mapping
+
+A table-by-table, column-by-column mapping DuckDB → Postgres, written before
+any Django code; it drives the models, the seed and the query rewrites.
+Postgres becomes a superset of the DuckDB entity/tracking schema; Postgres-only
+columns (`inner_bore`, `outer_bore`, `flow_params`, `design_office_reference`,
+`angle`, offsets, `metadata`, attachment FKs) stay, nullable.
+
+| Topic | To decide |
+|---|---|
+| Keys | `BigAutoField id` everywhere; natural `name` → `UNIQUE NOT NULL`; FKs by id, resolved by the seed |
+| Experiment ids | **Keep DuckDB's** `experiments`/`operationaldata` ids (explicit insert + sequence reset): existing stats stay valid without recomputation |
+| Timestamps | DuckDB naive `TIMESTAMP` (read as Europe/Paris by `populate.as_aware`) → `timestamptz`, converted explicitly |
+| Status | `enums.py` → Django `TextChoices`; mapping of old Postgres values |
+| `status_history` | JSON field, or a `status_events` table |
+| Lifecycle level | Which level is authoritative (entity vs membership); what fills `magnet_parts.commissioned_at` |
+| Nullability | Each DuckDB-nullable / Postgres-required column (`parts.material`, …): relax, or a seed fill rule |
+| Names | `sites` → `assemblies`, `site_magnets` → `assembly_magnets`; DuckDB `users` → e.g. `proposal_sessions` |
+| New tables | `housing_config`, `experiments`, `operationaldata`, `overview_records`, `change_events` + watched columns |
+| Postgres-only tables | Simulations, attachments (218 MB MinIO on calcul22), probes, servers, `audit_logs`, `records`: keep, re-link by name, or drop |
+
+Deliverable: the mapping plus an ER diagram of the target
+(`to_duckdb/schema_diagram.py` draws the DuckDB side).
+
+### Rough estimate
+
+Full-time weeks, one developer who knows both codebases; excludes packaging,
+images and deployment.
+
+| Step | Weeks |
+|---|---|
+| 0. Decisions (status vocabulary, lifecycle level, Postgres-only data, naming) | 0.5–1 |
+| 0b. Target schema mapping | ~1 |
+| 1. New Django schema + `change_events` triggers, one initial migration | 1.5–2.5 |
+| 2. `seed_from_duckdb` + verification + kept Postgres-only data | 1.5–2.5 |
+| 3. DuckDB side: compute scripts and `stress_map.py` (~40 entity-table queries), dashboard (~100 in 5 files) via `ATTACH`, names → ids, stale tracking from `change_events` | 2–3 |
+| **Milestone A: Postgres rebuilt from DuckDB, stats and dashboard on it** | **≈ 6.5–10** |
+| 4. API + python_magnetapi write commands, impact preview | 3–4 |
+| 5. `populate` as a worker task + bulk endpoints | 1.5–2 |
+| 6. Vue 3 web UI for the new fields | 2–4 |
+| 7. Cutover, tests, docs | 1 |
+| **Total** | **≈ 14–21** |
+
+Main uncertainties: the web UI, how much of `crud.py` is rules vs display, the
+fate of Postgres-only data; python_magnetdb has only 7 test files.
+
+### Open decisions
+
+1. Solution 1 confirmed (Postgres master for entities and tracking)?
+2. Fate of the Postgres-only data (step 0).
+3. Stale tracking: triggers, fingerprint, or both.
+4. Step 0b topics above.
