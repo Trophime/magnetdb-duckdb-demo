@@ -1,0 +1,20 @@
+# HTTPS + login in front of the dashboard (Quadlet, magnetdb user).
+# ~/traefik/ holds traefik.yml from scripts/traefik/, dynamic.yml from scripts/quadlet/traefik/,
+# plus htpasswd and certs/ (never committed).
+[Unit]
+Description=MagnetDB dashboard proxy (Traefik)
+Wants=magnetdb-dashboard.service
+After=magnetdb-dashboard.service
+
+[Container]
+Image=docker.io/library/traefik:v3.6.7
+ContainerName=magnetdb-traefik
+Network=magnetdb.network
+Volume=%h/traefik:/etc/traefik:ro
+PublishPort=8443:8443
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

@@ -1,0 +1,57 @@
+name: Retour sur le dashboard
+description: Signaler un problème ou une suggestion sur le dashboard MagnetDB
+title: "[Dashboard] "
+labels: ["dashboard"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Dépôt public** : pas de capture montrant des données, pas de valeurs
+        ni d'acronymes d'utilisateurs, jamais le mot de passe.
+  - type: dropdown
+    id: page
+    attributes:
+      label: Page
+      options:
+        - Manips
+        - Sites
+        - Assemblages
+        - Aimants
+        - Pièces
+        - Visualiseur de fichiers
+        - Enregistrements de synthèse
+        - Défauts et pics
+        - Pigbrother Stats viewer
+        - À propos
+        - Autre / toutes les pages
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Ce que j'ai fait
+      placeholder: "1. …\n2. …"
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Ce que j'attendais
+  - type: textarea
+    id: actual
+    attributes:
+      label: Ce qui s'est passé
+    validations:
+      required: true
+  - type: input
+    id: when
+    attributes:
+      label: Date et heure (à la minute)
+      placeholder: AAAA-MM-JJ HH:MM
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Navigateur
+      placeholder: ex. Firefox 144

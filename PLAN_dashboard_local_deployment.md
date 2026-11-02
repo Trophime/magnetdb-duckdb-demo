@@ -53,7 +53,7 @@ through Traefik (HTTPS + login) on `:8443`.
 | Build context | `.dockerignore` sends `Data/` (157 MB) and `Data-csv.tgz` (13 MB); `**/.envrc` already excluded |
 | Submodules | HEAD points to `python_magnetrun` `b3344bd` (`spike/tdms-polars-benchmark`) and `python_magnetsetup` `cf9718a` (`msite_to_assembly`, committed on another machine with `16fb501`). Both are on GitHub since 2026-10-27 and the checkouts are synced (step 0) |
 | Database | `to_duckdb/magnetdb-2026-10-08.duckdb` still modified today (10:47); a copy of the same size exists in `~/duckdb/` |
-| Network | Laptop first on eduroam `147.173.90.37/24` + VPN `tun0`, since 2026-10-27 afternoon on a wired LNCMI socket `147.173.83.78/22` (DHCP), VPN off; no sshd, so no SSH tunnel; ufw active but Docker-published ports bypass it |
+| Network | Laptop first on eduroam `<eduroam IP>` + VPN `tun0`, since 2026-10-27 afternoon on a wired LNCMI socket `<laptop wired IP>` (DHCP), VPN off; no sshd, so no SSH tunnel; ufw active but Docker-published ports bypass it |
 
 ### `scripts/run_docker.sh` review
 
@@ -104,7 +104,7 @@ No commit or push: the maintainer commits.
    → verify (maintainer, browser): assembly/magnet/part/housing stats, Overview records, File viewer (one pupitre, one TDMS, one archive file), Defaults & Spikes, Research area, About, switch to French, database dropdown, a style change through the gear icon that survives a reload while `~/.config/magnetdb` stays unchanged
 7. Traefik: create a test account in `scripts/traefik/htpasswd` (`htpasswd -nB`, or `openssl passwd -apr1` if `apache2-utils` is missing), run `scripts/run_traefik.sh`
    → verify: `curl -k -o /dev/null -w '%{http_code}' https://<laptop IP>:8443/` returns `401`, and `200` with `-u user:pass`; `curl http://<laptop IP>:8050/` is refused; `docker logs magnetdb-traefik` shows no errors
-8. External test: the other user opens `https://<laptop's wired IP>:8443/` (2026-10-27: `147.173.83.78`), accepts the warning, logs in, loads a few pages including a File viewer plot and the language switch
+8. External test: the other user opens `https://<laptop's wired IP>:8443/` (2026-10-27: `<laptop wired IP>`), accepts the warning, logs in, loads a few pages including a File viewer plot and the language switch
    → verify: pages load on their side; the Traefik access log shows their IP; nothing new in `docker logs magnetdb-dashboard`. If it fails, first `nc -z <IP> 8443` from their machine (Wi-Fi/VLAN firewall)
 9. Shut down: `docker stop magnetdb-traefik`
    → verify: `ss -ltn` no longer shows `:8443`
@@ -131,19 +131,19 @@ No commit or push: the maintainer commits.
 | 4 | Passed: build context 472 kB |
 | 5 | Passed: only `127.0.0.1:8050`; all mounts `RW=false`; DuckDB `read_only=True` works on the `:ro` mount, writes refused |
 | 6 | Partial: `/` and `/_dash-layout` 200, no traceback. Over the VPN the File viewer failed (`FileNotFoundError` for pupitre files, then hanging reads — see below); on the wired network `load_mrun("2026.10.07 - 19:07:03.txt", "M10")` works in the container (3 s), but switching to a second file still hung (rclone 1.60, see below). After the rclone fix, image rebuilt with the `file_viewer` zoom-sync fix (17:40) and restarted: `/` 200, mounts `RW=false`, no traceback. Maintainer's browser checks left |
-| 7 | Passed (eduroam, then again wired on `147.173.83.78`, and again after the rebuild): `401` without login / wrong password, `200` with the account; `:8050` refused from the LAN; `CN=TRAEFIK DEFAULT CERT`; 2 expected warnings (no domain in `PathPrefix`, encoded characters) |
+| 7 | Passed (eduroam, then again wired on `<laptop wired IP>`, and again after the rebuild): `401` without login / wrong password, `200` with the account; `:8050` refused from the LAN; `CN=TRAEFIK DEFAULT CERT`; 2 expected warnings (no domain in `PathPrefix`, encoded characters) |
 | 8, 9 | Not done |
 | 10 | Passed: 145 tests |
 | 11 | Done: `run_docker.sh` behaviour, `run_traefik.sh` section |
 
 ### Records over the VPN
 
-- The laptop is on **eduroam** (`147.173.90.37`, DHCP) with the **LNCMI VPN**; every route, including the one to `147.173.88.250`, goes through `tun0` (`147.173.91.150`).
+- The laptop is on **eduroam** (`<eduroam IP>`, DHCP) with the **LNCMI VPN**; every route, including the one to `<records server>`, goes through `tun0` (`<VPN IP>`).
 - rclone logged `Discarding closed SSH connection: … i/o timeout` (12:41, 12:58); reads then hang in `request_wait_answer` (processes in `D` state, unkillable, `docker stop` fails).
 - A stop of `rclone-mount.service` while a container bind-mounts the FUSE mount fails to unmount (`Device or resource busy`); rclone then loops on `directory already mounted` and the mount reports `Transport endpoint is not connected`. Recovery: stop rclone (fails pending requests), stop the container, `fusermount3 -uz`, start rclone, then the container.
 - After a clean restart, listing `srv-data-install/M10` works but reading a 616 kB file still times out on the host: the link does not deliver file contents.
 - The eduroam address is probably not reachable from the wired LNCMI network either, so step 8 would fail from the laptop.
-- **Confirmed**: with the laptop on a wired LNCMI socket (`147.173.83.78/22`, VPN off, route to `147.173.88.250` over Ethernet), full reads (`cat`) take 0.04–0.18 s (616 kB and 1.3 MB pupitre files, 7.3 MB TDMS archive). The VPN link was the cause of these timeouts; records access needs a wired LNCMI connection (or the server of plan 2). It was not the cause of the File viewer hang below.
+- **Confirmed**: with the laptop on a wired LNCMI socket (`<laptop wired IP>`, VPN off, route to `<records server>` over Ethernet), full reads (`cat`) take 0.04–0.18 s (616 kB and 1.3 MB pupitre files, 7.3 MB TDMS archive). The VPN link was the cause of these timeouts; records access needs a wired LNCMI connection (or the server of plan 2). It was not the cause of the File viewer hang below.
 
 ### File viewer hang: rclone 1.60
 
@@ -161,7 +161,7 @@ same conditions. Kept as an alternative; never approved, never run.
 ### Goal
 
 The plan-1 dashboard and Traefik setup runs on `calcul22`
-(`calcul22.LNCMIG.LOCAL`, `147.173.82.62`, wired, no VPN), where the File
+(`calcul22.LNCMIG.LOCAL`, `<calcul22 IP>`, wired, no VPN), where the File
 viewer plots records files and an LNCMI colleague can load
 `https://calcul22.LNCMIG.LOCAL:8443/`.
 
@@ -193,8 +193,8 @@ Prerequisite (maintainer): commit and push `apps/dashboards/magnetdb/Dockerfile`
 
 ### Approach
 
-0. Inventory of `calcul22` (read-only, `ssh calcul22`): `hostname -I`, `docker version`, `groups` (`docker`), `rclone version`, `grep user_allow_other /etc/fuse.conf`, `ip route get 147.173.88.250`, ports 8050/8443 free, `df -h ~`, existing `~/github/magnetdb-duckdb-demo`, `~/.config/rclone/rclone.conf`
-   → verify: all present; route to `147.173.88.250` on a wired interface. Missing Docker or `user_allow_other`: stop and re-plan
+0. Inventory of `calcul22` (read-only, `ssh calcul22`): `hostname -I`, `docker version`, `groups` (`docker`), `rclone version`, `grep user_allow_other /etc/fuse.conf`, `ip route get <records server>`, ports 8050/8443 free, `df -h ~`, existing `~/github/magnetdb-duckdb-demo`, `~/.config/rclone/rclone.conf`
+   → verify: all present; route to `<records server>` on a wired interface. Missing Docker or `user_allow_other`: stop and re-plan
 1. VPN hypothesis: on `calcul22`, time an `sftp` `get "/mnt/pve/DATA/srv-data-install/M10/2026.10.07 - 19:07:03.txt"`
    → verify: done in a few seconds. If it stalls too, the VPN is not the cause: stop and re-plan
 2. Stop Traefik on the laptop: `docker stop magnetdb-traefik`
@@ -220,7 +220,7 @@ Prerequisite (maintainer): commit and push `apps/dashboards/magnetdb/Dockerfile`
 
 ### Assumptions
 
-- `calcul22` is on the wired LNCMI network and reaches `147.173.88.250` without the VPN (checked in steps 0–1).
+- `calcul22` is on the wired LNCMI network and reaches `<records server>` without the VPN (checked in steps 0–1).
 - Nothing between the wired VLANs blocks `calcul22:8443` (checked in steps 7 and 9).
 - The SSH session from the laptop to `calcul22` goes through the VPN; that is fine for commands, the records traffic stays on `calcul22`.
 - Alternative not chosen: the laptop on a wired LNCMI socket with the VPN off.

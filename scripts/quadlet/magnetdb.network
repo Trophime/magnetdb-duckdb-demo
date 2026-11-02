@@ -1,0 +1,3 @@
+# Network shared by the dashboard and Traefik, which reaches it by container name.
+[Network]
+NetworkName=magnetdb

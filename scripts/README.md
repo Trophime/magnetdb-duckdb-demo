@@ -130,6 +130,50 @@ variables:
 | `TRAEFIK_IMAGE` | `traefik:v3.6.7` |
 | `TRAEFIK_PORT` | `8443` |
 
+## `quadlet/`
+
+The same dashboard and Traefik as a server deployment: rootless Podman under
+a dedicated `magnetdb` user (linger on), started at boot by systemd user
+units. Used on calcul18 (`PLAN_dashboard_server_deployment.md`).
+
+| File | Installed in | Role |
+|---|---|---|
+| `rclone-mount.service` | `~/.config/systemd/user/` | Records mounted read-only at `~/LNCMIG-Data/records` (remote `srv-data-install` in `~/.config/rclone/rclone.conf`) |
+| `magnetdb.network` | `~/.config/containers/systemd/` | Network `magnetdb` |
+| `magnetdb-dashboard.container` | `~/.config/containers/systemd/` | Dashboard, no published port; stops and starts with the rclone mount |
+| `magnetdb-traefik.container` | `~/.config/containers/systemd/` | Traefik on `:8443`, configuration from `~/traefik/` |
+| `traefik/dynamic.yml` | `~/traefik/` | Router for `calcul18.lncmig.local` and `dashboard.magnetdb-dev.local`, login, certificate |
+
+Traefik serves `https://calcul18.lncmig.local:8443/` (in the LNCMI DNS, no
+client setup) with a certificate signed by python_magnetdb's mkcert CA (on
+calcul22, `mkcert -CAROOT`), in `~/traefik/certs/`; the same certificate also
+covers `dashboard.magnetdb-dev.local` for clients that map it in `/etc/hosts`.
+Browsers trust it once `rootCA.pem` is imported, otherwise they warn once.
+Tester instructions (French):
+`apps/dashboards/magnetdb/docs/evaluation_tester_note.md`.
+
+As `magnetdb` (log in over SSH, not `sudo -iu`: Podman needs the user's
+systemd session):
+
+```bash
+mkdir -p ~/traefik/certs ~/duckdb ~/magnetdb-data/supervision
+# copy scripts/traefik/traefik.yml and scripts/quadlet/traefik/dynamic.yml to ~/traefik/;
+# on calcul22: mkcert -cert-file dashboard.magnetdb-dev.local.pem -key-file dashboard.magnetdb-dev.local-key.pem \
+#   calcul18.lncmig.local dashboard.magnetdb-dev.local, then copy both .pem files to ~/traefik/certs/
+htpasswd -cB ~/traefik/htpasswd <user>   # shared login; Traefik reads it at start only
+chmod 600 ~/traefik/htpasswd
+systemctl --user daemon-reload
+systemctl --user enable --now rclone-mount
+systemctl --user start magnetdb-dashboard magnetdb-traefik
+journalctl --user -u magnetdb-dashboard -f
+```
+
+The dashboard image is loaded, never pulled:
+`docker save magnetdb-dashboard:dev | gzip -1 | ssh magnetdb@<host> podman load`.
+The first start of a new image runs a slow copy-and-chown of its layers (up
+to several minutes on an HDD); later starts take seconds. The database name
+is set in `magnetdb-dashboard.container` (`MAGNETDB_DB_PATH`).
+
 ## `list_assembly_configs.sh`
 
 Lists the assembly JSON files (`<housing>_A<YYMMDD>_<n>.json`) of a

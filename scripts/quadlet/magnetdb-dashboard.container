@@ -1,0 +1,34 @@
+# MagnetDB dashboard, rootless Podman under the magnetdb user (Quadlet).
+# Read-only data: ~/duckdb/, ~/magnetdb-data/supervision/bdd.csv, records from rclone-mount.service.
+# No published port: Traefik (magnetdb-traefik.container) reaches it on the magnetdb network.
+[Unit]
+Description=MagnetDB dashboard
+Requires=rclone-mount.service
+After=rclone-mount.service
+
+[Container]
+# Loaded with `podman load`, never pulled: the docker.io/library/ prefix comes from the load
+Image=docker.io/library/magnetdb-dashboard:dev
+Pull=never
+ContainerName=magnetdb-dashboard
+Network=magnetdb.network
+# Image user 1000:100 runs as magnetdb on the host
+UserNS=keep-id:uid=1000,gid=100
+# Otherwise Podman names uid 1000 after the host user with that uid
+PodmanArgs=--passwd-entry=magnetdb:*:1000:100::/home/app:/bin/sh
+Environment=USER=magnetdb
+Environment=MAGNETDB_DB_PATH=/data/duckdb/magnetdb-2026-10-08.duckdb
+Environment=MAGNETDB_DB_DIR=/data/duckdb
+Environment=MAGNETDB_RECORDS_DIR=/mnt/LNCMIG-Data/records
+Environment=MAGNETDB_SUPERVISION_BDD_CSV=/data/supervision/bdd.csv
+Volume=%h/duckdb:/data/duckdb:ro
+Volume=%h/magnetdb-data/supervision:/data/supervision:ro
+Volume=%h/LNCMIG-Data/records:/mnt/LNCMIG-Data/records:ro
+
+[Service]
+Restart=on-failure
+# The first start of a new image under keep-id copies and chowns its layers (> 5 min on an HDD)
+TimeoutStartSec=900
+
+[Install]
+WantedBy=default.target
