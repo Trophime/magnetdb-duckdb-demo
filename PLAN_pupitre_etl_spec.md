@@ -516,13 +516,6 @@ flag broken files.
 
 ## Follow-ups (not in this plan; each needs its own plan and approval)
 
-- **Bug: `MagnetRun.fromtxt` ignores its ETL arguments** (found 2026-10-30).
-  It accepts `keys_to_remove` / `keys_to_rename` / `keys_to_add` but calls
-  `prepareData(data, housing)` without them
-  ([MagnetRun.py:254](python_magnetrun/python_magnetrun/MagnetRun.py#L254)),
-  so callers passing them silently get the default housing ETL. Fix: write a
-  test first (a `keys_to_add` entry must appear in the result), then forward
-  the three arguments. Independent of this plan; can be fixed before it.
 - **Raw pupitre view in `file_viewer`:** a "Processed / Raw" switch (pupitre
   files only, Processed by default). Raw = `load_magnetdata` + `addTime()` +
   `Units()`, no `prepareData`, cached apart from `load_mrun_object`; the
