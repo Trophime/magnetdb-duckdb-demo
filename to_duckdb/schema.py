@@ -151,6 +151,22 @@ ALTER TABLE experiments ADD COLUMN IF NOT EXISTS header_class    VARCHAR;
 ALTER TABLE experiments ADD COLUMN IF NOT EXISTS file_integrity  VARCHAR;
 ALTER TABLE experiments ADD COLUMN IF NOT EXISTS file_checks     JSON DEFAULT '{}';
 ALTER TABLE experiments ADD COLUMN IF NOT EXISTS file_checked_at TIMESTAMP;
+-- Spec-driven Pupitre ETL checks (prepare_pupitre results: housing_version,
+-- current, channel), kept apart from file_checks
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS etl_checks      JSON DEFAULT '[]';
+ALTER TABLE experiments ADD COLUMN IF NOT EXISTS etl_checked_at  TIMESTAMP;
+
+-- Magnet parts of the Pupitre ETL spec, one per (assembly, magnet, housing
+-- version): {"channels", "remove", "add", "current"}
+CREATE TABLE IF NOT EXISTS pupitre_etl_magnet (
+    assembly_name   VARCHAR,
+    magnet_name     VARCHAR,
+    housing_version VARCHAR REFERENCES housing_config_versions(name),
+    spec            JSON,
+    updated_at      TIMESTAMP DEFAULT now(),
+    PRIMARY KEY (assembly_name, magnet_name, housing_version),
+    FOREIGN KEY (assembly_name, magnet_name) REFERENCES assembly_magnets (assembly_name, magnet_name)
+);
 
 CREATE SEQUENCE IF NOT EXISTS operationaldata_id_seq START 1;
 

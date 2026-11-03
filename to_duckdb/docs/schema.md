@@ -12,6 +12,9 @@ housing_config_versions  wiring changes of a housing over time: from valid_from
                      (TIMESTAMPTZ), overrides (JSON, HousingConfig fields) apply to
                      the base wiring — loaded from the bundled JSON "versions"
                      (e.g. M8-260305: M8 Bitters read on Ucoil14)
+pupitre_etl_magnet   magnet parts of the Pupitre ETL spec, one per (assembly, magnet,
+                     housing version): channels, remove, add, current check
+                     (experiments.etl_checks / etl_checked_at hold the ETL check results)
 sites                operational configurations (housing, commissioning dates)
 site_magnets         magnets active in a site — positional & temporal metadata
 experiments          operational records (TSV files) attached to a site

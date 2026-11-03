@@ -17,10 +17,16 @@ For each experiment whose file has not been checked yet this script sets:
 Experiments whose file is missing are left unchecked (the records base may
 just be wrong) and counted.
 
+With ``--etl`` it records instead the checks of the spec-driven Pupitre ETL
+(PLAN_pupitre_etl_spec.md, step 6):
+  etl_checks      = prepare_pupitre results (housing_version, current, channel)
+  etl_checked_at  = now()
+
 Usage
 -----
     python check_experiment_files.py --db magnetdb-2026-10-08.duckdb
     python check_experiment_files.py --db magnetdb-2026-10-08.duckdb --assembly M10_A230509_00 --recheck
+    python check_experiment_files.py --db magnetdb-2026-10-08.duckdb --etl --recheck --assembly M8_A230919_00
 """
 
 import argparse
@@ -29,8 +35,11 @@ from pathlib import Path
 
 import duckdb
 from config import DEFAULT_DB
+from etl_spec import build_pupitre_etl_spec
+from file_context import file_start
 from populate import _RECORDS_BASE, _SRV_SUBDIR
 from python_magnetrun.magnetdata import load_magnetdata
+from python_magnetrun.runetl import PupitreEtlSpec, prepare_pupitre
 from python_magnetrun.utils.validation import classify_pupitre_header
 from schema import ensure_schema
 
@@ -160,6 +169,93 @@ def check_experiments(
     return results
 
 
+def check_experiments_etl(
+    db_path: str,
+    assembly: str | None = None,
+    records_base: str = DEFAULT_RECORDS_BASE,
+    srv_subdir: str = _SRV_SUBDIR,
+    recheck: bool = False,
+    verbose: bool = True,
+) -> dict:
+    """Fill ``etl_checks`` / ``etl_checked_at`` with the spec-driven Pupitre ETL checks.
+
+    For each experiment, the spec of its assembly at the file start
+    (:func:`~etl_spec.build_pupitre_etl_spec`) is applied with
+    :func:`~python_magnetrun.runetl.prepare_pupitre`; its check results
+    (housing version, one current check per magnet part, channel checks) are
+    stored. A file that cannot be loaded gets a single ``load`` result.
+    After editing a magnet part, run with ``recheck`` on that assembly.
+
+    Parameters
+    ----------
+    db_path : str
+        DuckDB file.
+    assembly : str, optional
+        Only check the experiments of this assembly; all when ``None``.
+    records_base : str, optional
+        Root of the records tree.
+    srv_subdir : str, optional
+        Subdirectory of *records_base* holding the pupitre TXT files.
+    recheck : bool, optional
+        Also check experiments already checked.
+    verbose : bool, optional
+        Print files with a failed check and a final summary.
+
+    Returns
+    -------
+    dict
+        ``{"checked": int, "skipped": int, "missing": int}``.
+    """
+    con = duckdb.connect(db_path)
+    ensure_schema(con)
+    exp_df = con.execute(
+        """
+        SELECT e.id, e.file, e.assembly_name, s.housing,
+               e.etl_checked_at IS NOT NULL AS already_checked
+        FROM experiments e
+        JOIN assemblies s ON s.name = e.assembly_name
+        WHERE ? IS NULL OR e.assembly_name = ?
+        ORDER BY e.id
+        """,
+        [assembly, assembly],
+    ).df()
+
+    results = {"checked": 0, "skipped": 0, "missing": 0}
+    for row in exp_df.itertuples():
+        if row.already_checked and not recheck:
+            results["skipped"] += 1
+            continue
+        f = Path(row.file)
+        path = f if f.is_absolute() else Path(records_base) / srv_subdir / row.housing / row.file
+        if not path.exists():
+            results["missing"] += 1
+            continue
+
+        try:
+            spec = PupitreEtlSpec.from_dict(
+                build_pupitre_etl_spec(con, row.assembly_name, file_start(path))
+            )
+            checks = prepare_pupitre(load_magnetdata(str(path)), spec)
+        except Exception as exc:
+            checks = [{"kind": "load", "reason": f"{type(exc).__name__}: {exc}", "ok": None}]
+        con.execute(
+            "UPDATE experiments SET etl_checks = ?, etl_checked_at = now() WHERE id = ?",
+            [json.dumps(checks), int(row.id)],
+        )
+        results["checked"] += 1
+        failed = [c for c in checks if c["ok"] is False]
+        if verbose and failed:
+            print(f"  {path}  {failed}")
+
+    con.close()
+    if verbose:
+        print(
+            f"\nDone — {results['checked']} checked, {results['skipped']} skipped, "
+            f"{results['missing']} missing"
+        )
+    return results
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Record pupitre file quality on experiments.",
@@ -184,9 +280,14 @@ def main() -> None:
         "--recheck", action="store_true", help="Re-check files already checked"
     )
     parser.add_argument("--quiet", action="store_true", help="Only print the summary")
+    parser.add_argument(
+        "--etl",
+        action="store_true",
+        help="Record the spec-driven Pupitre ETL checks (etl_checks) instead of file quality",
+    )
     args = parser.parse_args()
 
-    check_experiments(
+    (check_experiments_etl if args.etl else check_experiments)(
         db_path=args.db,
         assembly=args.assembly,
         records_base=args.records_base,

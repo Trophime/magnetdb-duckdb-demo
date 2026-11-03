@@ -104,3 +104,62 @@ def test_assembly_filter(tmp_path):
         str(db), assembly="NO_SUCH_ASSEMBLY", records_base=str(records), verbose=False
     )
     assert results == {"checked": 0, "skipped": 0, "missing": 0}
+
+
+# ---------------------------------------------------------------------------
+# --etl: spec-driven Pupitre ETL checks (etl_checks / etl_checked_at)
+# ---------------------------------------------------------------------------
+
+
+def _etl_setup(tmp_path):
+    from etl_spec import set_magnet_part
+
+    db, records = _setup(tmp_path)
+    with duckdb.connect(str(db)) as con:
+        set_magnet_part(
+            con, ASSEMBLY, MAGNET_JSON["name"], "M10-180220",
+            {"current": {"source": "Icoil1", "check": "IH"}},
+        )
+    return db, records
+
+
+def _etl_rows(db):
+    with duckdb.connect(str(db)) as con:
+        rows = con.execute(
+            "SELECT file, etl_checks, etl_checked_at, header_class FROM experiments ORDER BY id"
+        ).fetchall()
+    return {r[0]: (json.loads(r[1]) if r[1] else None, r[2], r[3]) for r in rows}
+
+
+def test_etl_checks_recorded(tmp_path):
+    db, records = _etl_setup(tmp_path)
+    results = check_experiment_files.check_experiments_etl(
+        str(db), records_base=str(records), verbose=False
+    )
+    assert results == {"checked": 3, "skipped": 0, "missing": 1}
+    rows = _etl_rows(db)
+
+    checks, checked_at, header_class = rows["2024.12.05 - 12:15:30.txt"]
+    assert [c["kind"] for c in checks] == ["housing_version", "current"]
+    assert checks[0] == {"kind": "housing_version", "spec": "M10-180220", "data": "M10-180220", "ok": True}
+    assert checks[1]["magnet"] == MAGNET_JSON["name"]  # one result per magnet part
+    assert checked_at is not None
+    assert header_class is None  # file quality columns untouched
+
+    checks, _, _ = rows["2024.12.05 - 12:15:32.txt"]  # no data rows
+    assert [c["kind"] for c in checks] == ["load"] and checks[0]["ok"] is None
+
+    assert rows[MISSING][1] is None
+
+
+def test_etl_already_checked_skipped_unless_recheck(tmp_path):
+    db, records = _etl_setup(tmp_path)
+    check_experiment_files.check_experiments_etl(str(db), records_base=str(records), verbose=False)
+    again = check_experiment_files.check_experiments_etl(
+        str(db), records_base=str(records), verbose=False
+    )
+    assert again == {"checked": 0, "skipped": 3, "missing": 1}
+    forced = check_experiment_files.check_experiments_etl(
+        str(db), records_base=str(records), recheck=True, verbose=False
+    )
+    assert forced == {"checked": 3, "skipped": 0, "missing": 1}

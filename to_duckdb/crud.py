@@ -3097,6 +3097,17 @@ def export_housing_config_json(
     ValueError
         If no ``housing_config`` row exists for *name*.
     """
+    cfg_dict = _housing_config_dict(con, name)
+    dest = Path(output_dir) / f"{name}-housing-config.json"
+    with open(dest, "w") as fh:
+        json.dump(cfg_dict, fh, indent=2, ensure_ascii=False)
+        fh.write("\n")
+    print(f"  Wrote {dest}")
+    return dest
+
+
+def _housing_config_dict(con, name: str) -> dict[str, Any]:
+    """Return the full housing-config dict of *name* (DB rows + versions), as in the bundled JSON."""
     row = con.execute(
         "SELECT coil_assignment, formats, extra_config FROM housing_config WHERE name = ?",
         [name],
@@ -3128,13 +3139,7 @@ def export_housing_config_json(
         versions.append(version)
     if versions:
         cfg_dict["versions"] = versions
-
-    dest = Path(output_dir) / f"{name}-housing-config.json"
-    with open(dest, "w") as fh:
-        json.dump(cfg_dict, fh, indent=2, ensure_ascii=False)
-        fh.write("\n")
-    print(f"  Wrote {dest}")
-    return dest
+    return cfg_dict
 
 
 # ---------------------------------------------------------------------------

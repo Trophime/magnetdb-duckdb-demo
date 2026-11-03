@@ -39,6 +39,9 @@ Unified CLI entry point for the student MagnetDB DuckDB.
                                             [--description ...] [--attachment KIND=PATH ...]
 
     python magnetdb.py housing view [<name>]                       [--db ...]
+    python magnetdb.py etl set-magnet <assembly> <magnet> <housing_version> <part.json> [--db ...]
+    python magnetdb.py etl show <assembly> [--version V | --at TIME] [--db ...]
+    python magnetdb.py etl export <assembly> [--version V | --at TIME] [-o DIR] [--db ...]
     python magnetdb.py experiments view [--assembly <assembly>] [--magnet <magnet>] [--part <part>]
                                         [--from DATETIME] [--to DATETIME] [--db ...]
     python magnetdb.py operationaldata view [--assembly <assembly>] [--type TYPE]
@@ -82,6 +85,7 @@ import difflib
 import json
 import sys
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -1132,6 +1136,59 @@ def cmd_housing_view(args) -> None:
 
 
 # ---------------------------------------------------------------------------
+# etl handlers (Pupitre ETL spec per assembly and housing version)
+# ---------------------------------------------------------------------------
+
+
+def _etl_time(con, args):
+    """Return the time selecting the spec: --at (no offset = Europe/Paris), --version, or default."""
+    from etl_spec import spec_time
+    from file_context import PUPITRE_TZ
+
+    if args.at:
+        when = datetime.fromisoformat(args.at)
+        return when if when.utcoffset() is not None else when.replace(tzinfo=PUPITRE_TZ)
+    return spec_time(con, args.assembly, args.version)
+
+
+def _existing_db(args) -> Path:
+    db_path = Path(args.db)
+    if not db_path.exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    return db_path
+
+
+def cmd_etl_set_magnet(args) -> None:
+    from etl_spec import set_magnet_part
+
+    part = json.loads(Path(args.part_json).read_text(encoding="utf-8"))
+    with duckdb.connect(str(_existing_db(args))) as con:
+        set_magnet_part(con, args.assembly, args.magnet, args.housing_version, part)
+    print(f"  + pupitre_etl_magnet  {args.assembly} / {args.magnet} / {args.housing_version}")
+
+
+def cmd_etl_show(args) -> None:
+    from etl_spec import build_pupitre_etl_spec
+
+    with duckdb.connect(str(_existing_db(args)), read_only=True) as con:
+        spec = build_pupitre_etl_spec(con, args.assembly, _etl_time(con, args))
+    print(json.dumps(spec, indent=2, ensure_ascii=False))
+
+
+def cmd_etl_export(args) -> None:
+    from etl_spec import export_pupitre_etl_spec
+
+    with duckdb.connect(str(_existing_db(args)), read_only=True) as con:
+        at = _etl_time(con, args) if args.at else None
+        paths = export_pupitre_etl_spec(
+            con, args.assembly, args.output_dir, version=args.version, at=at
+        )
+    for path in paths:
+        print(f"  Wrote {path}")
+
+
+# ---------------------------------------------------------------------------
 # experiments handlers
 # ---------------------------------------------------------------------------
 
@@ -1768,6 +1825,9 @@ _DISPATCH = {
     ("site",              "delete"):          cmd_assembly_delete,
     ("site",              "update-magnet"):   cmd_assembly_update_magnet,
     ("housing",           "view"):            cmd_housing_view,
+    ("etl",               "set-magnet"):      cmd_etl_set_magnet,
+    ("etl",               "show"):            cmd_etl_show,
+    ("etl",               "export"):          cmd_etl_export,
     ("experiments",       "view"):            cmd_experiments_view,
     ("operationaldata",   "view"):            cmd_operationaldata_view,
     ("log",                "view"):           cmd_log_view,
@@ -1899,7 +1959,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     entity = parser.add_subparsers(
         dest="entity", required=True,
-        metavar="{list,check,db,material,part,magnet,assembly,housing,experiments,operationaldata,overview-records,populate,hoop-stress}",
+        metavar="{list,check,db,material,part,magnet,assembly,housing,etl,experiments,operationaldata,overview-records,populate,hoop-stress}",
     )
 
     # ── list ─────────────────────────────────────────────────────────────────
@@ -2198,6 +2258,35 @@ def build_parser() -> argparse.ArgumentParser:
     h_view.add_argument("name", nargs="?", default=None,
                         help="Housing name (omit to list all)")
     _db_arg(h_view)
+
+    # ── etl ──────────────────────────────────────────────────────────────────
+    etl_p = entity.add_parser(
+        "etl", help="Pupitre ETL spec per assembly and housing version.")
+    etl_sub = etl_p.add_subparsers(dest="action", required=True,
+                                   metavar="{set-magnet,show,export}")
+
+    etl_set = etl_sub.add_parser(
+        "set-magnet", help="Insert or replace the ETL part of a magnet for one housing version.")
+    etl_set.add_argument("assembly", help="Assembly name")
+    etl_set.add_argument("magnet", help="Magnet of the assembly")
+    etl_set.add_argument("housing_version", help="Housing version, e.g. M8-260305")
+    etl_set.add_argument("part_json", help='JSON file: {"channels", "remove", "add", "current"}')
+    _db_arg(etl_set)
+
+    for action, help_text in (
+        ("show", "Print the spec of an assembly (default: version in force now or at its end)."),
+        ("export", "Write <assembly>.<version>.pupitre-etl.json (default: one file per version)."),
+    ):
+        etl_x = etl_sub.add_parser(action, help=help_text)
+        etl_x.add_argument("assembly", help="Assembly name")
+        sel = etl_x.add_mutually_exclusive_group()
+        sel.add_argument("--version", default=None, help="Housing version")
+        sel.add_argument("--at", default=None,
+                         help="ISO 8601 time (no offset = Europe/Paris time)")
+        if action == "export":
+            etl_x.add_argument("-o", "--output-dir", dest="output_dir", default=".",
+                               help="Destination directory (default: .)")
+        _db_arg(etl_x)
 
     # ── experiments ───────────────────────────────────────────────────────────
     exp_p = entity.add_parser("experiments", help="View experiment records.")

@@ -17,6 +17,7 @@ EXPECTED_TABLES = {
     "overview_records",
     "housing_config",
     "housing_config_versions",
+    "pupitre_etl_magnet",
     "op_run_scalars",
     "op_assembly_bin_stats",
     "op_part_bin_stats",

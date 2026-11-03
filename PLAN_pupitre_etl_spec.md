@@ -525,6 +525,12 @@ flag broken files.
   later, failed `etl_checks`.
 - **Switch Pupitre callers to the spec path** (step 2a of the cross-plan
   order): the spec path becomes the default.
+- **Current check tolerance during transients** (found 2026-11-03, step 7):
+  on M9 `2026.05.15 - 13:05:36` (`M9_A260505_00`), `IH − Icoil2` reaches
+  13.2 A on 2 of 2844 rows, inside an 852 A/s current drop, while the
+  steady-state gap is ≤ 0.14 A. The rule "max over all rows ≤
+  `ICOIL_CHECK_ATOL` (5 A)" therefore flags fast transients. Options: ignore
+  rows with a high |dI/dt|, or use a high percentile instead of the maximum.
 - **Re-export the specs when a housing version is added** (e.g. M8 going
   back to `Ucoil15/16`): `etl export ASSEMBLY` for the affected assemblies,
   then `check_experiment_files.py --etl --recheck --assembly <name>`.
