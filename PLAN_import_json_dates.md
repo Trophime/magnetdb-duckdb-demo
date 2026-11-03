@@ -1,6 +1,7 @@
 # Plan: importer reads `manufactured_at` / `assembled_at` from the JSON
 
-Status: **proposed** (2026-10-28), not yet approved or implemented.
+Status: **done**: implemented 2026-10-28 (`195732c`), addendum 2026-10-29
+(`84d0079`); follow-ups closed 2026-11-03 (see [Follow-ups](#follow-ups)).
 Related: [`PLAN_missing_dates.md`](PLAN_missing_dates.md) reports and fixes
 missing dates in an *existing* database. This plan makes the importer stop
 producing them in the first place.
@@ -96,12 +97,11 @@ Decided:
 2. Ordering problems only warn, whatever the part type. No error, no
    `check` report.
 
-Defaults to confirm:
+Defaults, confirmed by the implementation:
 
 3. **Magnet assembled after commissioning** is treated like the part rule:
    warning at import.
 4. **Fallback warnings:** one line per item (about 111 per rebuild).
-   Alternative: one summary line per magnet.
 
 Assumptions:
 
@@ -115,15 +115,28 @@ Assumptions:
 
 ## Follow-ups
 
-- Commit the JSON fixes in `hifimagnet-projects`, including
+- **Done:** commit the JSON fixes in `hifimagnet-projects`, including
   `M9_A250401_00.json` (magnet `M9Bitters-newBi09` → `M9Bitters-newBi08`).
-- Rebuild with `scripts/build_from_scratch.sh`. This fixes the missing
+  Committed as `hifimagnet-projects` `4a926d88`.
+- **Done:** rebuild with `scripts/build_from_scratch.sh`. This fixes the missing
   dates, the `M9_A250401_00` link and its 270 misattributed
   `exp_part_bin_stats` rows, and the import-time event dates.
-- After the rebuild, `PLAN_missing_dates.md`'s counts for magnets and parts
-  should drop to 0.
-- Give `M09052601` and `M12082401` a real `assembled_at` in their JSON to
-  remove the 8 helix ordering warnings.
+  Rebuilt as `magnetdb-2026-10-29.duckdb`.
+- **Done:** after the rebuild, `PLAN_missing_dates.md`'s counts for magnets and parts
+  should drop to 0. They did: 0 / 23 magnets, 0 / 201 parts.
+- **Done (2026-11-03, not committed in `hifimagnet-projects`):** give
+  `M09052601` and `M12082401` a real `assembled_at` in their JSON to
+  remove the 8 helix ordering warnings. Set to the latest helix's
+  manufacturing date (the earliest date consistent with the helices, still
+  before the first commissioning): `M09052601` → `2009-07-09 08:00:00`
+  (`H09070901`), `M12082401` → `2013-09-17 08:00:00` (`H13091701`).
+  Checked by loading both into a fresh scratch DB: no helix warning left.
+  Takes effect in the database at the next rebuild.
+- **Open, out of scope:** 5 rings guessed with IA help carry a name date of
+  2026-02-10 and still warn "made after magnet": `R26021001`,
+  `R26021002`, `R26021014`, `R26021030` (`M09052601`) and `R26021028`
+  (`M12082401`). The other guessed rings (`R261029xx`) carry a JSON
+  `manufactured_at` equal to the magnet's name date and do not warn.
 
 ## Addendum (2026-10-29): "Commissioned into assembly" events
 

@@ -1,7 +1,7 @@
 # Plan: helpers for rows with no date (highlight + report-only `check --entity dates`)
 
-Status: **implemented** (2026-11-02, scope option 2: no `--fix`); the
-dashboard look (step 6) awaits the user's check. Results under
+Status: **done** (2026-11-02, scope option 2: no `--fix`); the dashboard
+look (step 6) was confirmed by the user on 2026-11-03. Results under
 [Verification results](#verification-results-2026-11-02). The first
 version (2026-10-23) is summarised under
 [What changed](#what-changed-since-2026-10-23).
