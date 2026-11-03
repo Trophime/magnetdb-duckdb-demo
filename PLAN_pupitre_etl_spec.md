@@ -8,6 +8,11 @@ per-magnet parts, DuckDB as master with a JSON export for standalone
 python_magnetrun, `IH`/`IB` from Idcct only with a per-magnet `Icoil` check;
 per-channel companion fields, electrical fields of a missing magnet type
 dropped (hydraulics kept), empty-channel check.
+**Revised 2026-11-03:** one spec per **(assembly, housing version)**, built
+on step H of the digital twin plan (time-versioned housing config): the
+housing part comes from the housing-config version in force at the file
+start, magnet parts are keyed to a housing version, and `prepare_pupitre`
+checks that the spec's version matches the file.
 
 Related:
 - [NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md): M5 is the first
@@ -25,8 +30,10 @@ Related:
 ## Goal
 
 Add a second Pupitre ETL path that applies an explicit spec (remove / rename /
-add, companions, plus current and channel checks). The spec is defined per assembly: a housing part
-plus one part per magnet, since sensors are attached to magnets. DuckDB is
+add, companions, plus current and channel checks). The spec is defined per
+assembly and housing-config version: a housing part (the wiring in force
+at the file start) plus one part per magnet, since sensors are attached to
+magnets. DuckDB is
 the master; the spec is exported to JSON so python_magnetrun can run it
 standalone, with a fallback built from the housing config alone.
 `prepareData` and all its callers stay unchanged, and python_magnetrun never
@@ -73,7 +80,21 @@ even without current (measured 2026-10-30):
 
 Today `prepareData` keeps or drops these fields by content (all-zero and
 duplicate checks), so the same housing gives 35 to 52 columns depending on
-the run (`load_mrun` on the three files above). Some assemblies lack a magnet
+the run (`load_mrun` on the three files above).
+
+**The wiring changes over time, even inside one assembly** (step H of the
+digital twin plan, done 2026-11-03). python_magnetrun `HousingConfig` holds
+`versions` (bundled JSON, mirrored in DuckDB `housing_config_versions`);
+`HousingConfig.at(t0)` gives the wiring in force at `t0`. Every housing has
+a dated base version from its first commissioned assembly (`M5-140101`,
+`M7-140101`, `M8-211225`, `M9-181109`, `M10-180220`); M8 then has
+`M8-260305` (from 2026-03-05 17:21:09+01:00, inside `M8_A230919_00`):
+M8Bitters read on a single tap `Ucoil14`, `Ucoil15–16` exactly 0, so
+`UB = Ucoil14` and `UH = Ucoil1–13`. `prepareData` already resolves the
+version at the data start, and `cleanupData` no longer drops a
+`keys_to_add` column as a duplicate (`UB = Ucoil14` would otherwise
+vanish); its all-zero and other duplicate drops are unchanged, hence the
+`drop_redundant_columns` keyword below. Some assemblies lack a magnet
 type: no insert in 10 M10 assemblies, `M5_A140101_00` and `M8_A211225_00`; no
 Bitters in `M7_A140101_00` and `M8_A211225_00` (`Hybrid` only).
 
@@ -84,17 +105,19 @@ Bitters in `M7_A140101_00` and `M8_A211225_00` (`Hybrid` only).
 | Scope | Pupitre files only; TDMS and Hybrid keep using `prepareData` |
 | Content-based checks (all-zero, duplicate columns, Icoil guessing) | Dropped from the new path; the explicit remove list replaces them. The current check below only warns, it never drops or picks a column |
 | Remove list | Full-match regex patterns; plain names work as-is (e.g. `Icoil\d+`, `Ucoil1[5-6]`) |
-| Spec granularity | One spec per assembly = housing part + one part per magnet of the assembly |
-| Housing part | `remove`, `rename`, `add` (`IH`/`IB`), `defaults` (voltage sums used when no magnet part adds them), `companions` |
+| Spec granularity | One spec per **(assembly, housing version)** = housing part + one part per magnet of the assembly. An assembly spanning a wiring change (`M8_A230919_00`: `M8-211225`, `M8-260305`) has one spec per version |
+| Housing part | `remove`, `rename`, `add` (`IH`/`IB`), `defaults` (voltage sums used when no magnet part adds them), `companions`; built by `from_housing(cfg.at(t0))` and recorded with its version name (`housing.version`) |
+| Magnet parts and wiring changes (D1, 2026-11-03) | Keyed to a housing version: `(assembly, magnet, housing_version)`. A version with no part for a magnet falls back to the housing `defaults` (e.g. `UB = Ucoil14` under `M8-260305`). The housing versions are the only time axis of the wiring |
+| Version check | `prepare_pupitre` compares the spec's `housing.version` with the version in force at the data start (first `Date`/`Time`, Europe/Paris). A mismatch (e.g. an old spec file on a 2026 M8 file) is logged and returned as a `{"kind": "housing_version", …, "ok": False}` result in `etl_checks`; nothing is kept or dropped because of it |
 | Companions | `"companions": {"Ucoil": ["Icoil", "DRcoil", "Tcal"]}`: after `remove`, for every *n* whose `Ucoil n` is gone, its companions are removed too. Based on which columns exist, not on their values |
 | Missing magnet type | No `insert` in the assembly: the builder emits no `IH` add, no `UH` default, no H current check, and removes `IH`, `UH`, the H group's `Ucoil n` (companions follow) and its Idcct sources (from the H formula). Hydraulics `FlowH`, `TinH`, `RpmH`, `HPH` are kept. Same for B with no `bitters`; both groups for a supras-only assembly. Role names are listed explicitly, never matched with `.*H$` |
 | Empty-channel check | Before `remove`, every channel whose `Ucoil n` is about to be removed must have `Ucoil n`, `Icoil n`, `DRcoil n`, `Tcal n` exactly 0 |
 | Magnet parts | `channels`, `remove`, `add`, `current` only; never `rename` |
 | Merge | Flattened into one remove/rename/add list; an `add` key or a channel claimed twice (two magnet parts, or a magnet part and the housing `add`) raises an error. A magnet `add` key replaces the same key in housing `defaults` |
-| Master | DuckDB: magnet parts in `pupitre_etl_magnet`, housing part from `housing_config`. JSON is an export |
-| Builder location | `PupitreEtlSpec.from_housing(cfg)` in python_magnetrun (housing part only); to_duckdb adds the magnet parts from DuckDB. python_magnetdb (postgres) gets its own later |
-| Fallback | A magnet with no row: housing `defaults` apply. No JSON file standalone: `from_housing` |
-| Standalone | Explicit `--etl-spec FILE`, or `--etl-dir DIR` + assembly name → `DIR/<assembly>.pupitre-etl.json`; opt-in, `prepareData` stays the default |
+| Master | DuckDB: magnet parts in `pupitre_etl_magnet`, housing part from `housing_config` + `housing_config_versions`. JSON is an export |
+| Builder location | `PupitreEtlSpec.from_housing(cfg)` in python_magnetrun (housing part only, `cfg` already resolved with `.at(t0)`); to_duckdb adds the magnet parts of that version from DuckDB. python_magnetdb (postgres) gets its own later |
+| Fallback | A magnet with no row for the version: housing `defaults` apply. No JSON file standalone: `from_housing(get_housing_config(housing, at=t0))` |
+| Standalone | Explicit `--etl-spec FILE`, or `--etl-dir DIR` + assembly name → `DIR/<assembly>.<version>.pupitre-etl.json`, the version resolved by python_magnetrun from the file start; opt-in, `prepareData` stays the default |
 | Currents | `IH`/`IB` = Idcct sums (housing `add`), unchanged for the code reading them (`thermal_pipeline`, `processing/stats.py`, `txt2csv`, `waterflow_pipeline`, `analysis/config.py`, Hybrid comparison). Each magnet part names one `Icoil` to compare with; it is removed afterwards with all other `Icoil` columns |
 | M5 | `IB1` in one Bitter's magnet part, `IB2` in the other's |
 | Tolerance | Fixed: `ICOIL_CHECK_ATOL = 5.0  # [A]` in `runetl.py` |
@@ -105,18 +128,21 @@ Bitters in `M7_A140101_00` and `M8_A211225_00` (`Hybrid` only).
 
 | File | Action |
 |---|---|
-| `python_magnetrun/python_magnetrun/runetl.py` | edit: add `PupitreEtlSpec`, `ICOIL_CHECK_ATOL`, `prepare_pupitre()`, `load_pupitre_etl_spec()`, `save_pupitre_etl_spec()` |
+| `python_magnetrun/python_magnetrun/runetl.py` | edit: add `PupitreEtlSpec`, `ICOIL_CHECK_ATOL`, `prepare_pupitre()` (with the housing-version check, reusing `_data_start`), `load_pupitre_etl_spec()`, `save_pupitre_etl_spec()` |
 | `python_magnetrun/python_magnetrun/magnetdata_pandas.py` | edit: `cleanupData` gets `drop_redundant_columns: bool = True` |
 | `python_magnetrun/python_magnetrun/magnetdata_polars.py` | edit: same keyword |
 | `python_magnetrun/python_magnetrun/etl_cli.py` | create: `etl show FILE`, `etl create FILE --from-housing M9 [--assembly NAME]` (same pattern as `housing_config.register`) |
 | `python_magnetrun/python_magnetrun/config_cli.py` | edit: register the `etl` domain |
-| `python_magnetrun/python_magnetrun/utils/txt2csv.py` | edit: opt-in `--etl-spec FILE` / `--etl-dir DIR --assembly NAME` |
+| `python_magnetrun/python_magnetrun/utils/txt2csv.py` | edit: opt-in `--etl-spec FILE` / `--etl-dir DIR --assembly NAME` (file picked by the housing version at the file start) |
 | `python_magnetrun/python_magnetrun/MagnetRun.py` | edit: `fromtxt(..., etl_spec: PupitreEtlSpec \| None = None)`; `None` keeps `prepareData` |
 | `python_magnetrun/tests/test_runetl.py` | edit: tests for the spec, its JSON file and `prepare_pupitre` |
 | `python_magnetrun/README.md` | edit: the ETL section documents a `prepare_pupitre` that doesn't exist; replace it with the real usage, including standalone |
-| `to_duckdb/schema.py` | edit: `pupitre_etl_magnet` table; `experiments.etl_checks`, `experiments.etl_checked_at` |
-| `to_duckdb/etl_spec.py` | create: `build_pupitre_etl_spec(con, assembly_name) -> dict`, `set_magnet_part(...)`, `export_pupitre_etl_spec(...)` |
-| `to_duckdb/magnetdb.py` | edit: `etl set-magnet \| show \| export` commands |
+| `to_duckdb/schema.py` | edit: `pupitre_etl_magnet` table (keyed by housing version); `experiments.etl_checks`, `experiments.etl_checked_at` |
+| `to_duckdb/crud.py` | edit: factor the housing-config dict with its `versions` out of `export_housing_config_json` (`_housing_config_dict(con, name)`), shared with the spec builder |
+| `to_duckdb/file_context.py` | create: `FileContext` dataclass and `resolve_file_context(con, path)` (file → experiment → assembly → housing → housing version at the file start), shared with the digital twin's header readers |
+| `to_duckdb/tests/test_file_context.py` | create |
+| `to_duckdb/etl_spec.py` | create: `build_pupitre_etl_spec(con, assembly_name, at) -> dict`, `set_magnet_part(...)`, `export_pupitre_etl_spec(...)` (one file per version overlapping the assembly) |
+| `to_duckdb/magnetdb.py` | edit: `etl set-magnet \| show \| export` commands, with `--version V` / `--at TIME` |
 | `to_duckdb/check_experiment_files.py` | edit: `--etl` fills `etl_checks` / `etl_checked_at` |
 | `to_duckdb/tests/test_etl_spec.py` | create |
 | `to_duckdb/tests/test_check_experiment_files.py` | edit: `--etl` case |
@@ -125,7 +151,9 @@ Bitters in `M7_A140101_00` and `M8_A211225_00` (`Hybrid` only).
 
 ### JSON format
 
-One file per assembly, `<assembly>.pupitre-etl.json`:
+One file per assembly and housing version,
+`<assembly>.<housing version>.pupitre-etl.json` (e.g.
+`M9_A260602_00.M9-181109.pupitre-etl.json`):
 
 ```json
 {
@@ -134,6 +162,7 @@ One file per assembly, `<assembly>.pupitre-etl.json`:
   "assembly": "M9_A260602_00",
   "housing": {
     "name": "M9",
+    "version": "M9-181109",
     "remove": ["Icoil\\d+"],
     "rename": {"Flow1": "FlowH", "Flow2": "FlowB", "...": "..."},
     "add": {
@@ -163,6 +192,12 @@ One file per assembly, `<assembly>.pupitre-etl.json`:
 ```
 
 - `kind` and `version` are checked by `from_dict`; anything else is refused.
+  The top-level `version` is the spec format; `housing.version` is the
+  housing-config version the housing part was built from (`""` for data
+  older than the housing's first version, standalone only).
+- M8 example: `M8_A230919_00.M8-260305.pupitre-etl.json` has no M8Bitters
+  part, so the housing default `UB = Ucoil14` applies;
+  `M8_A230919_00.M8-211225.pupitre-etl.json` gives `UB = Ucoil15 + Ucoil16`.
 - `channels` documents which pupitre channels carry the magnet's taps in this
   assembly; it is used for the "channel claimed twice" check.
 - `assembly` and `magnets` may be empty (`from_housing` output).
@@ -175,7 +210,7 @@ ICOIL_CHECK_ATOL = 5.0  # [A]
 @dataclass(frozen=True)
 class PupitreEtlSpec:
     assembly: str | None
-    housing: dict              # name, remove, rename, add, defaults, companions
+    housing: dict              # name, version, remove, rename, add, defaults, companions
     magnets: dict[str, dict]   # magnet name -> channels, remove, add, current
 
     @property
@@ -192,13 +227,14 @@ class PupitreEtlSpec:
     def to_dict(self) -> dict: ...
     @classmethod
     def from_housing(cls, cfg: HousingConfig, assembly: str | None = None) -> "PupitreEtlSpec": ...
+        # cfg is already resolved: get_housing_config(housing, at=t0); housing.version = cfg.version
 
 def load_pupitre_etl_spec(path: str | Path) -> PupitreEtlSpec: ...
 def save_pupitre_etl_spec(path: str | Path, spec: PupitreEtlSpec) -> None: ...
 
 def prepare_pupitre(data: PandasMagnetData | PolarsMagnetData, spec: PupitreEtlSpec) -> list[dict]:
-    # addTime → rename → add → checks (current, channel) → remove (patterns matched
-    # on current keys) → companions → dedupe t
+    # version check → addTime → rename → add → checks (current, channel) → remove
+    # (patterns matched on current keys) → companions → dedupe t
 ```
 
 The structure is kept (not flattened) so `to_dict` round-trips; the
@@ -207,6 +243,11 @@ flattened lists are computed properties.
 - **Rename before add**, so formulas can use renamed names. Today's formulas
   only use `Idcct*` and `Ucoil*`, which are never renamed, so nothing changes
   for them.
+- **Version check first:** the housing version in force at the data start
+  (`HousingConfig.at`, first `Date`/`Time` read as Europe/Paris time) is
+  compared with `housing.version`. Result
+  `{"kind": "housing_version", "spec": "M8-211225", "data": "M8-260305", "ok"}`.
+  The spec is still applied; the result only flags it.
 - **Checks before remove**, so the checked columns still exist. Every
   result has a `kind` and an `ok`; every result that is not `ok` is logged
   as a warning. `prepare_pupitre` returns the list.
@@ -235,7 +276,9 @@ flattened lists are computed properties.
   Icoil guessing. The `t` dedupe still runs, via
   `cleanupData(drop_redundant_columns=False)`. The default `True` keeps
   `prepareData` behaving exactly as now.
-- **`from_housing(cfg)`** emits the housing part only:
+- **`from_housing(cfg)`** emits the housing part only, from a config
+  already resolved at the file start (`cfg.at(t0)`):
+  - `version`: `cfg.version`;
   - `add`: `pupitre_formula_map`;
   - `defaults`: `get_pupitre_voltage_formulas()` over all
     `voltage_channels_gr1`/`gr2` (not filtered by file content);
@@ -252,11 +295,12 @@ flattened lists are computed properties.
 
 ```sql
 CREATE TABLE IF NOT EXISTS pupitre_etl_magnet (
-    assembly_name VARCHAR,
-    magnet_name   VARCHAR,
-    spec          JSON,          -- {"channels": [...], "remove": [...], "add": {...}, "current": {...}}
-    updated_at    TIMESTAMP DEFAULT now(),
-    PRIMARY KEY (assembly_name, magnet_name),
+    assembly_name   VARCHAR,
+    magnet_name     VARCHAR,
+    housing_version VARCHAR REFERENCES housing_config_versions(name),
+    spec            JSON,        -- {"channels": [...], "remove": [...], "add": {...}, "current": {...}}
+    updated_at      TIMESTAMP DEFAULT now(),
+    PRIMARY KEY (assembly_name, magnet_name, housing_version),
     FOREIGN KEY (assembly_name, magnet_name) REFERENCES assembly_magnets (assembly_name, magnet_name)
 );
 
@@ -266,10 +310,18 @@ ALTER TABLE experiments ADD COLUMN IF NOT EXISTS etl_checked_at TIMESTAMP;
 
 - The composite foreign key makes a magnet part for a magnet outside the
   assembly impossible: no drift check against the assembly is needed.
-- The housing part is not stored again: `build_pupitre_etl_spec` reads the
-  assembly's `housing_config` row → `_derive_housing_config_dict` →
-  `HousingConfig.from_dict` → `PupitreEtlSpec.from_housing`, then applies
-  the missing-type rule, then adds the `pupitre_etl_magnet` rows.
+- **`housing_version`** (decision D1): a magnet part applies to one
+  housing version only. `set_magnet_part` also refuses a version of another
+  housing, or one that does not overlap the assembly's
+  `[commissioned_at, decommissioned_at)`. A wiring change is therefore
+  declared once, as a housing version; parts written for the old version
+  stop applying by themselves.
+- The housing part is not stored again: `build_pupitre_etl_spec(con,
+  assembly, at)` reads the assembly's housing config with its versions
+  (`_housing_config_dict`, shared with `export_housing_config_json`) →
+  `HousingConfig.from_dict(...).at(at)` → `PupitreEtlSpec.from_housing`,
+  then applies the missing-type rule, then adds the `pupitre_etl_magnet`
+  rows of that version.
 - **Missing-type rule:** the assembly's magnet types come from
   `magnets.type` (`insert` / `bitters` / `supras`). The H group is the one
   whose `reference_grX_current` is `IH` (GR1 in M7/M9, GR2 in M8/M10), the
@@ -288,13 +340,16 @@ ALTER TABLE experiments ADD COLUMN IF NOT EXISTS etl_checked_at TIMESTAMP;
   channel results). It is kept apart from step E's `file_checks`: editing a
   magnet part must trigger a recheck, not of file integrity.
 - CLI (`magnetdb.py`):
-  - `etl set-magnet ASSEMBLY MAGNET PART.json` validates through
-    `from_dict` and upserts the row;
-  - `etl show ASSEMBLY` prints the assembled spec;
-  - `etl export ASSEMBLY [-o FILE]` writes `<assembly>.pupitre-etl.json`.
-- `check_experiment_files.py --etl` builds the spec of each experiment's
-  assembly, runs `prepare_pupitre` on the file and stores the results in
-  `etl_checks` / `etl_checked_at`. `--recheck` and `--assembly` work as
+  - `etl set-magnet ASSEMBLY MAGNET VERSION PART.json` validates through
+    `from_dict` and upserts the row for that housing version;
+  - `etl show ASSEMBLY [--version V | --at TIME]` prints the assembled spec
+    (default: the version in force now, or at the assembly's end);
+  - `etl export ASSEMBLY [--version V | --at TIME] [-o DIR]` writes
+    `<assembly>.<version>.pupitre-etl.json`; without an option, one file per
+    housing version overlapping the assembly.
+- `check_experiment_files.py --etl` builds, for each experiment, the spec
+  of its assembly at the file start, runs `prepare_pupitre` on the file and
+  stores the results in `etl_checks` / `etl_checked_at`. `--recheck` and `--assembly` work as
   today; after editing a magnet part, run
   `--etl --recheck --assembly <name>`.
 
@@ -303,7 +358,12 @@ ALTER TABLE experiments ADD COLUMN IF NOT EXISTS etl_checked_at TIMESTAMP;
 Reading a raw pupitre file (`load_magnetdata`) does not need the assembly;
 **applying the spec does**, since the spec is per assembly (magnet parts,
 `IS` in step 1b, M5's `IB1`/`IB2`). The assembly is resolved from the
-database before the file is opened:
+database before the file is opened. Implemented once, in
+`to_duckdb/file_context.py`:
+`resolve_file_context(con, path) -> FileContext(experiment_id, assembly,
+housing, housing_version, t0)` (steps 1–3 below, then the housing
+version), and reused by the digital twin's header readers (phase 2, same
+resolution order, see its L2 "Pupitre header reader"):
 
 1. **Registered file:** file → `experiments.file` → `assembly_name`
    (experiments are created per assembly from the assembly JSON's records,
@@ -316,8 +376,16 @@ database before the file is opened:
    open question #28 there — housing-only spec (`from_housing`, no
    magnet parts) with a warning (recommended), or refuse the ETL.
 
-Standalone python_magnetrun does not resolve anything: the caller gives the
-spec file, or the directory and the assembly name.
+Then the **housing version**: the file start (first `Date`/`Time`,
+Europe/Paris; the filename timestamp before the file is read) →
+`HousingConfig.at(t0)`. Every housing has a dated base version from its
+first commissioned assembly, so every file linked to an assembly gets a
+named version; files older than that (e.g. M8 2011–2021, M10 2011–2018)
+get the base wiring with version `""`, and only through case 3.
+
+Standalone python_magnetrun resolves only the housing version (from the
+file start and its bundled configs): the caller gives the spec file, or the
+directory and the assembly name.
 
 The pupitre header (line 1, `MagnetCode`) is only a cross-check, never used
 to resolve the assembly (`MagnetCode` is unreliable as a key).
@@ -334,7 +402,14 @@ flag broken files.
      the housing default;
    - JSON file: `save` then `load` gives the same spec;
    - `from_housing`: M9 and M10 give different renames (`Flow1→FlowH` vs
-     `Flow1→FlowB`) and no magnet parts;
+     `Flow1→FlowB`) and no magnet parts; `housing.version` is the resolved
+     version (`M9-181109`); M8 resolved on 2026-03-06 gives the default
+     `UB = Ucoil14` and a `UH` without `Ucoil14`, M8 on 2025-11-05 gives
+     `UB = Ucoil15 + Ucoil16`;
+   - version check: an `M8-211225` spec on a synthetic M8 file dated
+     2026-03-06 returns `{"kind": "housing_version", "ok": False}` (warning
+     logged) and the data is still processed; a matching spec returns
+     `ok: True`;
    - `prepare_pupitre`: rename→add order, pattern removal, zero columns
      kept, `t` present, no `Icoil` left;
    - current check: synthetic file with `Icoil1` = 0 and `Icoil2` = `IH`
@@ -353,19 +428,34 @@ flag broken files.
    `prepare_pupitre` with NumPy docstrings → verify: the step 1 tests pass.
 4. Add `etl_cli.py`, register it, and the opt-in `--etl-spec` / `--etl-dir`
    in `txt2csv` and `etl_spec=` in `MagnetRun.fromtxt` → verify:
-   `etl create /tmp/x.json --from-housing M9` then `etl show` prints it;
-   `txt2csv --etl-spec` runs on a synthetic file; existing `txt2csv` and
-   `MagnetRun` tests still pass.
-5. Write `to_duckdb/tests/test_etl_spec.py` (in-memory DB loaded with the
-   bundled M8/M9/M10 configs, as in `test_housing_config_db.py`), then the
-   `schema.py` changes, `etl_spec.py` and the `etl` CLI → verify: the tests
-   pass, and
+   `etl create /tmp/x.json --from-housing M9 [--at TIME]` then `etl show`
+   prints it with its `housing.version`; `txt2csv --etl-spec` runs on a
+   synthetic file and `--etl-dir` picks `<assembly>.<version>` from the file
+   start; existing `txt2csv` and `MagnetRun` tests still pass.
+5. Write `to_duckdb/tests/test_file_context.py` and
+   `to_duckdb/tests/test_etl_spec.py` (in-memory DB loaded with the
+   bundled M8/M9/M10 configs and their versions, as in
+   `test_housing_config_db.py`), then `file_context.py`, the `schema.py`
+   changes, the shared `_housing_config_dict` in `crud.py` (the existing
+   export tests still pass), `etl_spec.py` and the `etl` CLI → verify: the
+   tests pass, and
+   - `resolve_file_context`: a registered file gives its experiment and
+     assembly; a file not in `experiments` resolves by the assembly time
+     window; an M8 file starting 2026-03-06 gives `M8-260305` and one
+     starting 2025-11-05 gives `M8-211225`; a file covered by no assembly
+     gives `assembly = None` (open question #28);
    - the M9 spec without magnet rows contains `IH`, `IB`, `Flow1→FlowH`,
-     `Icoil\d+` and the default `UH`/`UB`;
-   - with a `M25032101` row, `UH` sums `Ucoil2–7` only and the `Icoil2`
-     check is present;
+     `Icoil\d+`, the default `UH`/`UB` and `housing.version = "M9-181109"`;
+   - with a `M25032101` row for `M9-181109`, `UH` sums `Ucoil2–7` only and
+     the `Icoil2` check is present;
+   - `M8_A230919_00`: the specs at 2026-03-05 15:56 and 17:22 are
+     `M8-211225` (`UB = Ucoil15 + Ucoil16`) and `M8-260305` (`UB = Ucoil14`);
+     an M8Bitters part written for `M8-211225` is absent from the
+     `M8-260305` spec; `etl export` without an option writes both files;
    - inserting a part for a magnet not in the assembly is refused by the
-     foreign key;
+     foreign key; a part for an unknown version is refused by the foreign
+     key, one for another housing's version or a version not overlapping the
+     assembly by `set_magnet_part`;
    - an M10 Bitters-only assembly: no `IH` add, `remove` holds `IH`, `UH`,
      `Ucoil1–14`, `Idcct3`, `Idcct4`; `FlowH`, `TinH`, `RpmH`, `HPH` are
      not removed;
@@ -379,10 +469,13 @@ flag broken files.
    `etl_checked_at` is set; without `--recheck` a second run skips it.
 7. Run a comparison script (in the scratchpad, not committed) on real files
    from the records mount (the bundled `python_magnetrun/data` samples are
-   Git LFS pointers): M9 2026-05-15 and 2023-02-08 and an M10 file with
-   current, old `prepareData` versus the new spec path → verify: identical
-   values on shared columns; the current checks pass (≈1.2 A and 1.6 A on
-   the M9 files) and so do the channel checks for the removed channels.
+   Git LFS pointers): M9 2026-05-15 and 2023-02-08, an M10 file with
+   current, and M8 `2026.10.30 - 09:10:03` and `2025.11.05 - 14:42:13`
+   (both sides of `M8-260305`), old `prepareData` versus the new spec path
+   → verify: identical values on shared columns (M8 2026: `UB` ≈ 357 V =
+   `Ucoil14` on both paths); the current checks pass (≈1.2 A and 1.6 A on
+   the M9 files), so do the channel checks for the removed channels and the
+   housing-version checks.
    Expected differences, to be listed for review: all-zero and duplicate
    columns now kept, companions now removed with their `Ucoil`, and the
    electrical fields of a missing magnet type.
@@ -391,8 +484,13 @@ flag broken files.
 ## Assumptions and open questions
 
 - **v1 magnet parts are written by hand** (`etl set-magnet`), with explicit
-  channel names. No row is seeded for existing assemblies; without rows the
-  spec is the housing-only content. Generating magnet parts needs a rule for
+  channel names, one per housing version. No row is seeded for existing
+  assemblies; without rows the spec is the housing-only content of the
+  version.
+- **Wiring changes are declared as housing versions only** (D1). A wiring
+  change that concerns one assembly's magnets but not the housing GR
+  channels (e.g. an insert tap moved from `Ucoil2` to `Ucoil1`) still needs
+  a housing version to start a new magnet part. Assumed rare. Generating magnet parts needs a rule for
   mapping assembly magnets and parts to `Ucoil`/`Icoil` channels: the L2
   section mapping of [PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md)
   (`v_config_sections`, its phase 2), used by v2 of the builder. M5 also
@@ -434,6 +532,9 @@ flag broken files.
   later, failed `etl_checks`.
 - **Switch Pupitre callers to the spec path** (step 2a of the cross-plan
   order): the spec path becomes the default.
+- **Re-export the specs when a housing version is added** (e.g. M8 going
+  back to `Ucoil15/16`): `etl export ASSEMBLY` for the affected assemblies,
+  then `check_experiment_files.py --etl --recheck --assembly <name>`.
 - **Show `etl_checks` in the dashboards** (current and channel checks): an
   "ETL check" column (`⚠ IH Δ 7.3 A`, `⚠ ch5 Tcal5 9.3`) and an amber row
   (`#fff3cd`) in the assembly_stats
@@ -445,8 +546,12 @@ flag broken files.
   only the slots present under the digital twin's L2 section mapping rules
   (2026-10-08): pair layout with `Ucoil7` = outermost pair (e.g. `Ucoil2–7`
   for a 12-helix insert), per-helix layout detected from probes or non-null
-  `Ucoil8–14`, Bitters on `Ucoil15–16`, null channels (unplugged or absent)
-  left out.
+  `Ucoil8–14`, null channels (unplugged or absent) left out. The channels
+  of each group come from the **housing-config version in force at the file
+  start** (python_magnetrun `HousingConfig.at(t0)`, DuckDB
+  `housing_config_versions`, done 2026-11-03), not from a fixed rule: the
+  wiring can change inside one assembly (M8 Bitters on `Ucoil14` from
+  2026-03-05 17:21:09, version `M8-260305`; base wiring `Ucoil15–16`).
 - **M5 entries** (step 4; blocked on the formal wiring confirmation):
   `IB1`/`IB2` in the two Bitters' magnet parts.
 - **Supra current `IS` for M8** (step 1b, after v1; outline agreed

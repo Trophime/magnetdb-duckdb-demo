@@ -12,6 +12,10 @@ superseded; cross-references to
 [NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md); order, blockers and
 approvals across these plans in
 [Cross-plan order, blockers and approvals](#cross-plan-order-blockers-and-approvals).
+Revised 2026-11-03: pupitre header = monitoring model (R00/Adv/Bdv/CT,
+checked on real files), slot → magnet through the **housing-config version
+in force at t0** (step H, done), CT reference temperature, `Tout` binding;
+data issues #10–#11.
 **No implementation phase is approved yet** — each phase below
 gets its own short plan + approval before any code or schema change.
 Items marked **[unconfirmed]** are assumptions awaiting an answer (see
@@ -269,10 +273,10 @@ the 14 sample files). Summary:
 | `Qnom<n>`, `PBnom<n>` | nominal flow (l/s) and pressure (bar) for surveillance | active | `config_circuits` |
 | `FF<n>` | field factor (G/A), one per circuit: B = FF1·I₁ + FF2·I₂ — checked on M5 (10.0 T) and M9 (34.986 T); FF3/FF4 duplicate FF1/FF2 in M9 | active | `config_supply_loads.field_factor` + L3 in-situ FF rows |
 | `AR<n>`, `AL<n>` | load resistance / inductance (unit unknown) | unused | `config_supply_loads` |
-| `r0/a0/b0_coil<i>` | R(I) = r0 + a0·I + b0·I² per section (mΩ, mΩ/A, mΩ/A² — **inferred from data**) | active | `config_sections` + L3 R rows (`polynomial`, section level) |
+| `r0/a0/b0_coil<i>` | R at 0 °C vs current, R0c = r0 + a0·I + b0·I² per section (mΩ, mΩ/A, mΩ/A² — **confirmed** 2026-11-03: the pupitre computes 1000·U/I [mΩ], see [Monitoring model](#pupitre-monitoring-model)) | active | `config_sections` + L3 R rows (`expression`, section level) |
 | `ar/dr_coil<i>` | alarm / fault threshold on resistance deviation (%) — pupitre `DRcoil<i>` | active | `config_sections.protection` |
 | `at/dt_coil<i>` | alarm / fault threshold on coil temperature (°C) — pupitre `Tcal<i>` | active | `config_sections.protection` |
-| `ct<i>` | temperature coefficient (1/K), often wrong; checked vs `materials.alpha` | active | `config_sections.protection` |
+| `ct<i>` | temperature coefficient (1/K) at 0 °C, part of the monitoring model with r0/a0/b0; often wrong; checked vs `materials.alpha` | active | `config_sections.ct` (typed: semantics confirmed) |
 | `G<i>` | gain of the 0/10 V conditioning drawer (dimensionless) | active | `config_sections.protection` |
 | `H<i>` | rough inductance from trial and error (mH — **inferred**) | active | `config_sections.protection` |
 | `DeltaIA/IU/IS` | supply current surveillance: alarm (A), fault (A), activation flag | active | `operating_configurations.protection` |
@@ -305,6 +309,9 @@ CREATE TABLE IF NOT EXISTS operating_configurations (
     source_ref        VARCHAR,          -- sha256 (content minus Date/Heure) | MySQL row id
     source_timestamp  TIMESTAMP,        -- MAGFILE Date/Heure
     housing           VARCHAR,          -- from NMagnet, cross-check vs assembly
+    housing_version   VARCHAR REFERENCES housing_config_versions(name),
+                                        -- wiring in force at the source time (file start);
+                                        -- slots are resolved against it
     insert_code       VARCHAR,          -- MagnetCode, cross-check vs assembly insert
     resolution_status VARCHAR,          -- ok | insert_mismatch | no_experiment | section_mismatch
                                         -- | source_mismatch | ct_mismatch | layout_mismatch
@@ -344,14 +351,18 @@ CREATE TABLE IF NOT EXISTS config_supply_loads (
 
 CREATE TABLE IF NOT EXISTS config_sections (
     config_id     INTEGER REFERENCES operating_configurations(id),
-    slot          INTEGER,              -- MAGFILE coil index (1..NbCoil)
-    r0            DOUBLE,
-    a0            DOUBLE,
-    b0            DOUBLE,
-    protection    JSON DEFAULT '{}',    -- ar, dr, at, dt, ct, G, H; ct_check result
+    slot          INTEGER,              -- MAGFILE coil index (1..NbCoil) = Ucoil<slot>
+    r0            DOUBLE,               -- [Ohm] at 0 °C (source mOhm)
+    a0            DOUBLE,               -- [Ohm/A] (source mOhm/A)
+    b0            DOUBLE,               -- [Ohm/A^2] (source mOhm/A^2)
+    ct            DOUBLE,               -- [1/K] at 0 °C
+    protection    JSON DEFAULT '{}',    -- ar, dr, at, dt, G, H; ct_check result
     PRIMARY KEY (config_id, slot)
 );
--- Slots with r0 = a0 = b0 = 0 are NOT stored (section absent).
+-- Stored by slot, as written: which magnet a slot belongs to is resolved at
+-- read time (section mapping below), never at write time. Slots with
+-- r0 = a0 = b0 = 0 are not stored; a stored slot is not proof that the
+-- channel is plugged (M8 slots 15-16 since 2026-03-05: r0 = 0, a0/b0 != 0).
 ```
 
 ### Resolution rules
@@ -386,7 +397,12 @@ Rules confirmed by the user on 2026-10-08 (they replace the earlier
 (`R00/Adv/Bdv/CT` of channel *s*) and the MAGFILE `r0/a0/b0_coil<s>` follow
 the same numbering.
 
-1. **Channels per role:**
+1. **Channels per role** come from the **housing-config version in force at
+   t0** (2026-11-03, step H): magnet role → GR (`coil_assignment`) → that GR's
+   `voltage_channels_grX`, the wiring of python_magnetrun `HousingConfig.at(t0)`
+   (DuckDB: `housing_config` + `housing_config_versions`). The wiring can
+   change inside one assembly, so it is never a fixed rule per housing or
+   per assembly. Base wiring:
 
    | Housing | Wiring | Insert channels | Bitters channels |
    |---|---|---|---|
@@ -395,6 +411,16 @@ the same numbering.
    | M7 | Insert only, GR1 | `Ucoil1–7` (same insert rules) | — |
    | M5 | Bitters only, GR1 | — | `Ucoil1–2` |
    | M3 | needs a new `M3-housing-config.json` (3 coils) | open question #20 | |
+
+   Versions: each housing starts with a **dated base version** (empty
+   overrides) from its first commissioned assembly — `M5-140101`,
+   `M7-140101`, `M8-211225`, `M9-181109`, `M10-180220`; earlier data gets
+   the base wiring with no version name. Then **`M8-260305`** (from
+   2026-03-05 17:21:09+01:00, in
+   `M8_A230919_00`): M8Bitters read on a **single tap `Ucoil14`**, insert on
+   `Ucoil1–13`, `Ucoil15–16` exactly 0 in all 71 files checked up to
+   2026-11-03 (data issue #11). The expected wiring stays `Ucoil15/16`
+   (user); going back to it is a new version.
 
    M5 and M7 are single-group housings (confirmed); their `magnetdb.duckdb`
    rows were corrected on 2026-10-05 (data issue #8).
@@ -425,7 +451,8 @@ the same numbering.
    and probes when present. E.g. M9 `M25032101` (14 helices): `Ucoil1` null
    → unplugged.
 6. **Bitters:** one voltage tap per Bitter part: section *j* = Bitter part
-   with `coil_index` = j.
+   with `coil_index` = j — or, when the GR has a single channel
+   (`M8-260305`), one section for the whole Bitters magnet.
 7. **Ordering** is inner → outer. `magnet_parts.coil_index` follows the magnet
    definition order, so this assumes magnet JSON lists parts inner → outer;
    verified at ingest (inner radius increasing with `coil_index`, from
@@ -436,6 +463,8 @@ default:
 
 ```sql
 -- v_config_sections: (config_id, slot, magnet_name, section_index, part_names[] | probe_name)
+-- slots resolved against operating_configurations.housing_version (its GR
+-- channels) and the assembly's magnets; t0 is never recomputed here
 ```
 
 - **Used by the Pupitre ETL:** this slot mapping is the assembly → `Ucoil`
@@ -478,6 +507,13 @@ InferredConfigBuilder (reserved)┘
 - New modules (snake_case), e.g. `to_duckdb/operating_config.py`
   (dataclass + writer + resolution helpers) and
   `to_duckdb/readers/magfile_conf.py`.
+- **File context, shared with the Pupitre ETL** (2026-11-03): readers get
+  the experiment, assembly and housing version of a file from
+  `to_duckdb/file_context.py`,
+  `resolve_file_context(con, path) -> FileContext(experiment_id, assembly,
+  housing, housing_version, t0)`, created in step 5 of
+  [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md) and reused here, so
+  that resolution is written once.
 - `MagfileConfReader`: tolerant `key="value"` parser; ignores `#` lines;
   key → column mapping and source units come from `magfile-defs.json`
   (values converted to SI); keys without a defs entry go to `extra`
@@ -509,7 +545,10 @@ trailing tab. Designer's notes in that code:
 - `R00`, `Adv`, `Bdv` are the coefficients **in use at that instant**:
   R(I) = R00 + Adv·I + Bdv·I²; `CT` is the temperature coefficient.
 - The loop covers the measurement channels (16 on M8/M9/M10); **all four
-  values at 0 = channel not used**.
+  values at 0 = channel not used**. Not true in practice (2026-11-03): `CT`
+  is non-zero on unused slots (M9 slot 1 and slots 8–14 are
+  `0 0 0 0.0038`), and M8 slots 15–16 keep `a0`/`b0` ≠ 0 with `r0 = 0`
+  while the channels read exactly 0.
 - `imax1` / `imax2` are annotated "Imax tr1" / "Imax tr2"; "tr" = GR
   (user, 2026-10-08): GR1 / GR2 on M8/M9/M10, supplies A1 / A2 on M5,
   GR1 only on M7 (see the MAGFILE field table).
@@ -520,6 +559,32 @@ trailing tab. Designer's notes in that code:
 It largely closes the MAGFILE history gap for recent runs: no time matching
 is needed for these fields. The conf file / MySQL stays the source for the
 other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
+
+**Resolution order** (2026-11-03): the context of a file is resolved
+**before** its header is interpreted, with `resolve_file_context` (see
+reader architecture):
+
+1. file → experiment (`experiments.file`), or the time window for a file
+   not in `experiments` (same rules as the Pupitre ETL "Assembly
+   resolution");
+2. → assembly (`experiments.assembly_name`) → housing (`assemblies.housing`);
+3. → housing version in force at the file start (`HousingConfig.at(t0)`,
+   first `Date`/`Time` in Europe/Paris time);
+4. → read line 1 and interpret it against that context.
+
+| Step on line 1 | Needs assembly / housing version |
+|---|---|
+| Parse and classify (`header_class`, step E) | No — format only |
+| Store the coefficients by slot (`config_sections`) | No — raw by slot |
+| Link to the experiment; `MagnetCode` vs the assembly's insert | Assembly |
+| Slot → magnet section, CT check, L3 rows | Assembly and housing version |
+| Header check (`layout_mismatch`) | Housing version |
+
+**The header checks, it never decides.** Neither the coefficients nor
+`MagnetCode` ever choose the assembly or the housing version. A non-empty
+slot outside the version's channels, or a mapped channel whose slot is
+empty, sets `layout_mismatch`: the sign that a new housing version is
+needed (as for M8 on 2026-03-05, see data issue #11).
 
 - `PupitreHeaderReader` feeds the same `OperatingConfig` → writer, with
   `source = 'pupitre_header'` and `experiment_id` set directly. Units from
@@ -553,10 +618,13 @@ other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
   its own experiment the **pupitre header wins** (written with the run); the
   conf value is kept in `extra` and `resolution_status` gets
   `source_mismatch`.
-- **Versioning:** a new configuration version is created only when the
-  header content changes within the same assembly; repeated identical
-  headers (e.g. ~1800 M9 files) point to the existing version, whose
-  `experiment_id` is the first occurrence.
+- **Versioning:** a new configuration version is created when the
+  assembly, the **housing version** or the header content changes;
+  repeated identical headers (e.g. ~1800 M9 files) point to the existing
+  version, whose `experiment_id` is the first occurrence. Each
+  configuration therefore maps to exactly one housing version
+  (`operating_configurations.housing_version`), even when the coefficients
+  stay the same across a wiring change.
 - Files of class *data* or *empty* get a file-level flag
   (`no_parameter_line`) in the coverage view, never a configuration row.
 - **File quality on `experiments`** (step E of the cross-plan order, before
@@ -598,16 +666,66 @@ other fields (`Ivar`, `FF`, `Qnom`, `AR/AL`, surveillance, protection).
     `header_class = 'full'`**. Checked on the latest file of M3, M5, M7,
     M8, M9, M10 (all full); the 2019 M9 / 2020 M10 sample files in
     python_magnetrun are *short*.
-- Section absence still requires `r0 = a0 = b0 = 0`: M8 Bitters coils 15/16
-  have `r0 = 0` with non-zero `a0`/`b0`. Slot 1 of M9 `M25032101` is
-  `0 0 0` in both `MAGFILEM9.conf` and the 2026-10-02 pupitre header:
-  channel unplugged (section mapping rule 5; open question #3 resolved).
+- **Which slots are sections** comes from the housing-config version at t0
+  and the assembly (section mapping), not from the coefficients: M8 slots
+  15–16 have `r0 = 0` with non-zero `a0`/`b0` but are unplugged since
+  2026-03-05 (`M8-260305`). Slot 1 of M9 `M25032101` is `0 0 0` in both
+  `MAGFILEM9.conf` and the 2026-10-02 pupitre header: channel unplugged
+  (section mapping rule 5; open question #3 resolved).
+- **Header check** (logged, never rejected): a slot with non-zero
+  `r0/a0/b0` that is not among the channels of the housing-config version at
+  t0, or a mapped channel whose slot is all zero, adds `layout_mismatch` to
+  `resolution_status`. This is what reveals a wiring change: the M8 header
+  moved the Bitters to slot 14 on 2026-03-05 17:21:09, the first file with
+  the new wiring.
+
+### Pupitre monitoring model
+
+The header coefficients are the reference of the pupitre's live
+monitoring (notes `reference-resistance.md` and `resistance-temperature.md`
+in `~/github/magnet-scipy`). Per section, at each sample:
+
+| Quantity | Formula | Pupitre channel |
+|---|---|---|
+| reference R at 0 °C [mΩ] | R0c = R00 + Adv·\|I\| + Bdv·I² | — |
+| measured R [mΩ] | Rm = 1000·\|U/I\| | — |
+| mean water temperature [°C] | Tmoy = (Tin + Tout)/2 | — |
+| measured R at 0 °C [mΩ] | R0 = Rm / (1 + CT·Tmoy) | — |
+| deviation [%] | 100·(R0 − R0c)/R0c | `DRcoil<i>` (alarm `ar`, fault `dr`) |
+| equivalent coil temperature [°C] | \|Rm/R00 − 1\| / CT | `Tcal<i>` (alarm `at`, fault `dt`) |
+
+- **Checked 2026-11-03** by recomputing `DRcoil`/`Tcal` from line 1 and the
+  raw channels (rows above 2000 A): M9 `2026.10.29 - 18:03:45` and M8
+  `2026.10.30 - 09:10:03` match to the file's rounding (median gaps 0.025 %
+  and 0.03 K) on every active slot. Units mΩ confirmed; `Tcal` uses R00 only;
+  `Tout` is the pupitre `Tout` column (one primary-loop channel).
+- **Meaning** (`resistance-temperature.md`): the `I` terms are the Taylor
+  expansion of the conductor heating above the water,
+  R/R00 ≈ 1 + CT·ΔT(I) + CT²·σ²(I) at fixed water temperature, so Adv and
+  Bdv scale with CT. `Tcal` is the first-order estimate of the 1/r-weighted
+  mean conductor temperature ⟨T⟩_w with T₀ = 0 °C, R₀ = R00; it ignores the
+  CT²·σ² term (overestimates for an uneven temperature).
+- **R00, Adv, Bdv and CT form one model:** CT cannot be replaced by
+  `materials.alpha` without refitting R00/Adv/Bdv.
+- **Which `Tin`:** the pupitre uses `Tin2` for insert slots and `Tin1` for
+  Bitters slots, on M8 (insert GR2) and on M9 (insert GR1). On M9 `Tin1` is
+  the GR1 inlet (user, 2026-11-03; the M9 pumps `Rpm1`/`Flow1`/`HP1` follow
+  the GR1 current), so the M9 insert's `DRcoil` uses the Bitters inlet:
+  data issue #10.
 
 ### Temperature coefficient cross-check (`ct` vs `materials.alpha`)
 
-`ct<i>` is the temperature coefficient [1/K] of section *i* (confirmed).
-**`materials.alpha` is the reference**; `ct` is checked against it, never
-used to compute R(T).
+`ct<i>` is the temperature coefficient [1/K] of section *i* at 0 °C
+(confirmed). `ct` is part of the [monitoring model](#pupitre-monitoring-model)
+and is used by its L3 rows; **`materials.alpha` is the reference for
+physics models** (magnettools, FEM). The check compares the two as a
+diagnostic.
+
+- **Reference temperatures differ:** `materials.alpha` is given at
+  `materials.t_ref` (293 K for all 115 materials, `alpha = 0.0036`), `ct` at
+  0 °C. Convert before comparing: α₀ = α / (1 − α·(t_ref − 273.15 K)) —
+  0.0036 → 0.00388, close to the `ct` = 0.0038 of the headers, so data
+  issue #7 is partly this reference mismatch.
 
 - Parts of the section come from the section mapping above (insert section
   *k* → its helix pair; Bitters section *j* → that Bitter part; probes when
@@ -626,8 +744,8 @@ used to compute R(T).
   mismatches add `ct_mismatch` to `resolution_status` and are listed by
   `magnetdb.py check`. Never rejected.
 - Done at ingest by both readers (conf files and pupitre headers carry `ct`).
-- Until `materials.alpha` is corrected (data issue #7), almost every section
-  will report a mismatch.
+- Until `materials.alpha` is corrected (data issue #7), many sections will
+  report a mismatch even after the reference-temperature conversion.
 
 ---
 
@@ -663,7 +781,7 @@ CREATE TABLE IF NOT EXISTS electrical_characteristics (
     digital_assembly_name VARCHAR,          -- L4 option B: FK digital_assemblies(name)
     -- value
     representation        VARCHAR NOT NULL,  -- constant | polynomial | expression | table | vector
-    variables             VARCHAR[],         -- independent variables: subset of ['I', 'Tin']
+    variables             VARCHAR[],         -- independent variables: subset of ['I', 'Tin', 'Tout']
     unit                  VARCHAR,           -- SI unit of the quantity: 'ohm' | 'H' | 'T/A'
     value                 DOUBLE,            -- representation = constant
     params                JSON,              -- polynomial / expression / table mapping / vector
@@ -723,16 +841,21 @@ measured channels when evaluated:
   magnet are in series, so they share it); for **supra** parts, the supra's
   own current.
 - `Tin` [K] — the inlet temperature of that circuit.
+- `Tout` [K] — the outlet temperature: the pupitre `Tout` column, one
+  channel for the primary loop, shared by all circuits (used by the
+  [monitoring model](#pupitre-monitoring-model)).
 
 Binding helper, e.g.
 `bind_variables(con, assembly, magnet, source_format) -> {"I": "IH", "Tin": "TinH"}`:
 
 1. magnet role → circuit via `housing_config.coil_assignment`
    (e.g. M10 `{'Insert': 'GR2', 'Bitter': 'GR1'}`; the insert is on GR1 in
-   M9 but GR2 in M8/M10);
+   M9 but GR2 in M8/M10), with the channels of the housing-config version
+   in force at t0;
 2. circuit → current channel via `reference_gr<n>_current` (exists today);
 3. circuit → inlet temperature via **new** `reference_gr<n>_tin` keys
-   (e.g. M9: `TinH` / `TinB`) — explicit, not derived from the `H`/`B`
+   (e.g. M9: `TinH` / `TinB`; M9 `Tin1` = GR1 confirmed 2026-11-03) —
+   explicit, not derived from the `H`/`B`
    suffix, because older data and M8 files use `Tin1`/`Tin2` (also
    `Flow1/2`, `HP1/2`, `Rpm1/2`). Once Pupitre files go through the
    spec-driven ETL ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)),
@@ -866,15 +989,16 @@ Aggregation fallback: with no magnet-level row, R and FF may be summed over
 parts or sections (series connection, superposition at the field centre).
 L is never aggregated (part-to-part mutuals within a magnet are not stored).
 
-Temperature dependence: R(T) models use **`materials.alpha`** (per part, or
-the resistance-weighted α_eff per section, see L2 cross-check). MAGFILE `ct`
-is kept with the configuration as provenance only.
+Temperature dependence: physics R(T) models use **`materials.alpha`** (per
+part, or the resistance-weighted α_eff per section, see L2 cross-check). The
+MAGFILE / pupitre-header rows use their own `ct`, which is part of the
+[monitoring model](#pupitre-monitoring-model).
 
 ### What existing sources produce
 
 | Source | Rows |
 |---|---|
-| MAGFILE `r0/a0/b0_coil<i>` | R, `polynomial`, section level, `source = magfile_conf`, valid from the configuration's `valid_from` |
+| MAGFILE / pupitre header `r0/a0/b0/ct` (slot) | R, `expression` `(r0 + a0*abs(I) + b0*I**2) * (1 + ct*((Tin + Tout)/2 - 273.15))` (SI), `variables = ['I', 'Tin', 'Tout']`, `model = 'pupitre_monitoring'`, section level (slot → magnet section from the housing-config version at t0), `source = magfile_conf` or `pupitre_header`, valid from the configuration's `valid_from` |
 | MAGFILE `FF1–4` | FF, `constant`, in-situ |
 | magnet-scipy `inductance` | self L, `constant`, magnet level |
 | magnet-scipy `mutual_inductances` | M, `vector`, assembly level |
@@ -1188,13 +1312,15 @@ implementation.**
 |---|---|---|---|---|
 | 0 | Reconcile the plan documents | — | — | **Done** 2026-10-07 |
 | E | File quality on `experiments` (`header_class`, `file_integrity` ok / truncated / unreadable, `file_checks`; python_magnetrun reports truncation) — see L2 "Pupitre header reader" | — | none | **Done** 2026-10-22 (approved 2026-10-22); filled in `magnetdb-2026-10-08.duckdb` |
+| H | Time-versioned housing config: python_magnetrun `HousingConfig.versions` / `at(t0)` resolved by every caller (`prepareData`, `HybridRun`, overview processing, analysis CLI, dashboard), `cleanupData` keeps `keys_to_add` columns, DuckDB `housing_config_versions` (exported back by `export_housing_config_json`); dated base version per housing (first commissioned assembly) and `M8-260305` (data issue #11) | — | none | **Done** 2026-11-03 (approved 2026-11-03); versions not yet loaded into `magnetdb.duckdb` |
+| R | Header resolution order (assembly → housing version → header; the header checks, never decides), `operating_configurations.housing_version`, shared `resolve_file_context` helper — documents only, see L2 "Pupitre header reader" | H | none | **Done** 2026-11-03 (approved 2026-11-03) |
 | S1 | Signature regime robustness study ([PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md)), incl. a robust pupitre `Field` signature | — | before running: where the tooling lives; library fixes vs local work-arounds; RDP vs PELT; 3–4 test file pairs to pick. Deferred by that plan (2026-08-11): the "one pupitre file → several pigbrother files" case (no discovery logic in that direction yet) | **Methodology approved** 2026-08-11; execution choices to decide |
 | S2 | Fill `overview_records.signatures`, `plateaux`, `sync_info` with real `Signature` output (replacing the placeholder `_extract_signatures` in python_magnetrun `analysis/processing.py`); per-experiment `Field` signature (existing work: `stage/` writes `overview_experiments.field_signature` with a hand-picked `FIELD_THRESHOLD = 0.1`) | S1; 2a for channel names — the lag computation (`_compute_lag_correlation`) looks up pupitre current channels by their post-ETL names (`IH`/`IB` via `get_pupitre_current_channel`): use the spec's names, or the raw `Idcct*` columns | none beyond its dependencies | Plan to write, then approval |
 | S3 | `teb` as a time series: an ETL step shifting pupitre `teb` by the lag stored in `sync_info` (for magnet cooling modeling; signature plan "Related future work"). **Assumption to flag:** one clock offset per pupitre file, borrowed from the current-channel lag — no pigbrother temperature to verify it against | S2 (lag in `sync_info`), 2a (spec path) | none beyond its dependencies | Plan to write, then approval |
-| 1 | Pupitre ETL spec v1 ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)) | — | none | **Plan written, awaiting approval** |
+| 1 | Pupitre ETL spec v1 ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)); revised 2026-11-03: one spec per (assembly, housing version), magnet parts keyed to a housing version (D1); creates `resolve_file_context` | H, R | none | **Plan revised 2026-11-03, awaiting approval** |
 | 1b | Supra current `IS` for M8: `external` spec entries, hybrid loading moved from the dashboard to python_magnetrun (outline in [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)) | 1 | #27 (Hybrid ↔ pupitre clock lag) to check before aligning | Outline agreed 2026-10-07; detailed plan to write, then approval |
 | 2a | Switch Pupitre callers (`load_mrun`/dashboards, `stress_map.py`) to the spec path | 1 + review of its step 5 comparison | none | Plan to write, then approval |
-| 2b | Phase 2: probes + L2 run configuration + `v_config_sections` | — | #2 (conf → experiment link, conf reader only), #17 (M10 coverage start), #20 (M3 only) | Phase plan to write, then approval |
+| 2b | Phase 2: probes + L2 run configuration + `v_config_sections` | R (reuses `resolve_file_context` from step 1 if done first) | #2 (conf → experiment link, conf reader only), #17 (M10 coverage start), #20 (M3 only) | Phase plan to write, then approval |
 | 2c | Phase 1: L1 installation | — | **CIRRUS XML history access** (the 4 magnet-scipy samples suffice for tests and the phase 4 acceptance case); #5, #11, #14, #18, #21 | Phase plan to write, then approval |
 | 3 | Pupitre ETL spec v2: builder driven by the assembly through `v_config_sections` | 1, 2b | none beyond its dependencies | Plan to write, then approval |
 | 4 | M5 rewiring ([NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md)) | 2a (Pupitre part), 3 (optional) | **Formal confirmation of the M5 wiring**; corrected M5 source JSON (two Bitters magnets, user); #26 (`coil_assignment` key for two Bitters); M5 notes §9 open details | Notes ON HOLD; plan to write after confirmation, then approval |
@@ -1298,6 +1424,26 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
    not investigated; (b) optional code change: mode depends only on the
    currents, so `infer_overview_record_fields` could infer it even when
    `assembly_name` is NULL.
+10. **M9 insert `DRcoil` computed with the Bitters inlet temperature
+    (found 2026-11-03).** The pupitre uses `Tin2` for insert slots and
+    `Tin1` for Bitters slots in every housing; on M9 the insert is on GR1,
+    whose inlet is `Tin1` (user). On M9 `2026.10.29 - 18:03:45`,
+    `Tin2 − Tin1` ≈ 0.6 K under load, so the insert `DRcoil` reads
+    ≈ +0.10 % high (max 0.16 %); `Tcal` is not affected (R00 only). M8 is
+    consistent (insert on GR2). To report to the pupitre maintainer; see
+    open question #30 for the L3 binding.
+11. **M8 Bitters on a single tap `Ucoil14` since 2026-03-05 17:21:09
+    (found 2026-11-03).** Inside `M8_A230919_00`, the pupitre header moved
+    the Bitters from slots 15/16 (R00 6.92 + 3.22 mΩ) to slot 14 (R00
+    10.14 mΩ, 10.44 mΩ from 2026-03-06 to 2026-04-14); `Ucoil15–16` are
+    exactly 0 and `Ucoil14` carries ≈ 357 V at 29 kA in all 71 files up to
+    2026-11-03. The expected wiring is `Ucoil15/16` (user).
+    *Fix (step H, done 2026-11-03):* housing-config version `M8-260305`
+    (python_magnetrun `HousingConfig.at`, DuckDB
+    `housing_config_versions`): `UB = Ucoil14`, `UH = Ucoil1–13`. Before
+    it, `UH` included the Bitters voltage (+357 V) and `UB` was all-zero
+    and dropped. *Follow-up (own plan):* recompute the stored statistics of
+    the 50 M8 experiments since 2026-03-05 in `magnetdb.duckdb`.
 
 ---
 
@@ -1305,7 +1451,7 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
 
 | # | Question | Blocks |
 |---|---|---|
-| 1 | MAGFILE semantics/units — **mostly resolved** in `magfile-defs.json` (from `magfile.txt`; FF in G/A per circuit and r0 scale checked against data). Remaining: units of `r0/a0/b0` (mΩ, mΩ/A, mΩ/A² inferred from data) and `H<i>` (mH inferred); meaning and unit of `DeltaT0`; unit of `DeltaPFA/PFU` (mbar?, unused); ~~whether `Imax<n>` is per supply~~ — resolved 2026-10-08 (user): M8/M9/M10 one `Imax` per GR, M5 one per supply (A1, A2), M7 one for GR1. Note to explain in phase 2: M9 IH reached 29.5 kA with `Imax1` = 14.8 kA (limit not a hard cap on the measured current, or `IH = Idcct1 + Idcct2` is not the limited quantity?) | phase 2 typed columns |
+| 1 | MAGFILE semantics/units — **mostly resolved** in `magfile-defs.json` (from `magfile.txt`; FF in G/A per circuit and r0 scale checked against data). ~~units of `r0/a0/b0`~~ — confirmed mΩ, mΩ/A, mΩ/A² (2026-11-03, monitoring model recomputed from real files). Remaining: unit of `H<i>` (mH inferred); meaning and unit of `DeltaT0`; unit of `DeltaPFA/PFU` (mbar?, unused); ~~whether `Imax<n>` is per supply~~ — resolved 2026-10-08 (user): M8/M9/M10 one `Imax` per GR, M5 one per supply (A1, A2), M7 one for GR1. Note to explain in phase 2: M9 IH reached 29.5 kA with `Imax1` = 14.8 kA (limit not a hard cap on the measured current, or `IH = Idcct1 + Idcct2` is not the limited quantity?) | phase 2 typed columns |
 | 2 | MAGFILE conf → experiment link — only for **conf-only fields** (`Ivar`, `FF`, `Qnom`, surveillance), since the pupitre header links its fields to the experiment directly. `Date`/`Heure` is the file's **generation time**, not an experiment start, which favours a **validity window** (a conf applies from its generation time until the next one for that housing/assembly) over "nearest preceding experiment" | phase 2 reader |
 | 3 | Insert slot 1 is `0 0 0` for `M25032101` in both `MAGFILEM9.conf` and the 2026-10-02 pupitre header (so absent in live data too), while the magnet has 14 helices (7 pairs): **which** helix pair has no section — real voltage-tap probes not yet in DuckDB, pairing starting at slot 2, or H1H2 not instrumented? — **resolved 2026-10-08** (user): insert channel rules in the L2 section mapping (pair layout, `Ucoil7` = outermost pair; a null channel = unplugged or pair absent, told apart via `geometry_data` and probes). For `M25032101` (14 helices) `Ucoil1` is unplugged; the C++ writer comment about 4 helices on one channel is ignored. Per-helix layout: `Ucoil14` = outermost helix (confirmed) | — |
 | 4 | ~~PID `jeu` 1–16~~ — resolved: `jeu` is just the parameter-set id (`numero_jeu`); 17–20 = M7–M10, 1–16 stored with no housing; threshold ranges from `configAlims/README.md` | — |
@@ -1320,7 +1466,7 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
 | 13 | ~~MySQL defs file~~ — merged into #8 | — |
 | 14 | L1 cooling/flow tables (`cooling_circuits`, `primary_loop`, `flow_params`) are drafted in python_magnetcooling's working units (rpm, l/s, bar, MW, m³/h): convert to SI like L2/L3, or keep those units for direct use by `WaterFlow`? | phase 1 / 3 |
 | 15 | ~~Where does the `IS` ETL step live~~ — resolved 2026-10-07: `IS` is a column of the Pupitre data after the ETL, through the Pupitre ETL spec's `external` entries (step 1b); hybrid directory from python_magnetrun's `HYBRID_DATA_DIR` | — |
-| 16 | ~~Meaning of `ct`~~ — resolved: temperature coefficient [1/K]; cross-checked against `materials.alpha` (reference), resistance-weighted per helix pair for inserts (L2) | — |
+| 16 | ~~Meaning of `ct`~~ — resolved: temperature coefficient [1/K] at 0 °C, part of the pupitre monitoring model with r0/a0/b0 (2026-11-03); cross-checked against `materials.alpha` converted to 0 °C, resistance-weighted per helix pair for inserts (L2) | — |
 | 17 | Exact start of full pupitre parameter lines in M10 (shell scan inconclusive) | phase 2 coverage |
 | 18 | PID third-range threshold: 1000 A (CIRRUS README, R14L09 p13) vs 800 A (magnet-scipy `high_threshold` default) — which is right? If 1000 A, magnet-scipy's default needs a separate fix | phase 1 seed / phase 4 |
 | 19 | CIRRUS ramps (`analogique.rampes.rampe`): needed (e.g. ramp rates vs MAGFILE `dIdtmax`), or out of scope? | low priority |
@@ -1334,3 +1480,4 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
 | 27 | Do the Hybrid and pupitre clocks need a lag correction before `IS` is aligned with `merge_asof` (0.5 s)? Pupitre vs pigbrother lag is the subject of the signature robustness plan; Hybrid vs pupitre was never checked | step 1b |
 | 28 | Pupitre file with no assembly covering its time (e.g. data issue #9): build a housing-only spec (v1 content, no assembly-specific entries) with a warning (recommended), or refuse the ETL? | step 1 follow-ups / 2a |
 | 29 | ~~"Proper" pupitre header~~ — resolved 2026-10-08 from the pupitre writer's C++ code: defined by line 1 only; proper ⇔ `header_class = 'full'` (see L2 "Pupitre header reader") | — |
+| 30 | Monitoring-model L3 rows on M9: bind `Tin` to the GR1 inlet (`Tin1`, physically right) or to `Tin2`, which the pupitre used when the coefficients were in use (data issue #10)? | phase 3 |
