@@ -16,6 +16,7 @@ EXPECTED_TABLES = {
     "operationaldata",
     "overview_records",
     "housing_config",
+    "housing_config_versions",
     "op_run_scalars",
     "op_assembly_bin_stats",
     "op_part_bin_stats",

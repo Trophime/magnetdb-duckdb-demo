@@ -89,6 +89,16 @@ CREATE TABLE IF NOT EXISTS housing_config (
     extra_config    JSON
 );
 
+-- Wiring changes over time of a housing (python_magnetrun HousingConfig
+-- "versions"): from valid_from, overrides apply to the base wiring.
+CREATE TABLE IF NOT EXISTS housing_config_versions (
+    name        VARCHAR PRIMARY KEY,                     -- e.g. 'M8-260305'
+    housing     VARCHAR REFERENCES housing_config(name),
+    valid_from  TIMESTAMPTZ NOT NULL,
+    overrides   JSON NOT NULL,                           -- {HousingConfig field: value}
+    comment     VARCHAR
+);
+
 CREATE TABLE IF NOT EXISTS assemblies (
     name               VARCHAR PRIMARY KEY,
     description        VARCHAR,

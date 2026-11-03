@@ -61,6 +61,7 @@ import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from enums import COIL_PART_TO_MAGNET_TYPE, AssemblyStatus, LifecycleStatus
 from impact import (
@@ -2972,6 +2973,9 @@ def insert_housing_config_from_magnetrun(
     This is the preferred way to populate M8, M9, and M10 configs: the JSON
     files inside the ``python_magnetrun`` package are the authoritative source.
     The function is idempotent — it skips silently if the row already exists.
+    The JSON ``versions`` (wiring changes over time) are then inserted into
+    ``housing_config_versions``, skipping those already present by name, so
+    re-running it on an existing database adds new versions only.
 
     Parameters
     ----------
@@ -2993,14 +2997,46 @@ def insert_housing_config_from_magnetrun(
         if exists(con, "housing_config", housing_name):
             if verbose:
                 print(f"  ~ housing_config  {housing_name}  (already exists, skipped)")
-            _log_operation(con, "insert", "housing_config", housing_name)
-            return
-        data = _housing_config_data_from_magnetrun(housing_name)
-        insert_housing_config(con, data, verbose=verbose)
+        else:
+            data = _housing_config_data_from_magnetrun(housing_name)
+            insert_housing_config(con, data, verbose=verbose)
+        _insert_housing_config_versions(con, housing_name, verbose=verbose)
         _log_operation(con, "insert", "housing_config", housing_name)
     except Exception as exc:
         _log_operation(con, "insert", "housing_config", housing_name, status="error", details={"error": str(exc)})
         raise
+
+
+def _insert_housing_config_versions(con, housing_name: str, verbose: bool = True) -> None:
+    """Insert the bundled JSON's wiring versions of *housing_name*; existing names are skipped."""
+    from python_magnetrun.housing_config import (
+        HousingConfig,
+        get_bundled_housing_config_path,
+    )
+
+    raw = json.loads(
+        get_bundled_housing_config_path(housing_name).read_text(encoding="utf-8")
+    )
+    # from_dict validates the versions (keys, override fields, valid_from offset)
+    for v in HousingConfig.from_dict(raw).versions:
+        if exists(con, "housing_config_versions", v["name"]):
+            continue
+        con.execute(
+            """
+            INSERT INTO housing_config_versions
+                (name, housing, valid_from, overrides, comment)
+            VALUES (?, ?, CAST(? AS TIMESTAMPTZ), ?, ?)
+            """,
+            [
+                v["name"],
+                housing_name,
+                v["valid_from"],
+                json.dumps(v["overrides"]),
+                v.get("comment"),
+            ],
+        )
+        if verbose:
+            print(f"  + housing_config_versions  {v['name']}  from {v['valid_from']}")
 
 
 def insert_housing_config(con, data: dict, verbose: bool = True) -> None:
@@ -3037,10 +3073,29 @@ def insert_housing_config(con, data: dict, verbose: bool = True) -> None:
 def export_housing_config_json(
     con, name: str, output_dir: str | Path = "."
 ) -> Path:
-    """Write ``<output_dir>/<name>-housing-config.json`` from the DB row.
+    """Write ``<output_dir>/<name>-housing-config.json`` from the DB rows.
 
-    Returns the path of the written file.
-    Raises ``ValueError`` if no row for *name* exists in the table.
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open DuckDB connection.
+    name : str
+        Housing identifier, e.g. ``"M8"``.
+    output_dir : str or :class:`~pathlib.Path`, optional
+        Destination directory (default: current directory).
+
+    Returns
+    -------
+    :class:`~pathlib.Path`
+        Path of the written file. Its ``versions`` list comes from
+        ``housing_config_versions`` (ordered by ``valid_from``, written in
+        Europe/Paris time whatever the session time zone); the key is
+        omitted when the housing has no version.
+
+    Raises
+    ------
+    ValueError
+        If no ``housing_config`` row exists for *name*.
     """
     row = con.execute(
         "SELECT coil_assignment, formats, extra_config FROM housing_config WHERE name = ?",
@@ -3055,6 +3110,24 @@ def export_housing_config_json(
     cfg_dict = _derive_housing_config_dict(
         name, dict(coil_assignment), list(formats), extra_config
     )
+
+    versions = []
+    for v_name, valid_from, overrides, comment in con.execute(
+        "SELECT name, valid_from, overrides, comment FROM housing_config_versions "
+        "WHERE housing = ? ORDER BY valid_from",
+        [name],
+    ).fetchall():
+        version = {
+            "name": v_name,
+            # valid_from = local time of the first file with that wiring
+            "valid_from": valid_from.astimezone(ZoneInfo("Europe/Paris")).isoformat(),
+        }
+        if comment is not None:
+            version["comment"] = comment
+        version["overrides"] = json.loads(overrides)
+        versions.append(version)
+    if versions:
+        cfg_dict["versions"] = versions
 
     dest = Path(output_dir) / f"{name}-housing-config.json"
     with open(dest, "w") as fh:

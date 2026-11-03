@@ -6,6 +6,7 @@ go to pytest's tmp_path.
 """
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import duckdb
@@ -415,3 +416,71 @@ class TestSingleGroupHousing:
         ref = self._ref(housing)
         for field in _DERIVED_FIELDS + ["pupitre_formula_map", "pigbrother_formula_map"]:
             assert exported[field] == ref[field]
+
+
+# ---------------------------------------------------------------------------
+# housing_config_versions (time-versioned wiring from the bundled JSON)
+# ---------------------------------------------------------------------------
+
+
+def _versions(con) -> list[tuple]:
+    return con.execute(
+        "SELECT name, housing, valid_from, overrides, comment "
+        "FROM housing_config_versions ORDER BY name"
+    ).fetchall()
+
+
+class TestHousingConfigVersions:
+    def test_table_has_required_columns(self, con):
+        cols = {
+            row[0]
+            for row in con.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'housing_config_versions'"
+            ).fetchall()
+        }
+        assert {"name", "housing", "valid_from", "overrides", "comment"} <= cols
+
+    def test_m8_versions_loaded(self, con):
+        insert_housing_config_from_magnetrun(con, "M8", verbose=False)
+        rows = _versions(con)
+        assert [(r[0], r[1]) for r in rows] == [("M8-211225", "M8"), ("M8-260305", "M8")]
+        _, _, valid_from, overrides, _ = rows[1]
+        assert valid_from == datetime(2026, 3, 5, 16, 21, 9, tzinfo=timezone.utc)
+        assert json.loads(overrides)["voltage_channels_gr1"] == ["Ucoil14"]
+        assert json.loads(rows[0][3]) == {}
+
+    def test_versions_loaded_when_base_row_exists(self, con):
+        insert_housing_config(con, _housing_config_data_from_magnetrun("M8"), verbose=False)
+        insert_housing_config_from_magnetrun(con, "M8", verbose=False)
+        assert [r[0] for r in _versions(con)] == ["M8-211225", "M8-260305"]
+
+    def test_reload_adds_nothing(self, con):
+        insert_housing_config_from_magnetrun(con, "M8", verbose=False)
+        base = con.execute("SELECT * FROM housing_config").fetchall()
+        insert_housing_config_from_magnetrun(con, "M8", verbose=False)
+        assert len(_versions(con)) == 2
+        assert con.execute("SELECT * FROM housing_config").fetchall() == base
+
+    def test_m9_base_version(self, con):
+        insert_housing_config_from_magnetrun(con, "M9", verbose=False)
+        assert [r[0] for r in _versions(con)] == ["M9-181109"]
+
+    @pytest.mark.parametrize("session_tz", ["Europe/Paris", "UTC"])
+    @pytest.mark.parametrize("housing", ["M8", "M9", "M10"])
+    def test_export_versions_match_bundled(self, con, tmp_path, housing, session_tz):
+        """Exported versions equal the bundled ones, whatever the session time zone."""
+        insert_housing_config_from_magnetrun(con, housing, verbose=False)
+        con.execute(f"SET TimeZone = '{session_tz}'")
+        path = export_housing_config_json(con, housing, tmp_path)
+        assert json.loads(path.read_text())["versions"] == _load_ref(housing)["versions"]
+
+    def test_exported_m8_resolves_version(self, con, tmp_path):
+        from zoneinfo import ZoneInfo
+
+        from python_magnetrun.housing_config import load_housing_config
+
+        insert_housing_config_from_magnetrun(con, "M8", verbose=False)
+        cfg = load_housing_config(export_housing_config_json(con, "M8", tmp_path))
+        when = datetime(2026, 3, 6, 9, 11, 2, tzinfo=ZoneInfo("Europe/Paris"))
+        assert cfg.at(when).version == "M8-260305"

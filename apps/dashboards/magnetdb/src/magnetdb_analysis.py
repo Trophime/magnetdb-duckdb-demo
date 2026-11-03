@@ -25,6 +25,7 @@ from python_magnetrun.housing_config import get_housing_config
 from python_magnetrun.hybrid.hybrid_run import HybridRun
 from python_magnetrun.magnetdata_base import DataType
 from python_magnetrun.MagnetRun import load_mrun
+from python_magnetrun.utils.timestamps import parse_txt_filename
 
 try:
     from zoneinfo import ZoneInfo
@@ -1527,6 +1528,7 @@ def get_overview_group_entries(regular_files, housing):
     tdms_columns = {}
     pupitre_mrun_by_channel = {}
     tdms_mrun_by_channel = {}
+    pupitre_start = None
 
     for filename in regular_files or []:
         mrun = load_mrun_object(filename, housing)
@@ -1535,6 +1537,8 @@ def get_overview_group_entries(regular_files, housing):
         fmt = _DEFS_FORMAT_BY_DATATYPE.get(mrun.MagnetData.Type)
         if fmt is None:
             continue
+        if fmt == "pupitre" and pupitre_start is None:
+            pupitre_start = parse_txt_filename(filename)
         target = pupitre_columns if fmt == "pupitre" else tdms_columns
         for group_name in mrun.MagnetData.list_groups():
             if group_name == "Infos":
@@ -1556,7 +1560,11 @@ def get_overview_group_entries(regular_files, housing):
 
     gr_current_alias = {}
     if pupitre_columns:
-        cfg = get_housing_config(housing)
+        # wiring in force at the first pupitre file (file names are Paris local time)
+        cfg = get_housing_config(
+            housing,
+            at=pupitre_start.replace(tzinfo=ZoneInfo("Europe/Paris")) if pupitre_start else None,
+        )
         for role_channel, tchan in (
             (cfg.reference_gr1_current, "Courant_GR1"),
             (cfg.reference_gr2_current, "Courant_GR2"),

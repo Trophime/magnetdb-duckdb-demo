@@ -8,6 +8,10 @@ parts                individual physical components (helix, ring, bitter, lead)
 magnets              magnet assemblies (insert, bitters, hybrid, …)
 magnet_parts         ordered parts within a magnet, with coil_index
 housing_config       wiring layout for a magnet housing (GR1/GR2 coil assignment)
+housing_config_versions  wiring changes of a housing over time: from valid_from
+                     (TIMESTAMPTZ), overrides (JSON, HousingConfig fields) apply to
+                     the base wiring — loaded from the bundled JSON "versions"
+                     (e.g. M8-260305: M8 Bitters read on Ucoil14)
 sites                operational configurations (housing, commissioning dates)
 site_magnets         magnets active in a site — positional & temporal metadata
 experiments          operational records (TSV files) attached to a site
