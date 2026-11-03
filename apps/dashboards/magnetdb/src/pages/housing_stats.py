@@ -13,7 +13,7 @@ from natsort import natsorted
 from plotly import graph_objects as go
 
 dash.register_page(
-    __name__, path="/", name="Housings", order=2, title=lambda: i18n._("Housings")
+    __name__, path="/housings", name="Housings", order=2, title=lambda: i18n._("Housings")
 )
 
 
