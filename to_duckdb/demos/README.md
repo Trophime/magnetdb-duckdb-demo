@@ -15,8 +15,9 @@ acronym on one housing become a single `users` row spanning all of them,
 whatever the variant; sessions of different acronyms are never merged.
 Before building rows, per-row acronym typos in the log are fixed from
 `acronym_corrections.csv` (next to the script, override with
-`--corrections`). Each correction targets one log row by its `timestamp`,
-`magnet` and current `acronym`, and must give a `reason`; duplicate rows,
+`--corrections`). Each correction targets one log row by its `hstart`
+(the log's `HStart`, with milliseconds), `magnet` and current `acronym`,
+and must give a `reason`; duplicate rows,
 an empty `reason`, or a `corrected_acronym` that appears nowhere in the
 log abort the run. Applied corrections are printed, and a correction that
 matches no row only warns (e.g. once the row is fixed upstream). By
@@ -74,7 +75,7 @@ python to_duckdb/demos/users_table_demo.py --link-only --margin 0
 | `--proposals` | `Data/proposals.csv` | Input proposals CSV |
 | `--from` | none (no filtering) | Discard entries before this date (Europe/Paris local time), e.g. `2020-01-01` |
 | `--fuzzy-cutoff` | `0.8` | `difflib` similarity cutoff for fuzzy acronym matching |
-| `--corrections` | `demos/acronym_corrections.csv` | Per-row EXPERIENCES_LOG acronym corrections (`timestamp,magnet,acronym,corrected_acronym,reason`) |
+| `--corrections` | `demos/acronym_corrections.csv` | Per-row EXPERIENCES_LOG acronym corrections (`hstart,magnet,acronym,corrected_acronym,reason`) |
 | `--margin` | `5` | Fallback window [min] around `[hstart, hstop]` for experiments no row contains exactly; `0` disables it |
 | `--sample` | `20` | Number of resulting `users` rows to print |
 | `--housing` | `ALL` (no filtering) | Restrict rebuilding to these housings (e.g. `M9 M10`); other housings' existing rows are left untouched in full-replace mode. Mutually exclusive with `--link-only` |

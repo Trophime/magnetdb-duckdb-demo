@@ -117,20 +117,23 @@ def _log_row(timestamp, acronym, magnet, hstart, hstop):
 
 @pytest.fixture
 def log_csv(tmp_path):
-    """A log where GCS01-118 (M10e) is a typo of GSC01-118 (M10i) in one session."""
+    """A log where GCS01-118 (M10e) is a typo of GSC01-118 (M10i) in one session.
+
+    ``timestamp`` runs ~7.5 h ahead of ``HStart``, as in the real log since 2025.
+    """
     return _write_csv(tmp_path / "log.csv", LOG_FIELDS, [
-        _log_row("2018-12-06 15:05:24", "GCS01-118", "M10e",
+        _log_row("2018-12-06 22:33:24", "GCS01-118", "M10e",
                  "2018-12-06 15:05:24", "2018-12-06 22:58:01"),
-        _log_row("2018-12-06 15:05:40", "GSC01-118", "M10i",
+        _log_row("2018-12-06 22:33:40", "GSC01-118", "M10i",
                  "2018-12-06 15:05:40", "2018-12-06 22:58:01"),
-        _log_row("2018-12-07 10:00:00", "GCS01-118", "M10e",
+        _log_row("2018-12-07 17:28:00", "GCS01-118", "M10e",
                  "2018-12-07 10:00:00", "2018-12-07 11:00:00"),
     ])
 
 
-CORRECTION_FIELDS = ["timestamp", "magnet", "acronym", "corrected_acronym", "reason"]
+CORRECTION_FIELDS = ["hstart", "magnet", "acronym", "corrected_acronym", "reason"]
 GOOD_CORRECTION = {
-    "timestamp": "2018-12-06 15:05:24",
+    "hstart": "2018-12-06 15:05:24",
     "magnet": "M10e",
     "acronym": "GCS01-118",
     "corrected_acronym": "GSC01-118",
@@ -160,6 +163,22 @@ def test_correction_with_other_magnet_is_not_applied(tmp_path, log_csv, capsys):
     sessions, *_ = load_log(log_csv, None, None, corrections)
     assert len(sessions["GCS01-118"]) == 2
     assert "matched no EXPERIENCES_LOG row" in capsys.readouterr().out
+
+
+def test_correction_keyed_on_timestamp_is_not_applied(tmp_path, log_csv, capsys):
+    corrections = load_acronym_corrections(_write_csv(
+        tmp_path / "c.csv", CORRECTION_FIELDS, [{**GOOD_CORRECTION, "hstart": "2018-12-06 22:33:24"}]
+    ))
+    sessions, *_ = load_log(log_csv, None, None, corrections)
+    assert len(sessions["GCS01-118"]) == 2
+    assert "matched no EXPERIENCES_LOG row" in capsys.readouterr().out
+
+
+def test_cutoff_and_session_timestamps_use_hstart(log_csv):
+    # 2018-12-06 20:00 lies between the first rows' HStart (15:05) and timestamp (22:33).
+    sessions, timestamps, _, n_discarded, _ = load_log(log_csv, datetime(2018, 12, 6, 20), None)
+    assert n_discarded == 2
+    assert timestamps == {"GCS01-118": [_ts("2018-12-07 10:00:00")]}
 
 
 @pytest.mark.parametrize(

@@ -95,19 +95,22 @@ def load_acronym_corrections(path: Path) -> dict[tuple[datetime, str, str], str]
     """Load the hand-maintained EXPERIENCES_LOG acronym corrections.
 
     Each correction targets exactly one log row, identified by its
-    ``timestamp``, ``Magnet`` and current ``UserCode``, so it can never
-    rename an acronym elsewhere in the log.
+    ``HStart``, ``Magnet`` and current ``UserCode``, so it can never
+    rename an acronym elsewhere in the log. ``HStart`` is used rather than
+    the log's ``timestamp`` column, whose clock is unreliable (several
+    hours off since 2025).
 
     Parameters
     ----------
     path : :class:`~pathlib.Path`
-        CSV with columns ``timestamp``, ``magnet``, ``acronym``,
+        CSV with columns ``hstart`` (ISO, with milliseconds, e.g.
+        ``2018-12-06 15:05:24.080``), ``magnet``, ``acronym``,
         ``corrected_acronym`` and ``reason``.
 
     Returns
     -------
     dict[tuple[datetime, str, str], str]
-        ``(timestamp, magnet, acronym)`` -> corrected acronym. Acronyms
+        ``(hstart, magnet, acronym)`` -> corrected acronym. Acronyms
         are upper-cased, as in `load_log`.
 
     Raises
@@ -120,7 +123,7 @@ def load_acronym_corrections(path: Path) -> dict[tuple[datetime, str, str], str]
     with open(path, newline="", encoding="utf-8") as f:
         for lineno, row in enumerate(csv.DictReader(f), start=2):
             key = (
-                datetime.fromisoformat(row["timestamp"].strip()),
+                datetime.fromisoformat(row["hstart"].strip()),
                 row["magnet"].strip(),
                 row["acronym"].strip().upper(),
             )
@@ -149,13 +152,17 @@ def load_log(
 ]:
     """Group EXPERIENCES_LOG sessions by acronym (UserCode).
 
+    All session times come from ``HStart``/``HStop``; the log's
+    ``timestamp`` column is ignored, as its clock is unreliable (several
+    hours off since 2025).
+
     Parameters
     ----------
     log_path : :class:`~pathlib.Path`
         Path to ``EXPERIENCES_LOG.csv``.
     cutoff : datetime or None
-        Naive Europe/Paris datetime; sessions strictly before it are
-        discarded. ``None`` disables filtering.
+        Naive Europe/Paris datetime; sessions whose ``HStart`` is strictly
+        before it are discarded. ``None`` disables filtering.
     housing_filter : set[str] or None
         Upper-cased housing names to keep (e.g. ``{"M9", "M10"}``); sessions
         on any other housing are discarded. ``None`` disables filtering.
@@ -174,7 +181,7 @@ def load_log(
         ``None`` for magnets with no insert/external variant. ``HStop`` is
         ``None`` when EXPERIENCES_LOG left it blank (session not closed).
     timestamps : dict[str, list[datetime]]
-        Acronym -> list of surviving session start timestamps.
+        Acronym -> list of surviving session ``HStart`` values.
     n_total : int
         Total rows read.
     n_discarded : int
@@ -210,17 +217,17 @@ def load_log(
                     f"{log_path}:{lineno}: empty UserCode (acronym) is not allowed"
                 )
             seen_acronyms.add(acronym)
-            ts = datetime.fromisoformat(row["timestamp"].strip())
+            hstart = parse_hlog_timestamp(row["HStart"])
             raw_magnet = row["Magnet"].strip()
-            key = (ts, raw_magnet, acronym)
+            key = (hstart, raw_magnet, acronym)
             if key in corrections:
                 print(
-                    f"Applied acronym correction: {ts} {raw_magnet} "
+                    f"Applied acronym correction: {hstart} {raw_magnet} "
                     f"{acronym} -> {corrections[key]}"
                 )
                 acronym = corrections[key]
                 applied.add(key)
-            if cutoff is not None and ts < cutoff:
+            if cutoff is not None and hstart < cutoff:
                 n_discarded += 1
                 continue
             magnet = normalize_magnet(raw_magnet)
@@ -228,11 +235,10 @@ def load_log(
                 n_housing_excluded += 1
                 continue
             variant = raw_magnet[-1] if raw_magnet != magnet else None
-            hstart = parse_hlog_timestamp(row["HStart"])
             hstop_str = row["HStop"].strip()
             hstop = parse_hlog_timestamp(hstop_str) if hstop_str else None
             sessions[acronym].append((magnet, variant, hstart, hstop))
-            timestamps[acronym].append(ts)
+            timestamps[acronym].append(hstart)
     for key, corrected in corrections.items():
         if corrected not in seen_acronyms:
             raise ValueError(
@@ -1488,7 +1494,7 @@ def main() -> None:
         type=Path,
         default=Path(__file__).resolve().parent / "acronym_corrections.csv",
         help="CSV of per-row EXPERIENCES_LOG acronym corrections "
-        "(timestamp, magnet, acronym, corrected_acronym, reason).",
+        "(hstart, magnet, acronym, corrected_acronym, reason).",
     )
     parser.add_argument(
         "--margin",
