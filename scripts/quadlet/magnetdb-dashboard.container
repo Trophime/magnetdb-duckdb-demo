@@ -24,6 +24,8 @@ Environment=MAGNETDB_SUPERVISION_BDD_CSV=/data/supervision/bdd.csv
 Volume=%h/duckdb:/data/duckdb:ro
 Volume=%h/magnetdb-data/supervision:/data/supervision:ro
 Volume=%h/LNCMIG-Data/records:/mnt/LNCMIG-Data/records:ro
+# Site-wide style.json / group_order.json; the folder must exist, even empty
+Volume=%h/.config/magnetdb:/home/app/.config/magnetdb:ro
 
 [Service]
 Restart=on-failure
