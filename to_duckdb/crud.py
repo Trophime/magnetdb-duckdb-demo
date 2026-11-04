@@ -58,7 +58,7 @@ view_operation_log(con, table_filter, operation_filter, record_name_filter, stat
 import getpass
 import json
 import re
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -126,6 +126,13 @@ def load_json(path) -> dict:
 
 def exists(con, table: str, name: str) -> bool:
     return con.execute(f"SELECT 1 FROM {table} WHERE name = ?", [name]).fetchone() is not None
+
+
+def _table_exists(con, table: str) -> bool:
+    """True when *table* exists (a database created before a migration may lack it)."""
+    return con.execute(
+        "SELECT 1 FROM information_schema.tables WHERE table_name = ?", [table]
+    ).fetchone() is not None
 
 
 def _valid_lifecycle_status(status: str) -> str:
@@ -2389,7 +2396,19 @@ def view_housing_configs(con) -> None:
         print(f"{name:<12} {fmts}")
 
 
-def view_housing_config(con, name: str) -> None:
+def view_housing_config(con, name: str, at: datetime | None = None) -> None:
+    """Print a housing config and its versions.
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open DuckDB connection.
+    name : str
+        Housing name.
+    at : datetime, optional
+        Timezone-aware time whose version in force is marked ``*``
+        (default: now).
+    """
     row = con.execute(
         "SELECT name, coil_assignment, formats, extra_config "
         "FROM housing_config WHERE name = ?",
@@ -2412,6 +2431,28 @@ def view_housing_config(con, name: str) -> None:
         if isinstance(extra, dict):
             for k, v in extra.items():
                 print(f"  {k}: {v}")
+    if not _table_exists(con, "housing_config_versions"):
+        print("  versions: table missing in this database — run `magnetdb.py housing sync`")
+        return
+    versions = con.execute(
+        "SELECT name, valid_from, overrides, comment FROM housing_config_versions "
+        "WHERE housing = ? ORDER BY valid_from",
+        [name],
+    ).fetchall()
+    if versions:
+        paris = ZoneInfo("Europe/Paris")
+        when = at or datetime.now(timezone.utc)
+        active = None
+        for v_name, valid_from, _, _ in versions:
+            if valid_from <= when:
+                active = v_name
+        print(f"  versions (* = in force at {when.astimezone(paris).isoformat(timespec='seconds')}):")
+        for v_name, valid_from, overrides, comment in versions:
+            mark = "*" if v_name == active else " "
+            wiring = json.loads(overrides) or "base wiring"
+            print(f"  {mark} {v_name:<12} from {valid_from.astimezone(paris).isoformat()}  {wiring}")
+            if comment:
+                print(f"      {comment}")
 
 
 # SQL fragments for timestamp extraction from file paths (experiments / operationaldata
@@ -3037,6 +3078,96 @@ def _insert_housing_config_versions(con, housing_name: str, verbose: bool = True
         )
         if verbose:
             print(f"  + housing_config_versions  {v['name']}  from {v['valid_from']}")
+
+
+def sync_housing_config_from_magnetrun(
+    con, housing: str | None = None, dry_run: bool = False, verbose: bool = True
+) -> dict:
+    """Bring ``housing_config`` / ``housing_config_versions`` up to date with the bundled JSON.
+
+    Missing housings and missing versions (by name) are inserted. A version
+    present in both whose ``housing``, ``valid_from``, ``overrides`` or
+    ``comment`` differs is reported, never overwritten: specs and magnet
+    parts may rely on it. Existing ``housing_config`` rows are not compared.
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open DuckDB connection (read-only is enough with *dry_run*).
+    housing : str, optional
+        Housing to sync; all bundled housings when ``None``.
+    dry_run : bool, optional
+        Only report; write nothing (no ``operation_log`` row either).
+    verbose : bool, optional
+        Print what is added and what differs.
+
+    Returns
+    -------
+    dict
+        ``{"housings_added": [...], "versions_added": [...],
+        "versions_differing": [{"name", "field", "db", "json"}, ...]}``.
+    """
+    from python_magnetrun.housing_config import (
+        HOUSING_CONFIGS,
+        HousingConfig,
+        get_bundled_housing_config_path,
+    )
+
+    result: dict = {"housings_added": [], "versions_added": [], "versions_differing": []}
+    for name in [housing] if housing else sorted(HOUSING_CONFIGS):
+        try:
+            raw = json.loads(get_bundled_housing_config_path(name).read_text(encoding="utf-8"))
+            versions = HousingConfig.from_dict(raw).versions  # validated
+            housing_added = not exists(con, "housing_config", name)
+            # a pre-versions database (read-only dry run) has no versions table yet
+            has_table = _table_exists(con, "housing_config_versions")
+            added = [v["name"] for v in versions
+                     if not has_table or not exists(con, "housing_config_versions", v["name"])]
+            differing = []
+            for v in versions if has_table else ():
+                row = con.execute(
+                    "SELECT housing, valid_from, overrides, comment "
+                    "FROM housing_config_versions WHERE name = ?",
+                    [v["name"]],
+                ).fetchone()
+                if row is None:
+                    continue
+                in_db = {"housing": row[0], "valid_from": row[1],
+                         "overrides": json.loads(row[2]), "comment": row[3]}
+                in_json = {"housing": name, "valid_from": datetime.fromisoformat(v["valid_from"]),
+                           "overrides": v["overrides"], "comment": v.get("comment")}
+                differing += [
+                    {"name": v["name"], "field": field, "db": str(in_db[field]), "json": str(in_json[field])}
+                    for field in in_db
+                    if in_db[field] != in_json[field]
+                ]
+            if housing_added:
+                result["housings_added"].append(name)
+            result["versions_added"] += added
+            result["versions_differing"] += differing
+            if verbose:
+                for d in differing:
+                    print(f"  ! housing_config_versions  {d['name']}  {d['field']}: "
+                          f"DB {d['db']} ≠ JSON {d['json']} (not changed)")
+            if dry_run:
+                if verbose:
+                    print(f"  ~ housing_config  {name}  dry run: "
+                          f"{'add housing, ' if housing_added else ''}add versions {added}")
+                continue
+            if housing_added:
+                insert_housing_config(con, _housing_config_data_from_magnetrun(name), verbose=verbose)
+            _insert_housing_config_versions(con, name, verbose=verbose)
+            _log_operation(
+                con, "sync", "housing_config", name,
+                details={"housing_added": housing_added, "versions_added": added,
+                         "versions_differing": differing},
+            )
+        except Exception as exc:
+            if not dry_run:
+                _log_operation(con, "sync", "housing_config", name, status="error",
+                               details={"error": str(exc)})
+            raise
+    return result
 
 
 def insert_housing_config(con, data: dict, verbose: bool = True) -> None:

@@ -19,6 +19,8 @@ from crud import (
     insert_housing_config,
     insert_housing_config_from_magnetrun,
     export_housing_config_json,
+    sync_housing_config_from_magnetrun,
+    view_housing_config,
 )
 
 # ---------------------------------------------------------------------------
@@ -484,3 +486,93 @@ class TestHousingConfigVersions:
         cfg = load_housing_config(export_housing_config_json(con, "M8", tmp_path))
         when = datetime(2026, 3, 6, 9, 11, 2, tzinfo=ZoneInfo("Europe/Paris"))
         assert cfg.at(when).version == "M8-260305"
+
+
+# ---------------------------------------------------------------------------
+# sync_housing_config_from_magnetrun / view_housing_config with versions
+# ---------------------------------------------------------------------------
+
+
+def _sync_log(con):
+    return con.execute(
+        "SELECT operation, table_name, record_name, status FROM operation_log "
+        "WHERE operation = 'sync' ORDER BY id"
+    ).fetchall()
+
+
+class TestSyncHousingConfig:
+    def _base_only(self, con):
+        insert_housing_config(con, _housing_config_data_from_magnetrun("M8"), verbose=False)
+
+    def test_adds_missing_versions(self, con):
+        self._base_only(con)
+        result = sync_housing_config_from_magnetrun(con, "M8", verbose=False)
+        assert result == {
+            "housings_added": [],
+            "versions_added": ["M8-211225", "M8-260305"],
+            "versions_differing": [],
+        }
+        assert [r[0] for r in _versions(con)] == ["M8-211225", "M8-260305"]
+        assert _sync_log(con) == [("sync", "housing_config", "M8", "ok")]
+
+    def test_second_sync_adds_nothing(self, con):
+        sync_housing_config_from_magnetrun(con, "M8", verbose=False)
+        again = sync_housing_config_from_magnetrun(con, "M8", verbose=False)
+        assert again == {"housings_added": [], "versions_added": [], "versions_differing": []}
+
+    def test_dry_run_writes_nothing(self, con):
+        self._base_only(con)
+        result = sync_housing_config_from_magnetrun(con, "M8", dry_run=True, verbose=False)
+        assert result["versions_added"] == ["M8-211225", "M8-260305"]
+        assert _versions(con) == []
+        assert _sync_log(con) == []
+
+    def test_differing_version_reported_not_written(self, con):
+        sync_housing_config_from_magnetrun(con, "M8", verbose=False)
+        con.execute(
+            "UPDATE housing_config_versions SET valid_from = '2026-03-06 00:00:00+01:00' "
+            "WHERE name = 'M8-260305'"
+        )
+        result = sync_housing_config_from_magnetrun(con, "M8", verbose=False)
+        assert result["versions_added"] == []
+        assert [(d["name"], d["field"]) for d in result["versions_differing"]] == [
+            ("M8-260305", "valid_from")
+        ]
+        valid_from = con.execute(
+            "SELECT valid_from FROM housing_config_versions WHERE name = 'M8-260305'"
+        ).fetchone()[0]
+        assert valid_from == datetime(2026, 3, 5, 23, 0, tzinfo=timezone.utc)  # unchanged
+
+    def test_sync_all_housings(self, con):
+        result = sync_housing_config_from_magnetrun(con, verbose=False)
+        assert result["housings_added"] == ["M10", "M5", "M7", "M8", "M9"]
+        assert sorted(result["versions_added"]) == [
+            "M10-180220", "M5-140101", "M7-140101", "M8-211225", "M8-260305", "M9-181109",
+        ]
+
+    def test_view_lists_versions(self, con, capsys):
+        sync_housing_config_from_magnetrun(con, "M8", verbose=False)
+        view_housing_config(con, "M8", at=datetime(2026, 3, 6, tzinfo=timezone.utc))
+        out = capsys.readouterr().out
+        assert "  M8-211225" in out
+        assert "* M8-260305" in out
+
+
+class TestDatabaseBeforeVersions:
+    """A database created before housing_config_versions existed."""
+
+    @staticmethod
+    def _old(con):
+        con.execute("DROP TABLE pupitre_etl_magnet")
+        con.execute("DROP TABLE housing_config_versions")
+        insert_housing_config(con, _housing_config_data_from_magnetrun("M8"), verbose=False)
+
+    def test_dry_run_reports_all_versions(self, con):
+        self._old(con)
+        result = sync_housing_config_from_magnetrun(con, "M8", dry_run=True, verbose=False)
+        assert result["versions_added"] == ["M8-211225", "M8-260305"]
+
+    def test_view_without_versions_table(self, con, capsys):
+        self._old(con)
+        view_housing_config(con, "M8")
+        assert "housing sync" in capsys.readouterr().out

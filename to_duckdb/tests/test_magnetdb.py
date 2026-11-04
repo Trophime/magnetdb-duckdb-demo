@@ -1104,6 +1104,7 @@ _LOGGED_SUBCOMMANDS = {
     ("populate", "overview-records-from-json"), ("populate", "overview-records-infer"),
     ("hoop-stress", "compute"),
     ("etl", "set-magnet"),
+    ("housing", "sync"),
 }
 _READ_ONLY_SUBCOMMANDS = {
     ("list", None),
@@ -1123,3 +1124,29 @@ def test_every_subcommand_has_a_logging_decision():
 
     decided = _LOGGED_SUBCOMMANDS | _READ_ONLY_SUBCOMMANDS | _NOT_APPLICABLE_SUBCOMMANDS
     assert set(magnetdb._DISPATCH) == decided
+
+
+def test_housing_sync_and_view_cli(tmp_path, monkeypatch, capsys):
+    db = tmp_path / "test.duckdb"
+    _run(monkeypatch, "db", "create", "--db", str(db))
+    _run(monkeypatch, "housing", "sync", "M8", "--dry-run", "--db", str(db))
+    assert _log_rows(db, "housing_config") == []  # dry run: nothing written
+    _run(monkeypatch, "housing", "sync", "M8", "--db", str(db))
+    assert [(op, rec, st) for op, rec, st, _ in _log_rows(db, "housing_config")] == [
+        ("sync", "M8", "ok")
+    ]
+    capsys.readouterr()
+    _run(monkeypatch, "housing", "view", "M8", "--at", "2026-03-06T00:00", "--db", str(db))
+    assert "* M8-260305" in capsys.readouterr().out
+
+
+def test_housing_sync_creates_versions_table(tmp_path, monkeypatch):
+    """`housing sync` migrates a database created before housing_config_versions."""
+    db = tmp_path / "test.duckdb"
+    _run(monkeypatch, "db", "create", "--db", str(db))
+    with duckdb.connect(str(db)) as con:
+        con.execute("DROP TABLE pupitre_etl_magnet")
+        con.execute("DROP TABLE housing_config_versions")
+    _run(monkeypatch, "housing", "sync", "M8", "--db", str(db))
+    with duckdb.connect(str(db), read_only=True) as con:
+        assert con.execute("SELECT count(*) FROM housing_config_versions").fetchone()[0] == 2

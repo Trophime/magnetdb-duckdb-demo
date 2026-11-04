@@ -38,7 +38,8 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py assembly decommission <name> [--db ...] [--decommissioned-at ...]
                                             [--description ...] [--attachment KIND=PATH ...]
 
-    python magnetdb.py housing view [<name>]                       [--db ...]
+    python magnetdb.py housing view [<name>] [--at TIME]           [--db ...]
+    python magnetdb.py housing sync [<name>] [--dry-run]           [--db ...]
     python magnetdb.py etl set-magnet <assembly> <magnet> <housing_version> <part.json> [--db ...]
     python magnetdb.py etl show <assembly> [--version V | --at TIME] [--db ...]
     python magnetdb.py etl export <assembly> [--version V | --at TIME] [-o DIR] [--db ...]
@@ -1128,11 +1129,33 @@ def cmd_housing_view(args) -> None:
     if not db_path.exists():
         print(f"Error: '{db_path}' does not exist.")
         sys.exit(1)
+    at = None
+    if args.at:
+        from file_context import PUPITRE_TZ
+
+        at = datetime.fromisoformat(args.at)
+        if at.utcoffset() is None:
+            at = at.replace(tzinfo=PUPITRE_TZ)
     with duckdb.connect(str(db_path), read_only=True) as con:
         if args.name:
-            view_housing_config(con, args.name)
+            view_housing_config(con, args.name, at=at)
         else:
             view_housing_configs(con)
+
+
+def cmd_housing_sync(args) -> None:
+    from crud import sync_housing_config_from_magnetrun
+
+    with duckdb.connect(str(_existing_db(args)), read_only=args.dry_run) as con:
+        if not args.dry_run:
+            ensure_schema(con)  # creates housing_config_versions on older databases
+        result = sync_housing_config_from_magnetrun(con, args.name, dry_run=args.dry_run)
+    prefix = "Dry run — would add" if args.dry_run else "Added"
+    print(
+        f"\n{prefix} {len(result['housings_added'])} housing(s), "
+        f"{len(result['versions_added'])} version(s); "
+        f"{len(result['versions_differing'])} difference(s) reported"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1825,6 +1848,7 @@ _DISPATCH = {
     ("site",              "delete"):          cmd_assembly_delete,
     ("site",              "update-magnet"):   cmd_assembly_update_magnet,
     ("housing",           "view"):            cmd_housing_view,
+    ("housing",           "sync"):            cmd_housing_sync,
     ("etl",               "set-magnet"):      cmd_etl_set_magnet,
     ("etl",               "show"):            cmd_etl_show,
     ("etl",               "export"):          cmd_etl_export,
@@ -2252,12 +2276,25 @@ def build_parser() -> argparse.ArgumentParser:
     # ── housing ──────────────────────────────────────────────────────────────
     housing_p = entity.add_parser("housing", help="View housing configurations.")
     housing_sub = housing_p.add_subparsers(dest="action", required=True,
-                                           metavar="{view}")
+                                           metavar="{view,sync}")
 
-    h_view = housing_sub.add_parser("view", help="List all housings or show one.")
+    h_view = housing_sub.add_parser("view", help="List all housings or show one (with its versions).")
     h_view.add_argument("name", nargs="?", default=None,
                         help="Housing name (omit to list all)")
+    h_view.add_argument("--at", default=None,
+                        help="Mark the version in force at this ISO 8601 time "
+                             "(no offset = Europe/Paris time; default: now)")
     _db_arg(h_view)
+
+    h_sync = housing_sub.add_parser(
+        "sync",
+        help="Add missing housings and versions from the bundled python_magnetrun JSON; "
+             "report differing versions without changing them.")
+    h_sync.add_argument("name", nargs="?", default=None,
+                        help="Housing name (omit for all bundled housings)")
+    h_sync.add_argument("--dry-run", dest="dry_run", action="store_true",
+                        help="Only report what would change")
+    _db_arg(h_sync)
 
     # ── etl ──────────────────────────────────────────────────────────────────
     etl_p = entity.add_parser(
