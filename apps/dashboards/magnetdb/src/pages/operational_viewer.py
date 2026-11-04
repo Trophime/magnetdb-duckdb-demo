@@ -1,0 +1,1025 @@
+import dash
+import dash_selectors as selectors
+import i18n
+import magnetdb_analysis as db
+import magnetdb_plot as plot
+import pandas as pd
+import style_editor
+from dash import (
+    ALL,
+    Input,
+    Output,
+    Patch,
+    State,
+    ctx,
+    dcc,
+    html,
+    no_update,
+)
+from dash.exceptions import PreventUpdate
+from plotly import graph_objects as go
+from python_magnetrun.utils.timezone import local_to_utc_naive
+
+dash.register_page(
+    __name__,
+    path="/operational_viewer",
+    name="Overview/Archive viewer",
+    order=10,
+    title=lambda: i18n._("Overview/Archive viewer"),
+)
+
+# operationaldata.type values this page lists.
+OPERATIONAL_TYPES = ["Overview", "Archive"]
+
+
+# See file_viewer.py for the rationale behind seeding `dd-file`-style dropdowns
+# with their query-string value (assembly/file here) instead of waiting for
+# the options-loading callbacks.
+def layout(assembly=None, file=None, **kwargs):
+    return html.Div(
+        [
+            dcc.Store(id="opv-pending-auto-plot", data=["Field", "Champ_magn"]),
+            html.Div(
+                [
+                    html.H2(
+                        i18n._("Overview/Archive Viewer"),
+                        style={"marginTop": "0px", "marginBottom": "20px"},
+                    ),
+                    html.Hr(),
+                    html.Div(
+                        [
+                            selectors.aggregate_filter(
+                                "opv-housing-filter",
+                                i18n._("Housing"),
+                                style={"width": "200px"},
+                            ),
+                            selectors.aggregate_filter(
+                                "opv-year-filter", i18n._("Year"), style={"width": "150px"}
+                            ),
+                            selectors.aggregate_filter(
+                                "opv-status-filter",
+                                i18n._("Status"),
+                                style={"width": "200px"},
+                            ),
+                            html.Div(
+                                [
+                                    html.Label(i18n._("Type")),
+                                    dcc.Checklist(
+                                        id="opv-type-filter",
+                                        options=OPERATIONAL_TYPES,
+                                        value=OPERATIONAL_TYPES,
+                                        inline=True,
+                                        inputStyle={"marginRight": "4px"},
+                                        labelStyle={"marginRight": "15px"},
+                                    ),
+                                ]
+                            ),
+                        ],
+                        style={
+                            "display": "flex",
+                            "gap": "30px",
+                            "marginBottom": "15px",
+                        },
+                    ),
+                    selectors.cascading_selector(
+                        "opv-assembly", i18n._("Assembly"), 1, value=assembly
+                    ),
+                    html.Br(),
+                    html.Div(id="opv-magnets-table", style={"marginBottom": "10px"}),
+                    html.Br(),
+                    html.Label(
+                        i18n._("2. Choose an Overview/Archive File:"),
+                        style={"fontWeight": "bold"},
+                    ),
+                    dcc.Dropdown(
+                        id="opv-file",
+                        options=[file] if file else [],
+                        value=file,
+                        placeholder=i18n._("Choose an Overview/Archive file..."),
+                    ),
+                    html.Br(),
+                    html.Div(id="opv-file-stats", style={"marginBottom": "10px"}),
+                    selectors.graph(
+                        id="opv-field-histogram",
+                        figure=plot.field_histogram_figure(None),
+                        style={"height": "250px"},
+                    ),
+                    html.Br(),
+                    html.Label(
+                        i18n._("3. Choose X-axis :"),
+                        style={"fontWeight": "bold", "color": "#007bff"},
+                    ),
+                    dcc.Dropdown(
+                        id="opv-x-axis",
+                        options=[
+                            {"label": i18n._("Real Time (timestamp)"), "value": "timestamp"},
+                            {"label": i18n._("Elapsed Time (t)"), "value": "t"},
+                        ],
+                        value="timestamp",
+                        clearable=False,
+                    ),
+                    html.Br(),
+                    html.Label(i18n._("4. Choose Sensors :"), style={"fontWeight": "bold"}),
+                    # C'est ce conteneur unique qui contiendra tout (Groupes + Checklist + Graphiques associés)
+                    selectors.loading_region(
+                        html.Div(
+                            id="opv-sensors-selectors-container",
+                            children=[],
+                            style={"marginTop": "10px"},
+                        ),
+                        target_components={"opv-sensors-selectors-container": "children"},
+                    ),
+                    style_editor.modal_component("opv"),
+                    style_editor.download_store("opv"),
+                    html.Br(),
+                    html.Label(i18n._("5. Cursor sync:"), style={"fontWeight": "bold"}),
+                    html.Div(
+                        [
+                            dcc.Checklist(
+                                id="opv-sync-cursor-toggle",
+                                options=[
+                                    {
+                                        "label": i18n._(" Sync cursor across graphs"),
+                                        "value": "sync",
+                                    }
+                                ],
+                                value=["sync"],
+                                style={
+                                    "display": "inline-block",
+                                    "marginRight": "15px",
+                                },
+                            ),
+                            html.Button(
+                                i18n._("Clear cursors"), id="opv-clear-cursors-btn", n_clicks=0
+                            ),
+                        ],
+                        style={"marginTop": "4px"},
+                    ),
+                    html.Br(),
+                    html.Label(
+                        i18n._("6. Downsampling Method:"), style={"fontWeight": "bold"}
+                    ),
+                    dcc.Dropdown(
+                        id="opv-downsampling",
+                        options=["raw data", "LTTB", "minmax", "M4", "naive"],
+                        value="LTTB",
+                        clearable=False,
+                    ),
+                ],
+                style={
+                    "padding": "20px",
+                    "backgroundColor": "#f8f9fa",
+                    "minHeight": "100vh",
+                },
+            ),
+        ]
+    )
+
+
+@dash.callback(
+    Output("opv-housing-filter", "options"),
+    Output("opv-year-filter", "options"),
+    Output("opv-status-filter", "options"),
+    Input("dd-database", "value"),
+)
+def update_filter_options(selected_db):
+    if not selected_db:
+        return [selectors.ALL], [selectors.ALL], [selectors.ALL]
+
+    housing_options = [selectors.ALL] + db.get_housings(selected_db)
+
+    assemblies_meta = db.load_assemblies_meta(selected_db)
+    year_options = selectors.year_options(db.assemblies_year_range(assemblies_meta))
+
+    status_options = [selectors.ALL] + db.get_distinct_statuses("assemblies")
+
+    return housing_options, year_options, status_options
+
+
+# CALLBACK 0 : Met à jour la liste des assemblies en fonction de la Database sélectionnée et des filtres
+@dash.callback(
+    Output("opv-assembly", "options"),
+    Output("opv-assembly", "value"),
+    Input("dd-database", "value"),
+    Input("opv-housing-filter", "value"),
+    Input("opv-year-filter", "value"),
+    Input("opv-status-filter", "value"),
+    State("opv-assembly", "value"),
+)
+def update_assembly_dropdown(
+    selected_db, selected_housing, selected_year, selected_status, current_assembly
+):
+    if not selected_db:
+        return [], None
+
+    all_assemblies = selectors.newest_first(db.get_all_assemblies(selected_db))
+
+    assemblies_in_year = None
+    if selected_year and selected_year != selectors.ALL:
+        assemblies_meta = db.load_assemblies_meta(selected_db)
+        assemblies_in_year = db.assemblies_active_in_year(
+            assemblies_meta, int(selected_year)
+        )
+
+    assemblies_with_status = (
+        db.get_names_with_status("assemblies", selected_status, selected_db)
+        if selected_status and selected_status != selectors.ALL
+        else None
+    )
+
+    assemblies = [
+        a
+        for a in all_assemblies
+        if (
+            not selected_housing
+            or selected_housing == selectors.ALL
+            or a.startswith(f"{selected_housing}_")
+        )
+        and (assemblies_in_year is None or a in assemblies_in_year)
+        and (assemblies_with_status is None or a in assemblies_with_status)
+    ]
+
+    if current_assembly in assemblies:
+        return assemblies, dash.no_update
+    return assemblies, (assemblies[0] if assemblies else None)
+
+
+@dash.callback(
+    Output("opv-file", "options"),
+    Input("opv-assembly", "value"),
+    Input("opv-type-filter", "value"),
+    Input("dd-database", "value"),
+)
+def update_file_dropdown(selected_assembly, selected_types, selected_db):
+    if not selected_assembly:
+        return []
+
+    files = selectors.newest_first(
+        db.get_operational_files_for_assembly(
+            selected_assembly, selected_types, selected_db
+        )
+    )
+    return [{"label": f, "value": f} for f in files]
+
+
+@dash.callback(
+    Output("opv-magnets-table", "children"),
+    Input("opv-assembly", "value"),
+    Input("dd-database", "value"),
+)
+def update_magnets_table(selected_assembly, selected_db):
+    return selectors.magnets_table_section(selected_assembly, selected_db)
+
+
+@dash.callback(
+    Output("opv-file-stats", "children"),
+    Output("opv-field-histogram", "figure"),
+    Input("opv-file", "value"),
+    Input("opv-assembly", "value"),
+    Input("opv-x-axis", "value"),
+    Input({"type": "opv-dynamic-graph", "index": ALL}, "relayoutData"),
+)
+def update_file_stats(selected_file, selected_assembly, x_mode, all_relayout_data):
+    empty = selectors.file_stats_banner(None, None), plot.field_histogram_figure(None)
+    if not selected_file or not selected_assembly:
+        return empty
+
+    housing = selected_assembly.split("_")[0]
+    mrun = db.load_mrun_object(selected_file, housing)
+    if mrun is None:
+        return empty
+
+    # Same zoom-range extraction as update_outputs: any currently zoomed/panned
+    # graph narrows the summary to that time window; switching file/assembly/
+    # x-axis always resets to the full file.
+    triggered_id = ctx.triggered_id
+    x_range = None
+    if triggered_id not in ("opv-file", "opv-assembly", "opv-x-axis") and all_relayout_data:
+        for relayout in all_relayout_data:
+            if relayout:
+                if "xaxis.range[0]" in relayout:
+                    x_range = [relayout["xaxis.range[0]"], relayout["xaxis.range[1]"]]
+                    break
+                elif "xaxis.range" in relayout:
+                    x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
+                    break
+
+    analysis_range = x_range
+    if x_range is not None and x_mode == "timestamp":
+        # relayoutData holds the displayed local time (see
+        # magnetdb_plot._display_x_series); the "timestamp" column is stored
+        # as naive UTC, so the range needs converting back before filtering.
+        analysis_range = [
+            local_to_utc_naive(pd.Timestamp(x_range[0]), "Europe/Paris"),
+            local_to_utc_naive(pd.Timestamp(x_range[1]), "Europe/Paris"),
+        ]
+
+    if x_range is not None:
+        if x_mode == "timestamp":
+            duration = (pd.Timestamp(x_range[1]) - pd.Timestamp(x_range[0])).total_seconds()
+        else:
+            duration = float(x_range[1]) - float(x_range[0])
+    else:
+        duration = mrun.MagnetData.getDuration()
+
+    field_stats = db.get_field_column_stats([mrun], x_range=analysis_range, x_col=x_mode)
+    energy_stats = db.get_energy_stats([mrun], x_range=analysis_range, x_col=x_mode)
+
+    banner = selectors.file_stats_banner(
+        duration, field_stats, energy_stats=energy_stats, zoomed=x_range is not None
+    )
+    return banner, plot.field_histogram_figure(field_stats)
+
+
+def _sensor_group_block(group_name, options, saved_values, open_by_default=False):
+    """Build one collapsible checklist+graph block for the sensor-selector panel."""
+    return html.Details(
+        [
+            # 1. EN-TÊTE : Le titre cliquable qui contrôle TOUT le bloc
+            html.Summary(
+                f"📂 {i18n._(group_name)}",
+                style={
+                    "fontWeight": "bold",
+                    "cursor": "pointer",
+                    "padding": "10px 15px",
+                    "backgroundColor": "#e9ecef",
+                    "borderBottom": "1px solid #ddd",
+                    "outline": "none",
+                    "fontSize": "16px",
+                },
+            ),
+            style_editor.gear_button("opv", group_name),
+            style_editor.download_button("opv", group_name),
+            # 2. CONTENU : Les deux colonnes (Checklist et Graphique)
+            html.Div(
+                [
+                    # --- PARTIE GAUCHE : Les cases à cocher ---
+                    html.Div(
+                        [
+                            dcc.Checklist(
+                                id={
+                                    "type": "opv-group-sensors-checklist",
+                                    "index": group_name,
+                                },
+                                options=options,
+                                value=saved_values,
+                                labelStyle={
+                                    "display": "block",
+                                    "marginLeft": "25px",
+                                    "marginBottom": "4px",
+                                },
+                            )
+                        ],
+                        style={
+                            "width": "250px",
+                            "flexShrink": 0,
+                            "padding": "10px",
+                            "borderRight": "1px solid #ddd",
+                            "backgroundColor": "#ffffff",
+                        },
+                    ),
+                    # --- PARTIE DROITE : Le conteneur du Graphique ---
+                    html.Div(
+                        children=[
+                            selectors.loading_region(
+                                selectors.graph(
+                                    id={
+                                        "type": "opv-dynamic-graph",
+                                        "index": group_name,
+                                    },
+                                    style={"height": "350px"},
+                                )
+                            )
+                        ],
+                        style={
+                            "flexGrow": 1,
+                            "minWidth": "0",
+                            "padding": "10px",
+                        },
+                    ),
+                ],
+                style={
+                    "display": "flex",
+                    "flexDirection": "row",
+                    "backgroundColor": "#f8f9fa",
+                },
+            ),
+        ],
+        open=open_by_default,
+        style={
+            "border": "1px solid #007bff",
+            "borderRadius": "8px",
+            "marginBottom": "20px",
+            "boxShadow": "0 2px 4px rgba(0,0,0,0.05)",
+            "overflow": "hidden",
+            "backgroundColor": "#ffffff",
+            "position": "relative",
+        },
+    )
+
+
+@dash.callback(
+    Output("opv-sensors-selectors-container", "children"),
+    Output("opv-pending-auto-plot", "data"),
+    Input("opv-file", "value"),
+    Input("opv-assembly", "value"),
+    State({"type": "opv-group-sensors-checklist", "index": ALL}, "value"),
+    State({"type": "opv-group-sensors-checklist", "index": ALL}, "id"),
+    State("opv-pending-auto-plot", "data"),
+)
+def update_sensors_menus(
+    selected_file,
+    selected_assembly,
+    current_sensor_values,
+    current_sensor_ids,
+    pending_auto_plot,
+):
+    if not selected_file or not selected_assembly:
+        return [], no_update
+
+    housing = selected_assembly.split("_")[0]
+    print(
+        f"[operational_viewer.py] update_sensors_menus: Loading data file: {selected_file} (assembly={selected_assembly}, housing={housing})"
+    )
+    mrun = db.load_mrun_object(selected_file, housing)
+
+    if mrun is None:
+        return [], no_update
+
+    # Mémorisation des cases cochées
+    saved_state_map = {}
+    if current_sensor_ids and current_sensor_values:
+        saved_state_map = {
+            s_id["index"]: s_vals
+            for s_id, s_vals in zip(current_sensor_ids, current_sensor_values)
+            if s_vals is not None
+        }
+
+    # Sensors to auto-check on the page's first file selection (whichever of
+    # "Field"/pupitre or "Champ_magn"/pigbrother the file actually has).
+    # Consumed once, then cleared below, so it doesn't keep overriding the
+    # user's own choices on later file switches.
+    pending_auto_plot = pending_auto_plot or []
+
+    menus_blocks = []
+    supervision_groups = db.supervision_field_groups()
+    covered_supervision_groups = set()
+
+    # On boucle sur TOUS les groupes existants dans le fichier
+    for group_name in db.order_groups(mrun.MagnetData.list_groups()):
+        if group_name == "Infos":
+            continue
+
+        sensors = [
+            c
+            for c in mrun.MagnetData.get_group_data(group_name).columns
+            if c not in ("t", "timestamp")
+        ]
+
+        options = []
+        for s in sensors:
+            symbol, unit = plot.group_display_unit(mrun, group_name, s)
+            options.append(
+                {"label": plot.format_sensor_label(s, symbol, unit), "value": s}
+            )
+
+        # A native group can double as a SUPERVISION group (currently only
+        # "Refroidissement", which pupitre already uses for its own cooling
+        # temperatures) — its checklist/graph then carries both sources.
+        if group_name in supervision_groups:
+            options += db.supervision_field_options(group_name)
+            covered_supervision_groups.add(group_name)
+
+        saved_values_for_this_group = saved_state_map.get(group_name, [])
+        for target in pending_auto_plot:
+            if target in sensors and target not in saved_values_for_this_group:
+                saved_values_for_this_group = saved_values_for_this_group + [target]
+
+        menus_blocks.append(
+            _sensor_group_block(
+                group_name,
+                options,
+                saved_values_for_this_group,
+                open_by_default=(group_name == "Magnetic_Field"),
+            )
+        )
+
+    # SUPERVISION groups with no native counterpart in this file (e.g. a
+    # Pigbrother file has no "Refroidissement" group; "Water_Resistivity" and
+    # "Nitrogen_Level" never have one in any format) get their own fresh block.
+    for group_name in supervision_groups:
+        if group_name in covered_supervision_groups:
+            continue
+        menus_blocks.append(
+            _sensor_group_block(
+                group_name,
+                db.supervision_field_options(group_name),
+                saved_state_map.get(group_name, []),
+            )
+        )
+
+    return menus_blocks, []
+
+
+@dash.callback(
+    Output({"type": "opv-dynamic-graph", "index": ALL}, "figure"),
+    Input("opv-file", "value"),
+    Input("opv-assembly", "value"),
+    Input("opv-x-axis", "value"),
+    Input({"type": "opv-group-sensors-checklist", "index": ALL}, "value"),
+    Input({"type": "opv-group-sensors-checklist", "index": ALL}, "id"),
+    Input("opv-downsampling", "value"),
+    Input("opv-style-version", "data"),
+    State({"type": "opv-dynamic-graph", "index": ALL}, "relayoutData"),
+    State("user-style", "data"),
+)
+def update_outputs(
+    selected_file,
+    selected_assembly,
+    selected_x,
+    all_sensors_lists,
+    all_sensors_ids,
+    selected_algo,
+    _style_version,
+    all_relayout_data,
+    user_style,
+):
+
+    empty_fig = go.Figure()
+    empty_fig.update_layout(
+        annotations=[
+            {
+                "text": i18n._("Check a sensor to display its curve"),
+                "xref": "paper",
+                "yref": "paper",
+                "showarrow": False,
+                "font": {"color": "#888888"},
+            }
+        ],
+        xaxis={"visible": False},
+        yaxis={"visible": False},
+        template="plotly_white",
+        margin={"l": 20, "r": 20, "t": 30, "b": 20},
+    )
+
+    if not selected_file or not selected_assembly:
+        return [empty_fig for _ in all_sensors_ids]
+
+    # --- ETAPE 1 : DETERMINER SI ON DOIT CONSERVER LE ZOOM ---
+    maintain_zoom = False
+    triggered_id = ctx.triggered_id
+
+    # On maintient le zoom SEULEMENT si l'action vient d'une case a cocher, d'un changement
+    # d'algo de downsampling, ou d'une sauvegarde de style. Si on change de fichier ou d'axe X,
+    # on veut que le graphique s'autoscale (remise a zero).
+    if triggered_id in ("opv-downsampling", "opv-style-version") or (
+        isinstance(triggered_id, dict)
+        and triggered_id.get("type") == "opv-group-sensors-checklist"
+    ):
+        maintain_zoom = True
+
+    # --- ETAPE 2 : EXTRAIRE LES LIMITES DU ZOOM ACTUEL ---
+    x_range = None
+    if maintain_zoom and all_relayout_data:
+        # On cherche le premier graphique qui possede des informations de zoom
+        for relayout in all_relayout_data:
+            if relayout:
+                if "xaxis.range[0]" in relayout:
+                    x_range = [relayout["xaxis.range[0]"], relayout["xaxis.range[1]"]]
+                    break
+                elif "xaxis.range" in relayout:
+                    x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
+                    break
+
+    housing = selected_assembly.split("_")[0]
+    print(
+        f"[operational_viewer.py] Loading data file: {selected_file} (assembly={selected_assembly}, housing={housing})"
+    )
+    mrun = db.load_mrun_object(selected_file, housing)
+
+    if mrun is None:
+        return [empty_fig for _ in all_sensors_ids]
+
+    sensors_map = {
+        sensor_id["index"]: sensor_values
+        for sensor_id, sensor_values in zip(all_sensors_ids, all_sensors_lists)
+        if sensor_values is not None
+    }
+
+    supervision_groups = db.supervision_field_groups()
+    style_config = plot.merge_style_config(plot._STYLE_CONFIG, user_style)
+    outputs_figures = []
+
+    for sensor_id in all_sensors_ids:
+        group_name = sensor_id["index"]
+
+        if group_name == "Infos":
+            outputs_figures.append(empty_fig)
+            continue
+
+        sensors_in_this_group = sensors_map.get(group_name, [])
+        if not sensors_in_this_group:
+            outputs_figures.append(empty_fig)
+            continue
+
+        # Checked sensors are either native (mrun's own column names) or
+        # SUPERVISION-sourced ("supervision:"-prefixed) — see update_sensors_menus.
+        native_sensors = [
+            s for s in sensors_in_this_group if not s.startswith("supervision:")
+        ]
+        supervision_values = [
+            s for s in sensors_in_this_group if s.startswith("supervision:")
+        ]
+
+        fig = None
+
+        if native_sensors and group_name in mrun.MagnetData.list_groups():
+            try:
+                df = db.group_data_pandas(mrun, group_name)
+            except KeyError:
+                df = None
+            if isinstance(df, pd.DataFrame):
+                # Creation du plot normal
+                fig = plot.create_plot(
+                    df,
+                    selected_x,
+                    native_sensors,
+                    selected_algo,
+                    filename=selected_file,
+                    mrun=mrun,
+                    group_name=group_name,
+                    style_config=style_config,
+                )
+
+        if supervision_values and group_name in supervision_groups:
+            start, end = mrun.MagnetData.get_time_range()
+            bare_fields = [s[len("supervision:"):] for s in supervision_values]
+            # Columns stay "supervision:"-prefixed through create_plot() (not
+            # just the checklist value) so its df-column lookup, style-override
+            # lookup, and trace name all resolve against a collision-free key
+            # even when a field shares its bare name with a native sensor in
+            # this same group (e.g. pupitre's own "teb" vs. SUPERVISION's "teb").
+            supervision_df = db.load_supervision_bdd(start, end).rename(
+                columns={f: s for f, s in zip(bare_fields, supervision_values)}
+            )
+            supervision_fig = plot.create_plot(
+                supervision_df,
+                selected_x,
+                supervision_values,
+                selected_algo,
+                filename="SUPERVISION",
+                mrun=None,
+                group_name=group_name,
+                style_config=style_config,
+            )
+            # Legend label: "supervision:teb" -> "teb [SUPERVISION]".
+            for trace in supervision_fig.data:
+                trace.name = f"{trace.name[len('supervision:'):]} [SUPERVISION]"
+
+            if fig is None:
+                fig = supervision_fig
+            else:
+                fig.add_traces(supervision_fig.data)
+
+        if fig is None:
+            fig = empty_fig
+
+        # --- ETAPE 3 : INJECTER LE ZOOM DANS LA NOUVELLE FIGURE ---
+        if x_range is not None:
+            fig.update_layout(xaxis={"range": x_range, "autorange": False})
+
+        outputs_figures.append(fig)
+
+    return outputs_figures
+
+
+@dash.callback(
+    Output("opv-download-data", "data"),
+    Input({"type": "opv-download-btn", "index": ALL}, "n_clicks"),
+    State("opv-file", "value"),
+    State("opv-assembly", "value"),
+    State("opv-x-axis", "value"),
+    State({"type": "opv-group-sensors-checklist", "index": ALL}, "value"),
+    State({"type": "opv-group-sensors-checklist", "index": ALL}, "id"),
+    State({"type": "opv-dynamic-graph", "index": ALL}, "relayoutData"),
+    State({"type": "opv-dynamic-graph", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def download_group_csv(
+    all_clicks,
+    selected_file,
+    selected_assembly,
+    selected_x,
+    all_sensors_lists,
+    all_sensors_ids,
+    all_relayout_data,
+    all_graph_ids,
+):
+    triggered_id = ctx.triggered_id
+    if not isinstance(triggered_id, dict) or not ctx.triggered or not ctx.triggered[0]["value"]:
+        raise PreventUpdate
+    group_name = triggered_id["index"]
+
+    if not selected_file or not selected_assembly:
+        raise PreventUpdate
+
+    sensors_map = {
+        sensor_id["index"]: sensor_values
+        for sensor_id, sensor_values in zip(all_sensors_ids, all_sensors_lists)
+        if sensor_values is not None
+    }
+    sensors_in_this_group = sensors_map.get(group_name, [])
+    if not sensors_in_this_group:
+        raise PreventUpdate
+
+    housing = selected_assembly.split("_")[0]
+    mrun = db.load_mrun_object(selected_file, housing)
+    if mrun is None:
+        raise PreventUpdate
+
+    # Same zoom-range extraction as update_outputs/update_file_stats, but
+    # scoped to this group's own graph (cross-graph zoom sync keeps them all
+    # equal anyway, see sync_zoom_home below).
+    relayout_by_group = {
+        graph_id["index"]: relayout
+        for graph_id, relayout in zip(all_graph_ids, all_relayout_data)
+    }
+    relayout = relayout_by_group.get(group_name)
+    x_range = None
+    if relayout:
+        if "xaxis.range[0]" in relayout:
+            x_range = [relayout["xaxis.range[0]"], relayout["xaxis.range[1]"]]
+        elif "xaxis.range" in relayout:
+            x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
+
+    analysis_range = x_range
+    if x_range is not None and selected_x == "timestamp":
+        # relayoutData holds the displayed local time; the "timestamp" column
+        # is stored as naive UTC, so the range needs converting back first.
+        analysis_range = [
+            local_to_utc_naive(pd.Timestamp(x_range[0]), "Europe/Paris"),
+            local_to_utc_naive(pd.Timestamp(x_range[1]), "Europe/Paris"),
+        ]
+
+    native_sensors = [s for s in sensors_in_this_group if not s.startswith("supervision:")]
+    supervision_values = [s for s in sensors_in_this_group if s.startswith("supervision:")]
+
+    tidy_frames = []
+    target_unit = None
+
+    if native_sensors and group_name in mrun.MagnetData.list_groups():
+        try:
+            group_df = db.group_data_pandas(mrun, group_name)
+        except KeyError:
+            group_df = None
+        if isinstance(group_df, pd.DataFrame) and selected_x in group_df.columns:
+            group_df = db.filter_by_x_range(group_df, selected_x, analysis_range)
+            # Same y-axis unit as update_outputs' create_plot(): the first
+            # checked native sensor's display unit.
+            _, target_unit = plot.group_display_unit(mrun, group_name, native_sensors[0])
+            for sensor in native_sensors:
+                if sensor in group_df.columns:
+                    tidy_frames.append(pd.DataFrame({
+                        selected_x: group_df[selected_x],
+                        "file": selected_file,
+                        "sensor": sensor,
+                        "value": plot.display_values(
+                            group_df[sensor], mrun, sensor, group_name, target_unit
+                        ),
+                    }))
+
+    supervision_groups = db.supervision_field_groups()
+    if supervision_values and group_name in supervision_groups:
+        start, end = mrun.MagnetData.get_time_range()
+        bare_fields = [s[len("supervision:"):] for s in supervision_values]
+        supervision_df = db.load_supervision_bdd(start, end).rename(
+            columns={f: s for f, s in zip(bare_fields, supervision_values)}
+        )
+        if selected_x in supervision_df.columns:
+            supervision_df = db.filter_by_x_range(supervision_df, selected_x, analysis_range)
+            for sensor, bare in zip(supervision_values, bare_fields):
+                if sensor in supervision_df.columns:
+                    tidy_frames.append(pd.DataFrame({
+                        selected_x: supervision_df[selected_x],
+                        "file": "SUPERVISION",
+                        "sensor": f"{bare} [SUPERVISION]",
+                        "value": supervision_df[sensor],
+                    }))
+
+    if not tidy_frames:
+        raise PreventUpdate
+
+    csv_df = pd.concat(tidy_frames, ignore_index=True).rename(
+        columns={"value": plot.value_column_header(target_unit)}
+    )
+    return dcc.send_data_frame(csv_df.to_csv, f"{selected_file}_{group_name}.csv", index=False)
+
+
+# CALLBACK 5 : Synchronisation du zoom entre tous les graphiques de la page Home
+@dash.callback(
+    Output({"type": "opv-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
+    Input({"type": "opv-dynamic-graph", "index": ALL}, "relayoutData"),
+    State({"type": "opv-dynamic-graph", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def sync_zoom_home(relayout_data_list, graph_ids):
+    # 1. Identifier quel graphique a déclenché l'événement
+    triggered_id = ctx.triggered_id
+    if not triggered_id:
+        raise PreventUpdate
+
+    trigger_index = graph_ids.index(triggered_id)
+    relayout_data = relayout_data_list[trigger_index]
+
+    if not relayout_data:
+        raise PreventUpdate
+
+    patches = []
+    x_min, x_max = None, None
+    autoscale = False
+
+    # Cas A : Zoom avec le rectangle de sélection
+    if "xaxis.range[0]" in relayout_data:
+        x_min = relayout_data["xaxis.range[0]"]
+        x_max = relayout_data["xaxis.range[1]"]
+
+    # Cas B : Déplacement avec l'outil "Pan"
+    elif "xaxis.range" in relayout_data:
+        x_min = relayout_data["xaxis.range"][0]
+        x_max = relayout_data["xaxis.range"][1]
+
+    # Cas C : Double-clic pour réinitialiser le zoom (Autoscale)
+    elif "xaxis.autorange" in relayout_data:
+        autoscale = True
+
+    # Cas D : Autre événement
+    else:
+        raise PreventUpdate
+
+    for g_id in graph_ids:
+        # On ne met pas à jour le graphique qui a déclenché l'action
+        if g_id == triggered_id:
+            patches.append(dash.no_update)
+            continue
+
+        patched_fig = Patch()
+
+        if autoscale:
+            patched_fig["layout"]["xaxis"]["autorange"] = True
+        else:
+            patched_fig["layout"]["xaxis"]["range"] = [x_min, x_max]
+            patched_fig["layout"]["xaxis"]["autorange"] = False
+
+        patches.append(patched_fig)
+
+    return patches
+
+
+_CURSOR_LINE_STYLE = {"color": "#888888", "width": 1, "dash": "dot"}
+_CURSOR_MATCH_THRESHOLD = {"timestamp": 2.0, "t": 0.5}  # seconds
+
+
+def _cursor_line_shape(x):
+    return {
+        "type": "line",
+        "x0": x,
+        "x1": x,
+        "y0": 0,
+        "y1": 1,
+        "xref": "x",
+        "yref": "paper",
+        "line": _CURSOR_LINE_STYLE,
+    }
+
+
+def _cursor_x_distance(a, b, x_mode):
+    if x_mode == "timestamp":
+        return abs((pd.Timestamp(a) - pd.Timestamp(b)).total_seconds())
+    return abs(float(a) - float(b))
+
+
+# CALLBACK 6 : Epingler/retirer une ligne verticale (curseur) sur un ou tous les graphiques
+@dash.callback(
+    Output({"type": "opv-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
+    Input({"type": "opv-dynamic-graph", "index": ALL}, "clickData"),
+    State({"type": "opv-dynamic-graph", "index": ALL}, "id"),
+    State({"type": "opv-dynamic-graph", "index": ALL}, "figure"),
+    State("opv-sync-cursor-toggle", "value"),
+    State("opv-x-axis", "value"),
+    prevent_initial_call=True,
+)
+def pin_cursor_home(click_data_list, graph_ids, figures, sync_toggle, x_mode):
+    triggered_id = ctx.triggered_id
+    if not triggered_id:
+        raise PreventUpdate
+
+    trigger_index = graph_ids.index(triggered_id)
+    click_data = click_data_list[trigger_index]
+    if not click_data or not click_data.get("points"):
+        raise PreventUpdate
+    clicked_x = click_data["points"][0]["x"]
+
+    threshold = _CURSOR_MATCH_THRESHOLD.get(x_mode, _CURSOR_MATCH_THRESHOLD["t"])
+    current_shapes = (figures[trigger_index].get("layout") or {}).get("shapes") or []
+    match_idx = next(
+        (
+            i
+            for i, s in enumerate(current_shapes)
+            if _cursor_x_distance(s["x0"], clicked_x, x_mode) <= threshold
+        ),
+        None,
+    )
+    if match_idx is not None:
+        new_shapes = current_shapes[:match_idx] + current_shapes[match_idx + 1 :]
+    else:
+        new_shapes = current_shapes + [_cursor_line_shape(clicked_x)]
+
+    propagate = bool(sync_toggle)
+    patches = []
+    for g_id in graph_ids:
+        if g_id == triggered_id:
+            patched_fig = Patch()
+            patched_fig["layout"]["shapes"] = new_shapes
+            patches.append(patched_fig)
+            continue
+
+        if not propagate:
+            patches.append(dash.no_update)
+            continue
+
+        patched_fig = Patch()
+        patched_fig["layout"]["shapes"] = new_shapes
+        patches.append(patched_fig)
+
+    return patches
+
+
+@dash.callback(
+    Output({"type": "opv-dynamic-graph", "index": ALL}, "figure", allow_duplicate=True),
+    Input("opv-clear-cursors-btn", "n_clicks"),
+    State({"type": "opv-dynamic-graph", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def clear_cursors_home(n_clicks, graph_ids):
+    patches = []
+    for _ in graph_ids:
+        patched_fig = Patch()
+        patched_fig["layout"]["shapes"] = []
+        patches.append(patched_fig)
+    return patches
+
+
+@dash.callback(
+    Output({"type": "opv-group-sensors-checklist", "index": ALL}, "value"),
+    Input("opv-file", "value"),
+    State({"type": "opv-group-sensors-checklist", "index": ALL}, "id"),
+    prevent_initial_call=True,
+)
+def reset_checklists(selected_file, all_checklists_ids):
+    if not all_checklists_ids:
+        return dash.no_update
+
+    num_checklists = len(all_checklists_ids)
+
+    return [[] for _ in range(num_checklists)]
+
+
+def _style_context_fn(group_name, selected_file, selected_assembly):
+    """Resolve this group's raw sensor names + source-type key for the style-editor modal."""
+    if not selected_file or not selected_assembly:
+        return [], []
+
+    field_rows = []
+    source_keys = []
+
+    housing = selected_assembly.split("_")[0]
+    mrun = db.load_mrun_object(selected_file, housing)
+    if mrun is not None and group_name in mrun.MagnetData.list_groups():
+        sensors = [
+            c
+            for c in mrun.MagnetData.get_group_data(group_name).columns
+            if c not in ("t", "timestamp")
+        ]
+        source_key = plot.resolve_file_type_key(selected_file)
+        field_rows = [(s, source_key) for s in sensors]
+        if source_key:
+            source_keys = [source_key]
+
+    # SUPERVISION fields for this group (if any), regardless of whether a
+    # native group matched above — see update_outputs for the "supervision:"
+    # prefix convention this mirrors.
+    supervision_fields = db.supervision_field_groups().get(group_name, [])
+    if supervision_fields:
+        field_rows = field_rows + [
+            (f"supervision:{f}", "supervision") for f in supervision_fields
+        ]
+        source_keys = source_keys + ["supervision"]
+
+    return field_rows, source_keys
+
+
+style_editor.register_callbacks(
+    "opv",
+    context_fn=_style_context_fn,
+    extra_states=[State("opv-file", "value"), State("opv-assembly", "value")],
+)

@@ -398,6 +398,39 @@ def get_files_for_assembly(assembly_name, table_name, db_path=None):
     )
 
 
+def get_operational_files_for_assembly(assembly_name, types, db_path=None):
+    """Return an assembly's ``operationaldata`` filenames of the given types.
+
+    Parameters
+    ----------
+    assembly_name : str
+        ``assemblies.name`` to look up.
+    types : list of str
+        ``operationaldata.type`` values to keep, e.g. ``["Overview", "Archive"]``.
+    db_path : str, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        Distinct basenames (``file`` holds records-relative paths), in
+        ascending timestamp order as in :func:`get_files_for_assembly`.
+    """
+    if not types:
+        return []
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = f"""
+            SELECT DISTINCT file FROM operationaldata
+            WHERE assembly_name = ? AND file IS NOT NULL
+              AND type IN ({", ".join("?" for _ in types)})
+        """
+        df = conn.execute(query, [assembly_name, *types]).df()
+    return sorted(
+        {os.path.basename(f) for f in df["file"]},
+        key=lambda f: (parse_magnet_filename(f) or datetime.min, f),
+    )
+
+
 # Status vocabularies mirroring to_duckdb/enums.py's AssemblyStatus and
 # LifecycleStatus. Duplicated here (rather than imported) because this
 # dashboard is a separate deployable that doesn't depend on to_duckdb.
