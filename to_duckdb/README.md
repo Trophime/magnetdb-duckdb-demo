@@ -66,6 +66,19 @@ source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install .[test,notebook,cli]
 ```
 
+### Linting
+
+Static checks (ruff, ty, bandit) are configured in `pyproject.toml` and
+installed with the `lint` extra. Run them from `to_duckdb/` with the venv
+activated (ty finds the interpreter through `VIRTUAL_ENV`):
+
+```bash
+pip install .[lint]
+ruff check .                     # lint (add --fix for safe autofixes)
+ty check                         # type check
+bandit -c pyproject.toml -r .    # security
+```
+
 ---
 
 ## Unified CLI — `magnetdb.py`

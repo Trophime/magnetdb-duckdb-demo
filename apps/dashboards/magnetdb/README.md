@@ -111,6 +111,19 @@ Flags (all optional):
 
 Then open `http://localhost:8050/` in a browser.
 
+### Linting
+
+Static checks (ruff, ty, bandit) are configured in `pyproject.toml` and
+installed with the `lint` extra. Run them from `apps/dashboards/magnetdb/`
+with the venv activated (ty finds the interpreter through `VIRTUAL_ENV`):
+
+```bash
+pip install ".[lint]"
+ruff check .                     # lint (add --fix for safe autofixes)
+ty check                         # type check
+bandit -c pyproject.toml -r .    # security
+```
+
 ## Running with Docker
 
 > [!NOTE] On Windows, use Docker Desktop (WSL2 backend recommended). Two
