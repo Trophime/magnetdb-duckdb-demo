@@ -1,9 +1,15 @@
 """Tests for schema.py — DDL creation and idempotency."""
 
+import subprocess
+import sys
+from pathlib import Path
+
 import duckdb
 import pytest
 
 from schema import COIL_TYPES, ensure_schema
+
+TO_DUCKDB_DIR = Path(__file__).resolve().parent.parent
 
 EXPECTED_TABLES = {
     "materials",
@@ -61,6 +67,54 @@ def test_ensure_schema_on_empty_file(tmp_path):
     con = duckdb.connect(str(db_path))
     ensure_schema(con)
     assert _table_names(con) == EXPECTED_TABLES
+    con.close()
+
+
+def _run_child(code: str) -> subprocess.CompletedProcess:
+    """Run *code* in a fresh Python process with ``to_duckdb/`` importable."""
+    return subprocess.run(
+        [sys.executable, "-c", code], cwd=TO_DUCKDB_DIR, capture_output=True, text=True
+    )
+
+
+def test_killed_writer_leaves_openable_db(tmp_path):
+    """A process killed after ensure_schema() (no close, no checkpoint) must
+    leave a WAL that DuckDB can replay, so the database still opens."""
+    db_path = tmp_path / "killed.duckdb"
+    con = duckdb.connect(str(db_path))
+    ensure_schema(con)
+    con.close()
+
+    killed = _run_child(
+        "import os, duckdb\n"
+        "from schema import ensure_schema\n"
+        f"con = duckdb.connect({str(db_path)!r})\n"
+        "ensure_schema(con)\n"
+        "os._exit(0)\n"
+    )
+    assert killed.returncode == 0, killed.stderr
+    assert db_path.with_name(db_path.name + ".wal").exists()
+
+    reopened = _run_child(
+        "import duckdb\n"
+        f"con = duckdb.connect({str(db_path)!r}, read_only=True)\n"
+        "print(con.execute('SELECT count(*) FROM operationaldata').fetchone()[0])\n"
+    )
+    assert reopened.returncode == 0, reopened.stderr
+    assert reopened.stdout.strip() == "0"
+
+
+def test_ensure_schema_sets_missing_operationaldata_id_default():
+    """An old database whose operationaldata.id has no default gets the sequence default."""
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SEQUENCE operationaldata_id_seq START 1")
+    con.execute("CREATE TABLE operationaldata (id INTEGER PRIMARY KEY, file VARCHAR UNIQUE)")
+    ensure_schema(con)
+    default = con.execute(
+        "SELECT column_default FROM information_schema.columns "
+        "WHERE table_name = 'operationaldata' AND column_name = 'id'"
+    ).fetchone()[0]
+    assert default == "nextval('operationaldata_id_seq')"
     con.close()
 
 
