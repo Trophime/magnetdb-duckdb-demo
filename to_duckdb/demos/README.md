@@ -326,6 +326,55 @@ tar -xJf stage/M19061901.tar.xz -C /path/to/records && \
 
 ---
 
+## magnet_first_signatures.py
+
+Prints, for each magnet, the `Field` signature of its first "real"
+experiment. A magnet's experiments are those of the assemblies that contain
+it (`assembly_magnets`), tried in order of experiment name. An experiment is
+skipped while it is too short (`--min-duration`) or its field never exceeds
+`--min-field`: the first file of a new magnet is often a run without field.
+The next one is then tried, up to `--max-tries`. Only `Date`, `Time` and
+`Field` are read to test these rules; the chosen file is loaded with
+`python_magnetrun.MagnetRun.load_mrun()`.
+
+The signature comes from python_magnetrun:
+`Signature.from_mdata(md, "Field", "t", threshold)` then `compact()`, which
+merges consecutive identical regimes. It is a string of regimes `U` (up),
+`P` (plateau) and `D` (down). A sample is `U` or `D` when the field changes by
+at least `--threshold` since the previous sample, so with pupitre files
+(1 Hz) the threshold is a ramp rate in T/s: **slower ramps are seen as
+plateaux**. A file ramped at 1–3 T/min then gives a single `P` although its
+field goes up to 10 T. Such entries are flagged ⚠ and rerun at the
+`--fallback` thresholds in a second table. No single threshold fits every
+file: too high hides slow ramps, too low merges the steps of a staircase
+(plateau noise counts as a ramp).
+
+Repeated units are compressed: `(PU)33` = 33 times `PU`, `(PUPD)12` = 12
+times `PUPD`. A long staircase such as `(PU)33(PD)32` (setpoints held one
+after the other) is typical of the reference-resistance measurements made
+when a new magnet is commissioned. The 2014 / 2018 rows are each housing's
+first recorded file, not a commissioning. Both tables are printed to stdout
+as Markdown.
+
+```bash
+python to_duckdb/demos/magnet_first_signatures.py --db to_duckdb/magnetdb-2026-10-08.duckdb
+python to_duckdb/demos/magnet_first_signatures.py --db to_duckdb/magnetdb-2026-10-08.duckdb \
+    --magnet M25012001 M19020601 --min-field 1.5 --fallback 0.03 0.02
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db` | `test-magnetdb.duckdb` | Target DuckDB file |
+| `--records-base` | parent of python_magnetrun's `PUPITRE_DATA_DIR` | Root of the records tree; pupitre files in `<records-base>/srv-data-install/<housing>/` (an absolute `experiments.file` is used as is) |
+| `--min-duration` | `120` | [s] files shorter than this are skipped |
+| `--min-field` | `1.0` | [T] the field must exceed this |
+| `--threshold` | `0.1` | [T per sample] signature threshold (T/s at 1 Hz) |
+| `--fallback` | `0.05 0.02 0.01 0.005` | [T per sample] thresholds tried for single-`P` entries |
+| `--max-tries` | `300` | Experiments tried per magnet |
+| `--magnet` | all magnets | Only these magnets (`magnets.name`) |
+
+---
+
 ## Building `Data/unmatched_users.csv`
 
 This file is a report of `EXPERIENCES_LOG` acronyms that `users_table_demo.py`
