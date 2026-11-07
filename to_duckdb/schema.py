@@ -224,19 +224,20 @@ CREATE TABLE IF NOT EXISTS operationaldata (
     file        VARCHAR UNIQUE,
     assembly_name VARCHAR REFERENCES assemblies(name),
     type        VARCHAR DEFAULT 'Archive',
-    status      VARCHAR DEFAULT 'pending'
+    status      VARCHAR DEFAULT 'pending',
+    -- Per-file metadata, computed once by `populate operationaldata-metadata`
+    -- (PLAN_overview_records_from_operationaldata.md): file start/end as naive
+    -- timestamps in the DB timezone (UTC by default, like overview_records.t0),
+    -- and the operating mode of Overview files (NULL for other types).
+    t_start     TIMESTAMP,
+    t_end       TIMESTAMP,
+    mode        VARCHAR
 );
 
 -- idempotent migration for databases that predate the type column
 ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'Archive';
--- the id sequence default migration is in _ensure_operationaldata_id_default()
--- Per-file metadata, computed once by `populate operationaldata-metadata`
--- (PLAN_overview_records_from_operationaldata.md): file start/end as naive
--- timestamps in the DB timezone (UTC by default, like overview_records.t0),
--- and the operating mode of Overview files (NULL for other types).
-ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS t_start TIMESTAMP;
-ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS t_end TIMESTAMP;
-ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS mode VARCHAR;
+-- the id sequence default migration is in _ensure_operationaldata_id_default();
+-- t_start / t_end / mode on older databases: _ensure_operationaldata_metadata_columns()
 
 -- One row per processed overview file (OverviewRecord, data attribute excluded).
 -- sources_* columns hold the file-path lists from FileSet.
@@ -550,6 +551,43 @@ def _ensure_operationaldata_id_default(con) -> None:
         )
 
 
+def _ensure_operationaldata_metadata_columns(con) -> bool:
+    """Add t_start / t_end / mode to an older operationaldata; True if any was added."""
+    present = {
+        row[0] for row in con.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'operationaldata'"
+        ).fetchall()
+    }
+    missing = [
+        (name, sql_type)
+        for name, sql_type in (("t_start", "TIMESTAMP"), ("t_end", "TIMESTAMP"), ("mode", "VARCHAR"))
+        if name not in present
+    ]
+    for name, sql_type in missing:
+        con.execute(f"ALTER TABLE operationaldata ADD COLUMN {name} {sql_type}")
+    return bool(missing)
+
+
+def _ensure_sources_signal_stats(con) -> bool:
+    """Rename overview_records.sources_stats (or add the column); True if changed."""
+    columns = {
+        row[0] for row in con.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'overview_records'"
+        ).fetchall()
+    }
+    if "sources_signal_stats" in columns:
+        return False
+    if "sources_stats" in columns:
+        con.execute(
+            "ALTER TABLE overview_records RENAME COLUMN sources_stats TO sources_signal_stats"
+        )
+    else:
+        con.execute("ALTER TABLE overview_records ADD COLUMN sources_signal_stats VARCHAR[]")
+    return True
+
+
 def ensure_schema(con) -> None:
     """Create all tables and apply idempotent migrations on *con*."""
     # users.hstart changed from TIMESTAMP[] (one row per acronym+housing) to a
@@ -590,17 +628,14 @@ def ensure_schema(con) -> None:
     con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS overview_records_ids VARCHAR[]")
     # idempotent migration for databases that predate the local_contact column
     con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS local_contact VARCHAR[]")
-    # idempotent migration: overview_records.sources_stats was renamed to
-    # sources_signal_stats (pigbrother Stats files, not DB statistics)
-    has_old_stats = con.execute(
-        "SELECT 1 FROM information_schema.columns "
-        "WHERE table_name = 'overview_records' AND column_name = 'sources_stats'"
-    ).fetchone()
-    if has_old_stats is not None:
-        con.execute(
-            "ALTER TABLE overview_records RENAME COLUMN sources_stats TO sources_signal_stats"
-        )
-    # idempotent migration for databases that predate both names
-    con.execute(
-        "ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS sources_signal_stats VARCHAR[]"
-    )
+    # A24 migrations (PLAN_overview_records_from_operationaldata.md):
+    # operationaldata.t_start / t_end / mode, and overview_records.sources_stats
+    # renamed to sources_signal_stats (pigbrother Stats files, not DB
+    # statistics). DuckDB can't replay an ALTER on operationaldata from the WAL
+    # ("GetDefaultDatabase with no default database set": its id default is
+    # re-bound), so checkpoint at once: a writer killed later leaves no such
+    # ALTER in the WAL.
+    added = _ensure_operationaldata_metadata_columns(con)
+    renamed = _ensure_sources_signal_stats(con)
+    if added or renamed:
+        con.execute("CHECKPOINT")

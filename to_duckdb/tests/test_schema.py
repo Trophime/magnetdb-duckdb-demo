@@ -107,6 +107,43 @@ def test_killed_writer_leaves_openable_db(tmp_path):
     assert reopened.stdout.strip() == "0"
 
 
+def test_killed_writer_after_a24_migration_leaves_openable_db(tmp_path):
+    """Killing the first writer on a pre-A24 database (operationaldata without
+    t_start/t_end/mode, overview_records.sources_stats) must leave a database
+    that opens: an ALTER on operationaldata cannot be replayed from the WAL."""
+    db_path = tmp_path / "pre_a24.duckdb"
+    con = duckdb.connect(str(db_path))
+    con.execute("CREATE SEQUENCE operationaldata_id_seq START 1")
+    con.execute(
+        "CREATE TABLE operationaldata ("
+        " id INTEGER PRIMARY KEY DEFAULT nextval('operationaldata_id_seq'),"
+        " name VARCHAR, description VARCHAR, file VARCHAR UNIQUE, assembly_name VARCHAR,"
+        " type VARCHAR DEFAULT 'Archive', status VARCHAR DEFAULT 'pending')"
+    )
+    con.execute("CREATE TABLE overview_records (filename VARCHAR PRIMARY KEY, sources_stats VARCHAR[])")
+    con.execute("INSERT INTO overview_records VALUES ('M8_Overview_260226-0948', ['s.tdms'])")
+    con.close()
+
+    killed = _run_child(
+        "import os, duckdb\n"
+        "from schema import ensure_schema\n"
+        f"con = duckdb.connect({str(db_path)!r})\n"
+        "ensure_schema(con)\n"
+        "os._exit(0)\n"
+    )
+    assert killed.returncode == 0, killed.stderr
+
+    reopened = _run_child(
+        "import duckdb\n"
+        f"con = duckdb.connect({str(db_path)!r}, read_only=True)\n"
+        "cols = [r[1] for r in con.execute('PRAGMA table_info(operationaldata)').fetchall()]\n"
+        "print(cols[-3:])\n"
+        "print(con.execute('SELECT sources_signal_stats FROM overview_records').fetchone()[0])\n"
+    )
+    assert reopened.returncode == 0, reopened.stderr
+    assert reopened.stdout.split("\n")[:2] == ["['t_start', 't_end', 'mode']", "['s.tdms']"]
+
+
 def test_ensure_schema_sets_missing_operationaldata_id_default():
     """An old database whose operationaldata.id has no default gets the sequence default."""
     con = duckdb.connect(":memory:")
