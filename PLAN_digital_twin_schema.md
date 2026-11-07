@@ -19,7 +19,7 @@ data issues #10–#11.
 Revised 2026-11-05: header versions with explicit validity and a status
 (`stale` | `commissioning` | `valid`), from the line-1 headers of the
 commissioning assemblies `M9_A250121_00` / `M9_A250401_00`; tap change of
-`M25032101` inside `M9_A250401_00` (data issue #12); ETL magnet parts get
+`M25032101` inside `M9_A250401_00` (data issue #12); ETL magnet wirings get
 their own validity windows (ETL plan D1 = a).
 **No implementation phase is approved yet** — each phase below
 gets its own short plan + approval before any code or schema change.
@@ -499,7 +499,7 @@ Exposed as a view:
   lacks in its v1. ETL spec v2 builds the voltage sums from
   `v_config_sections`, summing only the slots present under the rules
   above (e.g. `Ucoil2–7` for a 12-helix insert; `Ucoil1` empty on M9
-  `M25032101` since 2025-05-09). The ETL magnet parts get the validity
+  `M25032101` since 2025-05-09). The ETL magnet wirings get the validity
   window of the `valid` header version they come from (ETL plan D1 = a,
   2026-11-05).
 - **M5 row** of the slot table above (Bitters 1–2 on GR1) changes if the M5

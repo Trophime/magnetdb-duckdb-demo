@@ -30,7 +30,7 @@ Effort (relative, no calendar): S · M · L · XL · ? (not sizeable yet).
 | Track | Scope | Open items | Next step |
 |---|---|---|---|
 | [A](#a--data-pipeline-to_duckdb) | `to_duckdb` schema, CLI, compute pipelines | 20 | `magnetdb-2026-11-05.duckdb` is in `to_duckdb/`; versions checked (A22, part); next hoop stress and the remaining A22 checks, then deploy the new DB to calcul18 (F7); approve A24 |
-| [B](#b--digital-twin--etl) | installations, run config, characteristics, Pupitre ETL, signatures, sessions | 14 steps | file-check rules steps 1–4 committed; next step 5 on the new DB; reconcile the D1 = a text with the wiring/rules naming, then approve its code; approve step R (sessions); write the S1 execution choices |
+| [B](#b--digital-twin--etl) | installations, run config, characteristics, Pupitre ETL, signatures, sessions | 14 steps | file-check rules steps 1–4 committed; next step 5 on the new DB; approve the D1 = a code (text aligned 2026-11-07); approve step R (sessions); write the S1 execution choices |
 | [C](#c--dashboards-appsdashboardsmagnetdb) | Dash app | 10 | evaluation with advanced users (F7); check the geometry colour on Magnet stats; approve C9 (CSV download) and C10 (hybrid viewer); reconcile C2; waterflow (C1) after E3 |
 | [D](#d--python_magnetrun) | data-access library | 16 | `cirrus-mirror` and the `runetl` check rules committed; D2 parquet is ready to execute |
 | [E](#e--python_magnetsetup--python_magnetgeo--python_magnetcooling) | setup / geometry / cooling libraries | 5 | approve E1 (Supra fix) — unblocks A2 and M8 |
@@ -165,7 +165,7 @@ the schema plan's own step R (header resolution order) is listed as **R (header)
 | S1 | Signature regime robustness study (incl. lag Side A vs Side B, robust `Field` signature) | [PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md) | 📝 methodology approved, not run | — | tooling location; RDP vs PELT; test-file set |
 | S2 | Fill `overview_records.signatures`/`plateaux`/`sync_info` with real output | to write | 💡 | S1 | — |
 | S3 | `teb` as a time series, shifted by stored lag | to write | 💡 | S2 | one-offset-per-file assumption |
-| 1 | Pupitre ETL spec v1 | [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md) | 🔄 parts A and B committed with D1 = b (opt-in path). D1 = a (revised 2026-11-05) documented; its text still uses `set_magnet_part` / `PART.json` / `current`, to reconcile with the wiring and rules naming before its code is approved. The current-check tolerance during transients is covered by the file-check rules (`p99_abs`). Follow-ups, each needing its own plan: re-export specs when a housing version is added, `etl_checks` in the dashboards, raw pupitre view in `file_viewer` | H, R (header) | none |
+| 1 | Pupitre ETL spec v1 | [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md) | 🔄 parts A and B committed with D1 = b (opt-in path). D1 = a (revised 2026-11-05) documented, its text aligned with the wiring and rules naming on 2026-11-07 (check rules keep the housing-version axis); its code awaits approval. The current-check tolerance during transients is covered by the file-check rules (`p99_abs`). Follow-ups, each needing its own plan: re-export specs when a housing version is added, `etl_checks` in the dashboards, raw pupitre view in `file_viewer` | H, R (header) | none |
 | 1 (rules) | File-check rules steps 5–7: M9 rules on a copy of the new DB (tolerances measured first), dashboard tag colours and tooltips, docs (`to_duckdb/docs/schema.md`, python_magnetrun README) | [PLAN_file_check_rules.md](PLAN_file_check_rules.md) | 🔄 approved; steps 1–4 done (`57a95bf`); step 5 unblocked (the new DB is in `to_duckdb/`) | 1 | — |
 | 1b | Supra current `IS` for M8; hybrid loading moved into python_magnetrun | outline in [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md) | 💡 outline agreed | 1 | #27 Hybrid ↔ pupitre clock lag (M8 work started, `00e6467`; cirrus notes give a measured offset method) |
 | 2a | Switch Pupitre callers (`load_mrun`, dashboards, `stress_map.py`) to the spec path | to write | 💡 | 1 | — |
@@ -466,7 +466,7 @@ marks the ones that unblock other work.
 3. **F1** [PLAN_github_runner_setup.md](PLAN_github_runner_setup.md) — unblocks F2, F3, F4
 4. A17 [PLAN_retired_magnet_guard.md](to_duckdb/PLAN_retired_magnet_guard.md) — safeguard for future loads (not needed for the A21 rebuild)
 5. B step R ([PLAN_session_records.md](PLAN_session_records.md#follow-up-step-r-pigbrother-runlog-path-proposed-2026-10-23))
-6. B step 1, D1 = a code ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)) — once its text uses the wiring and rules naming
+6. B step 1, D1 = a code ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md) step 9 and "D1 revision" files; text aligned with the wiring and rules naming 2026-11-07)
 7. A24 [PLAN_overview_records_from_operationaldata.md](PLAN_overview_records_from_operationaldata.md) (draft 2026-11-06)
 8. A2 [PLAN_hoop_stress_part_names.md](to_duckdb/PLAN_hoop_stress_part_names.md) (after E1; before the full hoop-stress run of A22 avoids running it twice)
 9. A1 [PLAN_exp_stats_performance.md](to_duckdb/PLAN_exp_stats_performance.md) — makes the next full rebuild faster
@@ -499,7 +499,6 @@ They are listed here and **were not edited**.
 |---|---|---|
 | [PLAN_dashboard_tables_newest_first.md](PLAN_dashboard_tables_newest_first.md) | no status line | table sorting implemented (`8614a4a`, `1c8d571`); About log collapsible (`0987dae`); 10 per page not done (C8) |
 | [PLAN_session_records.md](PLAN_session_records.md), [NOTES_session_records_checks.md](NOTES_session_records_checks.md) | "the parent repo does not record that submodule commit yet" | no longer true: python_magnetrun `b75b6a9` is in the pinned branch (merge `a77f37c`, superproject `74cdd28`) |
-| [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md) | D1 = a text (2026-11-05): `set_magnet_part`, `etl set-magnet … PART.json`, `current` in the magnet part | the code now has `set_magnet_wiring`, `<wiring.json>` and no `current` (check rules, `57a95bf`) |
 | [PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md) cross-plan table | row H "versions not yet loaded into `magnetdb.duckdb`" | loaded in `magnetdb-2026-11-05.duckdb` (A21 rebuild, 6 versions incl. `M8-260305`), or by `housing sync` on older DBs |
 | [PLAN_file_check_rules.md](PLAN_file_check_rules.md) | "Steps 5–6 wait for the new DB being rebuilt into `to_duckdb/`" | `magnetdb-2026-11-05.duckdb` is there since 2026-11-07 |
 | [to_duckdb/ROADMAP.md](to_duckdb/ROADMAP.md) | snapshot 2026-08-21; fatigue-bins matrix and `overview-records-from-json` under "Next"; `PERFORMANCE_PLAN.md` under "Next"; header points to this file "status as of 2026-10-16" | both items landed; `PERFORMANCE_PLAN.md` no longer exists; this file is now 2026-11-02 |
@@ -583,8 +582,7 @@ Ordered by dependency, not by date.
 4. **Architecture decision:** F5 option F, before writing the F8 plan.
 5. **Cheap drafted work:** A19, A4, A3, A5 (A5 before E2), A6, C8.
 6. **Track B in parallel:** file-check rules step 5 on a copy of
-   `magnetdb-2026-11-05.duckdb`, then steps 6–7; reconcile the D1 = a text,
-   then its code; step R, S1 execution choices; 2b and 2c as access allows.
+   `magnetdb-2026-11-05.duckdb`, then steps 6–7; the D1 = a code; step R, S1 execution choices; 2b and 2c as access allows.
 7. **Library storage:** D2 → D3, coordinated with B step 7's rustfs need.
 8. **Dashboards that follow the data:** C4 after A11 #1; C1 after E3;
    C6 after B steps 5–6; tester issues from F7.

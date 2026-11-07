@@ -114,6 +114,9 @@ foreign keys don't cascade and restrict updates of referenced rows).
 4. `to_duckdb`: 755 passed, 3 skipped, after adding `tags`, `check_rules`,
    `record_tags` to `EXPECTED_TABLES` in `tests/test_schema.py` (approved
    separately).
+7. (part, 2026-11-07) `PLAN_pupitre_etl_spec.md` uses the wiring and rules
+   naming (its D1 = a text included); `to_duckdb/docs/schema.md` and the
+   python_magnetrun README are still to do.
 
 Deviations from the file list above:
 
