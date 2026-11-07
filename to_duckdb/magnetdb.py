@@ -40,9 +40,18 @@ Unified CLI entry point for the student MagnetDB DuckDB.
 
     python magnetdb.py housing view [<name>] [--at TIME]           [--db ...]
     python magnetdb.py housing sync [<name>] [--dry-run]           [--db ...]
-    python magnetdb.py etl set-magnet <assembly> <magnet> <housing_version> <part.json> [--db ...]
+    python magnetdb.py etl set-magnet <assembly> <magnet> <housing_version> <wiring.json> [--db ...]
     python magnetdb.py etl show <assembly> [--version V | --at TIME] [--db ...]
     python magnetdb.py etl export <assembly> [--version V | --at TIME] [-o DIR] [--db ...]
+    python magnetdb.py tag add <category:name> --color '#rrggbb' [--severity N] [--description ...] [--db ...]
+    python magnetdb.py tag update <category:name> [--color ...] [--severity N] [--description ...] [--db ...]
+    python magnetdb.py tag remove <category:name> [--db ...]
+    python magnetdb.py tag list [--db ...]
+    python magnetdb.py rule add <name> --expr EXPR --stat max_abs|p99_abs|mean_abs --tol TOL
+                                (--housing H | --assembly A [--magnet M]) [--version V]
+                                [--unit U] [--tag TAG] [--description ...] [--db ...]
+    python magnetdb.py rule remove <name> (--housing H | --assembly A [--magnet M]) [--version V] [--db ...]
+    python magnetdb.py rule show [--housing H | --assembly A] [--db ...]
     python magnetdb.py experiments view [--assembly <assembly>] [--magnet <magnet>] [--part <part>]
                                         [--from DATETIME] [--to DATETIME] [--db ...]
     python magnetdb.py operationaldata view [--assembly <assembly>] [--type TYPE]
@@ -1183,11 +1192,11 @@ def _existing_db(args) -> Path:
 
 
 def cmd_etl_set_magnet(args) -> None:
-    from etl_spec import set_magnet_part
+    from etl_spec import set_magnet_wiring
 
-    part = json.loads(Path(args.part_json).read_text(encoding="utf-8"))
+    wiring = json.loads(Path(args.wiring_json).read_text(encoding="utf-8"))
     with duckdb.connect(str(_existing_db(args))) as con:
-        set_magnet_part(con, args.assembly, args.magnet, args.housing_version, part)
+        set_magnet_wiring(con, args.assembly, args.magnet, args.housing_version, wiring)
     print(f"  + pupitre_etl_magnet  {args.assembly} / {args.magnet} / {args.housing_version}")
 
 
@@ -1209,6 +1218,92 @@ def cmd_etl_export(args) -> None:
         )
     for path in paths:
         print(f"  Wrote {path}")
+
+
+# ---------------------------------------------------------------------------
+# tag / rule handlers (file-check rules, PLAN_file_check_rules.md)
+# ---------------------------------------------------------------------------
+
+
+def cmd_tag_add(args) -> None:
+    from etl_spec import add_tag
+
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        add_tag(con, args.name, args.color, severity=args.severity, description=args.description)
+    print(f"  + tag  {args.name}")
+
+
+def cmd_tag_update(args) -> None:
+    from etl_spec import update_tag
+
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        update_tag(
+            con, args.name, color=args.color, severity=args.severity, description=args.description
+        )
+    print(f"  ~ tag  {args.name}")
+
+
+def cmd_tag_remove(args) -> None:
+    from etl_spec import remove_tag
+
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        remove_tag(con, args.name)
+    print(f"  - tag  {args.name}")
+
+
+def cmd_tag_list(args) -> None:
+    from etl_spec import list_tags
+
+    with duckdb.connect(str(_existing_db(args)), read_only=True) as con:
+        tags = list_tags(con)
+    for tag in tags:
+        print(f"  {tag['name']:<32} {tag['color']}  severity {tag['severity']}  {tag['description'] or ''}")
+
+
+def _rule_scope_kwargs(args) -> dict:
+    return {
+        "housing": args.housing, "assembly": args.assembly,
+        "magnet": args.magnet, "version": args.version,
+    }
+
+
+def cmd_rule_add(args) -> None:
+    from etl_spec import add_rule
+
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        add_rule(
+            con, args.name, args.expr, args.stat, args.tol, **_rule_scope_kwargs(args),
+            unit=args.unit, tag=args.tag, description=args.description,
+        )
+    print(f"  + rule  {args.name}")
+
+
+def cmd_rule_remove(args) -> None:
+    from etl_spec import remove_rule
+
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        remove_rule(con, args.name, **_rule_scope_kwargs(args))
+    print(f"  - rule  {args.name}")
+
+
+def cmd_rule_show(args) -> None:
+    from etl_spec import list_rules
+
+    with duckdb.connect(str(_existing_db(args)), read_only=True) as con:
+        rules = list_rules(con, housing=args.housing, assembly=args.assembly)
+    for rule in rules:
+        scope = rule["housing"] or rule["assembly_name"]
+        if rule["magnet_name"]:
+            scope += f"/{rule['magnet_name']}"
+        scope += f"@{rule['housing_version']}" if rule["housing_version"] else " (all versions)"
+        unit = f" {rule['unit']}" if rule["unit"] else ""
+        tag = f"  -> {rule['tag']}" if rule["tag"] else ""
+        print(f"  {scope:<44} {rule['name']:<20} {rule['stat']}({rule['expr']}) <= {rule['tol']}{unit}{tag}")
 
 
 # ---------------------------------------------------------------------------
@@ -1852,6 +1947,13 @@ _DISPATCH = {
     ("etl",               "set-magnet"):      cmd_etl_set_magnet,
     ("etl",               "show"):            cmd_etl_show,
     ("etl",               "export"):          cmd_etl_export,
+    ("tag",               "add"):             cmd_tag_add,
+    ("tag",               "update"):          cmd_tag_update,
+    ("tag",               "remove"):          cmd_tag_remove,
+    ("tag",               "list"):            cmd_tag_list,
+    ("rule",              "add"):             cmd_rule_add,
+    ("rule",              "remove"):          cmd_rule_remove,
+    ("rule",              "show"):            cmd_rule_show,
     ("experiments",       "view"):            cmd_experiments_view,
     ("operationaldata",   "view"):            cmd_operationaldata_view,
     ("log",                "view"):           cmd_log_view,
@@ -1983,7 +2085,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     entity = parser.add_subparsers(
         dest="entity", required=True,
-        metavar="{list,check,db,material,part,magnet,assembly,housing,etl,experiments,operationaldata,overview-records,populate,hoop-stress}",
+        metavar="{list,check,db,material,part,magnet,assembly,housing,etl,tag,rule,experiments,operationaldata,overview-records,populate,hoop-stress}",
     )
 
     # ── list ─────────────────────────────────────────────────────────────────
@@ -2303,11 +2405,13 @@ def build_parser() -> argparse.ArgumentParser:
                                    metavar="{set-magnet,show,export}")
 
     etl_set = etl_sub.add_parser(
-        "set-magnet", help="Insert or replace the ETL part of a magnet for one housing version.")
+        "set-magnet", help="Insert or replace the wiring of a magnet for one housing version.")
     etl_set.add_argument("assembly", help="Assembly name")
     etl_set.add_argument("magnet", help="Magnet of the assembly")
     etl_set.add_argument("housing_version", help="Housing version, e.g. M8-260305")
-    etl_set.add_argument("part_json", help='JSON file: {"channels", "remove", "add", "current"}')
+    etl_set.add_argument(
+        "wiring_json",
+        help='JSON file: {"channels", "remove", "add"}; checks are rules (rule add)')
     _db_arg(etl_set)
 
     for action, help_text in (
@@ -2324,6 +2428,70 @@ def build_parser() -> argparse.ArgumentParser:
             etl_x.add_argument("-o", "--output-dir", dest="output_dir", default=".",
                                help="Destination directory (default: .)")
         _db_arg(etl_x)
+
+    # ── tag ──────────────────────────────────────────────────────────────────
+    tag_p = entity.add_parser(
+        "tag", help="Tags attached to files by failed checks (<category>:<name>, own colour).")
+    tag_sub = tag_p.add_subparsers(dest="action", required=True,
+                                   metavar="{add,update,remove,list}")
+    for action, help_text in (
+        ("add", "Define a tag."),
+        ("update", "Change the colour, severity or description of a tag."),
+    ):
+        tag_x = tag_sub.add_parser(action, help=help_text)
+        tag_x.add_argument("name", help="Tag name <category>:<name>, e.g. check:current_mismatch")
+        tag_x.add_argument("--color", required=action == "add", default=None,
+                           help="#rrggbb; not #f8d7da (geometry problems), #fff3cd "
+                                "(missing dates) or another tag's colour")
+        tag_x.add_argument("--severity", type=int, default=1 if action == "add" else None,
+                           help="Higher = more severe; the most severe tag sets a file's colour"
+                                + (" (default: 1)" if action == "add" else ""))
+        tag_x.add_argument("--description", default=None, help="Shown in dashboard tooltips")
+        _db_arg(tag_x)
+    tag_rm = tag_sub.add_parser("remove", help="Delete a tag no rule and no file uses.")
+    tag_rm.add_argument("name", help="Tag name")
+    _db_arg(tag_rm)
+    tag_ls = tag_sub.add_parser("list", help="List the tags.")
+    _db_arg(tag_ls)
+
+    # ── rule ─────────────────────────────────────────────────────────────────
+    rule_p = entity.add_parser(
+        "rule", help="Check rules on pupitre files, per housing, assembly or magnet.")
+    rule_sub = rule_p.add_subparsers(dest="action", required=True,
+                                     metavar="{add,remove,show}")
+    for action, help_text in (
+        ("add", "Insert or replace a rule. EXPR uses the file's columns after rename and "
+                "add: raw (Idcct1, Icoil2), added (IH, IB, UH, UB) and renamed (FlowH, "
+                "TinH, ...) names; the original name of a renamed column (Flow1) no "
+                "longer exists. The check passes when STAT(EXPR) <= TOL."),
+        ("remove", "Delete the rule with this name and scope."),
+    ):
+        rule_x = rule_sub.add_parser(action, help=help_text, description=help_text)
+        rule_x.add_argument("name", help="Rule name (letters, digits, _)")
+        if action == "add":
+            rule_x.add_argument("--expr", required=True, help='Expression, e.g. "IH - Icoil2"')
+            rule_x.add_argument("--stat", required=True, choices=["max_abs", "p99_abs", "mean_abs"],
+                                help="Statistic of |EXPR| over all rows (NaN ignored)")
+            rule_x.add_argument("--tol", required=True, type=float, help="Tolerance, in --unit")
+            rule_x.add_argument("--unit", default=None, help="Unit of EXPR and TOL, e.g. A")
+            rule_x.add_argument("--tag", default=None,
+                                help="Tag attached to the file when the rule fails "
+                                     "(default: result stored only)")
+            rule_x.add_argument("--description", default=None, help="Free text")
+        scope = rule_x.add_mutually_exclusive_group(required=True)
+        scope.add_argument("--housing", default=None, help="Housing rule (e.g. M9)")
+        scope.add_argument("--assembly", default=None, help="Assembly rule, or the magnet's assembly")
+        rule_x.add_argument("--magnet", default=None, help="Magnet rule (with --assembly)")
+        rule_x.add_argument("--version", default=None,
+                            help="Restrict to this housing version (default: all versions)")
+        _db_arg(rule_x)
+    rule_show = rule_sub.add_parser("show", help="List the rules.")
+    show_sel = rule_show.add_mutually_exclusive_group()
+    show_sel.add_argument("--housing", default=None,
+                          help="Rules of this housing and of its assemblies and magnets")
+    show_sel.add_argument("--assembly", default=None,
+                          help="Rules of this assembly, its magnets and its housing")
+    _db_arg(rule_show)
 
     # ── experiments ───────────────────────────────────────────────────────────
     exp_p = entity.add_parser("experiments", help="View experiment records.")

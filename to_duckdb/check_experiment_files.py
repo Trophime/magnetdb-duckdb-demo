@@ -35,7 +35,7 @@ from pathlib import Path
 
 import duckdb
 from config import DEFAULT_DB
-from etl_spec import build_pupitre_etl_spec
+from etl_spec import build_pupitre_etl_spec, replace_record_tags
 from file_context import file_start
 from populate import _RECORDS_BASE, _SRV_SUBDIR
 from python_magnetrun.magnetdata import load_magnetdata
@@ -182,9 +182,11 @@ def check_experiments_etl(
     For each experiment, the spec of its assembly at the file start
     (:func:`~etl_spec.build_pupitre_etl_spec`) is applied with
     :func:`~python_magnetrun.runetl.prepare_pupitre`; its check results
-    (housing version, one current check per magnet part, channel checks) are
-    stored. A file that cannot be loaded gets a single ``load`` result.
-    After editing a magnet part, run with ``recheck`` on that assembly.
+    (housing version, one per rule, channel checks) are stored, and the
+    experiment's ``record_tags`` are replaced by the tags of its failed
+    checks (:func:`~etl_spec.replace_record_tags`). A file that cannot be
+    loaded gets a single ``load`` result and no tag. After editing a magnet
+    wiring or a rule, run with ``recheck`` on the affected assemblies.
 
     Parameters
     ----------
@@ -242,6 +244,7 @@ def check_experiments_etl(
             "UPDATE experiments SET etl_checks = ?, etl_checked_at = now() WHERE id = ?",
             [json.dumps(checks), int(row.id)],
         )
+        replace_record_tags(con, "experiments", str(row.id), checks)
         results["checked"] += 1
         failed = [c for c in checks if c["ok"] is False]
         if verbose and failed:

@@ -1104,6 +1104,8 @@ _LOGGED_SUBCOMMANDS = {
     ("populate", "overview-records-from-json"), ("populate", "overview-records-infer"),
     ("hoop-stress", "compute"),
     ("etl", "set-magnet"),
+    ("tag", "add"), ("tag", "update"), ("tag", "remove"),
+    ("rule", "add"), ("rule", "remove"),
     ("housing", "sync"),
 }
 _READ_ONLY_SUBCOMMANDS = {
@@ -1115,6 +1117,7 @@ _READ_ONLY_SUBCOMMANDS = {
     ("hoop-stress", "barchart"), ("hoop-stress", "history"), ("hoop-stress", "stats"),
     ("hoop-stress", "fatigue"), ("hoop-stress", "part-history"),
     ("etl", "show"), ("etl", "export"),
+    ("tag", "list"), ("rule", "show"),
 }
 _NOT_APPLICABLE_SUBCOMMANDS = {("db", "delete")}  # removes the DB, log included
 

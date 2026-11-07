@@ -168,6 +168,53 @@ CREATE TABLE IF NOT EXISTS pupitre_etl_magnet (
     FOREIGN KEY (assembly_name, magnet_name) REFERENCES assembly_magnets (assembly_name, magnet_name)
 );
 
+-- File-check rules and tags (PLAN_file_check_rules.md). No foreign keys:
+-- references are checked in etl_spec.py.
+-- tags: <category>:<name>, one colour each (never #f8d7da / #fff3cd).
+CREATE TABLE IF NOT EXISTS tags (
+    name        VARCHAR PRIMARY KEY,
+    color       VARCHAR NOT NULL,
+    severity    INTEGER DEFAULT 1,
+    description VARCHAR
+);
+-- attached by the built-in channel check
+INSERT INTO tags VALUES ('check:channel_not_empty', '#e2d9f3', 1,
+    'A removed pupitre channel (Ucoil/Icoil/DRcoil/Tcal n) is not exactly 0')
+    ON CONFLICT DO NOTHING;
+
+-- One rule: housing set (housing rule), assembly_name (assembly rule) or
+-- assembly_name + magnet_name (magnet rule); housing_version NULL = all versions.
+CREATE SEQUENCE IF NOT EXISTS check_rules_id_seq START 1;
+CREATE TABLE IF NOT EXISTS check_rules (
+    id              INTEGER PRIMARY KEY DEFAULT nextval('check_rules_id_seq'),
+    name            VARCHAR NOT NULL,
+    housing         VARCHAR,
+    assembly_name   VARCHAR,
+    magnet_name     VARCHAR,
+    housing_version VARCHAR,
+    expr            VARCHAR NOT NULL,
+    stat            VARCHAR NOT NULL,
+    tol             DOUBLE  NOT NULL,
+    unit            VARCHAR,
+    tag             VARCHAR,
+    sources         VARCHAR[] DEFAULT ['pupitre'],
+    applies_to      VARCHAR DEFAULT 'experiments',
+    description     VARCHAR
+);
+
+-- Tags attached by failed checks. record_key: experiments.id as text
+-- (later overview_records.filename); rule: rule name, or ch<n> for a channel.
+CREATE TABLE IF NOT EXISTS record_tags (
+    record_table VARCHAR NOT NULL,
+    record_key   VARCHAR NOT NULL,
+    tag          VARCHAR NOT NULL,
+    rule         VARCHAR NOT NULL,
+    value        DOUBLE,
+    tolerance    DOUBLE,
+    tagged_at    TIMESTAMP DEFAULT now(),
+    PRIMARY KEY (record_table, record_key, tag, rule)
+);
+
 CREATE SEQUENCE IF NOT EXISTS operationaldata_id_seq START 1;
 
 CREATE TABLE IF NOT EXISTS operationaldata (

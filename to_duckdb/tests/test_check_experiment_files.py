@@ -111,15 +111,18 @@ def test_assembly_filter(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+TAG = "check:field_offset"
+
+
 def _etl_setup(tmp_path):
-    from etl_spec import set_magnet_part
+    from etl_spec import add_rule, add_tag
 
     db, records = _setup(tmp_path)
     with duckdb.connect(str(db)) as con:
-        set_magnet_part(
-            con, ASSEMBLY, MAGNET_JSON["name"], "M10-180220",
-            {"current": {"source": "Icoil1", "check": "IH"}},
-        )
+        add_tag(con, TAG, "#cfe2ff")
+        # Field is 28.7457 … 28.7578 in the test files
+        add_rule(con, "field_offset", "Field - 28", "max_abs", 0.5, assembly=ASSEMBLY, tag=TAG)
+        add_rule(con, "field_range", "Field", "max_abs", 100.0, housing=HOUSING, tag=TAG)
     return db, records
 
 
@@ -140,9 +143,11 @@ def test_etl_checks_recorded(tmp_path):
     rows = _etl_rows(db)
 
     checks, checked_at, header_class = rows["2024.12.05 - 12:15:30.txt"]
-    assert [c["kind"] for c in checks] == ["housing_version", "current"]
+    assert [c["kind"] for c in checks] == ["housing_version", "rule", "rule"]
     assert checks[0] == {"kind": "housing_version", "spec": "M10-180220", "data": "M10-180220", "ok": True}
-    assert checks[1]["magnet"] == MAGNET_JSON["name"]  # one result per magnet part
+    assert [(c["name"], c["scope"], c["ok"]) for c in checks[1:]] == [
+        ("field_offset", "assembly", False), ("field_range", "housing", True),
+    ]
     assert checked_at is not None
     assert header_class is None  # file quality columns untouched
 
@@ -163,3 +168,35 @@ def test_etl_already_checked_skipped_unless_recheck(tmp_path):
         str(db), records_base=str(records), recheck=True, verbose=False
     )
     assert forced == {"checked": 3, "skipped": 0, "missing": 1}
+
+
+def _record_tags(db):
+    with duckdb.connect(str(db)) as con:
+        return con.execute(
+            "SELECT e.file, t.tag, t.rule, round(t.value, 4), t.tolerance FROM record_tags t "
+            "JOIN experiments e ON CAST(e.id AS VARCHAR) = t.record_key "
+            "WHERE t.record_table = 'experiments' ORDER BY e.file"
+        ).fetchall()
+
+
+def test_etl_failed_rules_tag_the_file(tmp_path):
+    db, records = _etl_setup(tmp_path)
+    check_experiment_files.check_experiments_etl(str(db), records_base=str(records), verbose=False)
+    # both readable files fail field_offset; the empty file only has a `load` result
+    assert _record_tags(db) == [
+        ("2024.12.05 - 12:15:30.txt", TAG, "field_offset", 0.7578, 0.5),
+        ("2024.12.05 - 12:15:31.txt", TAG, "field_offset", 0.7578, 0.5),
+    ]
+
+
+def test_etl_recheck_replaces_tags(tmp_path):
+    from etl_spec import add_rule
+
+    db, records = _etl_setup(tmp_path)
+    check_experiment_files.check_experiments_etl(str(db), records_base=str(records), verbose=False)
+    with duckdb.connect(str(db)) as con:
+        add_rule(con, "field_offset", "Field - 28", "max_abs", 1.0, assembly=ASSEMBLY, tag=TAG)
+    check_experiment_files.check_experiments_etl(
+        str(db), records_base=str(records), recheck=True, verbose=False
+    )
+    assert _record_tags(db) == []
