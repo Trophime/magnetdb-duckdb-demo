@@ -144,7 +144,7 @@ def test_etl_checks_recorded(tmp_path):
 
     checks, checked_at, header_class = rows["2024.12.05 - 12:15:30.txt"]
     assert [c["kind"] for c in checks] == ["housing_version", "rule", "rule"]
-    assert checks[0] == {"kind": "housing_version", "spec": "M10-180220", "data": "M10-180220", "ok": True}
+    assert checks[0] == {"kind": "housing_version", "spec": "M10-210929", "data": "M10-210929", "ok": True}
     assert [(c["name"], c["scope"], c["ok"]) for c in checks[1:]] == [
         ("field_offset", "assembly", False), ("field_range", "housing", True),
     ]

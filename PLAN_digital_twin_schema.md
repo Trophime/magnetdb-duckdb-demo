@@ -1562,6 +1562,45 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
     (ETL plan D1 = a), in L2 a new header version.
     **[unconfirmed]** that this is the intended wiring (user: such a change
     "could be normal").
+    **Update 2026-11-07:** the ETL now derives each insert's taps from its
+    helix count (`Ucoil1–7` for 14 helices); the empty `Ucoil1` is kept as
+    a tap and adds 0 to `UH`, so the ETL needs no exception
+    ([PLAN_pupitre_checks_file.md](PLAN_pupitre_checks_file.md), revision 2).
+    Several other 14-helix inserts show empty `Ucoil1` (or `Ucoil1–2`) taps
+    (`M09052601`, `M20022001`, `M22011801`, `M12082401`): a section-mapping
+    question for L2, not for the ETL.
+13. **Insert supplies swapped, found by the check rule `IH - Icoil7`
+    (2026-11-07):**
+    - **M7, 2014-03-17 → 2014-04-15:** the insert is fed by A1 + A3
+      (`Idcct1 + Idcct3` = `Icoil7`, `Idcct2` = `Idcct4` = 0) in every
+      powered file, not A1 + A2; three isolated A1 + A3 files follow in
+      2016 (`2016.07.27 - 10:17`, `2016.08.03 - 19:38` and `20:18`) among
+      A1 + A2 ones. Fixed by the housing versions `M7-140317` (`IH = Idcct1 +
+      Idcct3`) and `M7-160726` (base again); the three 2016 files stay
+      tagged. With A1 + A3, `IH - Icoil7` still reaches 5.7–7.2 A (p99) at
+      ≈ 13.8 kA, a systematic offset (A3 DCCT calibration?) above the 5 A
+      tolerance: 16 files tagged, kept on purpose (2026-11-07).
+    - **M10, 2021-03-25 → 2021-07-10** (end of `M10_A201214_00`,
+      `M10_A210414_00`, `M10_A210519_00`): insert fed by A1 + A2, Bitters by
+      A3 + A4, the reverse of the M10 base wiring. Fixed by `M10-210325`
+      (`IH = Idcct1 + Idcct2`, `IB = Idcct3 + Idcct4`) and `M10-210929`. In
+      half of these files the Bitters ran on A3 alone (`Idcct4` = 0): tagged
+      by `A3_vs_A4`, a real imbalance.
+    - The stats computed with the old `IH` for these files (`compute_exp_stats`)
+      need a recompute after `housing sync` (A22).
+14. **`M8_A211225_00` is supras-only in DuckDB**, yet `Idcct1` reaches
+    6 856 A (a Bitters-group supply) and insert / Bitters taps carry signal
+    (`ch1–7`, `11`, `12`, `15`, `16`) in up to all 28 files: 181
+    channel-check tags (2026-11-07). Missing magnets in the assembly JSON,
+    or that supply and those taps served something else — to check.
+15. **`M10_A220223_00` (insert `M19071101`, 12 helices) reads taps 5–7
+    only from `2022.04.06 - 11:42:33`** (2–7 until `2022.04.02 - 14:22:58`),
+    up to ≈ 27 kA, while the DB keeps it until 2022-04-22; nothing changes
+    at 2022-04-22 in the pupitre files. Either a 6-helix insert from
+    ≈ 2022-04-06 (`M10_A220422_00` → `M10_A220406_00`?) or `M19071101`
+    cabled on 5–7 only — to check by the user (2026-11-07). Taps show the
+    cabling, not the magnet: the Bitters-only `M10_A241209_00` has taps 2–7
+    plugged.
 
 ---
 

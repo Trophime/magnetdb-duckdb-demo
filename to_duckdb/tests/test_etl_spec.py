@@ -142,7 +142,7 @@ def test_supras_only(con):
 def test_same_magnet_in_m9_and_m10(con):
     wiring = {"channels": ["Ucoil3"]}
     set_magnet_wiring(con, "M9_B", "MX", "M9-181109", wiring)
-    set_magnet_wiring(con, "M10_X", "MX", "M10-180220", wiring)
+    set_magnet_wiring(con, "M10_X", "MX", "M10-210929", wiring)  # 2024: base wiring again since 2021-09-29
     m9 = _spec(con, "M9_B", 2025, 6, 1)
     m10 = _spec(con, "M10_X", 2024, 6, 1)
     assert m9.rename["Flow1"] == "FlowH" and m10.rename["Flow1"] == "FlowB"
