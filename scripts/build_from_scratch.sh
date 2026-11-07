@@ -228,25 +228,30 @@ export_source_data() {
         echo "Warning: EMFL proposals download failed; keeping existing $DATA_DIR/proposals.csv." >&2
     fi
 
-    # SUPERVISION DB:
-    python ./mysql_connect.py --mode export --format csv \
+    # Time convention: the MySQL tables hold Europe/Paris local time. Only bdd is
+    # exported as naive UTC (--utc), as the dashboard's SUPERVISION panels expect;
+    # every other export keeps local time (--no-utc).
+
+    # SUPERVISION DB: HStart/HStop (local text) are what the users steps read;
+    # the timestamp column is unreliable and unused
+    python ./mysql_connect.py --mode export --format csv --no-utc \
        --output-dir $DATA_DIR/ --tables EXPERIENCES_LOG \
        --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_SUPERVISION || return 1
 
-    # Get water temperature input/output from HX
-    python ./mysql_connect.py --mode export --format csv \
+    # Get water temperature input/output from HX (naive UTC)
+    python ./mysql_connect.py --mode export --format csv --utc \
        --output-dir $DATA_DIR/ --tables bdd \
        --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_SUPERVISION || return 1
 
-    # Get water Power and Cooling loop parameters
-    python ./mysql_connect.py --mode export --format csv \
+    # Get water Power and Cooling loop parameters (change_date time zone unknown: kept as stored)
+    python ./mysql_connect.py --mode export --format csv --no-utc \
        --output-dir $DATA_DIR/ --tables site_parameters \
        --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_MAGNETS || return 1
 
-    # Get logs from Cirrus
+    # Get logs from Cirrus (local time, like the raw cirrus logs and pupitre filenames)
     local table
     for table in cirrusA1 cirrusA2 cirrusA3 cirrusA4; do
-        python ./mysql_connect.py --mode export --format csv \
+        python ./mysql_connect.py --mode export --format csv --no-utc \
            --output-dir $DATA_DIR/ --tables $table --time-field date --sort-time asc \
            --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_LOGS || return 1
     done
