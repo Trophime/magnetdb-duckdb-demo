@@ -44,6 +44,7 @@ import numpy as np
 import pandas as pd
 from config import DEFAULT_DB, MW_TO_W, SCALAR_CHANNEL_UNITS
 from populate import _RECORDS_BASE, resolve_operationaldata_path
+from record_io import MAX_CONSECUTIVE_IO_FAILURES, is_io_error, load_with_retry
 from schema import ensure_schema
 
 # ---------------------------------------------------------------------------
@@ -123,6 +124,8 @@ def load_file(path: Path) -> tuple[pd.DataFrame, dict] | None:
         df = data.to_pandas() if hasattr(data, "to_pandas") else data.copy()
         units = md.units
     except Exception as exc:
+        if is_io_error(exc):
+            raise
         print(f"  [WARN] python_magnetrun could not load {path.name} ({exc}); falling back to pandas")
         try:
             # Old pupitre files start with a preamble line before the header.
@@ -136,6 +139,8 @@ def load_file(path: Path) -> tuple[pd.DataFrame, dict] | None:
                 df = df.iloc[: count_valid_pupitre_rows(df["Date"], df["Time"])]
             units = {}
         except Exception as exc:
+            if is_io_error(exc):
+                raise
             print(f"  [ERROR] cannot read {path.name}: {exc}")
             return None
 
@@ -503,8 +508,13 @@ def ingest_assembly(
     Returns
     -------
     dict
-        ``{"new": int, "skipped": int, "errors": list, "missing": int}``;
-        ``missing`` counts the entries of ``errors`` whose file does not exist.
+        ``{"new": int, "skipped": int, "errors": list, "missing": int,
+        "io_errors": int, "aborted": bool}``; ``missing`` counts the entries
+        of ``errors`` whose file does not exist, ``io_errors`` those still
+        failing with an I/O error after the retries of
+        :func:`record_io.load_with_retry` (not marked processed, so the next
+        run retries them). ``aborted`` is True when the run stopped after
+        :data:`record_io.MAX_CONSECUTIVE_IO_FAILURES` such files in a row.
     """
     con = duckdb.connect(db_path)
     ensure_schema(con)
@@ -513,7 +523,8 @@ def ingest_assembly(
     parts = get_assembly_parts(con, assembly_name)
     records_path = Path(records_dir)
 
-    results = {"new": 0, "skipped": 0, "errors": [], "missing": 0}
+    results = {"new": 0, "skipped": 0, "errors": [], "missing": 0, "io_errors": 0, "aborted": False}
+    consecutive_io_failures = 0
 
     for _, row in od_df.iterrows():
         od_id = int(row["id"])
@@ -524,10 +535,25 @@ def ingest_assembly(
             continue
 
         path = resolve_operationaldata_path(filename, records_base=records_path)
-        result = load_file(path)
+        try:
+            result = load_with_retry(load_file, path, verbose=verbose)
+            missing = result is None and not path.exists()
+        except OSError as exc:
+            if not is_io_error(exc):
+                raise
+            results["errors"].append((filename, str(exc)))
+            results["io_errors"] += 1
+            consecutive_io_failures += 1
+            print(f"  [IOERR] giving up on {path.name}: {exc}")
+            if consecutive_io_failures >= MAX_CONSECUTIVE_IO_FAILURES:
+                print(f"  [IOERR] {consecutive_io_failures} files in a row failed: mount looks down, stopping.")
+                results["aborted"] = True
+                break
+            continue
+        consecutive_io_failures = 0
         if result is None:
             results["errors"].append(filename)
-            if not path.exists():
+            if missing:
                 results["missing"] += 1
             continue
         df, units = result
@@ -642,6 +668,8 @@ def main() -> None:
         reprocess=args.reprocess,
         verbose=not args.quiet,
     )
+    if results["aborted"]:
+        sys.exit(1)
     # every attempted file missing: the records base is most likely wrong
     attempted = results["new"] + len(results["errors"])
     if attempted and results["missing"] == attempted:

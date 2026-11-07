@@ -1,5 +1,7 @@
 """Tests for compute_scalars() / load_file() in compute_exp_stats.py / compute_op_stats.py."""
 
+import errno
+
 import pandas as pd
 import polars as pl
 import pytest
@@ -128,6 +130,22 @@ def test_load_file_fallback_drops_stale_tail(load_file, tmp_path, monkeypatch):
     monkeypatch.setattr("python_magnetrun.magnetdata.load_magnetdata", _failing_load)
     df, _ = load_file(path)
     assert df["Field"].tolist() == [0.0, 1.5]
+
+
+@pytest.mark.parametrize("load_file", _LOAD_FNS)
+def test_load_file_reraises_io_error_while_reading(load_file, tmp_path, monkeypatch):
+    # rclone drop mid-read: both readers hit EIO; must not pass for a bad file.
+    path = tmp_path / "2018.02.21 - 10:18:54.txt"
+    path.write_text(_PUPITRE_BODY)
+
+    def _eio(*_args, **_kwargs):
+        raise OSError(errno.EIO, "Input/output error")
+
+    monkeypatch.setattr("python_magnetrun.magnetdata.load_magnetdata", _eio)
+    monkeypatch.setattr("builtins.open", _eio)
+    with pytest.raises(OSError) as exc:
+        load_file(path)
+    assert exc.value.errno == errno.EIO
 
 
 def test_get_experiments_skips_unreadable_and_single_row(tmp_path):
