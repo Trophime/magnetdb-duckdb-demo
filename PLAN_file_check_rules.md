@@ -1,7 +1,8 @@
 # Plan: configurable file-check rules, tags and colours
 
-**Status (2026-11-05): approved; steps 1–4 done** (see Results). Steps 5–6
-wait for the new DB being rebuilt into `to_duckdb/`.
+**Status (2026-11-07): approved; steps 1–5 done** (see Results; step 5 on
+a scratch copy of `magnetdb-2026-11-05.duckdb`, the repo DBs hold no rules
+yet). Step 6 (dashboard) and the rest of step 7 (docs) are left.
 
 Related:
 - [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md): the spec-driven
@@ -114,6 +115,49 @@ foreign keys don't cascade and restrict updates of referenced rows).
 4. `to_duckdb`: 755 passed, 3 skipped, after adding `tags`, `check_rules`,
    `record_tags` to `EXPECTED_TABLES` in `tests/test_schema.py` (approved
    separately).
+5. (2026-11-07) Scratch copy of `magnetdb-2026-11-05.duckdb`; 190
+   experiments of `M9_A260505_00` (27), `M9_A260602_00` (16),
+   `M9_A260707_00` (147), about 2 s per file over the records mount.
+   - Wirings (`etl set-magnet`, version `M9-181109`): channels `Ucoil2–7`,
+     remove `Ucoil1` and `Ucoil8–14`, `UH = Ucoil2 + … + Ucoil7`, for
+     `M25032101` (`M9_A260602_00`, `M9_A260707_00`) and `M19071101`
+     (12 helices, `M9_A260505_00`; the plan first assumed `M25032101` there).
+   - Measurement first (untagged rules, `max_abs` and `p99_abs`), over the
+     189 loaded files (1 header-only file, `2026.08.25 - 15:10:51`, gets a
+     `load` result):
+
+     | Expression | stat | median | p90 | p95 | max |
+     |---|---|---|---|---|---|
+     | `IH - Icoil2` | p99_abs | 0.22 | 1.12 | 1.18 | 2.84 A |
+     | `IH - Icoil2` | max_abs | 0.56 | 1.86 | 2.91 | 56.4 A (transients) |
+     | `Idcct1 - Idcct2` | p99_abs | 20.8 | 41.2 | 281 | 15001 A |
+     | `Idcct1 - Idcct2` | max_abs | 34.0 | 138 | 437 | 15001 A |
+     | `Idcct3 - Idcct4` | p99_abs | 8.9 | 26.2 | 35.8 | 300 A |
+     | `Idcct3 - Idcct4` | max_abs | 28.2 | 99.1 | 143 | 321 A |
+
+     The DCCT differences are far from 0 in normal runs, and huge on some
+     files (`2026.08.27 - 13:46:28`, `2026.10.06 - 09:48:21`: ≈ 15000 A;
+     `2026.09.01 - 16:59:16`: 2000 A) where `IH - Icoil2` stays < 1 A: the
+     sum is right, the two supplies are unbalanced (single-supply or
+     unbalanced runs; **[unconfirmed]**).
+   - Final rules (user, 2026-11-07): `IH_vs_Icoil2` = `p99_abs(IH - Icoil2)`
+     ≤ 5 A → `check:current_mismatch` (`#cfe2ff`), a magnet rule per
+     (assembly, insert); `A1_vs_A2` = `p99_abs(Idcct1 - Idcct2)` ≤ 280 A and
+     `A3_vs_A4` = `p99_abs(Idcct3 - Idcct4)` ≤ 36 A (≈ p95) →
+     `check:dcct_mismatch` (`#d1e7dd`), housing rules on M9.
+   - Result: `record_tags` holds exactly the 20 failed tagged checks (10
+     `A1_vs_A2`, 10 `A3_vs_A4`, one rule per file); the 170 other files have
+     none. `IH_vs_Icoil2` tags no file; M9 `2026.05.15 - 13:05:36` passes
+     (p99 1.18 A; its max_abs is 13.18 A). Channel checks: 1512 / 1512 ok
+     (8 removed channels × 189 files), confirming `Ucoil1` and `Ucoil8–14`
+     exactly 0 on both inserts.
+   - Channel tag: a deliberately wrong wiring on `M9_A260602_00` (plugged
+     `Ucoil7` removed) gives `check:channel_not_empty`, `rule = ch7`, on its
+     16 files; restoring the wiring and re-checking removes them.
+   - Found on the way: `check_experiment_files.py --quiet` prints no
+     summary line, although its help says "Only print the summary".
+   - The rules and wirings exist only in the scratch copy: a rebuild loses
+     them (where to keep them needs its own plan).
 7. (part, 2026-11-07) `PLAN_pupitre_etl_spec.md` uses the wiring and rules
    naming (its D1 = a text included); `to_duckdb/docs/schema.md` and the
    python_magnetrun README are still to do.
