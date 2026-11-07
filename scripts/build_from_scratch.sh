@@ -2,7 +2,8 @@
 set -eo pipefail
 
 # step IDs, in build order (see --help)
-STEPS=(create assemblies statuses etl-config check experiments exp-stats operationaldata op-stats
+STEPS=(create assemblies statuses etl-config check experiments exp-stats operationaldata
+       operationaldata-metadata op-stats
        overview-json overview-infer export users link-users unlinked-users)
 
 usage() {
@@ -311,7 +312,12 @@ section exp-stats "Ingest per-experiment statistics" ingest_exp_stats
 
 # Populate OperationalData
 section operationaldata "Populate operationaldata" \
-    python magnetdb.py populate  operationaldata --all --db $DB --records-base $RECORDS --type Overview Archive Spike Default Pupitre
+    python magnetdb.py populate  operationaldata --all --db $DB --records-base $RECORDS --type Overview Archive Spike Default SignalStats Trigger Pupitre
+# Start/end time of every operationaldata file, and the mode of Overview files,
+# computed once (PLAN_overview_records_from_operationaldata.md; about 3-3.5 h,
+# mostly pupitre and Overview metadata reads over the records mount)
+section operationaldata-metadata "Store operationaldata file times and Overview mode" \
+    python magnetdb.py populate  operationaldata-metadata --all --db $DB --records-base $RECORDS
 # Ingest per-file operational statistics (idempotent)
 section op-stats "Ingest per-file operational statistics" ingest_op_stats
 

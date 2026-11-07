@@ -33,7 +33,7 @@ See: [to_duckdb/docs/hoop-stress.md](docs/hoop-stress.md) and [to_duckdb/PLAN_ho
 
 # duckdb schema:
 - [ ] cleanup and update schema to reflect the above changes
-- [ ] remove uneeded tables and columns: operationaldata, sum_x2_dt columns -- hoop proxy
+- [ ] remove uneeded tables and columns: sum_x2_dt columns -- hoop proxy (operationaldata stays: file index for overview_records, PLAN_overview_records_from_operationaldata.md)
 
 # scheduler
 See: [to_duckdb/PLAN_scheduled_populate.md](PLAN_scheduled_populate.md)

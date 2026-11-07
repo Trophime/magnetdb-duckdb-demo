@@ -1,6 +1,21 @@
 # Plan: build overview_records from operationaldata (+ SignalStats rename)
 
-Status: **draft, revised 2026-11-07, awaiting approval** (first draft 2026-11-06)
+Status: **approved 2026-11-07, in progress** (first draft 2026-11-06)
+
+| Phase | Status (2026-11-07) |
+|---|---|
+| A — python_magnetrun rename | ✅ `3354e50` (bumped in `cbcc042`) |
+| B — schema, SignalStats / Trigger types | ✅ (also: `operationaldata view --from/--to` reads the new names) |
+| C — `populate operationaldata-metadata` | ✅; Spike/Default/Trigger taken from their names (step 8); checked on `M10_A260326_00` |
+| D — `teb`/`BP` scalars | ✅; equal to the `infer` path on a real pupitre file |
+| E — SQL builder, stored mode | ⏳ |
+| F — dashboard, docs | ✅ (`get_stats_files_for_assembly` and the Stats viewer page keep their names) |
+| G — validation, build script | step 15 partly done ahead of validation, for the 2026-11 rebuild: SignalStats/Trigger registered and `operationaldata-metadata` step added; `overview-ops` waits for phase E |
+
+Open: files still being written (question 3).
+Decided 2026-11-07: A13 keeps `operationaldata` (question 1); the 2026-11
+rebuild computes the `teb`/`BP` scalars, so no reprocessing (question 4);
+current branches (question 13).
 
 Revision 2026-11-07:
 - facts taken from the A21 rebuild `magnetdb-2026-11-05.duckdb`;
@@ -193,6 +208,10 @@ the two changes don't mix in the same files.
      last pupitre line.
    - Convert local Europe/Paris → naive `db_tz` (UTC default), the same
      convention as `overview_records.t0`.
+   - **Decision 2026-11-07:** Spike, Default and Trigger files are not read:
+     `t_start = t_end` = the time in their file name. That saves about 8 h
+     on the first pass (measured: about 0.5 s per Spike file and 2.8 s per
+     Default file over the mount; 8113 Spike files filled in 24 s instead).
    - For `Overview` rows only: load once with `load_magnetdata`, store
      `infer_operating_mode(Data["Courants_Alimentations"])` in `mode`.
    - Commit per file, so the pass can be stopped and resumed.
@@ -235,7 +254,7 @@ the two changes don't mix in the same files.
     | `housing` | the assembly's |
     | `t0` | `t_start` |
     | `duration` | `t_end − t_start` [s] |
-    | `sources_<kind>` | basenames of rows of the same housing whose `[t_start, t_end]` overlaps the overview's (strict, as `select_files`), excluding files ≤ 30 s for Archive/Pupitre and with no minimum for Default/Spike/Trigger/SignalStats |
+    | `sources_<kind>` | basenames of rows of the same housing whose `[t_start, t_end]` overlaps the overview's (strict, as `select_files`), excluding files ≤ 30 s for Archive/Pupitre and with no minimum for SignalStats; Default/Spike/Trigger rows are points in time (step 8), kept when `ov.t_start <= t_start < ov.t_end` |
     | `teb`, `bp` | `SUM(mean·count)/SUM(count)` over the `sources_pupitre` files from `op_run_scalars`; `0.0` when the scalars are missing (today's value) |
     | `mode` | via step 10 (stored) |
     | JSON columns, runlog lists | empty, as in the DB today |
@@ -320,9 +339,12 @@ the two changes don't mix in the same files.
 7. **`t0` precision.** It stays minute-precision from the Overview file name
    (as `infer_overview_record_fields` already does), not the first sample
    time.
-8. **Cost of the first metadata pass.** It reads metadata for about 54k files
-   plus the new types over the rclone mount (33k Spike). It runs once; check
-   that the mount is on rclone ≥ 1.75 first (see the 1.60 deadlock note).
+8. **Cost of the first metadata pass.** Measured 2026-11-07 on calcul24
+   (rclone 1.75.2): 0.5–3 s per file read, and up to 4 min for the first file
+   of each folder (directory listing). With Spike/Default/Trigger taken from
+   their names (step 8), about 3–3.5 h once, mostly pupitre and Overview
+   files. Check that the mount is on rclone ≥ 1.75 first (see the 1.60
+   deadlock note).
 9. **`record_tags`.** PLAN_file_check_rules.md plans `record_key =
    overview_records.filename`. The builder keeps the file stem as
    `filename`, so tags survive a rebuild of the table. Future tags on
