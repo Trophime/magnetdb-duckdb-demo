@@ -33,6 +33,16 @@ per-magnet `current` check and `ICOIL_CHECK_ATOL` are replaced by **check
 rules** (spec format 2). The text below uses these names; the "(2026-11-03,
 implemented: …)" notes, the steps 1–8 file table and steps 1–8 record what
 was built on 2026-11-03, before this rename.
+**Revised 2026-11-07 (derived insert wiring,
+[PLAN_pupitre_checks_file.md](PLAN_pupitre_checks_file.md) revision 2):**
+`build_pupitre_etl_spec` derives the wiring of an insert without a
+`pupitre_etl_magnet` row from its helix count (pair layout, taps
+`Ucoil(8 − N/2)` … `Ucoil7`; `remove` = the other channels of the insert
+group of the housing version in force). A slice of cross-plan step 3 (v2
+builder) brought forward. Stored wirings are now **overrides** only; none is
+needed for the files checked so far (46 assemblies). D1 = a (validity
+windows) loses its main case (`M25032101`'s empty `Ucoil1` is harmless for
+the ETL) and is not planned for now.
 
 Related:
 - [NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md): M5 is the first

@@ -12,11 +12,14 @@ from etl_spec import (
     add_rule,
     add_tag,
     build_pupitre_etl_spec,
+    dump_pupitre_checks,
+    import_pupitre_checks,
     list_rules,
     list_tags,
     remove_rule,
     remove_tag,
     replace_record_tags,
+    set_magnet_wiring,
     update_tag,
 )
 from tests.test_file_context import build_db
@@ -184,7 +187,7 @@ def test_rule_tag_must_exist(con):
 @pytest.mark.parametrize(
     "kwargs, match",
     [
-        ({}, "housing"),
+        ({"version": "M9-181109"}, "global"),  # no scope = global rule, never per version
         ({"housing": "M9", "assembly": "M9_A260602_00"}, "housing"),
         ({"magnet": "M25032101"}, "assembly"),
         ({"housing": "M99"}, "M99"),
@@ -240,6 +243,52 @@ def test_rule_changes_logged(con):
         "WHERE table_name = 'check_rules' ORDER BY id"
     ).fetchall()
     assert rows == [("upsert", "M9:r", "ok"), ("upsert", "M99:r", "error"), ("delete", "M9:r", "ok")]
+
+
+def test_global_rule_applies_to_every_housing(con):
+    add_rule(con, "IH_vs_Icoil7", "IH - Icoil7", "p99_abs", 5.0, unit="A")
+    for assembly, when in (("M9_A260602_00", (2026, 6, 10)), ("M10_X", (2024, 6, 1)),
+                           ("M8_A230919_00", (2026, 3, 6))):
+        rule = _rules(con, assembly, when)["IH_vs_Icoil7"]
+        assert (rule["tol"], rule["scope"]) == (5.0, "global")
+
+
+def test_housing_rule_overrides_global(con):
+    add_rule(con, "A1_vs_A2", "Idcct1 - Idcct2", "p99_abs", 40.0)
+    add_rule(con, "A1_vs_A2", "Idcct1 - Idcct2", "p99_abs", 280.0, housing="M9")
+    assert (_rules(con)["A1_vs_A2"]["tol"], _rules(con)["A1_vs_A2"]["scope"]) == (280.0, "housing")
+    assert _rules(con, "M10_X", (2024, 6, 1))["A1_vs_A2"]["tol"] == 40.0
+    add_rule(con, "A1_vs_A2", "Idcct1 - Idcct2", "p99_abs", 7.0, assembly="M9_A260602_00")
+    assert _rules(con)["A1_vs_A2"]["scope"] == "assembly"
+
+
+def test_global_rule_listed_and_removed(con):
+    add_rule(con, "g", "Idcct1 - Idcct2", "max_abs", 5.0)
+    add_rule(con, "h", "Idcct1 - Idcct2", "max_abs", 5.0, housing="M8")
+    assert {r["name"] for r in list_rules(con, housing="M9")} == {"g"}
+    assert {r["name"] for r in list_rules(con, assembly="M9_A260602_00")} == {"g"}
+    remove_rule(con, "g")
+    assert [r["name"] for r in list_rules(con)] == ["h"]
+    rows = con.execute(
+        "SELECT operation, record_name, status FROM operation_log "
+        "WHERE table_name = 'check_rules' ORDER BY id"
+    ).fetchall()
+    assert rows[0] == ("upsert", "*:g", "ok") and rows[-1] == ("delete", "*:g", "ok")
+
+
+def test_cli_global_rule(tmp_path, monkeypatch, capsys):
+    db = tmp_path / "test.duckdb"
+    build_db(str(db)).close()
+    _run(monkeypatch, "rule", "add", "IH_vs_Icoil7", "--expr", "IH - Icoil7", "--stat", "p99_abs",
+         "--tol", "5", "--unit", "A", "--db", str(db))
+    capsys.readouterr()
+    _run(monkeypatch, "rule", "show", "--housing", "M10", "--db", str(db))
+    out = capsys.readouterr().out
+    assert "IH_vs_Icoil7" in out and "* (all housings)" in out
+    _run(monkeypatch, "rule", "remove", "IH_vs_Icoil7", "--db", str(db))
+    capsys.readouterr()
+    _run(monkeypatch, "rule", "show", "--db", str(db))
+    assert "IH_vs_Icoil7" not in capsys.readouterr().out
 
 
 # ---------------------------------------------------------------------------
@@ -323,3 +372,199 @@ def test_cli_tag_and_rule(tmp_path, monkeypatch, capsys):
     capsys.readouterr()
     _run(monkeypatch, "rule", "show", "--db", str(db))
     assert "IH_vs_Icoil2" not in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# pupitre checks file: dump / import (PLAN_pupitre_checks_file.md)
+# ---------------------------------------------------------------------------
+
+DCCT_TAG = "check:dcct_mismatch"
+WIRING = {
+    "channels": ["Ucoil2", "Ucoil3"],
+    "remove": ["Ucoil1"],
+    "add": {"UH": {"formula": "UH = Ucoil2 + Ucoil3", "symbol": "UH", "unit": "volt",
+                   "label": "GR1 Voltage (UH)", "description": "test"}},
+}
+
+
+def _fill(con):
+    """Tags, rules at the three levels (one version-specific) and a wiring."""
+    add_tag(con, TAG, "#cfe2ff", severity=2, description="Icoil vs Idcct")
+    add_tag(con, DCCT_TAG, "#d1e7dd")
+    add_rule(con, "IH_vs_Icoil2", "IH - Icoil2", "p99_abs", 5.0, assembly="M9_A260602_00",
+             magnet="M25032101", unit="A", tag=TAG)
+    add_rule(con, "A1_vs_A2", "Idcct1 - Idcct2", "p99_abs", 280.0, housing="M9", unit="A",
+             tag=DCCT_TAG, description="two DCCTs")
+    add_rule(con, "r", "Idcct1 - Idcct2", "max_abs", 9.0, housing="M8", version="M8-260305")
+    add_rule(con, "a", "Idcct3 - Idcct4", "max_abs", 7.0, assembly="M9_A260602_00")
+    set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M9-181109", WIRING)
+
+
+def _state(con):
+    tags = [t for t in list_tags(con) if t["name"] != CHANNEL_TAG]
+    wirings = con.execute(
+        "SELECT assembly_name, magnet_name, housing_version, spec::VARCHAR "
+        "FROM pupitre_etl_magnet ORDER BY ALL"
+    ).fetchall()
+    return tags, list_rules(con), wirings
+
+
+def test_dump_content(con):
+    _fill(con)
+    checks = dump_pupitre_checks(con)
+    assert (checks["kind"], checks["version"]) == ("pupitre-checks", 1)
+    assert [t["name"] for t in checks["tags"]] == [TAG, DCCT_TAG]  # by name; seeded tag left out
+    assert {
+        "name": "IH_vs_Icoil2", "assembly": "M9_A260602_00", "magnet": "M25032101",
+        "expr": "IH - Icoil2", "stat": "p99_abs", "tol": 5.0, "unit": "A", "tag": TAG,
+    } in checks["rules"]
+    assert checks["wirings"] == [{
+        "assembly": "M9_A260602_00", "magnet": "M25032101", "housing_version": "M9-181109",
+        "wiring": WIRING,
+    }]
+    json.dumps(checks)  # JSON-serialisable
+
+
+def test_dump_import_round_trip(con):
+    _fill(con)
+    checks = dump_pupitre_checks(con)
+    other = build_db()
+    try:
+        counts = import_pupitre_checks(other, checks, source="f.json")
+        assert counts == {"tags": 2, "rules": 4, "wirings": 1}
+        assert _state(other) == _state(con)
+        assert dump_pupitre_checks(other) == checks
+    finally:
+        other.close()
+
+
+def test_import_twice_changes_nothing(con):
+    _fill(con)
+    checks = dump_pupitre_checks(con)
+    before = _state(con)
+    import_pupitre_checks(con, checks)
+    import_pupitre_checks(con, checks)
+    assert _state(con) == before
+
+
+def test_import_keeps_rows_absent_from_file(con):
+    _fill(con)
+    checks = dump_pupitre_checks(con)
+    checks["rules"] = [r for r in checks["rules"] if r["name"] != "a"]
+    checks["tags"] = checks["tags"][:1]
+    import_pupitre_checks(con, checks)
+    assert "a" in {r["name"] for r in list_rules(con)}
+    assert TAG in _tags(con)
+
+
+def test_import_updates_existing_entries(con):
+    _fill(con)
+    checks = dump_pupitre_checks(con)
+    next(t for t in checks["tags"] if t["name"] == TAG)["color"] = "#cff4fc"
+    next(r for r in checks["rules"] if r["name"] == "A1_vs_A2")["tol"] = 300.0
+    import_pupitre_checks(con, checks)
+    assert _tags(con)[TAG]["color"] == "#cff4fc"
+    assert {r["name"]: r["tol"] for r in list_rules(con)}["A1_vs_A2"] == 300.0
+
+
+@pytest.mark.parametrize(
+    "section, entry, match",
+    [
+        ("rules", {"name": "x", "housing": "M9", "expr": "IH - Icoil2", "stat": "max_abs",
+                   "tol": 5.0, "tag": "check:nope"}, "check:nope"),
+        ("wirings", {"assembly": "NOPE", "magnet": "M25032101", "housing_version": "M9-181109",
+                     "wiring": WIRING}, "NOPE"),
+        ("wirings", {"assembly": "M9_A260602_00", "magnet": "M8Bi",
+                     "housing_version": "M9-181109", "wiring": WIRING}, "M8Bi"),
+        ("tags", {"name": "check:other", "color": "#cfe2ff"}, "already used"),
+        ("tags", {"name": "check:other", "colour": "#abcdef"}, "colour"),
+    ],
+)
+def test_import_bad_entry_writes_nothing(con, section, entry, match):
+    add_tag(con, TAG, "#cfe2ff")
+    before = _state(con)
+    n_log = con.execute("SELECT count(*) FROM operation_log").fetchone()[0]
+    checks = {"kind": "pupitre-checks", "version": 1, "tags": [], "rules": [], "wirings": []}
+    checks["tags"].append({"name": DCCT_TAG, "color": "#d1e7dd"})  # valid, rolled back
+    checks[section].append(entry)
+    with pytest.raises(ValueError, match=match):
+        import_pupitre_checks(con, checks, source="bad.json")
+    assert _state(con) == before
+    rows = con.execute(
+        "SELECT operation, table_name, record_name, status FROM operation_log WHERE id > ? "
+        "ORDER BY id", [n_log]
+    ).fetchall()
+    assert rows == [("import", "pupitre_checks", "bad.json", "error")]
+
+
+def test_dump_import_global_rule(con):
+    add_rule(con, "IH_vs_Icoil7", "IH - Icoil7", "p99_abs", 5.0, unit="A")
+    checks = dump_pupitre_checks(con)
+    assert checks["rules"] == [
+        {"name": "IH_vs_Icoil7", "expr": "IH - Icoil7", "stat": "p99_abs", "tol": 5.0, "unit": "A"}
+    ]
+    other = build_db()
+    try:
+        import_pupitre_checks(other, checks)
+        assert _state(other) == _state(con)
+    finally:
+        other.close()
+
+
+@pytest.mark.parametrize("change, match", [({"kind": "x"}, "kind"), ({"version": 2}, "version")])
+def test_import_wrong_kind_or_version(con, change, match):
+    checks = {"kind": "pupitre-checks", "version": 1, "tags": [], "rules": [], "wirings": []}
+    with pytest.raises(ValueError, match=match):
+        import_pupitre_checks(con, {**checks, **change})
+
+
+def test_import_dry_run_writes_nothing(con):
+    other = build_db()
+    try:
+        _fill(other)
+        checks = dump_pupitre_checks(other)
+    finally:
+        other.close()
+    before = _state(con)
+    n_log = con.execute("SELECT count(*) FROM operation_log").fetchone()[0]
+    counts = import_pupitre_checks(con, checks, dry_run=True)
+    assert counts == {"tags": 2, "rules": 4, "wirings": 1}
+    assert _state(con) == before
+    assert con.execute("SELECT count(*) FROM operation_log").fetchone()[0] == n_log
+
+
+def test_import_logs_one_summary_row(con):
+    other = build_db()
+    try:
+        _fill(other)
+        checks = dump_pupitre_checks(other)
+    finally:
+        other.close()
+    import_pupitre_checks(con, checks, source="f.json")
+    rows = con.execute(
+        "SELECT status, details FROM operation_log WHERE table_name = 'pupitre_checks'"
+    ).fetchall()
+    assert [(status, json.loads(details)) for status, details in rows] == [
+        ("ok", {"tags": 2, "rules": 4, "wirings": 1})
+    ]
+
+
+def test_cli_etl_dump_and_import(tmp_path, monkeypatch, capsys):
+    src, dst = tmp_path / "src.duckdb", tmp_path / "dst.duckdb"
+    build_db(str(src)).close()
+    build_db(str(dst)).close()
+    import duckdb
+
+    with duckdb.connect(str(src)) as c:
+        _fill(c)
+    path = tmp_path / "pupitre_checks.json"
+    _run(monkeypatch, "etl", "dump", str(path), "--db", str(src))
+    assert json.loads(path.read_text())["kind"] == "pupitre-checks"
+    _run(monkeypatch, "etl", "import", str(path), "--dry-run", "--db", str(dst))
+    with duckdb.connect(str(dst), read_only=True) as c:
+        assert c.execute("SELECT count(*) FROM check_rules").fetchone()[0] == 0
+    _run(monkeypatch, "etl", "import", str(path), "--db", str(dst))
+    out = capsys.readouterr().out
+    assert "2 tags, 4 rules, 1 wirings" in out
+    with duckdb.connect(str(src), read_only=True) as a, duckdb.connect(str(dst), read_only=True) as b:
+        assert _state(a) == _state(b)

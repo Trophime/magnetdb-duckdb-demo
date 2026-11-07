@@ -105,6 +105,8 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | `assembly add/view/update/delete` | Manage assemblies + experiment records; `add --status-file` applies known retirements/deaths when parts are reused | [loading.md](docs/loading.md), [schema.md](docs/schema.md) |
 | `assembly update-magnet` | Patch positional/temporal AssemblyMagnet fields | [loading.md](docs/loading.md) |
 | `housing view` | List housing configs | [loading.md](docs/loading.md#housing-configs) |
+| `etl import FILE [--dry-run]` / `etl dump FILE` | Load (all or nothing, rows absent from the file kept) or write the pupitre check tags, rules and magnet wirings; the build loads `hifimagnet-projects/magnetdb.json/pupitre_checks.json` (step `etl-config`); an insert without a stored wiring gets the pair-layout wiring of its helix count | [PLAN_pupitre_checks_file.md](../PLAN_pupitre_checks_file.md) |
+| `rule add/remove/show [--housing H \| --assembly A [--magnet M]] [--version V]` | Check rules on pupitre files; without `--housing` / `--assembly` a rule is global (every housing; narrower rules override it) | [PLAN_file_check_rules.md](../PLAN_file_check_rules.md) |
 | `experiments view` | List experiment records | [populate.md](docs/populate.md#experiments-view) |
 | `operationaldata view` | List operationaldata records | [populate.md](docs/populate.md#operationaldata-view) |
 | `overview-records view` | List overview_records | [populate.md](docs/populate.md#overview-records-view) |

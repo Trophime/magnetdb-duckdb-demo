@@ -43,14 +43,17 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py etl set-magnet <assembly> <magnet> <housing_version> <wiring.json> [--db ...]
     python magnetdb.py etl show <assembly> [--version V | --at TIME] [--db ...]
     python magnetdb.py etl export <assembly> [--version V | --at TIME] [-o DIR] [--db ...]
+    python magnetdb.py etl import <pupitre_checks.json> [--dry-run] [--db ...]
+    python magnetdb.py etl dump <pupitre_checks.json> [--db ...]
     python magnetdb.py tag add <category:name> --color '#rrggbb' [--severity N] [--description ...] [--db ...]
     python magnetdb.py tag update <category:name> [--color ...] [--severity N] [--description ...] [--db ...]
     python magnetdb.py tag remove <category:name> [--db ...]
     python magnetdb.py tag list [--db ...]
     python magnetdb.py rule add <name> --expr EXPR --stat max_abs|p99_abs|mean_abs --tol TOL
-                                (--housing H | --assembly A [--magnet M]) [--version V]
+                                [--housing H | --assembly A [--magnet M]] [--version V]
                                 [--unit U] [--tag TAG] [--description ...] [--db ...]
-    python magnetdb.py rule remove <name> (--housing H | --assembly A [--magnet M]) [--version V] [--db ...]
+                                (no --housing / --assembly: global rule)
+    python magnetdb.py rule remove <name> [--housing H | --assembly A [--magnet M]] [--version V] [--db ...]
     python magnetdb.py rule show [--housing H | --assembly A] [--db ...]
     python magnetdb.py experiments view [--assembly <assembly>] [--magnet <magnet>] [--part <part>]
                                         [--from DATETIME] [--to DATETIME] [--db ...]
@@ -1220,6 +1223,32 @@ def cmd_etl_export(args) -> None:
         print(f"  Wrote {path}")
 
 
+def _checks_counts(counts: dict) -> str:
+    return f"{counts['tags']} tags, {counts['rules']} rules, {counts['wirings']} wirings"
+
+
+def cmd_etl_import(args) -> None:
+    from etl_spec import import_pupitre_checks
+
+    checks = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        counts = import_pupitre_checks(con, checks, source=str(args.file), dry_run=args.dry_run)
+    verb = "Would import" if args.dry_run else "Imported"
+    print(f"  {verb} {_checks_counts(counts)} from {args.file}")
+
+
+def cmd_etl_dump(args) -> None:
+    from etl_spec import dump_pupitre_checks
+
+    with duckdb.connect(str(_existing_db(args)), read_only=True) as con:
+        checks = dump_pupitre_checks(con)
+    path = Path(args.file)
+    path.write_text(json.dumps(checks, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    counts = {section: len(checks[section]) for section in ("tags", "rules", "wirings")}
+    print(f"  Wrote {path} ({_checks_counts(counts)})")
+
+
 # ---------------------------------------------------------------------------
 # tag / rule handlers (file-check rules, PLAN_file_check_rules.md)
 # ---------------------------------------------------------------------------
@@ -1297,10 +1326,13 @@ def cmd_rule_show(args) -> None:
     with duckdb.connect(str(_existing_db(args)), read_only=True) as con:
         rules = list_rules(con, housing=args.housing, assembly=args.assembly)
     for rule in rules:
-        scope = rule["housing"] or rule["assembly_name"]
-        if rule["magnet_name"]:
-            scope += f"/{rule['magnet_name']}"
-        scope += f"@{rule['housing_version']}" if rule["housing_version"] else " (all versions)"
+        if rule["housing"] is None and rule["assembly_name"] is None:
+            scope = "* (all housings)"
+        else:
+            scope = rule["housing"] or rule["assembly_name"]
+            if rule["magnet_name"]:
+                scope += f"/{rule['magnet_name']}"
+            scope += f"@{rule['housing_version']}" if rule["housing_version"] else " (all versions)"
         unit = f" {rule['unit']}" if rule["unit"] else ""
         tag = f"  -> {rule['tag']}" if rule["tag"] else ""
         print(f"  {scope:<44} {rule['name']:<20} {rule['stat']}({rule['expr']}) <= {rule['tol']}{unit}{tag}")
@@ -1947,6 +1979,8 @@ _DISPATCH = {
     ("etl",               "set-magnet"):      cmd_etl_set_magnet,
     ("etl",               "show"):            cmd_etl_show,
     ("etl",               "export"):          cmd_etl_export,
+    ("etl",               "import"):          cmd_etl_import,
+    ("etl",               "dump"):            cmd_etl_dump,
     ("tag",               "add"):             cmd_tag_add,
     ("tag",               "update"):          cmd_tag_update,
     ("tag",               "remove"):          cmd_tag_remove,
@@ -2402,7 +2436,7 @@ def build_parser() -> argparse.ArgumentParser:
     etl_p = entity.add_parser(
         "etl", help="Pupitre ETL spec per assembly and housing version.")
     etl_sub = etl_p.add_subparsers(dest="action", required=True,
-                                   metavar="{set-magnet,show,export}")
+                                   metavar="{set-magnet,show,export,import,dump}")
 
     etl_set = etl_sub.add_parser(
         "set-magnet", help="Insert or replace the wiring of a magnet for one housing version.")
@@ -2428,6 +2462,20 @@ def build_parser() -> argparse.ArgumentParser:
             etl_x.add_argument("-o", "--output-dir", dest="output_dir", default=".",
                                help="Destination directory (default: .)")
         _db_arg(etl_x)
+
+    etl_imp = etl_sub.add_parser(
+        "import",
+        help="Add or replace tags, rules and magnet wirings from a pupitre checks file "
+             "(all or nothing; rows absent from the file are kept).")
+    etl_imp.add_argument("file", help="pupitre_checks.json, as written by etl dump")
+    etl_imp.add_argument("--dry-run", action="store_true",
+                         help="Validate the file, write nothing")
+    _db_arg(etl_imp)
+
+    etl_dump = etl_sub.add_parser(
+        "dump", help="Write the tags, rules and magnet wirings to a pupitre checks file.")
+    etl_dump.add_argument("file", help="Output JSON file (overwritten)")
+    _db_arg(etl_dump)
 
     # ── tag ──────────────────────────────────────────────────────────────────
     tag_p = entity.add_parser(
@@ -2456,7 +2504,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     # ── rule ─────────────────────────────────────────────────────────────────
     rule_p = entity.add_parser(
-        "rule", help="Check rules on pupitre files, per housing, assembly or magnet.")
+        "rule", help="Check rules on pupitre files: global, per housing, assembly or magnet.")
     rule_sub = rule_p.add_subparsers(dest="action", required=True,
                                      metavar="{add,remove,show}")
     for action, help_text in (
@@ -2478,8 +2526,10 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="Tag attached to the file when the rule fails "
                                      "(default: result stored only)")
             rule_x.add_argument("--description", default=None, help="Free text")
-        scope = rule_x.add_mutually_exclusive_group(required=True)
-        scope.add_argument("--housing", default=None, help="Housing rule (e.g. M9)")
+        scope = rule_x.add_mutually_exclusive_group()
+        scope.add_argument("--housing", default=None,
+                           help="Housing rule (e.g. M9); without --housing and --assembly: "
+                                "global rule, for every housing")
         scope.add_argument("--assembly", default=None, help="Assembly rule, or the magnet's assembly")
         rule_x.add_argument("--magnet", default=None, help="Magnet rule (with --assembly)")
         rule_x.add_argument("--version", default=None,

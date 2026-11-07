@@ -177,3 +177,66 @@ def test_set_magnet_wiring_error_logged(con):
     with pytest.raises(ValueError):
         set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M8-260305", INSERT_WIRING)
     assert _log(con) == [("upsert", "pupitre_etl_magnet", "M9_A260602_00/M25032101/M8-260305", "error")]
+
+
+# ---------------------------------------------------------------------------
+# insert wiring derived from the helix count (PLAN_pupitre_checks_file.md, revision 2)
+# ---------------------------------------------------------------------------
+
+
+def _helices(con, magnet: str, n: int) -> None:
+    """Give *magnet* *n* helix parts (the fixture's magnets have no parts)."""
+    for i in range(1, n + 1):
+        con.execute("INSERT INTO parts (name, type, status) VALUES (?, 'helix', 'in_operation')",
+                    [f"{magnet}_H{i}"])
+        con.execute("INSERT INTO magnet_parts (magnet_name, part_name, rank) VALUES (?, ?, ?)",
+                    [magnet, f"{magnet}_H{i}", i])
+
+
+def _ucoils(numbers) -> list[str]:
+    return [f"Ucoil{n}" for n in numbers]
+
+
+@pytest.mark.parametrize("helices, first", [(14, 1), (12, 2), (6, 5), (2, 7)])
+def test_derived_insert_wiring(con, helices, first):
+    _helices(con, "M25032101", helices)
+    spec = _spec(con, "M9_A260602_00", 2026, 6, 10, 10)
+    taps = _ucoils(range(first, 8))
+    wiring = spec.magnets["M25032101"]
+    assert wiring["channels"] == taps
+    assert wiring["remove"] == [c for c in _ucoils(range(1, 15)) if c not in taps]
+    assert spec.add["UH"]["formula"] == "UH = " + " + ".join(taps)
+    assert spec.add["UH"]["label"] == "GR1 Voltage (UH)"
+    assert {"Ucoil15", "Ucoil16"}.isdisjoint(wiring["remove"])  # Bitters untouched
+
+
+def test_derived_wiring_label_follows_housing(con):
+    _helices(con, "MX", 6)
+    spec = _spec(con, "M10_X", 2024, 6, 1)
+    assert spec.magnets["MX"]["channels"] == _ucoils(range(5, 8))
+    assert spec.add["UH"]["label"] == "GR2 Voltage (UH)"
+
+
+def test_derived_wiring_follows_housing_version(con):
+    """M8-260305 reads the Bitters on Ucoil14: the insert wiring must not remove it."""
+    _helices(con, "M23012001", 12)
+    before = _spec(con, "M8_A230919_00", 2026, 3, 5, 15, 56)  # M8-211225
+    after = _spec(con, "M8_A230919_00", 2026, 3, 5, 17, 22)  # M8-260305
+    assert before.magnets["M23012001"]["remove"] == _ucoils([1, *range(8, 15)])
+    assert after.magnets["M23012001"]["remove"] == _ucoils([1, *range(8, 14)])
+    assert after.add["UB"]["formula"] == "UB = Ucoil14"
+    assert "Ucoil14" not in after.remove
+
+
+def test_explicit_wiring_overrides_derived(con):
+    _helices(con, "M25032101", 14)
+    set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M9-181109", INSERT_WIRING)
+    assert _spec(con, "M9_A260602_00", 2026, 6, 10).magnets["M25032101"] == INSERT_WIRING
+
+
+@pytest.mark.parametrize("helices", [0, 7, 16])
+def test_no_derived_wiring_without_usable_helix_count(con, helices):
+    _helices(con, "M25032101", helices)
+    spec = _spec(con, "M9_A260602_00", 2026, 6, 10)
+    assert spec.magnets == {}
+    assert spec.add["UH"]["formula"] == "UH = " + " + ".join(_ucoils(range(1, 15)))

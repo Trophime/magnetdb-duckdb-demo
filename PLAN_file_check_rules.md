@@ -3,6 +3,11 @@
 **Status (2026-11-07): approved; steps 1–5 done** (see Results; step 5 on
 a scratch copy of `magnetdb-2026-11-05.duckdb`, the repo DBs hold no rules
 yet). Step 6 (dashboard) and the rest of step 7 (docs) are left.
+**Since 2026-11-07** ([PLAN_pupitre_checks_file.md](PLAN_pupitre_checks_file.md)):
+rules may also be **global** (no housing, no assembly; lowest precedence),
+the step 5 per-assembly `IH_vs_Icoil2` rules are replaced by one global
+`IH_vs_Icoil7`, and the tags, rules and wirings are kept in
+`hifimagnet-projects/magnetdb.json/pupitre_checks.json`, loaded by the build.
 
 Related:
 - [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md): the spec-driven

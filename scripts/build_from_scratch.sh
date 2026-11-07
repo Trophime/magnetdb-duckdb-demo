@@ -2,7 +2,7 @@
 set -eo pipefail
 
 # step IDs, in build order (see --help)
-STEPS=(create assemblies statuses check experiments exp-stats operationaldata op-stats
+STEPS=(create assemblies statuses etl-config check experiments exp-stats operationaldata op-stats
        overview-json overview-infer export users link-users unlinked-users)
 
 usage() {
@@ -61,6 +61,8 @@ cd $(dirname "$0")/../to_duckdb
 JSON=~/github/hifimagnet-projects/magnetdb.json
 # known magnet status changes (dead, retired, ...), applied in file order
 STATUS_FILE=$JSON/magnet_status.json
+# pupitre check tags, rules and magnet wirings (PLAN_pupitre_checks_file.md)
+CHECKS_FILE=$JSON/pupitre_checks.json
 RECORDS=~/LNCMIG-Data/records
 DATA_DIR=~/github/magnetdb-duckdb-demo/Data
 LOG="$DB.log"
@@ -149,6 +151,14 @@ add_done_counts() {
 }
 
 # --- step functions ---------------------------------------------------------
+
+load_pupitre_checks() {
+    if [ ! -f "$CHECKS_FILE" ]; then
+        SKIP_REASON="no $CHECKS_FILE"
+        return 0
+    fi
+    python magnetdb.py etl import "$CHECKS_FILE" --db "$DB"
+}
 
 ingest_exp_stats() {
     local assemblies assembly tmp
@@ -279,6 +289,9 @@ fi
 # deal with known dead/retired magnets, listed in $STATUS_FILE
 section statuses "Set known magnet statuses" \
     python magnetdb.py magnet update-status-from-file "$STATUS_FILE" --db "$DB"
+
+# pupitre check tags, rules and magnet wirings, listed in $CHECKS_FILE
+section etl-config "Load pupitre checks (tags, rules, wirings)" load_pupitre_checks
 
 # check database consistency (check exits non-zero when it finds problems: report and go on)
 section check "Check database consistency" python magnetdb.py check --db "$DB" || true

@@ -7,11 +7,12 @@ DuckDB (PLAN_pupitre_etl_spec.md, step 5).
 - The housing part comes from ``housing_config`` + ``housing_config_versions``
   resolved at the file start (``HousingConfig.at``), then the missing-type
   rule drops the electrical fields of a magnet type absent from the assembly.
-- Magnet wirings come from ``pupitre_etl_magnet``, keyed by housing version
-  (decision D1): a wiring change is declared once, as a housing version.
-- Check rules come from ``check_rules`` (housing, assembly and magnet
-  levels), merged into the spec; failed checks attach ``tags`` to the file
-  in ``record_tags`` (PLAN_file_check_rules.md).
+- An insert's wiring is derived from its helix count (pair layout, taps
+  ending on ``Ucoil7``); rows of ``pupitre_etl_magnet``, keyed by housing
+  version (decision D1), override it (PLAN_pupitre_checks_file.md, rev. 2).
+- Check rules come from ``check_rules`` (global, housing, assembly and
+  magnet levels), merged into the spec; failed checks attach ``tags`` to
+  the file in ``record_tags`` (PLAN_file_check_rules.md).
 """
 
 import json
@@ -91,6 +92,53 @@ def _apply_missing_types(housing: dict, cfg: HousingConfig, types: set[str]) -> 
             housing["remove"] += [current, ref_voltage, *channels, *_IDCCT.findall(formula)]
 
 
+def _derived_insert_wirings(con, assembly: str, cfg: HousingConfig, housing: dict) -> dict[str, dict]:
+    """Pair-layout wiring of each insert of *assembly*, from its helix count.
+
+    N helices (even, 2 to 14) give the taps ``Ucoil(8 - N/2)`` … ``Ucoil7``
+    (``Ucoil7`` = outermost pair); ``remove`` holds the other voltage
+    channels of the insert group (reference current ``IH``) in *cfg*, so a
+    channel the housing version gives to another group (M8 ``M8-260305``:
+    ``Ucoil14`` = ``UB``) is never removed. The voltage sum keeps the field
+    definition of the housing default. Inserts with another helix count, or
+    taps outside the group, get nothing (the housing defaults apply).
+    """
+    groups = [
+        (cfg.reference_gr1_current, cfg.reference_gr1_voltage, cfg.voltage_channels_gr1),
+        (cfg.reference_gr2_current, cfg.reference_gr2_voltage, cfg.voltage_channels_gr2),
+    ]
+    group = next(((volt, list(chans)) for cur, volt, chans in groups if cur == "IH"), None)
+    if group is None or group[0] not in housing["defaults"]:
+        return {}
+    voltage, channels = group
+    rows = con.execute(
+        """
+        SELECT am.magnet_name, count(p.name) FILTER (WHERE p.type = 'helix')
+        FROM assembly_magnets am
+        JOIN magnets m ON m.name = am.magnet_name
+        LEFT JOIN magnet_parts mp ON mp.magnet_name = m.name
+        LEFT JOIN parts p ON p.name = mp.part_name
+        WHERE am.assembly_name = ? AND m.type = 'insert'
+        GROUP BY am.magnet_name ORDER BY am.magnet_name
+        """,
+        [assembly],
+    ).fetchall()
+    wirings = {}
+    for magnet, helices in rows:
+        if helices % 2 or not 2 <= helices <= 14:
+            continue
+        taps = [f"Ucoil{n}" for n in range(8 - helices // 2, 8)]
+        if not set(taps) <= set(channels):
+            continue
+        field = dict(housing["defaults"][voltage], formula=f"{voltage} = " + " + ".join(taps))
+        wirings[magnet] = {
+            "channels": taps,
+            "remove": [c for c in channels if c not in taps],
+            "add": {voltage: field},
+        }
+    return wirings
+
+
 def build_pupitre_etl_spec(con, assembly_name: str, at: datetime) -> dict:
     """Build the ETL spec of an assembly at a given time.
 
@@ -108,8 +156,10 @@ def build_pupitre_etl_spec(con, assembly_name: str, at: datetime) -> dict:
     dict
         Validated spec in its JSON form (:meth:`PupitreEtlSpec.to_dict`):
         housing part of that version with the missing-type rule applied, the
-        magnet wirings stored for that version, and the check rules of the
-        housing, the assembly and its magnets that apply to that version.
+        magnet wirings stored for that version (overrides), the pair-layout
+        wiring derived from the helix count for an insert without one, and
+        the global check rules and those of the housing, the assembly and its
+        magnets that apply to that version.
 
     Raises
     ------
@@ -134,6 +184,8 @@ def build_pupitre_etl_spec(con, assembly_name: str, at: datetime) -> dict:
         [assembly_name, cfg.version],
     ).fetchall()
     spec["magnets"] = {magnet: json.loads(wiring) for magnet, wiring in rows}
+    for magnet, wiring in _derived_insert_wirings(con, assembly_name, cfg, spec["housing"]).items():
+        spec["magnets"].setdefault(magnet, wiring)
     spec["rules"] = _merged_rules(con, housing, assembly_name, cfg.version)
     return PupitreEtlSpec.from_dict(spec).to_dict()
 
@@ -461,8 +513,8 @@ def list_tags(con) -> list[dict]:
 
 
 def _rule_record(name, housing, assembly, magnet, version) -> str:
-    """``operation_log`` record name of a rule: ``<housing|assembly>[/magnet][@version]:<name>``."""
-    where = housing or assembly or "-"
+    """``operation_log`` record name of a rule: ``<housing|assembly|*>[/magnet][@version]:<name>``."""
+    where = housing or assembly or "*"
     if magnet:
         where += f"/{magnet}"
     if version:
@@ -487,7 +539,7 @@ def add_rule(
     applies_to: str = RULE_APPLIES_TO,
     description: str | None = None,
 ) -> None:
-    """Insert or replace a check rule at housing, assembly or magnet level.
+    """Insert or replace a check rule at global, housing, assembly or magnet level.
 
     Parameters
     ----------
@@ -495,7 +547,7 @@ def add_rule(
         Open DuckDB connection (read-write).
     name : str
         Rule name (letters, digits, ``_``); a rule of the same name at a
-        narrower level overrides it.
+        narrower level overrides it (global < housing < assembly < magnet).
     expr : str
         Expression on the file's columns after rename and add, e.g.
         ``"IH - Icoil2"`` (see :func:`~python_magnetrun.runetl.check_rule`).
@@ -507,10 +559,13 @@ def add_rule(
         Housing of a housing rule.
     assembly : str, optional
         Assembly of an assembly or magnet rule (exclusive with *housing*).
+        Without *housing* and *assembly*, the rule is global: it applies to
+        every housing.
     magnet : str, optional
         Magnet of *assembly*, for a magnet rule.
     version : str, optional
         Restrict the rule to this housing version; default: all versions.
+        Not allowed for a global rule.
     unit : str, optional
         Unit of the expression and *tol*, e.g. ``"A"``.
     tag : str, optional
@@ -534,8 +589,13 @@ def add_rule(
     with _logged(con, "upsert", "check_rules", record):
         if magnet is not None and assembly is None:
             raise ValueError("A magnet rule needs its assembly")
-        if (housing is None) == (assembly is None):
-            raise ValueError("Give a housing or an assembly (not both)")
+        if housing is not None and assembly is not None:
+            raise ValueError("Give a housing or an assembly, not both")
+        if housing is None and assembly is None and version is not None:
+            raise ValueError(
+                "A global rule applies to every housing: it cannot be restricted to a "
+                "housing version"
+            )
         sources = list(sources or RULE_SOURCES)
         if sources != RULE_SOURCES:
             raise ValueError(f"Rule sources {sources}: only {RULE_SOURCES} is supported for now")
@@ -550,8 +610,10 @@ def add_rule(
             if not con.execute("SELECT 1 FROM housing_config WHERE name = ?", [housing]).fetchone():
                 raise ValueError(f"Unknown housing {housing!r}")
             rule_housing = housing
-        else:
+        elif assembly is not None:
             rule_housing = _housing_of(con, assembly)
+        else:
+            rule_housing = None  # global
         if magnet is not None and not con.execute(
             "SELECT 1 FROM assembly_magnets WHERE assembly_name = ? AND magnet_name = ?",
             [assembly, magnet],
@@ -633,15 +695,18 @@ def list_rules(con, housing: str | None = None, assembly: str | None = None) -> 
     con : duckdb.DuckDBPyConnection
         Open DuckDB connection.
     housing : str, optional
-        Rules of this housing and of its assemblies and magnets.
+        Global rules and the rules of this housing and of its assemblies and
+        magnets.
     assembly : str, optional
-        Rules of this assembly, of its magnets and of its housing.
+        Global rules and the rules of this assembly, of its magnets and of
+        its housing.
 
     Returns
     -------
     list[dict]
         One dict per ``check_rules`` row (without ``id``), plus
-        ``rule_housing``; sorted by housing, assembly, magnet, name, version.
+        ``rule_housing`` (``None`` for a global rule); sorted by housing
+        (global first), assembly, magnet, name, version.
     """
     if not _has_table(con, "check_rules"):
         return []
@@ -651,10 +716,12 @@ def list_rules(con, housing: str | None = None, assembly: str | None = None) -> 
                r.stat, r.tol, r.unit, r.tag, r.sources, r.applies_to, r.description,
                COALESCE(r.housing, a.housing) AS rule_housing
         FROM check_rules r LEFT JOIN assemblies a ON a.name = r.assembly_name
-        WHERE (? IS NULL OR COALESCE(r.housing, a.housing) = ?)
+        WHERE (? IS NULL OR COALESCE(r.housing, a.housing) = ?
+               OR (r.housing IS NULL AND r.assembly_name IS NULL))
           AND (? IS NULL OR r.assembly_name = ?
-               OR r.housing = (SELECT housing FROM assemblies WHERE name = ?))
-        ORDER BY rule_housing, r.assembly_name NULLS FIRST, r.magnet_name NULLS FIRST,
+               OR r.housing = (SELECT housing FROM assemblies WHERE name = ?)
+               OR (r.housing IS NULL AND r.assembly_name IS NULL))
+        ORDER BY rule_housing NULLS FIRST, r.assembly_name NULLS FIRST, r.magnet_name NULLS FIRST,
                  r.name, r.housing_version NULLS FIRST
         """,
         [housing, housing, assembly, assembly, assembly],
@@ -662,24 +729,33 @@ def list_rules(con, housing: str | None = None, assembly: str | None = None) -> 
 
 
 def _merged_rules(con, housing: str, assembly: str, version: str) -> list[dict]:
-    """Rules of *housing*, *assembly* and its magnets at *version*: magnet > assembly > housing, version-specific > all."""
+    """Global rules and those of *housing*, *assembly* and its magnets at *version*.
+
+    Precedence: magnet > assembly > housing > global; at one level, version-specific > all.
+    """
     if not _has_table(con, "check_rules"):
         return []
     rows = con.execute(
         """
-        SELECT name, expr, stat, tol, unit, tag, assembly_name, magnet_name, housing_version
+        SELECT name, expr, stat, tol, unit, tag, housing, assembly_name, magnet_name, housing_version
         FROM check_rules
         WHERE applies_to = ? AND (housing_version IS NULL OR housing_version = ?)
-          AND (housing = ? OR assembly_name = ?)
+          AND (housing = ? OR assembly_name = ? OR (housing IS NULL AND assembly_name IS NULL))
         """,
         [RULE_APPLIES_TO, version, housing, assembly],
     ).fetchall()
     ranked = []
-    for name, expr, stat, tol, unit, tag, rule_assembly, magnet, rule_version in rows:
+    for name, expr, stat, tol, unit, tag, rule_housing, rule_assembly, magnet, rule_version in rows:
         rule = {"name": name, "expr": expr, "stat": stat, "tol": tol}
         rule.update({k: v for k, v in (("unit", unit), ("tag", tag)) if v is not None})
-        rule["scope"] = f"magnet:{magnet}" if magnet else "assembly" if rule_assembly else "housing"
-        level = 2 if magnet else 1 if rule_assembly else 0
+        if magnet:
+            rule["scope"], level = f"magnet:{magnet}", 3
+        elif rule_assembly:
+            rule["scope"], level = "assembly", 2
+        elif rule_housing:
+            rule["scope"], level = "housing", 1
+        else:
+            rule["scope"], level = "global", 0
         ranked.append(((level, rule_version is not None), rule))
     merged = {}
     for _, rule in sorted(ranked, key=lambda item: item[0]):
@@ -723,3 +799,169 @@ def replace_record_tags(con, record_table: str, record_key: str, checks: list[di
             "VALUES (?, ?, ?, ?, ?, ?)",
             [record_table, record_key, *row],
         )
+
+
+# ---------------------------------------------------------------------------
+# Pupitre checks file: tags, rules and wirings kept across rebuilds
+# (PLAN_pupitre_checks_file.md)
+# ---------------------------------------------------------------------------
+
+CHECKS_KIND = "pupitre-checks"
+CHECKS_FORMAT_VERSION = 1
+_CHECKS_KEYS = {
+    "tags": ({"name", "color"}, {"severity", "description"}),
+    "rules": ({"name", "expr", "stat", "tol"},
+              {"housing", "assembly", "magnet", "version", "unit", "tag", "description"}),
+    "wirings": ({"assembly", "magnet", "housing_version", "wiring"}, set()),
+}
+# list_rules column -> file key
+_RULE_FILE_KEYS = {
+    "name": "name", "housing": "housing", "assembly_name": "assembly", "magnet_name": "magnet",
+    "housing_version": "version", "expr": "expr", "stat": "stat", "tol": "tol", "unit": "unit",
+    "tag": "tag", "description": "description",
+}
+
+
+def _without_none(d: dict) -> dict:
+    """Return *d* without its ``None`` values."""
+    return {k: v for k, v in d.items() if v is not None}
+
+
+def dump_pupitre_checks(con) -> dict:
+    """Return the tags, check rules and magnet wirings of the database as a checks file.
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open DuckDB connection (read-only is enough).
+
+    Returns
+    -------
+    dict
+        ``{"kind": "pupitre-checks", "version": 1, "tags", "rules", "wirings"}``,
+        JSON-ready and sorted, without ``None`` values. The seeded
+        :data:`CHANNEL_TAG` is left out. Tables missing from an older
+        database give empty lists. :func:`import_pupitre_checks` on an empty
+        database gives the same tables back.
+    """
+    tags = [_without_none(t) for t in list_tags(con) if t["name"] != CHANNEL_TAG]
+    rules = [
+        _without_none({key: rule[column] for column, key in _RULE_FILE_KEYS.items()})
+        for rule in list_rules(con)
+    ]
+    wirings = []
+    if _has_table(con, "pupitre_etl_magnet"):
+        rows = con.execute(
+            "SELECT assembly_name, magnet_name, housing_version, spec FROM pupitre_etl_magnet "
+            "ORDER BY assembly_name, magnet_name, housing_version"
+        ).fetchall()
+        wirings = [
+            {"assembly": a, "magnet": m, "housing_version": v, "wiring": json.loads(spec)}
+            for a, m, v, spec in rows
+        ]
+    return {
+        "kind": CHECKS_KIND, "version": CHECKS_FORMAT_VERSION,
+        "tags": tags, "rules": rules, "wirings": wirings,
+    }
+
+
+def _check_entries(checks: dict) -> None:
+    """``ValueError`` on a wrong kind or version, or an entry with missing or unknown keys."""
+    if checks.get("kind") != CHECKS_KIND:
+        raise ValueError(f"Pupitre checks file: kind {checks.get('kind')!r} is not {CHECKS_KIND!r}")
+    if checks.get("version") != CHECKS_FORMAT_VERSION:
+        raise ValueError(
+            f"Pupitre checks file: format version {checks.get('version')!r} is not "
+            f"{CHECKS_FORMAT_VERSION}"
+        )
+    unknown = set(checks) - {"kind", "version", *_CHECKS_KEYS}
+    if unknown:
+        raise ValueError(f"Pupitre checks file: unknown keys {sorted(unknown)}")
+    for section, (required, optional) in _CHECKS_KEYS.items():
+        for entry in checks.get(section, []):
+            missing, extra = required - set(entry), set(entry) - required - optional
+            if missing or extra:
+                raise ValueError(
+                    f"Pupitre checks file, {section} entry {entry}: "
+                    f"missing {sorted(missing)}, unknown {sorted(extra)}"
+                )
+
+
+def import_pupitre_checks(
+    con, checks: dict, source: str = "-", dry_run: bool = False
+) -> dict[str, int]:
+    """Add or replace the tags, check rules and magnet wirings of a checks file, all or nothing.
+
+    Entries go through :func:`add_tag` / :func:`update_tag`, :func:`add_rule`
+    and :func:`set_magnet_wiring`, so the CLI checks apply. Rows absent from
+    the file are kept.
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open DuckDB connection (read-write) with the current schema.
+    checks : dict
+        Content of the file, as written by :func:`dump_pupitre_checks`.
+    source : str, optional
+        File name recorded in ``operation_log``.
+    dry_run : bool, optional
+        Validate everything, then roll back; nothing is written or logged.
+
+    Returns
+    -------
+    dict[str, int]
+        Number of ``tags``, ``rules`` and ``wirings`` imported.
+
+    Raises
+    ------
+    ValueError
+        On a wrong kind or format version, a malformed entry, or an entry
+        refused by the CLI checks. Nothing is written; one ``error`` row
+        (``import``, ``pupitre_checks``, *source*) goes to ``operation_log``.
+
+    Notes
+    -----
+    On success the item functions write their usual ``operation_log`` rows,
+    followed by one summary row (``import``, ``pupitre_checks``) with the
+    counts.
+    """
+    con.begin()
+    try:
+        _check_entries(checks)
+        for tag in checks.get("tags", []):
+            extra = {"severity": tag.get("severity"), "description": tag.get("description")}
+            if _tag_exists(con, tag["name"]):
+                update_tag(con, tag["name"], color=tag["color"], **extra)
+            else:
+                add_tag(con, tag["name"], tag["color"], severity=extra["severity"] or 1,
+                        description=extra["description"])
+        for rule in checks.get("rules", []):
+            add_rule(
+                con, rule["name"], rule["expr"], rule["stat"], rule["tol"],
+                housing=rule.get("housing"), assembly=rule.get("assembly"),
+                magnet=rule.get("magnet"), version=rule.get("version"), unit=rule.get("unit"),
+                tag=rule.get("tag"), description=rule.get("description"),
+            )
+        for w in checks.get("wirings", []):
+            # checked here: a foreign-key failure would abort the transaction
+            if not con.execute(
+                "SELECT 1 FROM assembly_magnets WHERE assembly_name = ? AND magnet_name = ?",
+                [w["assembly"], w["magnet"]],
+            ).fetchone():
+                raise ValueError(f"Magnet {w['magnet']!r} is not part of {w['assembly']!r}")
+            set_magnet_wiring(con, w["assembly"], w["magnet"], w["housing_version"], w["wiring"])
+        counts = {section: len(checks.get(section, [])) for section in _CHECKS_KEYS}
+    except Exception as exc:
+        con.rollback()
+        if not dry_run:
+            _log_operation(
+                con, "import", "pupitre_checks", source, status="error",
+                details={"error": str(exc)},
+            )
+        raise
+    if dry_run:
+        con.rollback()
+    else:
+        _log_operation(con, "import", "pupitre_checks", source, details=counts)
+        con.commit()
+    return counts
