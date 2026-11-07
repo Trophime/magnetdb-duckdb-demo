@@ -67,6 +67,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
                                              [--from DATETIME] [--to DATETIME] [--signatures] [--db ...]
 
     python magnetdb.py populate operationaldata [--assembly ASSEMBLY ...] [--all] [--type ...] [--records-base ...] [--dry-run]
+    python magnetdb.py populate operationaldata-metadata [--assembly ASSEMBLY ...] [--all] [--type ...] [--reprocess] [--dry-run]
     python magnetdb.py populate experiments     [--assembly ASSEMBLY ...] [--all] [--dry-run]
     python magnetdb.py populate overview-records [--assembly ASSEMBLY ...] [--all] [--reprocess] [--dry-run]
     python magnetdb.py populate overview-records-from-archive [--assembly ASSEMBLY ...] [--all] [--reprocess] [--dry-run]
@@ -171,6 +172,9 @@ from populate import (
 )
 from populate import (
     ALL_POPULATE_TYPES,
+)
+from populate import (
+    fill_operationaldata_metadata,
 )
 from populate import (
     find_and_register_pupitre as _pupitre_find_and_register,
@@ -1477,6 +1481,48 @@ def cmd_populate_operationaldata(args) -> None:
             )
 
 
+def cmd_populate_operationaldata_metadata(args) -> None:
+    db_path = args.db
+    if not Path(db_path).exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    try:
+        db_tz = ZoneInfo(args.db_tz)
+    except (ValueError, KeyError):
+        print(f"Error: Unknown timezone '{args.db_tz}'")
+        sys.exit(1)
+
+    assembly_names = _resolve_assembly_names(args, db_path)
+    if not assembly_names:
+        print("No assemblies specified. Use --assembly ASSEMBLY or --all.")
+        sys.exit(1)
+
+    records_base = Path(args.records_base)
+    with duckdb.connect(db_path, read_only=args.dry_run) as con:
+        if not args.dry_run:
+            ensure_schema(con)
+        for assembly_name in assembly_names:
+            print(f"\nAssembly: {assembly_name}")
+            counts = fill_operationaldata_metadata(
+                con, assembly_name, types=args.types, reprocess=args.reprocess,
+                records_base=records_base, db_tz=db_tz, dry_run=args.dry_run,
+            )
+            print(
+                f"  {counts['filled']} filled, {counts['no_time_range']} without time range, "
+                f"{len(counts['errors'])} errors"
+            )
+            if not args.dry_run:
+                _log_operation(
+                    con, "metadata", "operationaldata", assembly_name,
+                    status="error" if counts["errors"] else "ok",
+                    details={
+                        "filled": counts["filled"],
+                        "no_time_range": counts["no_time_range"],
+                        "errors": counts["errors"][:20],
+                    },
+                )
+
+
 def cmd_populate_experiments(args) -> None:
     db_path = args.db
     if not Path(db_path).exists():
@@ -1993,6 +2039,7 @@ _DISPATCH = {
     ("log",                "view"):           cmd_log_view,
     ("overview-records",  "view"):            cmd_overview_records_view,
     ("populate",          "operationaldata"): cmd_populate_operationaldata,
+    ("populate",          "operationaldata-metadata"): cmd_populate_operationaldata_metadata,
     ("populate",          "experiments"):     cmd_populate_experiments,
     ("populate",          "overview-records"):             cmd_populate_overview_records,
     ("populate",          "overview-records-from-archive"): cmd_populate_overview_records_from_archive,
@@ -2631,7 +2678,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── populate ─────────────────────────────────────────────────────────────
     pop_p = entity.add_parser("populate", help="Populate data tables from files.")
     pop_sub = pop_p.add_subparsers(dest="action", required=True,
-                                   metavar="{operationaldata,experiments,overview-records,overview-records-from-archive,overview-records-from-json}")
+                                   metavar="{operationaldata,operationaldata-metadata,experiments,overview-records,overview-records-from-archive,overview-records-from-json}")
 
     # populate operationaldata
     p_opdata = pop_sub.add_parser(
@@ -2662,6 +2709,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_opdata.add_argument("--dry-run", action="store_true",
                           help="Match files but do not write to the DB.")
+
+    # populate operationaldata-metadata
+    p_opmeta = pop_sub.add_parser(
+        "operationaldata-metadata",
+        help="Store each operationaldata file's start/end time (and Overview mode) once.",
+        description=(
+            "Fill operationaldata.t_start / t_end from file metadata (TDMS properties, "
+            "Archive mtime, last pupitre line; no data loaded) and, for Overview files, "
+            "the operating mode. Only rows without t_end are processed unless --reprocess."
+        ),
+    )
+    _db_arg(p_opmeta)
+    _assemblies_arg(p_opmeta)
+    p_opmeta.add_argument(
+        "--type", nargs="+", choices=ALL_POPULATE_TYPES, dest="types", metavar="TYPE",
+        help=f"File type(s) to process ({', '.join(ALL_POPULATE_TYPES)}). Default: all.",
+    )
+    p_opmeta.add_argument(
+        "--records-base", default=str(_DEFAULT_RECORDS_BASE), dest="records_base",
+        help=f"Root of the records tree (default: {_DEFAULT_RECORDS_BASE})",
+    )
+    p_opmeta.add_argument(
+        "--db-tz", default="UTC", dest="db_tz",
+        help="Timezone of the stored t_start / t_end (default: UTC, as overview_records.t0)",
+    )
+    p_opmeta.add_argument("--reprocess", action="store_true",
+                          help="Recompute rows that already have t_end.")
+    p_opmeta.add_argument("--dry-run", action="store_true",
+                          help="Compute but do not write to the DB.")
 
     # populate experiments
     p_exp = pop_sub.add_parser(

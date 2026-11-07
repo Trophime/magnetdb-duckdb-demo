@@ -102,6 +102,41 @@ def test_experiments_file_quality_columns_exist(con, column):
     assert column in cols
 
 
+def _columns(con, table: str) -> set[str]:
+    return {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
+@pytest.mark.parametrize("column", ["t_start", "t_end", "mode"])
+def test_operationaldata_metadata_columns_exist(con, column):
+    assert column in _columns(con, "operationaldata")
+
+
+def test_overview_records_has_sources_signal_stats(con):
+    cols = _columns(con, "overview_records")
+    assert "sources_signal_stats" in cols
+    assert "sources_stats" not in cols
+
+
+def test_sources_stats_renamed_to_sources_signal_stats_keeps_data(con):
+    """A pre-rename DB keeps its Stats file lists under sources_signal_stats."""
+    con.execute(
+        "ALTER TABLE overview_records RENAME COLUMN sources_signal_stats TO sources_stats"
+    )
+    con.execute(
+        "INSERT INTO overview_records (filename, sources_stats) "
+        "VALUES ('M8_Overview_260226-0948', ['M8_Stats_260226-094838.tdms'])"
+    )
+    ensure_schema(con)
+    ensure_schema(con)  # a second run must be a no-op
+    cols = _columns(con, "overview_records")
+    assert "sources_stats" not in cols
+    row = con.execute(
+        "SELECT sources_signal_stats FROM overview_records "
+        "WHERE filename = 'M8_Overview_260226-0948'"
+    ).fetchone()
+    assert row[0] == ["M8_Stats_260226-094838.tdms"]
+
+
 def test_decommisioned_typo_migrated_to_disassembled(con):
     """A row seeded with the legacy 'decommisioned' (typo) status value must
     be rewritten to 'disassembled' the next time ensure_schema() runs."""

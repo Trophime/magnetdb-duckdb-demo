@@ -231,6 +231,13 @@ CREATE TABLE IF NOT EXISTS operationaldata (
 ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'Archive';
 -- idempotent migration: ensure id has the sequence default (fixes DBs created before the DEFAULT was added)
 ALTER TABLE operationaldata ALTER COLUMN id SET DEFAULT nextval('operationaldata_id_seq');
+-- Per-file metadata, computed once by `populate operationaldata-metadata`
+-- (PLAN_overview_records_from_operationaldata.md): file start/end as naive
+-- timestamps in the DB timezone (UTC by default, like overview_records.t0),
+-- and the operating mode of Overview files (NULL for other types).
+ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS t_start TIMESTAMP;
+ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS t_end TIMESTAMP;
+ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS mode VARCHAR;
 
 -- One row per processed overview file (OverviewRecord, data attribute excluded).
 -- sources_* columns hold the file-path lists from FileSet.
@@ -250,7 +257,7 @@ CREATE TABLE IF NOT EXISTS overview_records (
     sources_default           VARCHAR[],
     sources_trigger           VARCHAR[],
     sources_spike             VARCHAR[],
-    sources_stats             VARCHAR[],
+    sources_signal_stats      VARCHAR[],
     sources_hybrid_kHz        VARCHAR[],
     sources_hybrid_rms        VARCHAR[],
     sources_hybrid_trigger    VARCHAR[],
@@ -273,8 +280,8 @@ ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS plateaux JSON DEFAULT '{}'
 -- idempotent migration for databases that predate merged_into (dedup tombstone:
 -- NULL = live row; non-NULL = filename of the row this one was merged into)
 ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS merged_into VARCHAR;
--- idempotent migration for databases that predate sources_stats
-ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS sources_stats VARCHAR[];
+-- sources_signal_stats (pigbrother Stats files, formerly sources_stats) is
+-- renamed / added in ensure_schema(), after this script.
 
 -- ── Operational statistics tables ────────────────────────────────────────────
 
@@ -567,3 +574,17 @@ def ensure_schema(con) -> None:
     con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS overview_records_ids VARCHAR[]")
     # idempotent migration for databases that predate the local_contact column
     con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS local_contact VARCHAR[]")
+    # idempotent migration: overview_records.sources_stats was renamed to
+    # sources_signal_stats (pigbrother Stats files, not DB statistics)
+    has_old_stats = con.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_name = 'overview_records' AND column_name = 'sources_stats'"
+    ).fetchone()
+    if has_old_stats is not None:
+        con.execute(
+            "ALTER TABLE overview_records RENAME COLUMN sources_stats TO sources_signal_stats"
+        )
+    # idempotent migration for databases that predate both names
+    con.execute(
+        "ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS sources_signal_stats VARCHAR[]"
+    )

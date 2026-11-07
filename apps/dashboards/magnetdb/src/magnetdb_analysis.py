@@ -579,9 +579,9 @@ def get_overview_records_for_assembly(assembly_name, db_path=None):
 
 
 def get_stats_files_for_assembly(assembly_name, db_path=None):
-    """Return the Pigbrother Stats TDMS filenames attached to an assembly's overview records.
+    """Return the Pigbrother Stats (SignalStats) TDMS filenames attached to an assembly's overview records.
 
-    Flattens ``overview_records.sources_stats`` (one array per row) across
+    Flattens ``overview_records.sources_signal_stats`` (one array per row) across
     every live (``merged_into IS NULL``) record for *assembly_name*.
 
     Parameters
@@ -599,7 +599,7 @@ def get_stats_files_for_assembly(assembly_name, db_path=None):
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
             SELECT DISTINCT stats
-            FROM overview_records, UNNEST(sources_stats) AS t(stats)
+            FROM overview_records, UNNEST(sources_signal_stats) AS t(stats)
             WHERE assembly_name = ? AND merged_into IS NULL
             ORDER BY stats
         """
@@ -2891,7 +2891,8 @@ def get_overview_records_for_filters(housing=None, year=None, research_area=None
         One row per distinct live (``merged_into IS NULL``) overview record
         linked to a matching ``users`` session, with columns ``filename``,
         ``assembly_name``, ``housing``, ``mode``, ``t0``, ``duration``
-        [s] and ``stats`` (comma-joined ``sources_stats`` filenames).
+        [s] and ``signal_stats`` (comma-joined ``sources_signal_stats``
+        filenames).
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
@@ -2904,7 +2905,7 @@ def get_overview_records_for_filters(housing=None, year=None, research_area=None
                     AND (? IS NULL OR acronym = ?)
             )
             SELECT DISTINCT o.filename, o.assembly_name, o.housing, o.mode, o.t0, o.duration,
-                array_to_string(COALESCE(o.sources_stats, []), ', ') AS stats
+                array_to_string(COALESCE(o.sources_signal_stats, []), ', ') AS signal_stats
             FROM filtered_users AS u, UNNEST(u.overview_records_ids) AS t(ovid)
             JOIN overview_records AS o ON o.filename = t.ovid AND o.merged_into IS NULL
             ORDER BY o.t0

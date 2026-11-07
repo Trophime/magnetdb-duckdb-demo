@@ -2460,8 +2460,9 @@ def view_housing_config(con, name: str, at: datetime | None = None) -> None:
 # Used only when --from / --to filtering is requested.
 #
 # _EXP_FILE_TS  : pupitre TXT pattern  "YYYY.MM.DD - HH:MM:SS.txt"
-# _OD_FILE_TS   : COALESCE of pupitre + TDMS Overview/Archive (%y%m%d) +
-#                 TDMS Spike/Default (%y%m%d)
+# _OD_FILE_TS   : COALESCE of pupitre + TDMS Overview/Archive and legacy
+#                 minute-precision Stats (%y%m%d-%H%M) + TDMS Spike/Default/
+#                 ManuelTrig/Stats (%y%m%d-%H%M%S)
 #
 # NOTE: these strings reference the table aliases used in their respective queries
 # ("e.file" and "od.file").  They must NOT be used in f-string templates directly;
@@ -2480,7 +2481,7 @@ _OD_FILE_TS = (
     " TRY_STRPTIME(regexp_extract(od.file,"
     " '([0-9]{6}-[0-9]{4})\\.tdms$', 1), '%y%m%d-%H%M'),"
     " TRY_STRPTIME(regexp_extract(od.file,"
-    " '(?:Spikes|Default)_([0-9]{6}-[0-9]{6})', 1), '%y%m%d-%H%M%S')"
+    " '(?:Spikes|Default|ManuelTrig|Stats)_+([0-9]{6}-[0-9]{6})', 1), '%y%m%d-%H%M%S')"
     ")"
 )
 
@@ -3283,7 +3284,7 @@ def _fileset_lists(sources) -> dict[str, list[str]]:
     if sources is None:
         empty: list[str] = []
         return {k: empty for k in (
-            "overview", "archive", "pupitre", "default", "trigger", "spike", "stats",
+            "overview", "archive", "pupitre", "default", "trigger", "spike", "signal_stats",
             "hybrid_kHz", "hybrid_rms", "hybrid_trigger", "hybrid_vprocess",
             "pigbrother_runlog", "pupitre_runlog",
         )}
@@ -3294,7 +3295,7 @@ def _fileset_lists(sources) -> dict[str, list[str]]:
         "default":            list(getattr(sources, "default", []) or []),
         "trigger":            list(getattr(sources, "trigger", []) or []),
         "spike":              list(getattr(sources, "spike", []) or []),
-        "stats":              list(getattr(sources, "stats", []) or []),
+        "signal_stats":       list(getattr(sources, "signal_stats", []) or []),
         "hybrid_kHz":         list(getattr(sources, "hybrid_kHz", []) or []),
         "hybrid_rms":         list(getattr(sources, "hybrid_rms", []) or []),
         "hybrid_trigger":     list(getattr(sources, "hybrid_trigger", []) or []),
@@ -3306,7 +3307,7 @@ def _fileset_lists(sources) -> dict[str, list[str]]:
 
 _OVERVIEW_SOURCE_LIST_COLUMNS = [
     "sources_overview", "sources_archive", "sources_pupitre",
-    "sources_default", "sources_trigger", "sources_spike", "sources_stats",
+    "sources_default", "sources_trigger", "sources_spike", "sources_signal_stats",
     "sources_hybrid_kHz", "sources_hybrid_rms", "sources_hybrid_trigger",
     "sources_hybrid_vprocess", "sources_pigbrother_runlog", "sources_pupitre_runlog",
 ]
@@ -3408,7 +3409,7 @@ def _overview_record_to_columns(record, assembly_name: str | None) -> dict:
         "sources_default": src["default"],
         "sources_trigger": src["trigger"],
         "sources_spike": src["spike"],
-        "sources_stats": src["stats"],
+        "sources_signal_stats": src["signal_stats"],
         "sources_hybrid_kHz": src["hybrid_kHz"],
         "sources_hybrid_rms": src["hybrid_rms"],
         "sources_hybrid_trigger": src["hybrid_trigger"],
@@ -3493,6 +3494,8 @@ def insert_overview_record_from_dict(
     comma-separated string (as written by ``cli.py``).  Both the canonical
     ``sources_<key>`` column names and the short ``<key>`` aliases used by
     ``cli.py`` are accepted (e.g. ``sources_overview`` or ``overview``).
+    ``signal_stats`` is also read from the pre-rename ``stats`` /
+    ``sources_stats`` keys.
     Each item is reduced to its basename (``Path(x).name``) before storage.
 
     Pupitre-duplicate detection/merging is not done here — see
@@ -3531,13 +3534,19 @@ def insert_overview_record_from_dict(
         return [Path(x).name for x in items]
 
     _source_keys = [
-        "overview", "archive", "pupitre", "default", "trigger", "spike", "stats",
+        "overview", "archive", "pupitre", "default", "trigger", "spike", "signal_stats",
         "hybrid_kHz", "hybrid_rms", "hybrid_trigger", "hybrid_vprocess",
         "pigbrother_runlog", "pupitre_runlog",
     ]
+    # key used before the signal_stats rename (older summary.json files)
+    _legacy_source_keys = {"signal_stats": "stats"}
 
     def _get_sources(key: str) -> list[str]:
-        return _to_list(data.get(f"sources_{key}", data.get(key)))
+        value = data.get(f"sources_{key}", data.get(key))
+        legacy = _legacy_source_keys.get(key)
+        if value is None and legacy is not None:
+            value = data.get(f"sources_{legacy}", data.get(legacy))
+        return _to_list(value)
 
     def _json_field_dict(key: str) -> dict:
         v = data.get(key, {})

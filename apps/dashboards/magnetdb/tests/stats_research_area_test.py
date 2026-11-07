@@ -31,7 +31,7 @@ def test_overview_records_section_newest_first():
         "housing": ["M9", "M9", "M10"],
         "mode": ["old", "mid", "new"],
         "t0": pd.to_datetime(["2024-01-10", "2025-03-05", "2026-06-20"]),
-        "stats": ["", "", ""],
+        "signal_stats": ["", "", ""],
     })
     table = ra._overview_records_section(ov_df)
     assert [r["Mode"] for r in table.data] == ["new", "mid", "old"]

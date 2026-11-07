@@ -28,7 +28,7 @@ python magnetdb.py populate operationaldata --all --db-tz Europe/Paris
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--assembly ASSEMBLY` | — | Assembly name to process (repeat for multiple); use `--all` instead to process every assembly |
-| `--type` | all | Restrict to one or more of `Overview Archive Spike Default Pupitre` |
+| `--type` | all | Restrict to one or more of `Overview Archive Spike Default SignalStats Trigger Pupitre` (`SignalStats`: pigbrother Stats files in `Fichiers_stats`; `Trigger`: ManuelTrig files in `Fichiers_Manuel_Trig`) |
 | `--records-base` | `/mnt/LNCMIG-Data/records` | Root of the records tree |
 | `--srv-subdir` | `srv-data-install` | Subdirectory of `records-base` for pupitre TXT files |
 | `--pbsurv` | `pbsurv` | Subdirectory of `records-base` for TDMS files |
@@ -151,7 +151,7 @@ The file must contain a top-level JSON array. Each element is a dict with the fo
 | `sources_default` | list\[str\] \| csv | Default incident file path(s) |
 | `sources_trigger` | list\[str\] \| csv | Trigger incident file path(s) |
 | `sources_spike` | list\[str\] \| csv | Spike incident file path(s) |
-| `sources_stats` | list\[str\] \| csv | Stats TDMS file path(s) (4800 Hz data reduced to 1 Hz) |
+| `sources_signal_stats` | list\[str\] \| csv | Pigbrother Stats TDMS file path(s): mean, standard deviation and PSD bands of each signal over 1 s (formerly `sources_stats`; the `stats` key of older `summary.json` files is still read) |
 | `sources_hybrid_kHz` | list\[str\] \| csv | Hybrid kHz file path(s) |
 | `sources_hybrid_rms` | list\[str\] \| csv | Hybrid RMS file path(s) |
 | `sources_hybrid_trigger` | list\[str\] \| csv | Hybrid trigger file path(s) |
@@ -281,7 +281,7 @@ python magnetdb.py operationaldata view --db student.duckdb
 # Filter by assembly
 python magnetdb.py operationaldata view --assembly M10_M19071101_13 --db student.duckdb
 
-# Filter by file type (Overview, Archive, Spike, Default, Pupitre)
+# Filter by file type (Overview, Archive, Spike, Default, SignalStats, Trigger, Pupitre)
 python magnetdb.py operationaldata view --type Pupitre --db student.duckdb
 
 # Filter by magnet or part
@@ -299,13 +299,13 @@ python magnetdb.py operationaldata view \
 | Option | Description |
 |--------|-------------|
 | `--assembly ASSEMBLY` | Filter by assembly name |
-| `--type TYPE` | Filter by file type: `Overview`, `Archive`, `Spike`, `Default`, `Pupitre` |
+| `--type TYPE` | Filter by file type: `Overview`, `Archive`, `Spike`, `Default`, `SignalStats`, `Trigger`, `Pupitre` |
 | `--magnet MAGNET` | Filter by magnet name (joins via `assembly_magnets`) |
 | `--part PART` | Filter by part name (joins via `assembly_magnets → magnet_parts`) |
 | `--from DATETIME` | Include records at or after this date/time |
 | `--to DATETIME` | Include records at or before this date/time (inclusive) |
 
-> **Note:** For `operationaldata`, the timestamp is extracted from the filename. Pupitre TXT files use `YYYY.MM.DD - HH:MM:SS`; TDMS Overview/Archive files use `YYMMDD-HHMM`; TDMS Spike/Default files use `YYMMDD-HHMMSS`. Records whose filenames don't match any known pattern are excluded when `--from`/`--to` is used.
+> **Note:** For `operationaldata`, the timestamp is extracted from the filename. Pupitre TXT files use `YYYY.MM.DD - HH:MM:SS`; TDMS Overview/Archive files use `YYMMDD-HHMM`; TDMS Spike/Default/ManuelTrig files use `YYMMDD-HHMMSS`; Stats files use `YYMMDD-HHMMSS` or, in some legacy names, `YYMMDD-HHMM`. Records whose filenames don't match any known pattern are excluded when `--from`/`--to` is used.
 
 **Example output (assembly + type filter):**
 

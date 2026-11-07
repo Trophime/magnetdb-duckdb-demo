@@ -44,7 +44,7 @@ def overview_record_columns():
             if c in ("Overview Record", "Assembly")
             else {"name": c, "id": c}
         )
-        for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats")
+        for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Signal stats")
     ]
 
 
@@ -96,13 +96,13 @@ def _overview_records_section(ov_df):
             "assembly_name": "Assembly",
             "housing": "Housing",
             "mode": "Mode",
-            "stats": "Stats",
+            "signal_stats": "Signal stats",
         }
     )
     source_df = source_df.sort_values("t0", ascending=False, kind="stable")
 
     table_df = source_df[
-        ["Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats"]
+        ["Overview Record", "Assembly", "Housing", "Mode", "t0", "Signal stats"]
     ].copy()
     table_df["Overview Record"] = source_df.apply(overview_record_link, axis=1)
     table_df["Assembly"] = source_df.apply(assembly_link, axis=1)

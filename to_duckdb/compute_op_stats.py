@@ -10,6 +10,8 @@ For each operationaldata file not yet processed this script:
        'heat_extracted_j'    = sum((tsb - teb) * Q_m3s * rho_cp * dt)
        'duration_s'          = sum(dt)
        'duration_field_on_s' = sum(dt) where Field > field_threshold
+       'teb_mean' / 'bp_mean'   = sample mean of teb [degC] / BP [bar] (non-NaN)
+       'teb_count' / 'bp_count' = number of non-NaN samples behind each mean
   3. Computes assembly-level field-bin stats → op_assembly_bin_stats
        channels: Pmagnet, Ptot, tsb, teb, debitbrut  (configurable)
   4. Computes per-part field-bin stats  → op_part_bin_stats
@@ -293,6 +295,16 @@ def compute_scalars(
         flow_m3s = df["debitbrut"].astype(float) * debit_to_m3s
         heat_w = delta_t * flow_m3s * rho_cp
         scalars["heat_extracted_j"] = float((heat_w * dt).sum())
+
+    # plain sample means (as overview_records.teb / bp), with the sample
+    # counts that weight several files together
+    for column, prefix in (("teb", "teb"), ("BP", "bp")):
+        if column not in df.columns:
+            continue
+        values = df[column].astype(float).dropna()
+        if len(values):
+            scalars[f"{prefix}_mean"] = float(values.mean())
+            scalars[f"{prefix}_count"] = float(len(values))
 
     return scalars
 

@@ -42,6 +42,7 @@ from crud import (
     update_part_status,
     view_magnet,
     view_magnets,
+    view_operationaldata,
     view_overview_records,
     view_assembly,
     view_assemblies,
@@ -1820,13 +1821,13 @@ def test_insert_overview_record_from_dict_reduces_sources_to_basename(con):
                 "/mnt/LNCMIG-Data/records/pbsurv/M10/Fichiers_Archive/M10_Archive_250127-2105.tdms"
             ),
             "pupitre": ["/mnt/LNCMIG-Data/records/srv-data-install/M10/2025.01.27 - 15:39:29.txt"],
-            "stats": "/mnt/LNCMIG-Data/records/pbsurv/M10/Fichiers_Stats/M10_Stats_250127-1605.tdms",
+            "signal_stats": "/mnt/LNCMIG-Data/records/pbsurv/M10/Fichiers_stats/M10_Stats_250127-1605.tdms",
         },
         verbose=False,
     )
     row = con.execute(
-        "SELECT sources_overview, sources_archive, sources_pupitre, sources_stats FROM overview_records "
-        "WHERE filename = 'M10_Overview_250127-1605'"
+        "SELECT sources_overview, sources_archive, sources_pupitre, sources_signal_stats "
+        "FROM overview_records WHERE filename = 'M10_Overview_250127-1605'"
     ).fetchone()
     assert row == (
         ["M10_Overview_250127-1605.tdms"],
@@ -1834,6 +1835,24 @@ def test_insert_overview_record_from_dict_reduces_sources_to_basename(con):
         ["2025.01.27 - 15:39:29.txt"],
         ["M10_Stats_250127-1605.tdms"],
     )
+
+
+@pytest.mark.parametrize("legacy_key", ["stats", "sources_stats"])
+def test_insert_overview_record_from_dict_reads_legacy_stats_key(con, legacy_key):
+    """summary.json files written before the signal_stats rename still load."""
+    insert_overview_record_from_dict(
+        con,
+        {
+            "filename": "M8_Overview_260226-0948",
+            legacy_key: "/data/M8/Fichiers_stats/M8_Stats_260226-094838.tdms",
+        },
+        verbose=False,
+    )
+    row = con.execute(
+        "SELECT sources_signal_stats FROM overview_records "
+        "WHERE filename = 'M8_Overview_260226-0948'"
+    ).fetchone()
+    assert row[0] == ["M8_Stats_260226-094838.tdms"]
 
 
 # ---------------------------------------------------------------------------
@@ -2209,13 +2228,13 @@ def test_view_overview_records_prints_per_source_type_counts(con, capsys):
     _insert_overview(
         con, "M9_Overview_220127-1700", "2022-01-27 17:00:00", 100.0, 10.0, 1.0,
         ["p1.tdms", "p2.tdms"], assembly_name="M9_ASSEMBLY_A",
-        sources_stats=[],
+        sources_signal_stats=[],
     )
 
     view_overview_records(con)
     out = capsys.readouterr().out
     assert "sources: pupitre=2" in out
-    assert "stats=" not in out
+    assert "signal_stats=" not in out
 
 
 # ---------------------------------------------------------------------------
@@ -2739,3 +2758,24 @@ def test_update_assembly_magnet_commissioned_at_change_marks_hoop_stale(con_hoop
     _op_id, details = _last_update_log(con_hoop, "assembly_magnets", "ASSEMBLY_01/MAG_01")
     assert details["changes"] == {"commissioned_at": ["2025-01-01 00:00:00", "2025-02-01 00:00:00"]}
     assert _is_marked(con_hoop)
+
+
+# ---------------------------------------------------------------------------
+# view_operationaldata() --from / --to
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("file_type,name", [
+    ("SignalStats", "M10_Stats_250115-120005.tdms"),
+    ("SignalStats", "M10_Stats__250115-1200.tdms"),
+    ("Trigger", "M10_ManuelTrig_250115-120005.tdms"),
+])
+def test_view_operationaldata_time_filter_keeps_new_types(con_populated, capsys, file_type, name):
+    """SignalStats and Trigger file names carry a timestamp the time filter can read."""
+    con_populated.execute(
+        "INSERT INTO operationaldata (name, description, file, assembly_name, type, status) "
+        "VALUES (?, '', ?, 'ASSEMBLY_01', ?, 'pending')",
+        [name.removesuffix(".tdms"), f"pbsurv/M10/dir/{name}", file_type],
+    )
+    view_operationaldata(con_populated, from_ts="2025-01-15 00:00:00", to_ts="2025-01-16 00:00:00")
+    assert name in capsys.readouterr().out

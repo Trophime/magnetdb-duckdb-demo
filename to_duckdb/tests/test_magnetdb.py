@@ -763,7 +763,7 @@ def test_cli_populate_overview_records_from_archive_writes_thin_row(tmp_path, mo
             sources=FileSet(
                 archive=[str(path)],
                 pupitre=["2025.01.15 - 12:00:00.txt"],
-                stats=["M10_Stats_250115-1200.tdms"],
+                signal_stats=["M10_Stats_250115-1200.tdms"],
             ),
         )
 
@@ -777,7 +777,8 @@ def test_cli_populate_overview_records_from_archive_writes_thin_row(tmp_path, mo
 
     row = _fetch_one(
         db, "SELECT housing, assembly_name, sources_overview, sources_archive, sources_pupitre, "
-        "sources_stats, duration FROM overview_records WHERE filename = 'M10_Archive_250115-1200'"
+        "sources_signal_stats, duration FROM overview_records "
+        "WHERE filename = 'M10_Archive_250115-1200'"
     )
     assert row[0] == "M10"
     assert row[1] == "ASSEMBLY_JSON_01"
@@ -841,7 +842,7 @@ def _summary_json_record(filename, **extra):
         "default": "",
         "trigger": "",
         "spike": "",
-        "stats": "",
+        "signal_stats": "",
         "hybrid_kHz": "",
         "hybrid_rms": "",
         "hybrid_trigger": "",
@@ -1087,6 +1088,32 @@ def test_cli_populate_overview_records_infer_logs_one_summary_row(tmp_path, monk
     assert "merges" in details
 
 
+def test_cli_populate_operationaldata_metadata_fills_and_logs(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)  # ASSEMBLY_JSON_01, housing M10
+    with duckdb.connect(str(db)) as con:
+        con.execute(
+            "INSERT INTO operationaldata (name, description, file, assembly_name, type, status) "
+            "VALUES ('p', '', 'srv-data-install/M10/2025.07.15 - 12:00:05.txt', "
+            "'ASSEMBLY_JSON_01', 'Pupitre', 'pending')"
+        )
+    monkeypatch.setattr(
+        "python_magnetrun.utils.files.extract_data",
+        lambda file, housing, assembly="", key=None, dry_run=False: (
+            "2025-07-15 12:00:05", "2025-07-15 13:00:00", False
+        ),
+    )
+
+    _run(monkeypatch, "populate", "operationaldata-metadata", "--assembly", "ASSEMBLY_JSON_01",
+         "--records-base", str(tmp_path), "--db", str(db))
+
+    # July: Europe/Paris = UTC+2
+    assert _fetch_one(db, "SELECT t_start, t_end FROM operationaldata") == (
+        datetime(2025, 7, 15, 10, 0, 5), datetime(2025, 7, 15, 11, 0),
+    )
+    rows = [(op, rec, status) for op, rec, status, _ in _log_rows(db, "operationaldata")]
+    assert rows == [("metadata", "ASSEMBLY_JSON_01", "ok")]
+
+
 # Every subcommand needs a logging decision: a new one missing from both sets
 # fails here.
 _LOGGED_SUBCOMMANDS = {
@@ -1099,7 +1126,8 @@ _LOGGED_SUBCOMMANDS = {
     ("assembly", "add"), ("assembly", "update"), ("assembly", "delete"),
     ("assembly", "update-magnet"), ("assembly", "decommission"),
     ("site", "add"), ("site", "delete"), ("site", "update-magnet"),
-    ("populate", "operationaldata"), ("populate", "experiments"),
+    ("populate", "operationaldata"), ("populate", "operationaldata-metadata"),
+    ("populate", "experiments"),
     ("populate", "overview-records"), ("populate", "overview-records-from-archive"),
     ("populate", "overview-records-from-json"), ("populate", "overview-records-infer"),
     ("hoop-stress", "compute"),

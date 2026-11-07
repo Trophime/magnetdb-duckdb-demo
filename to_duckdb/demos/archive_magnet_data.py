@@ -60,8 +60,8 @@ import duckdb
 from python_magnetrun.utils.files import (
     DIR_ARCHIVE,
     DIR_DEFAULT,
+    DIR_SIGNAL_STATS,
     DIR_SPIKE,
-    DIR_STATS,
     DIR_TRIGGER,
 )
 
@@ -85,11 +85,13 @@ _TDMS_MODE_DIRS = {
     "Default": DIR_DEFAULT,
     "Spikes": DIR_SPIKE,
     "ManuelTrig": DIR_TRIGGER,
-    "Stats": DIR_STATS,
+    "Stats": DIR_SIGNAL_STATS,
 }
 
 # overview_records source columns whose on-disk layout is known
-_ARCHIVED_SOURCES = ("overview", "archive", "pupitre", "default", "trigger", "spike", "stats")
+_ARCHIVED_SOURCES = (
+    "overview", "archive", "pupitre", "default", "trigger", "spike", "signal_stats",
+)
 # ... and those skipped for now (no layout defined)
 _SKIPPED_SOURCES = (
     "hybrid_kHz", "hybrid_rms", "hybrid_trigger", "hybrid_vprocess",
