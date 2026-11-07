@@ -229,8 +229,7 @@ CREATE TABLE IF NOT EXISTS operationaldata (
 
 -- idempotent migration for databases that predate the type column
 ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'Archive';
--- idempotent migration: ensure id has the sequence default (fixes DBs created before the DEFAULT was added)
-ALTER TABLE operationaldata ALTER COLUMN id SET DEFAULT nextval('operationaldata_id_seq');
+-- the id sequence default migration is in _ensure_operationaldata_id_default()
 -- Per-file metadata, computed once by `populate operationaldata-metadata`
 -- (PLAN_overview_records_from_operationaldata.md): file start/end as naive
 -- timestamps in the DB timezone (UTC by default, like overview_records.t0),
@@ -535,6 +534,22 @@ CREATE TABLE IF NOT EXISTS operation_log (
 """
 
 
+def _ensure_operationaldata_id_default(con) -> None:
+    """Give operationaldata.id its sequence default, only on databases that lack it."""
+    # Fixes DBs created before the DEFAULT was added. Run only when missing:
+    # DuckDB can't replay this ALTER from the WAL ("GetDefaultDatabase with no
+    # default database set"), so running it on every connect left any process
+    # killed before its checkpoint with a database that no longer opens.
+    default = con.execute(
+        "SELECT column_default FROM information_schema.columns "
+        "WHERE table_name = 'operationaldata' AND column_name = 'id'"
+    ).fetchone()
+    if default is not None and default[0] is None:
+        con.execute(
+            "ALTER TABLE operationaldata ALTER COLUMN id SET DEFAULT nextval('operationaldata_id_seq')"
+        )
+
+
 def ensure_schema(con) -> None:
     """Create all tables and apply idempotent migrations on *con*."""
     # users.hstart changed from TIMESTAMP[] (one row per acronym+housing) to a
@@ -559,6 +574,7 @@ def ensure_schema(con) -> None:
     if local_contact_type is not None and local_contact_type[0] != "VARCHAR[]":
         con.execute("ALTER TABLE users DROP COLUMN local_contact")
     con.execute(SCHEMA_SQL)
+    _ensure_operationaldata_id_default(con)
     # idempotent migration: experiment_ids was renamed to experiments_ids
     has_old_name = con.execute(
         "SELECT 1 FROM information_schema.columns "
