@@ -97,7 +97,7 @@ def test_unregistered_file_by_time_window(con, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "date, version", [("2026.03.06", "M8-260305"), ("2025.11.05", "M8-211225")]
+    "date, version", [("2026.03.06", "M8-260305"), ("2025.11.05", "M8-230913")]
 )
 def test_m8_housing_version(con, tmp_path, date, version):
     ctx = resolve_file_context(con, write_pupitre(tmp_path / "M8", date))

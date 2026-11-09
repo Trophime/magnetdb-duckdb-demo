@@ -1222,4 +1222,4 @@ def test_housing_sync_creates_versions_table(tmp_path, monkeypatch):
         con.execute("DROP TABLE housing_config_versions")
     _run(monkeypatch, "housing", "sync", "M8", "--db", str(db))
     with duckdb.connect(str(db), read_only=True) as con:
-        assert con.execute("SELECT count(*) FROM housing_config_versions").fetchone()[0] == 2
+        assert con.execute("SELECT count(*) FROM housing_config_versions").fetchone()[0] == 3
