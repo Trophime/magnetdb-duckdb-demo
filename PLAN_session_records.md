@@ -6,10 +6,14 @@ file-quality commits of 2026-10-22 afternoon (`4caf41c`, `17c16f9`, `b3344bd`
 in `python_magnetrun`; [PLAN_pupitre_binary_tail.md](PLAN_pupitre_binary_tail.md)).
 **Approved and implemented 2026-10-22**, committed 2026-10-28 in
 `python_magnetrun` as `b75b6a9` ("explore session to link pupitre/pigbrother
-data"; the parent repo does not record that submodule commit yet); verification results
-and open issues in [NOTES_session_records_checks.md](NOTES_session_records_checks.md).
+data"). That commit was dropped by the submodule bump in `ffdb347` (2026-11-03),
+then restored: merged into `housing-config-versions` as `a77f37c` and recorded
+in the parent repo by `74cdd28` (2026-11-04). Both repos now work on
+`housing-config-versions`. Verification results and open issues in
+[NOTES_session_records_checks.md](NOTES_session_records_checks.md); later
+changes that touch this plan in [Changes since implementation](#changes-since-implementation).
 Follow-up step R (runlog path fix, [below](#follow-up-step-r-pigbrother-runlog-path-proposed-2026-10-23))
-is **proposed, awaiting approval**.
+is **proposed, awaiting approval**; not implemented as of 2026-11-09.
 
 **Goal.** A `magnetrun sessions` command that turns `Data/EXPERIENCES_LOG.csv`
 into one record per session, for any housing, from **2018-01-01 to now**. Each
@@ -69,10 +73,16 @@ already handle archive-anchored sessions, but they have not been run for
   local time, and watch the ambiguous hour when clocks go back in autumn.
 - `EXPLOIT.` (8090 rows) and `EXPLOIT` (10 rows, 2007–2013) are the same
   operator account.
-- `ElecGroup` always matches the GR1/GR2 mapping in the housing configs, and
-  `e` is always the Bitter (B) coil, `i` the Helix (H) coil. Group 1 is the B
-  side for M10/M8 and the H side for M9. Rows with an unusual pairing (e.g. 6
-  rows in 2008 with `M10i` on group 1) point to swapped runs.
+- `ElecGroup` always matches the GR1/GR2 mapping of the base housing configs,
+  and `e` is always the Bitter (B) coil, `i` the Helix (H) coil. Group 1 is
+  the B side for M10/M8 and the H side for M9. Rows with an unusual pairing
+  (e.g. 6 rows in 2008 with `M10i` on group 1) point to swapped runs.
+  **But `ElecGroup` does not reveal supply swaps** (checked 2026-11-09): during
+  the swapped-supply periods now recorded as housing config versions
+  (`69f6c49`: M10 2021-03-25 → 2021-09-29, M7 2014-03-17 → 2016-07-26), the log
+  keeps the base pairing (M10e on group 1, M10i on group 2; M7 on group 1).
+  Use the housing config version valid at `HStart` for the wiring, not
+  `ElecGroup`.
 - `MinuteCount` is consistently slightly shorter than `HStop − HStart`
   (median 0.3 h on long sessions); it probably excludes some idle time.
 
@@ -366,6 +376,39 @@ All in the `python_magnetrun` submodule except the last one.
    up in unlogged records.
 9. **Future source:** `load_sessions` is the only place that knows about the
    CSV, so the source can be swapped for the SUPERVISION database later.
+
+## Changes since implementation
+
+Checked 2026-11-09 against both repos (`housing-config-versions`).
+
+- **Stats → SignalStats rename** (`python_magnetrun` `3354e50`, A24 phase A):
+  `FileSet.stats` is now `FileSet.signal_stats` (the old name kept as a
+  deprecated property), the `sessions.json` / `summary.json` key is
+  `"signal_stats"` (`from_dict` still reads `"stats"`), and so is the
+  `FileDiscovery.candidate_files` key; `utils.files.DIR_SIGNAL_STATS` (with
+  `DIR_STATS` kept as an alias). On-disk names (`Fichiers_stats`,
+  `<housing>_Stats_*`) are unchanged. Where this plan says "stats" for these
+  fields, read `signal_stats`.
+- **File times stored in the database** ([PLAN_overview_records_from_operationaldata.md](PLAN_overview_records_from_operationaldata.md),
+  A24, approved 2026-11-07, in progress): phase C stores each file's `t_start`,
+  `t_end` and `mode` in `operationaldata`, computed with the same
+  `extract_data` metadata path as here. Two consequences:
+  - the small-archive modification-time error ([notes, issue 1](NOTES_session_records_checks.md#1-modification-time-is-wrong-for-small-archives))
+    now also lands in the stored `t_end` of Archive rows, so the 50 MB
+    threshold (notes, suggestion 1) matters for A24 too;
+  - A24 considered sessions and did not use them; conversely, sessions could
+    read the stored `t_start`/`t_end` instead of re-reading file ranges
+    (notes, suggestion 3, run time).
+- **Housing config versions** (`311c284`, `69f6c49`): wiring is now
+  time-versioned, including the M10 (2021) and M7 (2014–2016) supply swaps.
+  `ElecGroup` in EXPERIENCES_LOG does not follow these swaps (see
+  [Clocks and data pitfalls](#clocks-and-data-pitfalls)); this also matters
+  for the Cirrus `exp_power_groups` design, whose primary source is the
+  session's `ElecGroup`.
+- **Users demo** (`095449b`): now uses `HStart`, not the CSV `timestamp`, for
+  its corrections and `--from` cutoff, consistent with this plan.
+- **Step R** is unaffected: the code it changes is as described below (only
+  line numbers in `processing.py` moved).
 
 ## Follow-up step R: pigbrother runlog path (proposed 2026-10-23)
 

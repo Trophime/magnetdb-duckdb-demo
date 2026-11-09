@@ -3,13 +3,17 @@
 Checks run on 2026-10-22/23 for [PLAN_session_records.md](PLAN_session_records.md)
 (`magnetrun sessions`, step 0 changes to `extract_data`). The code, tests and
 docs were committed on 2026-10-28 in `python_magnetrun` as `b75b6a9`
-("explore session to link pupitre/pigbrother data"); the parent repo does not
-record that submodule commit yet. The issues and suggestions below are not
-addressed by that commit.
+("explore session to link pupitre/pigbrother data"). That commit was dropped by
+the submodule bump in `ffdb347` (2026-11-03), then restored: merged into
+`housing-config-versions` as `a77f37c` and recorded in the parent repo by
+`74cdd28` (2026-11-04). The issues and suggestions below are not addressed by
+that commit; later changes that bear on them are in
+[Changes since the checks](#changes-since-the-checks).
 
 ## What was implemented
 
-In the `python_magnetrun` submodule (branch `spike/tdms-polars-benchmark`):
+In the `python_magnetrun` submodule (branch `spike/tdms-polars-benchmark`,
+merged into `housing-config-versions` on 2026-11-04):
 
 - `utils/files.py::extract_data`:
   - Archive TDMS end time from the file modification time when plausible
@@ -65,7 +69,9 @@ The file seems to be closed when the next recording opens, 1–1.5 min after
 its last sample, so the modification time overlaps the next overview. All 8
 large differences of the step 0 comparison were also small files (0–26 MB);
 large archives agree within 60 s. **This changes the output of the existing
-`magnetrun analysis`.**
+`magnetrun analysis`.** Since the A24 work (2026-11-07), it also reaches the
+`t_end` stored for Archive rows in `operationaldata` (see
+[Changes since the checks](#changes-since-the-checks)).
 
 ### 2. `data_end` misses late closures when pigbrother keeps recording
 
@@ -205,6 +211,9 @@ cases, so it cannot be the criterion.
    repeated runs are still too slow, revisit the persistent file-range index
    left out of the plan (path, type, housing, start, end, size, modification
    time). Profile M9 2025 alone first, to confirm where the time goes.
+   Alternative since A24: read the `t_start`/`t_end` now stored per file in
+   `operationaldata` instead of re-reading file ranges (only for files
+   registered there; M8 hybrid files are not).
 4. **Investigate the (c) shortfall** after 1 and 3: list the overviews that
    are in a logged session according to the database but not according to
    discovery.
@@ -223,11 +232,40 @@ cases, so it cannot be the criterion.
 Suggestions 1–4, 6 and 7 change the approved plan and need a revised plan
 first; step R (5) is already written in the plan, awaiting approval.
 
+## Changes since the checks
+
+Checked 2026-11-09 against both repos (`housing-config-versions`).
+
+- **Stats → SignalStats rename** (`python_magnetrun` `3354e50`):
+  `FileSet.stats` is now `signal_stats`, and so is the `sessions.json` /
+  `summary.json` key (`from_dict` still reads `"stats"`). The `ses_*/sessions.json`
+  outputs listed under [Raw outputs](#raw-outputs) predate the rename and use
+  `"stats"`.
+- **File times stored in the database**
+  ([PLAN_overview_records_from_operationaldata.md](PLAN_overview_records_from_operationaldata.md),
+  A24, approved 2026-11-07, in progress): each file's `t_start`/`t_end` is
+  stored in `operationaldata`, computed with the same `extract_data` path. So
+  issue 1 (small archives) carries into the stored Archive `t_end`, and the
+  stored times offer a way to speed up `magnetrun sessions` (suggestion 3).
+- **`ElecGroup` does not follow supply swaps:** during the swapped-supply
+  periods now recorded as housing config versions (`69f6c49`: M10
+  2021-03-25 → 2021-09-29, M7 2014-03-17 → 2016-07-26), EXPERIENCES_LOG keeps
+  the base pairing (M10e on group 1, M10i on group 2; M7 on group 1). The
+  wiring must come from the housing config version valid at `HStart`; this
+  also concerns the Cirrus `exp_power_groups` design.
+- **Users demo** (`095449b`): now uses `HStart`, not the CSV `timestamp`.
+- **Not changed:** step R (runlog path) and suggestions 1–4, 6, 7 are still
+  open; the pigbrother log is still never found.
+
 ## Decisions pending
 
-- Step R of the plan: approve or amend.
+- Step R of the plan: its two questions were answered on 2026-11-02
+  (`pigbrother_runlog_dir` = `<pigbrother_datadir>/log`, also as the
+  `PIGBROTHER_RUNLOG_DIR` default; `PIGBROTHER_LOG_FILENAME` =
+  `Log_ACQ_ENET.txt`); the step still awaits approval.
 - Suggestions 1, 2, 3, 6, 7: which to include in a revised plan, and in which
-  order.
+  order. Suggestion 1 now also affects the file times stored by A24, so it may
+  belong in that plan or before its next metadata pass.
 - Thresholds to confirm: 50 MB (archives), 100 A (power / continuation),
   10 min (continuation gap), 30 min (unlogged chaining, still the default).
 
