@@ -8,7 +8,7 @@ Status: **approved 2026-11-07, in progress** (first draft 2026-11-06)
 | B — schema, SignalStats / Trigger types | ✅ (also: `operationaldata view --from/--to` reads the new names) |
 | C — `populate operationaldata-metadata` | ✅; Spike/Default/Trigger taken from their names (step 8); checked on `M10_A260326_00` |
 | D — `teb`/`BP` scalars | ✅; equal to the `infer` path on a real pupitre file |
-| E — SQL builder, stored mode | ⏳ |
+| E — SQL builder, stored mode | ✅ (2026-11-09; decisions at the end of phase E) |
 | F — dashboard, docs | ✅ (`get_stats_files_for_assembly` and the Stats viewer page keep their names) |
 | G — validation, build script | step 15 partly done ahead of validation, for the 2026-11 rebuild: SignalStats/Trigger registered and `operationaldata-metadata` step added; `overview-ops` waits for phase E |
 
@@ -272,6 +272,23 @@ the two changes don't mix in the same files.
     (overlap edges, min-duration, midnight crossing, teb weighting, M8
     skipped).
     → verify: tests pass.
+
+Done 2026-11-09 (to_duckdb suite: 826 → 838 passed, 3 skipped). Decisions
+taken on approval:
+- `t0` is the time in the Overview file name (minute precision, as the
+  existing rows and open question 7), not `t_start`; `duration` stays
+  `t_end − t_start`.
+- With `--reprocess`, the rewritten row and the rows merged into it get
+  `merged_into = NULL` before the write, so the merge sweep rebuilds the
+  merges (`INSERT OR REPLACE` would otherwise leave stale tombstones).
+- `build_overview_records_from_operationaldata` also takes `dry_run` and
+  `db_tz`; it returns `written` / `skipped_existing` / `skipped_no_times` /
+  `skipped_m8` counts. The CLI runs `merge_duplicate_pupitre_records` after
+  all assemblies and logs one `build` row per assembly in `operation_log`.
+- Sources of the same housing count whatever assembly they are registered
+  under (as today's discovery, which ignores assemblies).
+- The stored-mode lookup matches `operationaldata.name` (file stem) of type
+  `Overview` against the stem of `sources_overview[0]`.
 
 ### Phase F — dashboard and docs
 

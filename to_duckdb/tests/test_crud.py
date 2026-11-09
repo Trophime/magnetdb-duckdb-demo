@@ -11,6 +11,7 @@ from crud import (
     _parse_overview_filename,
     _postprocess_overview_record,
     assembled_at_from_name,
+    build_overview_records_from_operationaldata,
     decommission_assembly,
     delete_magnet,
     delete_assembly,
@@ -2546,6 +2547,288 @@ def test_postprocess_overview_record_resolves_bare_basename(con, monkeypatch, tm
 
     assert status == "applied"
     assert seen_paths == [str(overview_dir / "M9_Overview_220127-1756.tdms")]
+
+
+def _insert_overview_operationaldata(con, name: str, mode: str | None) -> None:
+    """One Overview operationaldata row of M9_ASSEMBLY_B with the given stored mode."""
+    con.execute(
+        "INSERT INTO operationaldata (name, file, assembly_name, type, mode) "
+        "VALUES (?, ?, 'M9_ASSEMBLY_B', 'Overview', ?)",
+        [name, f"pbsurv/M9/Overview/{name}.tdms", mode],
+    )
+
+
+def test_postprocess_overview_record_uses_stored_mode(con, monkeypatch):
+    """A mode stored in operationaldata is used as is: the Overview file is not loaded."""
+    _insert_m9_assemblies(con)
+    _insert_overview_operationaldata(con, "M9_Overview_220127-1756", "ECO")
+
+    def _no_load(path):
+        raise AssertionError(f"load_magnetdata called on {path}")
+
+    monkeypatch.setattr("python_magnetrun.magnetdata.load_magnetdata", _no_load)
+    insert_overview_record_from_dict(
+        con,
+        {
+            "filename": "M9_Overview_220127-1756",
+            "assembly_name": "M9_ASSEMBLY_B",
+            "sources_overview": ["M9_Overview_220127-1756.tdms"],
+        },
+        verbose=False,
+    )
+
+    status = _postprocess_overview_record(con, "M9_Overview_220127-1756", verbose=False)
+
+    assert status == "applied"
+    row = con.execute(
+        "SELECT mode FROM overview_records WHERE filename = 'M9_Overview_220127-1756'"
+    ).fetchone()
+    assert row == ("ECO",)
+
+
+def test_postprocess_overview_record_loads_file_when_stored_mode_is_null(con, monkeypatch):
+    """With no stored mode, the Overview file is still loaded to infer it."""
+    _insert_m9_assemblies(con)
+    _insert_overview_operationaldata(con, "M9_Overview_220127-1756", None)
+
+    ib = list(range(60, 1060, 10))
+    fake_df = {"Courant_GR1": ib, "Courant_GR2": ib}  # slope == 1.0 -> NORMAL
+    monkeypatch.setattr(
+        "python_magnetrun.magnetdata.load_magnetdata",
+        lambda path: _FakeTdmsData(fake_df),
+    )
+    insert_overview_record_from_dict(
+        con,
+        {
+            "filename": "M9_Overview_220127-1756",
+            "assembly_name": "M9_ASSEMBLY_B",
+            "sources_overview": ["M9_Overview_220127-1756.tdms"],
+        },
+        verbose=False,
+    )
+
+    status = _postprocess_overview_record(con, "M9_Overview_220127-1756", verbose=False)
+
+    assert status == "applied"
+    row = con.execute(
+        "SELECT mode FROM overview_records WHERE filename = 'M9_Overview_220127-1756'"
+    ).fetchone()
+    assert row == ("NORMAL",)
+
+
+# ---------------------------------------------------------------------------
+# build_overview_records_from_operationaldata()
+# ---------------------------------------------------------------------------
+
+# M9_Overview_220127-1756: 17:56 Paris = 16:56 UTC (January, UTC+1);
+# stored t_start / t_end are naive UTC, as written by phase C.
+_OV_NAME = "M9_Overview_220127-1756"
+_OV_START = datetime(2022, 1, 27, 16, 56, 5)
+_OV_END = datetime(2022, 1, 27, 17, 56, 5)
+
+
+def _od(con, relpath, file_type, t_start, t_end=None, assembly="M9_ASSEMBLY_B", mode=None) -> int:
+    """Insert one operationaldata row; t_end defaults to t_start (point-in-time files)."""
+    return con.execute(
+        "INSERT INTO operationaldata (name, file, assembly_name, type, t_start, t_end, mode) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
+        [relpath.rsplit("/", 1)[-1].rsplit(".", 1)[0], relpath, assembly, file_type,
+         t_start, t_end if t_end is not None else t_start, mode],
+    ).fetchone()[0]
+
+
+def _od_overview(con, name=_OV_NAME, t_start=_OV_START, t_end=_OV_END,
+                 assembly="M9_ASSEMBLY_B", housing="M9") -> int:
+    return _od(con, f"pbsurv/{housing}/Overview/{name}.tdms", "Overview", t_start, t_end,
+               assembly=assembly, mode="NORMAL")
+
+
+def _od_scalars(con, od_id, teb_mean, teb_count, bp_mean, bp_count) -> None:
+    for channel, value in (("teb_mean", teb_mean), ("teb_count", teb_count),
+                           ("bp_mean", bp_mean), ("bp_count", bp_count)):
+        con.execute("INSERT INTO op_run_scalars VALUES (?, ?, ?, NULL)", [od_id, channel, value])
+
+
+def _overview_row(con, filename=_OV_NAME) -> dict | None:
+    cols = ["filename", "assembly_name", "housing", "mode", "t0", "duration", "teb", "bp",
+            "sources_overview", "sources_archive", "sources_pupitre", "sources_default",
+            "sources_trigger", "sources_spike", "sources_signal_stats", "sources_hybrid_kHz",
+            "sources_pupitre_runlog", "merged_into"]
+    row = con.execute(
+        f"SELECT {', '.join(cols)} FROM overview_records WHERE filename = ?", [filename]
+    ).fetchone()
+    return dict(zip(cols, row, strict=True)) if row else None
+
+
+@pytest.fixture
+def no_file_loads(monkeypatch):
+    """The builder must not read any file: modes come from operationaldata."""
+    def _no_load(path):
+        raise AssertionError(f"load_magnetdata called on {path}")
+
+    monkeypatch.setattr("python_magnetrun.magnetdata.load_magnetdata", _no_load)
+
+
+def test_build_overview_records_from_operationaldata_selects_sources(con, no_file_loads):
+    _insert_m9_assemblies(con)
+    insert_assembly(con, {"name": "M10_ASSEMBLY", "housing": "M10",
+                          "commissioned_at": "2022-01-01 00:00:00"}, verbose=False)
+    _od_overview(con)
+    arc = "pbsurv/M9/Fichiers_Archive/"
+    # started the day before, still running: kept
+    _od(con, arc + "M9_Archive_220126-2300.tdms", "Archive",
+        datetime(2022, 1, 26, 22, 0), datetime(2022, 1, 27, 17, 0))
+    # ends exactly at the overview start / starts exactly at its end: strict overlap, excluded
+    _od(con, arc + "M9_Archive_220127-1500.tdms", "Archive", datetime(2022, 1, 27, 14, 0), _OV_START)
+    _od(con, arc + "M9_Archive_220127-1856.tdms", "Archive", _OV_END, datetime(2022, 1, 27, 19, 0))
+    # 20 s archive inside the window: below the 30 s minimum, excluded
+    _od(con, arc + "M9_Archive_220127-1810.tdms", "Archive",
+        datetime(2022, 1, 27, 17, 10), datetime(2022, 1, 27, 17, 10, 20))
+    _od(con, "srv-data-install/M9/2022.01.27 - 17:50:00.txt", "Pupitre",
+        datetime(2022, 1, 27, 16, 50), datetime(2022, 1, 27, 18, 10))
+    # 10 s signal stats: no minimum duration, kept
+    _od(con, "pbsurv/M9/Fichiers_stats/M9_Stats_220127-180000.tdms", "SignalStats",
+        datetime(2022, 1, 27, 17, 0), datetime(2022, 1, 27, 17, 0, 10))
+    # point-in-time captures: kept at the overview start, excluded at its end
+    _od(con, "pbsurv/M9/Fichiers_Spike/M9_Spikes_220127-175605.tdms", "Spike", _OV_START)
+    _od(con, "pbsurv/M9/Fichiers_Default/M9_Default_220127-185605.tdms", "Default", _OV_END)
+    # same housing, registered under another assembly: kept
+    _od(con, "pbsurv/M9/Fichiers_Manuel_Trig/M9_ManuelTrig_220127-182000.tdms", "Trigger",
+        datetime(2022, 1, 27, 17, 20), assembly="M9_ASSEMBLY_A")
+    # another housing: excluded
+    _od(con, "pbsurv/M10/Fichiers_Archive/M10_Archive_220127-1800.tdms", "Archive",
+        datetime(2022, 1, 27, 17, 0), datetime(2022, 1, 27, 18, 0), assembly="M10_ASSEMBLY")
+
+    counts = build_overview_records_from_operationaldata(con, "M9_ASSEMBLY_B", verbose=False)
+
+    assert counts == {"written": 1, "skipped_existing": 0, "skipped_no_times": 0, "skipped_m8": 0}
+    row = _overview_row(con)
+    assert row == {
+        "filename": _OV_NAME,
+        "assembly_name": "M9_ASSEMBLY_B",
+        "housing": "M9",
+        "mode": "NORMAL",
+        "t0": datetime(2022, 1, 27, 16, 56),  # from the file name (minute precision)
+        "duration": 3600.0,
+        "teb": 0.0,
+        "bp": 0.0,
+        "sources_overview": [f"{_OV_NAME}.tdms"],
+        "sources_archive": ["M9_Archive_220126-2300.tdms"],
+        "sources_pupitre": ["2022.01.27 - 17:50:00.txt"],
+        "sources_default": [],
+        "sources_trigger": ["M9_ManuelTrig_220127-182000.tdms"],
+        "sources_spike": ["M9_Spikes_220127-175605.tdms"],
+        "sources_signal_stats": ["M9_Stats_220127-180000.tdms"],
+        "sources_hybrid_kHz": [],
+        "sources_pupitre_runlog": [],
+        "merged_into": None,
+    }
+
+
+def test_build_overview_records_from_operationaldata_crosses_midnight(con, no_file_loads):
+    """A pupitre file named after midnight (Paris) belongs to the overview it overlaps."""
+    _insert_m9_assemblies(con)
+    # 23:45 Paris = 22:45 UTC, ends 00:30 Paris the next day
+    _od_overview(con, "M9_Overview_220127-2345",
+                 datetime(2022, 1, 27, 22, 45), datetime(2022, 1, 27, 23, 30))
+    _od(con, "srv-data-install/M9/2022.01.28 - 00:10:00.txt", "Pupitre",
+        datetime(2022, 1, 27, 23, 10), datetime(2022, 1, 27, 23, 40))
+
+    build_overview_records_from_operationaldata(con, "M9_ASSEMBLY_B", verbose=False)
+
+    row = _overview_row(con, "M9_Overview_220127-2345")
+    assert row["sources_pupitre"] == ["2022.01.28 - 00:10:00.txt"]
+    assert row["duration"] == 2700.0
+
+
+def test_build_overview_records_from_operationaldata_weights_teb_bp(con, no_file_loads):
+    """teb / bp = SUM(mean * count) / SUM(count) over pupitre files that have the scalars."""
+    _insert_m9_assemblies(con)
+    _od_overview(con)
+    p1 = _od(con, "srv-data-install/M9/2022.01.27 - 17:50:00.txt", "Pupitre",
+             datetime(2022, 1, 27, 16, 50), datetime(2022, 1, 27, 17, 20))
+    p2 = _od(con, "srv-data-install/M9/2022.01.27 - 18:20:00.txt", "Pupitre",
+             datetime(2022, 1, 27, 17, 20), datetime(2022, 1, 27, 17, 50))
+    _od(con, "srv-data-install/M9/2022.01.27 - 18:50:00.txt", "Pupitre",  # no scalars
+        datetime(2022, 1, 27, 17, 50), datetime(2022, 1, 27, 18, 30))
+    _od_scalars(con, p1, teb_mean=10.0, teb_count=100, bp_mean=20.0, bp_count=100)
+    _od_scalars(con, p2, teb_mean=20.0, teb_count=300, bp_mean=24.0, bp_count=300)
+
+    build_overview_records_from_operationaldata(con, "M9_ASSEMBLY_B", verbose=False)
+
+    row = _overview_row(con)
+    assert len(row["sources_pupitre"]) == 3
+    assert row["teb"] == pytest.approx(17.5)
+    assert row["bp"] == pytest.approx(23.0)
+
+
+def test_build_overview_records_from_operationaldata_skips_m8(con, no_file_loads):
+    insert_assembly(con, {"name": "M8_ASSEMBLY", "housing": "M8",
+                          "commissioned_at": "2022-01-01 00:00:00"}, verbose=False)
+    _od_overview(con, "M8_Overview_220127-1756", assembly="M8_ASSEMBLY", housing="M8")
+
+    counts = build_overview_records_from_operationaldata(con, "M8_ASSEMBLY", verbose=False)
+
+    assert counts == {"written": 0, "skipped_existing": 0, "skipped_no_times": 0, "skipped_m8": 1}
+    assert _overview_row(con, "M8_Overview_220127-1756") is None
+
+
+def test_build_overview_records_from_operationaldata_skips_rows_without_times(con, no_file_loads):
+    _insert_m9_assemblies(con)
+    _od(con, f"pbsurv/M9/Overview/{_OV_NAME}.tdms", "Overview", None, mode="NORMAL")
+
+    counts = build_overview_records_from_operationaldata(con, "M9_ASSEMBLY_B", verbose=False)
+
+    assert counts == {"written": 0, "skipped_existing": 0, "skipped_no_times": 1, "skipped_m8": 0}
+    assert _overview_row(con) is None
+
+
+def test_build_overview_records_from_operationaldata_skip_then_reprocess(con, no_file_loads):
+    _insert_m9_assemblies(con)
+    _od_overview(con)
+    insert_overview_record_from_dict(
+        con, {"filename": _OV_NAME, "assembly_name": "M9_ASSEMBLY_B", "duration": 1.0},
+        verbose=False,
+    )
+
+    counts = build_overview_records_from_operationaldata(con, "M9_ASSEMBLY_B", verbose=False)
+    assert counts["skipped_existing"] == 1
+    assert _overview_row(con)["duration"] == 1.0
+
+    counts = build_overview_records_from_operationaldata(
+        con, "M9_ASSEMBLY_B", reprocess=True, verbose=False
+    )
+    assert counts["written"] == 1
+    assert _overview_row(con)["duration"] == 3600.0
+
+
+def test_build_overview_records_from_operationaldata_reprocess_clears_merges(con, no_file_loads):
+    """With reprocess, a rewritten row and the rows merged into it are live again."""
+    _insert_m9_assemblies(con)
+    _od_overview(con)
+    for name in (_OV_NAME, "M9_Overview_220127-1800", "M9_Overview_220127-1700"):
+        insert_overview_record_from_dict(con, {"filename": name}, verbose=False)
+    con.execute("UPDATE overview_records SET merged_into = 'M9_Overview_220127-1700' "
+                "WHERE filename = ?", [_OV_NAME])
+    con.execute(f"UPDATE overview_records SET merged_into = '{_OV_NAME}' "
+                "WHERE filename = 'M9_Overview_220127-1800'")
+
+    build_overview_records_from_operationaldata(con, "M9_ASSEMBLY_B", reprocess=True, verbose=False)
+
+    assert _overview_row(con)["merged_into"] is None
+    assert _overview_row(con, "M9_Overview_220127-1800")["merged_into"] is None
+
+
+def test_build_overview_records_from_operationaldata_dry_run_writes_nothing(con, no_file_loads):
+    _insert_m9_assemblies(con)
+    _od_overview(con)
+
+    counts = build_overview_records_from_operationaldata(
+        con, "M9_ASSEMBLY_B", dry_run=True, verbose=False
+    )
+
+    assert counts["written"] == 1
+    assert _overview_row(con) is None
 
 
 # ---------------------------------------------------------------------------

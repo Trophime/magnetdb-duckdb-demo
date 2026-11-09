@@ -1114,6 +1114,47 @@ def test_cli_populate_operationaldata_metadata_fills_and_logs(tmp_path, monkeypa
     assert rows == [("metadata", "ASSEMBLY_JSON_01", "ok")]
 
 
+def _db_with_overview_operationaldata(tmp_path):
+    """ASSEMBLY_JSON_01 (M10) with one Overview file whose times and mode are stored."""
+    db = _db_with_assembly(tmp_path)
+    with duckdb.connect(str(db)) as con:
+        con.execute(
+            "INSERT INTO operationaldata (name, file, assembly_name, type, t_start, t_end, mode) "
+            "VALUES ('M10_Overview_250715-1200', 'pbsurv/M10/Overview/M10_Overview_250715-1200.tdms', "
+            "'ASSEMBLY_JSON_01', 'Overview', '2025-07-15 10:00:05', '2025-07-15 11:00:05', 'ECO')"
+        )
+    return db
+
+
+def test_cli_populate_overview_records_from_operationaldata_builds_and_logs(tmp_path, monkeypatch):
+    db = _db_with_overview_operationaldata(tmp_path)
+
+    _run(monkeypatch, "populate", "overview-records-from-operationaldata",
+         "--assembly", "ASSEMBLY_JSON_01", "--db", str(db))
+
+    # July: Europe/Paris = UTC+2
+    assert _fetch_one(db, "SELECT filename, t0, duration, mode FROM overview_records") == (
+        "M10_Overview_250715-1200", datetime(2025, 7, 15, 10, 0), 3600.0, "ECO",
+    )
+    rows = _log_rows(db, "overview_records")
+    assert [(op, rec, status) for op, rec, status, _ in rows] == [
+        ("build", "ASSEMBLY_JSON_01", "ok"),
+    ]
+    details = json.loads(rows[0][3])
+    assert details["written"] == 1
+    assert "merges" in details
+
+
+def test_cli_populate_overview_records_from_operationaldata_dry_run(tmp_path, monkeypatch):
+    db = _db_with_overview_operationaldata(tmp_path)
+
+    _run(monkeypatch, "populate", "overview-records-from-operationaldata",
+         "--assembly", "ASSEMBLY_JSON_01", "--dry-run", "--db", str(db))
+
+    assert _fetch_one(db, "SELECT count(*) FROM overview_records") == (0,)
+    assert _log_rows(db, "overview_records") == []
+
+
 # Every subcommand needs a logging decision: a new one missing from both sets
 # fails here.
 _LOGGED_SUBCOMMANDS = {
@@ -1130,6 +1171,7 @@ _LOGGED_SUBCOMMANDS = {
     ("populate", "experiments"),
     ("populate", "overview-records"), ("populate", "overview-records-from-archive"),
     ("populate", "overview-records-from-json"), ("populate", "overview-records-infer"),
+    ("populate", "overview-records-from-operationaldata"),
     ("hoop-stress", "compute"),
     ("etl", "set-magnet"), ("etl", "import"),
     ("tag", "add"), ("tag", "update"), ("tag", "remove"),

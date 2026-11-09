@@ -218,6 +218,41 @@ python magnetdb.py populate overview-records-infer --db-tz Europe/Paris --db stu
 
 ---
 
+## `populate overview-records-from-operationaldata`
+
+Builds `overview_records` rows with SQL over `operationaldata`, without reading any file. It needs the per-file `t_start` / `t_end` / `mode` stored by `populate operationaldata-metadata`, and, for `teb` / `bp`, the `teb_*` / `bp_*` scalars that `compute_op_stats` writes to `op_run_scalars`.
+
+One row per `Overview` file of the assembly that has `t_start` and `t_end`:
+
+| Column | Value |
+|--------|-------|
+| `filename` | the Overview file stem |
+| `t0` | time in the file name (minute precision), in `--db-tz` |
+| `duration` | `t_end − t_start` [s] |
+| `sources_*` | files of the same housing (any assembly) whose `[t_start, t_end]` strictly overlaps the overview's; Archive and Pupitre files of 30 s or less are left out. Default, Spike and Trigger files are points in time, kept when `ov.t_start <= t_start < ov.t_end` |
+| `teb`, `bp` | `SUM(mean · count) / SUM(count)` over the pupitre sources; `0.0` when the scalars are missing |
+| `mode` | `operationaldata.mode` of the Overview file |
+
+Hybrid and run-log lists and the JSON columns stay empty. M8 assemblies are skipped: their hybrid files are not in `operationaldata`, so they keep the `summary.json` path (`overview-records-from-json`). Existing rows are skipped unless `--reprocess`; with it, the rewritten row and the rows merged into it become live again (`merged_into = NULL`). The pupitre-duplicate merge of `overview-records-infer` then runs over the table.
+
+```bash
+# Preview the rows of one assembly
+python magnetdb.py populate overview-records-from-operationaldata --assembly M9_A260505_00 --dry-run --db student.duckdb
+
+# Build for every assembly
+python magnetdb.py populate overview-records-from-operationaldata --all --db student.duckdb
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--assembly` / `--all` | — | Assemblies to build |
+| `--db-tz` | `UTC` | Timezone of the stored timestamps |
+| `--reprocess` | — | Replace existing rows (default: skip them) |
+| `--max-gap-seconds` | `60.0` | Max gap between two pupitre-sharing rows for them to be merged |
+| `--dry-run` | — | Compute the rows without writing to the DB |
+
+---
+
 ## Inspecting the data tables
 
 ### `experiments view`
