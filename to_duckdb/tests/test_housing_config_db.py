@@ -547,7 +547,8 @@ class TestSyncHousingConfig:
         result = sync_housing_config_from_magnetrun(con, verbose=False)
         assert result["housings_added"] == ["M10", "M5", "M7", "M8", "M9"]
         assert sorted(result["versions_added"]) == [
-            "M10-180220", "M5-140101", "M7-140101", "M8-211225", "M8-260305", "M9-181109",
+            "M10-180220", "M10-210325", "M10-210929", "M5-140101", "M7-140101", "M7-140317",
+            "M7-160726", "M8-211225", "M8-260305", "M9-181109",
         ]
 
     def test_view_lists_versions(self, con, capsys):

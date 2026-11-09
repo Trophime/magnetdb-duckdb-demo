@@ -40,9 +40,21 @@ Unified CLI entry point for the student MagnetDB DuckDB.
 
     python magnetdb.py housing view [<name>] [--at TIME]           [--db ...]
     python magnetdb.py housing sync [<name>] [--dry-run]           [--db ...]
-    python magnetdb.py etl set-magnet <assembly> <magnet> <housing_version> <part.json> [--db ...]
+    python magnetdb.py etl set-magnet <assembly> <magnet> <housing_version> <wiring.json> [--db ...]
     python magnetdb.py etl show <assembly> [--version V | --at TIME] [--db ...]
     python magnetdb.py etl export <assembly> [--version V | --at TIME] [-o DIR] [--db ...]
+    python magnetdb.py etl import <pupitre_checks.json> [--dry-run] [--db ...]
+    python magnetdb.py etl dump <pupitre_checks.json> [--db ...]
+    python magnetdb.py tag add <category:name> --color '#rrggbb' [--severity N] [--description ...] [--db ...]
+    python magnetdb.py tag update <category:name> [--color ...] [--severity N] [--description ...] [--db ...]
+    python magnetdb.py tag remove <category:name> [--db ...]
+    python magnetdb.py tag list [--db ...]
+    python magnetdb.py rule add <name> --expr EXPR --stat max_abs|p99_abs|mean_abs --tol TOL
+                                [--housing H | --assembly A [--magnet M]] [--version V]
+                                [--unit U] [--tag TAG] [--description ...] [--db ...]
+                                (no --housing / --assembly: global rule)
+    python magnetdb.py rule remove <name> [--housing H | --assembly A [--magnet M]] [--version V] [--db ...]
+    python magnetdb.py rule show [--housing H | --assembly A] [--db ...]
     python magnetdb.py experiments view [--assembly <assembly>] [--magnet <magnet>] [--part <part>]
                                         [--from DATETIME] [--to DATETIME] [--db ...]
     python magnetdb.py operationaldata view [--assembly <assembly>] [--type TYPE]
@@ -55,6 +67,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
                                              [--from DATETIME] [--to DATETIME] [--signatures] [--db ...]
 
     python magnetdb.py populate operationaldata [--assembly ASSEMBLY ...] [--all] [--type ...] [--records-base ...] [--dry-run]
+    python magnetdb.py populate operationaldata-metadata [--assembly ASSEMBLY ...] [--all] [--type ...] [--reprocess] [--dry-run]
     python magnetdb.py populate experiments     [--assembly ASSEMBLY ...] [--all] [--dry-run]
     python magnetdb.py populate overview-records [--assembly ASSEMBLY ...] [--all] [--reprocess] [--dry-run]
     python magnetdb.py populate overview-records-from-archive [--assembly ASSEMBLY ...] [--all] [--reprocess] [--dry-run]
@@ -159,6 +172,9 @@ from populate import (
 )
 from populate import (
     ALL_POPULATE_TYPES,
+)
+from populate import (
+    fill_operationaldata_metadata,
 )
 from populate import (
     find_and_register_pupitre as _pupitre_find_and_register,
@@ -1183,11 +1199,11 @@ def _existing_db(args) -> Path:
 
 
 def cmd_etl_set_magnet(args) -> None:
-    from etl_spec import set_magnet_part
+    from etl_spec import set_magnet_wiring
 
-    part = json.loads(Path(args.part_json).read_text(encoding="utf-8"))
+    wiring = json.loads(Path(args.wiring_json).read_text(encoding="utf-8"))
     with duckdb.connect(str(_existing_db(args))) as con:
-        set_magnet_part(con, args.assembly, args.magnet, args.housing_version, part)
+        set_magnet_wiring(con, args.assembly, args.magnet, args.housing_version, wiring)
     print(f"  + pupitre_etl_magnet  {args.assembly} / {args.magnet} / {args.housing_version}")
 
 
@@ -1209,6 +1225,121 @@ def cmd_etl_export(args) -> None:
         )
     for path in paths:
         print(f"  Wrote {path}")
+
+
+def _checks_counts(counts: dict) -> str:
+    return f"{counts['tags']} tags, {counts['rules']} rules, {counts['wirings']} wirings"
+
+
+def cmd_etl_import(args) -> None:
+    from etl_spec import import_pupitre_checks
+
+    checks = json.loads(Path(args.file).read_text(encoding="utf-8"))
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        counts = import_pupitre_checks(con, checks, source=str(args.file), dry_run=args.dry_run)
+    verb = "Would import" if args.dry_run else "Imported"
+    print(f"  {verb} {_checks_counts(counts)} from {args.file}")
+
+
+def cmd_etl_dump(args) -> None:
+    from etl_spec import dump_pupitre_checks
+
+    with duckdb.connect(str(_existing_db(args)), read_only=True) as con:
+        checks = dump_pupitre_checks(con)
+    path = Path(args.file)
+    path.write_text(json.dumps(checks, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    counts = {section: len(checks[section]) for section in ("tags", "rules", "wirings")}
+    print(f"  Wrote {path} ({_checks_counts(counts)})")
+
+
+# ---------------------------------------------------------------------------
+# tag / rule handlers (file-check rules, PLAN_file_check_rules.md)
+# ---------------------------------------------------------------------------
+
+
+def cmd_tag_add(args) -> None:
+    from etl_spec import add_tag
+
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        add_tag(con, args.name, args.color, severity=args.severity, description=args.description)
+    print(f"  + tag  {args.name}")
+
+
+def cmd_tag_update(args) -> None:
+    from etl_spec import update_tag
+
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        update_tag(
+            con, args.name, color=args.color, severity=args.severity, description=args.description
+        )
+    print(f"  ~ tag  {args.name}")
+
+
+def cmd_tag_remove(args) -> None:
+    from etl_spec import remove_tag
+
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        remove_tag(con, args.name)
+    print(f"  - tag  {args.name}")
+
+
+def cmd_tag_list(args) -> None:
+    from etl_spec import list_tags
+
+    with duckdb.connect(str(_existing_db(args)), read_only=True) as con:
+        tags = list_tags(con)
+    for tag in tags:
+        print(f"  {tag['name']:<32} {tag['color']}  severity {tag['severity']}  {tag['description'] or ''}")
+
+
+def _rule_scope_kwargs(args) -> dict:
+    return {
+        "housing": args.housing, "assembly": args.assembly,
+        "magnet": args.magnet, "version": args.version,
+    }
+
+
+def cmd_rule_add(args) -> None:
+    from etl_spec import add_rule
+
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        add_rule(
+            con, args.name, args.expr, args.stat, args.tol, **_rule_scope_kwargs(args),
+            unit=args.unit, tag=args.tag, description=args.description,
+        )
+    print(f"  + rule  {args.name}")
+
+
+def cmd_rule_remove(args) -> None:
+    from etl_spec import remove_rule
+
+    with duckdb.connect(str(_existing_db(args))) as con:
+        ensure_schema(con)
+        remove_rule(con, args.name, **_rule_scope_kwargs(args))
+    print(f"  - rule  {args.name}")
+
+
+def cmd_rule_show(args) -> None:
+    from etl_spec import list_rules
+
+    with duckdb.connect(str(_existing_db(args)), read_only=True) as con:
+        rules = list_rules(con, housing=args.housing, assembly=args.assembly)
+    for rule in rules:
+        if rule["housing"] is None and rule["assembly_name"] is None:
+            scope = "* (all housings)"
+        else:
+            scope = rule["housing"] or rule["assembly_name"]
+            if rule["magnet_name"]:
+                scope += f"/{rule['magnet_name']}"
+            scope += f"@{rule['housing_version']}" if rule["housing_version"] else " (all versions)"
+        unit = f" {rule['unit']}" if rule["unit"] else ""
+        tag = f"  -> {rule['tag']}" if rule["tag"] else ""
+        print(f"  {scope:<44} {rule['name']:<20} {rule['stat']}({rule['expr']}) <= {rule['tol']}{unit}{tag}")
 
 
 # ---------------------------------------------------------------------------
@@ -1348,6 +1479,48 @@ def cmd_populate_operationaldata(args) -> None:
                 assembly, db_path, db_tz, dry_run=args.dry_run,
                 type_filter=tdms_types, records_base=records_base, pbsurv=args.pbsurv,
             )
+
+
+def cmd_populate_operationaldata_metadata(args) -> None:
+    db_path = args.db
+    if not Path(db_path).exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    try:
+        db_tz = ZoneInfo(args.db_tz)
+    except (ValueError, KeyError):
+        print(f"Error: Unknown timezone '{args.db_tz}'")
+        sys.exit(1)
+
+    assembly_names = _resolve_assembly_names(args, db_path)
+    if not assembly_names:
+        print("No assemblies specified. Use --assembly ASSEMBLY or --all.")
+        sys.exit(1)
+
+    records_base = Path(args.records_base)
+    with duckdb.connect(db_path, read_only=args.dry_run) as con:
+        if not args.dry_run:
+            ensure_schema(con)
+        for assembly_name in assembly_names:
+            print(f"\nAssembly: {assembly_name}")
+            counts = fill_operationaldata_metadata(
+                con, assembly_name, types=args.types, reprocess=args.reprocess,
+                records_base=records_base, db_tz=db_tz, dry_run=args.dry_run,
+            )
+            print(
+                f"  {counts['filled']} filled, {counts['no_time_range']} without time range, "
+                f"{len(counts['errors'])} errors"
+            )
+            if not args.dry_run:
+                _log_operation(
+                    con, "metadata", "operationaldata", assembly_name,
+                    status="error" if counts["errors"] else "ok",
+                    details={
+                        "filled": counts["filled"],
+                        "no_time_range": counts["no_time_range"],
+                        "errors": counts["errors"][:20],
+                    },
+                )
 
 
 def cmd_populate_experiments(args) -> None:
@@ -1852,11 +2025,21 @@ _DISPATCH = {
     ("etl",               "set-magnet"):      cmd_etl_set_magnet,
     ("etl",               "show"):            cmd_etl_show,
     ("etl",               "export"):          cmd_etl_export,
+    ("etl",               "import"):          cmd_etl_import,
+    ("etl",               "dump"):            cmd_etl_dump,
+    ("tag",               "add"):             cmd_tag_add,
+    ("tag",               "update"):          cmd_tag_update,
+    ("tag",               "remove"):          cmd_tag_remove,
+    ("tag",               "list"):            cmd_tag_list,
+    ("rule",              "add"):             cmd_rule_add,
+    ("rule",              "remove"):          cmd_rule_remove,
+    ("rule",              "show"):            cmd_rule_show,
     ("experiments",       "view"):            cmd_experiments_view,
     ("operationaldata",   "view"):            cmd_operationaldata_view,
     ("log",                "view"):           cmd_log_view,
     ("overview-records",  "view"):            cmd_overview_records_view,
     ("populate",          "operationaldata"): cmd_populate_operationaldata,
+    ("populate",          "operationaldata-metadata"): cmd_populate_operationaldata_metadata,
     ("populate",          "experiments"):     cmd_populate_experiments,
     ("populate",          "overview-records"):             cmd_populate_overview_records,
     ("populate",          "overview-records-from-archive"): cmd_populate_overview_records_from_archive,
@@ -1983,7 +2166,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     entity = parser.add_subparsers(
         dest="entity", required=True,
-        metavar="{list,check,db,material,part,magnet,assembly,housing,etl,experiments,operationaldata,overview-records,populate,hoop-stress}",
+        metavar="{list,check,db,material,part,magnet,assembly,housing,etl,tag,rule,experiments,operationaldata,overview-records,populate,hoop-stress}",
     )
 
     # ── list ─────────────────────────────────────────────────────────────────
@@ -2300,14 +2483,16 @@ def build_parser() -> argparse.ArgumentParser:
     etl_p = entity.add_parser(
         "etl", help="Pupitre ETL spec per assembly and housing version.")
     etl_sub = etl_p.add_subparsers(dest="action", required=True,
-                                   metavar="{set-magnet,show,export}")
+                                   metavar="{set-magnet,show,export,import,dump}")
 
     etl_set = etl_sub.add_parser(
-        "set-magnet", help="Insert or replace the ETL part of a magnet for one housing version.")
+        "set-magnet", help="Insert or replace the wiring of a magnet for one housing version.")
     etl_set.add_argument("assembly", help="Assembly name")
     etl_set.add_argument("magnet", help="Magnet of the assembly")
     etl_set.add_argument("housing_version", help="Housing version, e.g. M8-260305")
-    etl_set.add_argument("part_json", help='JSON file: {"channels", "remove", "add", "current"}')
+    etl_set.add_argument(
+        "wiring_json",
+        help='JSON file: {"channels", "remove", "add"}; checks are rules (rule add)')
     _db_arg(etl_set)
 
     for action, help_text in (
@@ -2324,6 +2509,86 @@ def build_parser() -> argparse.ArgumentParser:
             etl_x.add_argument("-o", "--output-dir", dest="output_dir", default=".",
                                help="Destination directory (default: .)")
         _db_arg(etl_x)
+
+    etl_imp = etl_sub.add_parser(
+        "import",
+        help="Add or replace tags, rules and magnet wirings from a pupitre checks file "
+             "(all or nothing; rows absent from the file are kept).")
+    etl_imp.add_argument("file", help="pupitre_checks.json, as written by etl dump")
+    etl_imp.add_argument("--dry-run", action="store_true",
+                         help="Validate the file, write nothing")
+    _db_arg(etl_imp)
+
+    etl_dump = etl_sub.add_parser(
+        "dump", help="Write the tags, rules and magnet wirings to a pupitre checks file.")
+    etl_dump.add_argument("file", help="Output JSON file (overwritten)")
+    _db_arg(etl_dump)
+
+    # ── tag ──────────────────────────────────────────────────────────────────
+    tag_p = entity.add_parser(
+        "tag", help="Tags attached to files by failed checks (<category>:<name>, own colour).")
+    tag_sub = tag_p.add_subparsers(dest="action", required=True,
+                                   metavar="{add,update,remove,list}")
+    for action, help_text in (
+        ("add", "Define a tag."),
+        ("update", "Change the colour, severity or description of a tag."),
+    ):
+        tag_x = tag_sub.add_parser(action, help=help_text)
+        tag_x.add_argument("name", help="Tag name <category>:<name>, e.g. check:current_mismatch")
+        tag_x.add_argument("--color", required=action == "add", default=None,
+                           help="#rrggbb; not #f8d7da (geometry problems), #fff3cd "
+                                "(missing dates) or another tag's colour")
+        tag_x.add_argument("--severity", type=int, default=1 if action == "add" else None,
+                           help="Higher = more severe; the most severe tag sets a file's colour"
+                                + (" (default: 1)" if action == "add" else ""))
+        tag_x.add_argument("--description", default=None, help="Shown in dashboard tooltips")
+        _db_arg(tag_x)
+    tag_rm = tag_sub.add_parser("remove", help="Delete a tag no rule and no file uses.")
+    tag_rm.add_argument("name", help="Tag name")
+    _db_arg(tag_rm)
+    tag_ls = tag_sub.add_parser("list", help="List the tags.")
+    _db_arg(tag_ls)
+
+    # ── rule ─────────────────────────────────────────────────────────────────
+    rule_p = entity.add_parser(
+        "rule", help="Check rules on pupitre files: global, per housing, assembly or magnet.")
+    rule_sub = rule_p.add_subparsers(dest="action", required=True,
+                                     metavar="{add,remove,show}")
+    for action, help_text in (
+        ("add", "Insert or replace a rule. EXPR uses the file's columns after rename and "
+                "add: raw (Idcct1, Icoil2), added (IH, IB, UH, UB) and renamed (FlowH, "
+                "TinH, ...) names; the original name of a renamed column (Flow1) no "
+                "longer exists. The check passes when STAT(EXPR) <= TOL."),
+        ("remove", "Delete the rule with this name and scope."),
+    ):
+        rule_x = rule_sub.add_parser(action, help=help_text, description=help_text)
+        rule_x.add_argument("name", help="Rule name (letters, digits, _)")
+        if action == "add":
+            rule_x.add_argument("--expr", required=True, help='Expression, e.g. "IH - Icoil2"')
+            rule_x.add_argument("--stat", required=True, choices=["max_abs", "p99_abs", "mean_abs"],
+                                help="Statistic of |EXPR| over all rows (NaN ignored)")
+            rule_x.add_argument("--tol", required=True, type=float, help="Tolerance, in --unit")
+            rule_x.add_argument("--unit", default=None, help="Unit of EXPR and TOL, e.g. A")
+            rule_x.add_argument("--tag", default=None,
+                                help="Tag attached to the file when the rule fails "
+                                     "(default: result stored only)")
+            rule_x.add_argument("--description", default=None, help="Free text")
+        scope = rule_x.add_mutually_exclusive_group()
+        scope.add_argument("--housing", default=None,
+                           help="Housing rule (e.g. M9); without --housing and --assembly: "
+                                "global rule, for every housing")
+        scope.add_argument("--assembly", default=None, help="Assembly rule, or the magnet's assembly")
+        rule_x.add_argument("--magnet", default=None, help="Magnet rule (with --assembly)")
+        rule_x.add_argument("--version", default=None,
+                            help="Restrict to this housing version (default: all versions)")
+        _db_arg(rule_x)
+    rule_show = rule_sub.add_parser("show", help="List the rules.")
+    show_sel = rule_show.add_mutually_exclusive_group()
+    show_sel.add_argument("--housing", default=None,
+                          help="Rules of this housing and of its assemblies and magnets")
+    show_sel.add_argument("--assembly", default=None,
+                          help="Rules of this assembly, its magnets and its housing")
+    _db_arg(rule_show)
 
     # ── experiments ───────────────────────────────────────────────────────────
     exp_p = entity.add_parser("experiments", help="View experiment records.")
@@ -2413,7 +2678,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── populate ─────────────────────────────────────────────────────────────
     pop_p = entity.add_parser("populate", help="Populate data tables from files.")
     pop_sub = pop_p.add_subparsers(dest="action", required=True,
-                                   metavar="{operationaldata,experiments,overview-records,overview-records-from-archive,overview-records-from-json}")
+                                   metavar="{operationaldata,operationaldata-metadata,experiments,overview-records,overview-records-from-archive,overview-records-from-json}")
 
     # populate operationaldata
     p_opdata = pop_sub.add_parser(
@@ -2444,6 +2709,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_opdata.add_argument("--dry-run", action="store_true",
                           help="Match files but do not write to the DB.")
+
+    # populate operationaldata-metadata
+    p_opmeta = pop_sub.add_parser(
+        "operationaldata-metadata",
+        help="Store each operationaldata file's start/end time (and Overview mode) once.",
+        description=(
+            "Fill operationaldata.t_start / t_end from file metadata (TDMS properties, "
+            "Archive mtime, last pupitre line; no data loaded) and, for Overview files, "
+            "the operating mode. Only rows without t_end are processed unless --reprocess."
+        ),
+    )
+    _db_arg(p_opmeta)
+    _assemblies_arg(p_opmeta)
+    p_opmeta.add_argument(
+        "--type", nargs="+", choices=ALL_POPULATE_TYPES, dest="types", metavar="TYPE",
+        help=f"File type(s) to process ({', '.join(ALL_POPULATE_TYPES)}). Default: all.",
+    )
+    p_opmeta.add_argument(
+        "--records-base", default=str(_DEFAULT_RECORDS_BASE), dest="records_base",
+        help=f"Root of the records tree (default: {_DEFAULT_RECORDS_BASE})",
+    )
+    p_opmeta.add_argument(
+        "--db-tz", default="UTC", dest="db_tz",
+        help="Timezone of the stored t_start / t_end (default: UTC, as overview_records.t0)",
+    )
+    p_opmeta.add_argument("--reprocess", action="store_true",
+                          help="Recompute rows that already have t_end.")
+    p_opmeta.add_argument("--dry-run", action="store_true",
+                          help="Compute but do not write to the DB.")
 
     # populate experiments
     p_exp = pop_sub.add_parser(

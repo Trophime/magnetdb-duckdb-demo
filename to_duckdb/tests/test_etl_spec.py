@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import duckdb
 import pytest
 
-from etl_spec import build_pupitre_etl_spec, export_pupitre_etl_spec, set_magnet_part
+from etl_spec import build_pupitre_etl_spec, export_pupitre_etl_spec, set_magnet_wiring
 from python_magnetrun.runetl import PupitreEtlSpec, load_pupitre_etl_spec
 from tests.test_file_context import build_db
 
@@ -20,11 +20,10 @@ def _fd(formula: str) -> dict:
     return {"formula": formula, "symbol": key, "unit": "volt", "label": key, "description": key}
 
 
-INSERT_PART = {
+INSERT_WIRING = {
     "channels": INSERT_UCOILS,
     "remove": ["Ucoil1", "Ucoil(8|9|1[0-4])"],
     "add": {"UH": _fd("UH = " + " + ".join(INSERT_UCOILS))},
-    "current": {"source": "Icoil2", "check": "IH"},
 }
 
 
@@ -39,7 +38,7 @@ def _spec(con, assembly, *when) -> PupitreEtlSpec:
     return PupitreEtlSpec.from_dict(build_pupitre_etl_spec(con, assembly, datetime(*when, tzinfo=PARIS)))
 
 
-def test_m9_without_magnet_parts(con):
+def test_m9_without_magnet_wiring(con):
     spec = _spec(con, "M9_A260602_00", 2026, 6, 10, 10)
     assert spec.housing["version"] == "M9-181109"
     assert r"Icoil\d+" in spec.remove
@@ -48,16 +47,17 @@ def test_m9_without_magnet_parts(con):
     assert spec.magnets == {}
 
 
-def test_m9_with_insert_part(con):
-    set_magnet_part(con, "M9_A260602_00", "M25032101", "M9-181109", INSERT_PART)
+def test_m9_with_insert_wiring(con):
+    set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M9-181109", INSERT_WIRING)
     spec = _spec(con, "M9_A260602_00", 2026, 6, 10, 10)
     assert spec.add["UH"]["formula"] == "UH = Ucoil2 + Ucoil3 + Ucoil4 + Ucoil5 + Ucoil6 + Ucoil7"
-    assert spec.checks == [{"magnet": "M25032101", "source": "Icoil2", "check": "IH"}]
+    assert spec.magnets["M25032101"] == INSERT_WIRING
+    assert spec.rules == []
 
 
 def test_m8_spec_follows_wiring_change(con):
-    part = {"channels": ["Ucoil15", "Ucoil16"], "current": {"source": "Icoil15", "check": "IB"}}
-    set_magnet_part(con, "M8_A230919_00", "M8Bi", "M8-211225", part)
+    wiring = {"channels": ["Ucoil15", "Ucoil16"]}
+    set_magnet_wiring(con, "M8_A230919_00", "M8Bi", "M8-211225", wiring)
     before = _spec(con, "M8_A230919_00", 2026, 3, 5, 15, 56)
     after = _spec(con, "M8_A230919_00", 2026, 3, 5, 17, 22)
     assert before.housing["version"] == "M8-211225"
@@ -83,35 +83,44 @@ def test_export_one_version(con, tmp_path):
     assert [p.name for p in paths] == ["M8_A230919_00.M8-260305.pupitre-etl.json"]
 
 
-def test_part_for_magnet_outside_assembly_refused(con):
+def test_wiring_for_magnet_outside_assembly_refused(con):
     with pytest.raises(duckdb.ConstraintException):
-        set_magnet_part(con, "M9_A260602_00", "M8Bi", "M9-181109", {"channels": ["Ucoil15"]})
+        set_magnet_wiring(con, "M9_A260602_00", "M8Bi", "M9-181109", {"channels": ["Ucoil15"]})
 
 
-def test_part_for_unknown_version_refused(con):
+def test_wiring_for_unknown_version_refused(con):
     with pytest.raises((duckdb.ConstraintException, ValueError)):
-        set_magnet_part(con, "M9_A260602_00", "M25032101", "M9-999999", INSERT_PART)
+        set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M9-999999", INSERT_WIRING)
 
 
-def test_part_for_other_housing_version_refused(con):
+def test_wiring_for_other_housing_version_refused(con):
     with pytest.raises(ValueError, match="M8"):
-        set_magnet_part(con, "M9_A260602_00", "M25032101", "M8-260305", INSERT_PART)
+        set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M8-260305", INSERT_WIRING)
 
 
-def test_part_for_version_outside_assembly_refused(con):
+def test_wiring_for_version_outside_assembly_refused(con):
     with pytest.raises(ValueError, match="overlap"):
-        set_magnet_part(con, "M8_S", "Hybrid", "M8-260305", {})
+        set_magnet_wiring(con, "M8_S", "Hybrid", "M8-260305", {})
 
 
-def test_invalid_part_refused(con):
+def test_invalid_wiring_refused(con):
     with pytest.raises(ValueError, match="rename"):
-        set_magnet_part(con, "M9_A260602_00", "M25032101", "M9-181109", {"rename": {"A": "B"}})
+        set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M9-181109", {"rename": {"A": "B"}})
 
 
-def test_set_magnet_part_upserts(con):
-    set_magnet_part(con, "M9_A260602_00", "M25032101", "M9-181109", {"channels": ["Ucoil2"]})
-    set_magnet_part(con, "M9_A260602_00", "M25032101", "M9-181109", INSERT_PART)
-    assert _spec(con, "M9_A260602_00", 2026, 6, 10).magnets["M25032101"] == INSERT_PART
+def test_wiring_with_current_refused(con):
+    """The current check is a rule now (`rule add`), not part of the wiring."""
+    with pytest.raises(ValueError, match="current"):
+        set_magnet_wiring(
+            con, "M9_A260602_00", "M25032101", "M9-181109",
+            {"channels": ["Ucoil2"], "current": {"source": "Icoil2", "check": "IH"}},
+        )
+
+
+def test_set_magnet_wiring_upserts(con):
+    set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M9-181109", {"channels": ["Ucoil2"]})
+    set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M9-181109", INSERT_WIRING)
+    assert _spec(con, "M9_A260602_00", 2026, 6, 10).magnets["M25032101"] == INSERT_WIRING
 
 
 def test_m10_bitters_only(con):
@@ -131,13 +140,13 @@ def test_supras_only(con):
 
 
 def test_same_magnet_in_m9_and_m10(con):
-    part = {"channels": ["Ucoil3"]}
-    set_magnet_part(con, "M9_B", "MX", "M9-181109", part)
-    set_magnet_part(con, "M10_X", "MX", "M10-180220", part)
+    wiring = {"channels": ["Ucoil3"]}
+    set_magnet_wiring(con, "M9_B", "MX", "M9-181109", wiring)
+    set_magnet_wiring(con, "M10_X", "MX", "M10-210929", wiring)  # 2024: base wiring again since 2021-09-29
     m9 = _spec(con, "M9_B", 2025, 6, 1)
     m10 = _spec(con, "M10_X", 2024, 6, 1)
     assert m9.rename["Flow1"] == "FlowH" and m10.rename["Flow1"] == "FlowB"
-    assert m9.magnets["MX"] == m10.magnets["MX"] == part
+    assert m9.magnets["MX"] == m10.magnets["MX"] == wiring
 
 
 def test_etl_cli_export(tmp_path, monkeypatch, capsys):
@@ -159,12 +168,75 @@ def _log(con):
     ).fetchall()
 
 
-def test_set_magnet_part_logged(con):
-    set_magnet_part(con, "M9_A260602_00", "M25032101", "M9-181109", INSERT_PART)
+def test_set_magnet_wiring_logged(con):
+    set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M9-181109", INSERT_WIRING)
     assert _log(con) == [("upsert", "pupitre_etl_magnet", "M9_A260602_00/M25032101/M9-181109", "ok")]
 
 
-def test_set_magnet_part_error_logged(con):
+def test_set_magnet_wiring_error_logged(con):
     with pytest.raises(ValueError):
-        set_magnet_part(con, "M9_A260602_00", "M25032101", "M8-260305", INSERT_PART)
+        set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M8-260305", INSERT_WIRING)
     assert _log(con) == [("upsert", "pupitre_etl_magnet", "M9_A260602_00/M25032101/M8-260305", "error")]
+
+
+# ---------------------------------------------------------------------------
+# insert wiring derived from the helix count (PLAN_pupitre_checks_file.md, revision 2)
+# ---------------------------------------------------------------------------
+
+
+def _helices(con, magnet: str, n: int) -> None:
+    """Give *magnet* *n* helix parts (the fixture's magnets have no parts)."""
+    for i in range(1, n + 1):
+        con.execute("INSERT INTO parts (name, type, status) VALUES (?, 'helix', 'in_operation')",
+                    [f"{magnet}_H{i}"])
+        con.execute("INSERT INTO magnet_parts (magnet_name, part_name, rank) VALUES (?, ?, ?)",
+                    [magnet, f"{magnet}_H{i}", i])
+
+
+def _ucoils(numbers) -> list[str]:
+    return [f"Ucoil{n}" for n in numbers]
+
+
+@pytest.mark.parametrize("helices, first", [(14, 1), (12, 2), (6, 5), (2, 7)])
+def test_derived_insert_wiring(con, helices, first):
+    _helices(con, "M25032101", helices)
+    spec = _spec(con, "M9_A260602_00", 2026, 6, 10, 10)
+    taps = _ucoils(range(first, 8))
+    wiring = spec.magnets["M25032101"]
+    assert wiring["channels"] == taps
+    assert wiring["remove"] == [c for c in _ucoils(range(1, 15)) if c not in taps]
+    assert spec.add["UH"]["formula"] == "UH = " + " + ".join(taps)
+    assert spec.add["UH"]["label"] == "GR1 Voltage (UH)"
+    assert {"Ucoil15", "Ucoil16"}.isdisjoint(wiring["remove"])  # Bitters untouched
+
+
+def test_derived_wiring_label_follows_housing(con):
+    _helices(con, "MX", 6)
+    spec = _spec(con, "M10_X", 2024, 6, 1)
+    assert spec.magnets["MX"]["channels"] == _ucoils(range(5, 8))
+    assert spec.add["UH"]["label"] == "GR2 Voltage (UH)"
+
+
+def test_derived_wiring_follows_housing_version(con):
+    """M8-260305 reads the Bitters on Ucoil14: the insert wiring must not remove it."""
+    _helices(con, "M23012001", 12)
+    before = _spec(con, "M8_A230919_00", 2026, 3, 5, 15, 56)  # M8-211225
+    after = _spec(con, "M8_A230919_00", 2026, 3, 5, 17, 22)  # M8-260305
+    assert before.magnets["M23012001"]["remove"] == _ucoils([1, *range(8, 15)])
+    assert after.magnets["M23012001"]["remove"] == _ucoils([1, *range(8, 14)])
+    assert after.add["UB"]["formula"] == "UB = Ucoil14"
+    assert "Ucoil14" not in after.remove
+
+
+def test_explicit_wiring_overrides_derived(con):
+    _helices(con, "M25032101", 14)
+    set_magnet_wiring(con, "M9_A260602_00", "M25032101", "M9-181109", INSERT_WIRING)
+    assert _spec(con, "M9_A260602_00", 2026, 6, 10).magnets["M25032101"] == INSERT_WIRING
+
+
+@pytest.mark.parametrize("helices", [0, 7, 16])
+def test_no_derived_wiring_without_usable_helix_count(con, helices):
+    _helices(con, "M25032101", helices)
+    spec = _spec(con, "M9_A260602_00", 2026, 6, 10)
+    assert spec.magnets == {}
+    assert spec.add["UH"]["formula"] == "UH = " + " + ".join(_ucoils(range(1, 15)))

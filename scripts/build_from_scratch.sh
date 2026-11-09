@@ -2,7 +2,8 @@
 set -eo pipefail
 
 # step IDs, in build order (see --help)
-STEPS=(create assemblies statuses check experiments exp-stats operationaldata op-stats
+STEPS=(create assemblies statuses etl-config check experiments exp-stats operationaldata
+       operationaldata-metadata op-stats
        overview-json overview-infer export users link-users unlinked-users)
 
 usage() {
@@ -61,6 +62,8 @@ cd $(dirname "$0")/../to_duckdb
 JSON=~/github/hifimagnet-projects/magnetdb.json
 # known magnet status changes (dead, retired, ...), applied in file order
 STATUS_FILE=$JSON/magnet_status.json
+# pupitre check tags, rules and magnet wirings (PLAN_pupitre_checks_file.md)
+CHECKS_FILE=$JSON/pupitre_checks.json
 RECORDS=~/LNCMIG-Data/records
 DATA_DIR=~/github/magnetdb-duckdb-demo/Data
 LOG="$DB.log"
@@ -150,6 +153,14 @@ add_done_counts() {
 
 # --- step functions ---------------------------------------------------------
 
+load_pupitre_checks() {
+    if [ ! -f "$CHECKS_FILE" ]; then
+        SKIP_REASON="no $CHECKS_FILE"
+        return 0
+    fi
+    python magnetdb.py etl import "$CHECKS_FILE" --db "$DB"
+}
+
 ingest_exp_stats() {
     local assemblies assembly tmp
     assemblies=$(list_assemblies) || return 1
@@ -218,25 +229,30 @@ export_source_data() {
         echo "Warning: EMFL proposals download failed; keeping existing $DATA_DIR/proposals.csv." >&2
     fi
 
-    # SUPERVISION DB:
-    python ./mysql_connect.py --mode export --format csv \
+    # Time convention: the MySQL tables hold Europe/Paris local time. Only bdd is
+    # exported as naive UTC (--utc), as the dashboard's SUPERVISION panels expect;
+    # every other export keeps local time (--no-utc).
+
+    # SUPERVISION DB: HStart/HStop (local text) are what the users steps read;
+    # the timestamp column is unreliable and unused
+    python ./mysql_connect.py --mode export --format csv --no-utc \
        --output-dir $DATA_DIR/ --tables EXPERIENCES_LOG \
        --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_SUPERVISION || return 1
 
-    # Get water temperature input/output from HX
-    python ./mysql_connect.py --mode export --format csv \
+    # Get water temperature input/output from HX (naive UTC)
+    python ./mysql_connect.py --mode export --format csv --utc \
        --output-dir $DATA_DIR/ --tables bdd \
        --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_SUPERVISION || return 1
 
-    # Get water Power and Cooling loop parameters
-    python ./mysql_connect.py --mode export --format csv \
+    # Get water Power and Cooling loop parameters (change_date time zone unknown: kept as stored)
+    python ./mysql_connect.py --mode export --format csv --no-utc \
        --output-dir $DATA_DIR/ --tables site_parameters \
        --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_MAGNETS || return 1
 
-    # Get logs from Cirrus
+    # Get logs from Cirrus (local time, like the raw cirrus logs and pupitre filenames)
     local table
     for table in cirrusA1 cirrusA2 cirrusA3 cirrusA4; do
-        python ./mysql_connect.py --mode export --format csv \
+        python ./mysql_connect.py --mode export --format csv --no-utc \
            --output-dir $DATA_DIR/ --tables $table --time-field date --sort-time asc \
            --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_LOGS || return 1
     done
@@ -280,6 +296,9 @@ fi
 section statuses "Set known magnet statuses" \
     python magnetdb.py magnet update-status-from-file "$STATUS_FILE" --db "$DB"
 
+# pupitre check tags, rules and magnet wirings, listed in $CHECKS_FILE
+section etl-config "Load pupitre checks (tags, rules, wirings)" load_pupitre_checks
+
 # check database consistency (check exits non-zero when it finds problems: report and go on)
 section check "Check database consistency" python magnetdb.py check --db "$DB" || true
 # python magnetdb.py part update $JSON/HybridSupra.json --db $DB
@@ -293,7 +312,12 @@ section exp-stats "Ingest per-experiment statistics" ingest_exp_stats
 
 # Populate OperationalData
 section operationaldata "Populate operationaldata" \
-    python magnetdb.py populate  operationaldata --all --db $DB --records-base $RECORDS --type Overview Archive Spike Default Pupitre
+    python magnetdb.py populate  operationaldata --all --db $DB --records-base $RECORDS --type Overview Archive Spike Default SignalStats Trigger Pupitre
+# Start/end time of every operationaldata file, and the mode of Overview files,
+# computed once (PLAN_overview_records_from_operationaldata.md; about 3-3.5 h,
+# mostly pupitre and Overview metadata reads over the records mount)
+section operationaldata-metadata "Store operationaldata file times and Overview mode" \
+    python magnetdb.py populate  operationaldata-metadata --all --db $DB --records-base $RECORDS
 # Ingest per-file operational statistics (idempotent)
 section op-stats "Ingest per-file operational statistics" ingest_op_stats
 

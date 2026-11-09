@@ -58,6 +58,30 @@ def test_energy_j_rejects_incompatible_declared_unit(compute_scalars):
         compute_scalars(_make_df(), units=units)
 
 
+def test_op_scalars_store_teb_and_bp_sample_means_and_counts():
+    """teb/BP plain means over non-NaN samples, with counts to weight several files."""
+    df = _make_df().assign(teb=[10.0, float("nan")], BP=[2.0, 4.0])
+    scalars = compute_op_scalars(df)
+    assert scalars["teb_mean"] == 10.0
+    assert scalars["teb_count"] == 1
+    assert scalars["bp_mean"] == 3.0
+    assert scalars["bp_count"] == 2
+
+
+def test_op_scalars_skip_teb_and_bp_when_absent():
+    scalars = compute_op_scalars(_make_df())
+    assert not {"teb_mean", "teb_count", "bp_mean", "bp_count"} & set(scalars)
+
+
+def test_op_scalar_units_for_teb_and_bp():
+    from config import SCALAR_CHANNEL_UNITS
+
+    assert SCALAR_CHANNEL_UNITS["teb_mean"] == "degC"
+    assert SCALAR_CHANNEL_UNITS["bp_mean"] == "bar"
+    assert SCALAR_CHANNEL_UNITS["teb_count"] == "dimensionless"
+    assert SCALAR_CHANNEL_UNITS["bp_count"] == "dimensionless"
+
+
 class _FakePolarsMagnetData:
     """Mimics PolarsMagnetData: ``.Data`` is a polars frame."""
 

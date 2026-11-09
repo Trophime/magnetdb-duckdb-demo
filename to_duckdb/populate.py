@@ -19,6 +19,7 @@ Public API
     find_and_register_pupitre(...)         → list[(Path, datetime)]
     find_and_register_tdms(...)            → list[(Path, datetime, str)]
     resolve_operationaldata_path(...)      → Path
+    fill_operationaldata_metadata(...)     → dict   (t_start / t_end / mode)
 """
 
 import re
@@ -42,6 +43,7 @@ from schema import ensure_schema
 _SRV_SUBDIR   = "srv-data-install"   # pupitre TXT:  records_base / srv_subdir / housing
 _PBSURV       = "pbsurv"             # TDMS files:   records_base / pbsurv    / housing / subdir
 FILE_TZ       = ZoneInfo("Europe/Paris")
+_UTC          = ZoneInfo("UTC")
 
 # Default records root follows python_magnetrun's data-directory resolution
 # (MAGNETRUN_PUPITRE_DATA_DIR env var > data_dirs.json > hard-coded default),
@@ -83,17 +85,29 @@ _TDMS_SUBDIR_NAMES: dict[str, str] = {
     "Archive":  "Fichiers_Archive",
     "Spike":    "Fichiers_Spike",
     "Default":  "Fichiers_Default",
+    # pigbrother Stats files: per-signal 1 s statistics (lower-case "s" on disk)
+    "SignalStats": "Fichiers_stats",
+    "Trigger":  "Fichiers_Manuel_Trig",
 }
 TDMS_TYPES = list(_TDMS_SUBDIR_NAMES)
 
-# Per-type: (compiled pattern, strptime format)
+# strptime format by timestamp length, for names written with either precision
+_MINUTE_OR_SECOND: dict[int, str] = {11: "%y%m%d-%H%M", 13: "%y%m%d-%H%M%S"}
+
+# Per-type: (compiled pattern, strptime format or {length: format})
 # Overview/Archive: YYDDMM-HHMM  (French day-first, minute precision)
-# Spike/Default:    YYMMDD-HHMMSS (ISO order, second precision)
-_TDMS_TS_PATTERNS: dict[str, tuple[re.Pattern, str]] = {
+# Spike/Default/Trigger: YYMMDD-HHMMSS (ISO order, second precision)
+# SignalStats: YYMMDD-HHMMSS, or YYMMDD-HHMM with a stray extra underscore
+#              in legacy names (e.g. M9_Stats__190304-1459.tdms)
+_TDMS_TS_PATTERNS: dict[str, tuple[re.Pattern, str | dict[int, str]]] = {
     "Overview": (re.compile(r"(\d{6}-\d{4})\.tdms$",   re.IGNORECASE), "%y%m%d-%H%M"),
     "Archive":  (re.compile(r"(\d{6}-\d{4})\.tdms$",   re.IGNORECASE), "%y%m%d-%H%M"),
     "Spike":    (re.compile(r"_Spikes_(\d{6}-\d{6})",  re.IGNORECASE), "%y%m%d-%H%M%S"),
     "Default":  (re.compile(r"_Default_(\d{6}-\d{6})", re.IGNORECASE), "%y%m%d-%H%M%S"),
+    "SignalStats": (
+        re.compile(r"_Stats_+(\d{6}-\d{4}(?:\d{2})?)(?!\d)", re.IGNORECASE), _MINUTE_OR_SECOND,
+    ),
+    "Trigger":  (re.compile(r"_ManuelTrig_(\d{6}-\d{6})", re.IGNORECASE), "%y%m%d-%H%M%S"),
 }
 
 # ---------------------------------------------------------------------------
@@ -178,6 +192,150 @@ def resolve_operationaldata_path(relpath: str, records_base: Path = _RECORDS_BAS
         Absolute path where the file is expected to live on disk.
     """
     return records_base / relpath
+
+
+# Incident captures are not read: t_start = t_end = the time in their name
+# (about 8 h saved on the first metadata pass, mostly Spike files).
+_NAME_ONLY_TYPES = frozenset({"Spike", "Default", "Trigger"})
+
+
+def _local_to_db(ts: str, db_tz: ZoneInfo) -> datetime:
+    """Convert a ``python_magnetrun`` local (Europe/Paris) timestamp to naive *db_tz*."""
+    from python_magnetrun.utils.files import TIMESTAMP_FORMAT
+
+    local = datetime.strptime(ts, TIMESTAMP_FORMAT).replace(tzinfo=FILE_TZ)
+    return local.astimezone(db_tz).replace(tzinfo=None)
+
+
+def _overview_mode(path: Path, verbose: bool) -> str | None:
+    """Operating mode of one Overview file, or None when it cannot be inferred."""
+    from python_magnetrun import magnetdata
+
+    from crud import infer_operating_mode
+
+    try:
+        df = magnetdata.load_magnetdata(str(path)).Data["Courants_Alimentations"]
+    except Exception as exc:  # noqa: BLE001 — any unreadable TDMS leaves mode NULL
+        if verbose:
+            print(f"  ! {path.name}: could not read Courants_Alimentations: {exc}")
+        return None
+    try:
+        return infer_operating_mode(df)
+    except ValueError as exc:
+        if verbose:
+            print(f"  ! {path.name}: {exc}")
+        return None
+
+
+def fill_operationaldata_metadata(
+    con,
+    assembly_name: str,
+    types: list[str] | None = None,
+    reprocess: bool = False,
+    records_base: Path = _RECORDS_BASE,
+    db_tz: ZoneInfo = _UTC,
+    dry_run: bool = False,
+    verbose: bool = True,
+) -> dict:
+    """Store each file's start/end time, and the mode of Overview files, once.
+
+    Start/end come from ``python_magnetrun``'s metadata-only path
+    (:func:`python_magnetrun.utils.files.extract_data` with ``key=None``:
+    TDMS properties, Archive mtime, last pupitre line), so no data is loaded
+    except for Overview files, whose ``Courants_Alimentations`` group is
+    loaded once to infer the operating mode. Spike, Default and Trigger
+    captures (:data:`_NAME_ONLY_TYPES`) are not read at all: both
+    ``t_start`` and ``t_end`` are the time in their name. Each row is
+    written as soon as it is computed, so an interrupted run resumes where
+    it stopped.
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open connection with the current schema.
+    assembly_name : str
+        ``operationaldata.assembly_name`` of the rows to fill.
+    types : list[str], optional
+        Restrict to these ``operationaldata.type`` values; all types when
+        omitted.
+    reprocess : bool, optional
+        Recompute rows that already have ``t_end``; by default only rows
+        with ``t_end IS NULL`` are processed.
+    records_base : :class:`~pathlib.Path`, optional
+        Root of the records tree (default: :data:`_RECORDS_BASE`).
+    db_tz : :class:`~zoneinfo.ZoneInfo`, optional
+        Timezone of the stored naive timestamps (default UTC, the
+        convention of ``overview_records.t0``).
+    dry_run : bool, optional
+        Compute but write nothing.
+    verbose : bool, optional
+        Print one line per file.
+
+    Returns
+    -------
+    dict
+        ``{"filled": int, "no_time_range": int, "errors": list[tuple[str, str]]}``;
+        ``filled`` counts the rows written (or that would be, with *dry_run*).
+    """
+    from python_magnetrun.utils import files as mr_files
+
+    housing_row = con.execute(
+        "SELECT housing FROM assemblies WHERE name = ?", [assembly_name]
+    ).fetchone()
+    housing = housing_row[0] if housing_row else None
+
+    conditions = ["assembly_name = ?"]
+    params: list = [assembly_name]
+    if types:
+        conditions.append(f"type IN ({', '.join('?' * len(types))})")
+        params.extend(types)
+    if not reprocess:
+        conditions.append("t_end IS NULL")
+    rows = con.execute(
+        f"SELECT id, file, type FROM operationaldata WHERE {' AND '.join(conditions)} ORDER BY id",
+        params,
+    ).fetchall()
+
+    counts: dict = {"filled": 0, "no_time_range": 0, "errors": []}
+    for od_id, relpath, file_type in rows:
+        path = resolve_operationaldata_path(relpath, records_base)
+        if file_type in _NAME_ONLY_TYPES:
+            named = parse_tdms_file_ts(path.name, file_type)
+            if named is None:
+                counts["no_time_range"] += 1
+                if verbose:
+                    print(f"  ! {relpath}: no timestamp in the file name")
+                continue
+            t_start = t_end = named.astimezone(db_tz).replace(tzinfo=None)
+        else:
+            try:
+                start, end, _skip = mr_files.extract_data(
+                    str(path), housing, assembly="", key=None, dry_run=False
+                )
+            except (OSError, ValueError, RuntimeError, UnicodeDecodeError) as exc:
+                counts["errors"].append((relpath, str(exc)))
+                if verbose:
+                    print(f"  [ERROR] {relpath}: {exc}")
+                continue
+            if not start or not end:
+                counts["no_time_range"] += 1
+                if verbose:
+                    print(f"  ! {relpath}: no time range (start={start!r}, end={end!r})")
+                continue
+            t_start, t_end = _local_to_db(start, db_tz), _local_to_db(end, db_tz)
+
+        mode = _overview_mode(path, verbose) if file_type == "Overview" else None
+        if not dry_run:
+            con.execute(
+                "UPDATE operationaldata SET t_start = ?, t_end = ?, mode = ? WHERE id = ?",
+                [t_start, t_end, mode, od_id],
+            )
+        counts["filled"] += 1
+        if verbose:
+            prefix = "[dry-run] " if dry_run else ""
+            suffix = f"  mode={mode}" if file_type == "Overview" else ""
+            print(f"  {prefix}{relpath}  {t_start} → {t_end}{suffix}")
+    return counts
 
 
 def _assembly_window(
@@ -278,8 +436,12 @@ def parse_tdms_file_ts(filename: str, file_type: str) -> datetime | None:
     m = pattern.search(filename)
     if not m:
         return None
+    token = m.group(1)
+    if isinstance(fmt, dict):
+        # pick by length: strptime is lenient about digit counts
+        fmt = fmt[len(token)]
     try:
-        return datetime.strptime(m.group(1), fmt).replace(tzinfo=FILE_TZ)
+        return datetime.strptime(token, fmt).replace(tzinfo=FILE_TZ)
     except ValueError:
         return None
 

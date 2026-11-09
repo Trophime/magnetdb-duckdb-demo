@@ -16,6 +16,11 @@ Revised 2026-11-03: pupitre header = monitoring model (R00/Adv/Bdv/CT,
 checked on real files), slot → magnet through the **housing-config version
 in force at t0** (step H, done), CT reference temperature, `Tout` binding;
 data issues #10–#11.
+Revised 2026-11-05: header versions with explicit validity and a status
+(`stale` | `commissioning` | `valid`), from the line-1 headers of the
+commissioning assemblies `M9_A250121_00` / `M9_A250401_00`; tap change of
+`M25032101` inside `M9_A250401_00` (data issue #12); ETL magnet wirings get
+their own validity windows (ETL plan D1 = a).
 **No implementation phase is approved yet** — each phase below
 gets its own short plan + approval before any code or schema change.
 Items marked **[unconfirmed]** are assumptions awaiting an answer (see
@@ -74,7 +79,7 @@ pigbrother `Signature`, Tin series) entirely from the database.
 | Commissioning measurements | field and voltage per magnet at PID-stabilized current setpoints, with flow and Tin, taken when an assembly is commissioned | extracted from experiments' pupitre files with a proper header (`header_class = 'full'`, #29) at load time; candidate commissioning experiments identified by a `Field` signature still to be defined — **[unconfirmed, open question #24]** | L3 (raw tables, then fits) |
 | pigbrother `Signature` | reference currents per circuit | `overview_records.signatures` — **empty today** (0 / 1915 records in `test-magnetdb.duckdb`; the python_magnetrun extraction stores placeholder min/max/mean only), filled by step S2 | L5 inputs |
 | `overview_records.plateaux` | plateau metadata | `overview_records` — **empty today** (0 / 1915), filled by step S2 | run search only (view), not an entity |
-| `python_magnetdb` `Probe` / `python_magnetgeo` `Probe` | name, type (`voltage_taps`/`temperature`/`magnetic_field`), labels, points | held by `Insert`/`Bitters`/`Supras` in magnetgeo | `probes` table |
+| `python_magnetdb` `Probe` / `python_magnetgeo` `Probe` | name, type (`voltage_taps`/`temperature`/`magnetic_field`), labels, points | held by `Insert`/`Bitters`/`Supras` in magnetgeo | `probes` table (FEM inputs; checked for coherence, not used to build the section mapping) |
 
 ---
 
@@ -303,8 +308,10 @@ CREATE TABLE IF NOT EXISTS operating_configurations (
     id                INTEGER PRIMARY KEY DEFAULT nextval('operating_configurations_id_seq'),
     assembly_name     VARCHAR REFERENCES assemblies(name),
     experiment_id     INTEGER REFERENCES experiments(id),   -- when the source links one
-    valid_from        TIMESTAMP,
-    valid_to          TIMESTAMP,
+    valid_from        TIMESTAMP,        -- pupitre header: start of the first file of this version
+    valid_to          TIMESTAMP,        -- start of the next version, or the assembly end
+    status            VARCHAR,          -- stale | commissioning | valid (pupitre header, 2026-11-05):
+                                        -- only `valid` versions give L3 monitoring rows
     source            VARCHAR,          -- magfile_conf | mysql | pupitre_header | inferred | manual
     source_ref        VARCHAR,          -- sha256 (content minus Date/Heure) | MySQL row id
     source_timestamp  TIMESTAMP,        -- MAGFILE Date/Heure
@@ -424,32 +431,51 @@ the same numbering.
 
    M5 and M7 are single-group housings (confirmed); their `magnetdb.duckdb`
    rows were corrected on 2026-10-05 (data issue #8).
-2. **Insert layout — pair (standard today):** one voltage tap per couple of
-   consecutive helices, on the **HP-side ring** joining the couple. Taps run
+2. **Insert layout — pair (standard today):** voltage taps on the
+   **HP-side rings joining consecutive pairs** (H2H3, H4H5, …, H12H13, ring
+   `bpside = false`) plus the **two current leads**. Each `Ucoil` is the
+   difference between two consecutive taps; the **reference tap** (start of
+   the first section) is the inner current lead. Taps run
    inner → outer and **`Ucoil7` is always the outermost pair (largest
    diameter)**: for an insert of N helices, pair *k* (helices 2k−1, 2k,
    counted from the inside) is on **`Ucoil(7 − N/2 + k)`** — 14 helices →
    `Ucoil1–7`, 12 → `Ucoil2–7`, 10 → `Ucoil3–7`. Section *k* = helix parts
    with `coil_index` ∈ {2k−1, 2k} (as in magnet-scipy `R_14Helices.csv`).
-3. **Insert layout — one tap per helix (older):** taps on every ring.
+
+   ```
+   lead_in ─H1─H2─ [H2H3] ─H3─H4─ [H4H5] … [H12H13] ─H13─H14─ lead_out
+      │  Ucoil1   │    Ucoil2     │   …    │     Ucoil7     │
+   ```
+
+   Ring sides (2026-11-05): H1H2, H3H4, …, H13H14 are BP-side
+   (`bpside = true`), H2H3, …, H12H13 HP-side, in the `Ring-*.yaml` files of
+   HL-27/29/31/34; all 54 ring parts in DuckDB carry `bpside` in
+   `geometry_data`. Both leads are then on the HP side (inferred, open
+   question #31).
+3. **Insert layout — one tap per helix (older):** taps on every ring plus
+   the two current leads (reference = inner lead).
    `Ucoil14` = outermost helix (confirmed 2026-10-08); helix *j* of an N-helix
    insert is on **`Ucoil(14 − N + j)`**. Section *j* = the helix part with
    `coil_index` = j.
 4. **Which insert layout:**
-   1. voltage-tap **probes attached to the magnet** → they define the layout
-      and the sections (local section *i* = the *i*-th probe of
-      `type = 'voltage_taps'`, ordered by `probes.rank`; temperature and
-      magnetic-field probes never count);
-   2. no probes → assume the **pair layout**;
-   3. data check: any non-null `Ucoil8`–`Ucoil14` (or non-zero header
+   1. assume the **pair layout**;
+   2. data check: any non-null `Ucoil8`–`Ucoil14` (or non-zero header
       coefficients in slots 8–14) contradicts the pair assumption → treat as
       the per-helix layout and flag it (`layout_mismatch` in
       `resolution_status`).
+
+   Probes never define the layout or the sections: they are FEM inputs,
+   checked against this mapping (see [Probes](#probes)).
 5. **Null channel** (`Ucoil_n` null, coefficients all 0) means either the
    channel is **unplugged**, or that pair / helix **does not exist** in this
-   insert. Told apart from the insert's `geometry_data` (helix count, rings)
-   and probes when present. E.g. M9 `M25032101` (14 helices): `Ucoil1` null
-   → unplugged.
+   insert. Told apart from the insert's `geometry_data` (helix count,
+   rings). E.g. M9 `M25032101` (14 helices): `Ucoil1` null
+   → unplugged. **A third case (2026-11-05):** the pair's taps are read
+   together with the next pair on one channel — `M25032101` since
+   2025-05-09: H1–H4 on `Ucoil2`, `Ucoil1` empty (data issue #12). The pair
+   rule of rule 2 then does not hold for that magnet; the layout of each
+   header version (L2 "Header versions, …") says which slots carry which
+   sections.
 6. **Bitters:** one voltage tap per Bitter part: section *j* = Bitter part
    with `coil_index` = j — or, when the GR has a single channel
    (`M8-260305`), one section for the whole Bitters magnet.
@@ -458,21 +484,24 @@ the same numbering.
    verified at ingest (inner radius increasing with `coil_index`, from
    `geometry_data`).
 
-Exposed as a view, so adding probes later automatically overrides the
-default:
+Exposed as a view:
 
 ```sql
--- v_config_sections: (config_id, slot, magnet_name, section_index, part_names[] | probe_name)
+-- v_config_sections: (config_id, slot, magnet_name, section_index, part_names[], probe_label)
 -- slots resolved against operating_configurations.housing_version (its GR
--- channels) and the assembly's magnets; t0 is never recomputed here
+-- channels) and the assembly's magnets; t0 is never recomputed here.
+-- probe_label: label section_index of the magnet's voltage_taps probe, or
+-- null; links FEM results on probes to the measured Ucoil<slot>.
 ```
 
 - **Used by the Pupitre ETL:** this slot mapping is the assembly → `Ucoil`
   channel rule that [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)
   lacks in its v1. ETL spec v2 builds the voltage sums from
   `v_config_sections`, summing only the slots present under the rules
-  above (e.g. `Ucoil2–7` for a 12-helix insert; `Ucoil1` unplugged on M9
-  `M25032101`).
+  above (e.g. `Ucoil2–7` for a 12-helix insert; `Ucoil1` empty on M9
+  `M25032101` since 2025-05-09). The ETL magnet wirings get the validity
+  window of the `valid` header version they come from (ETL plan D1 = a,
+  2026-11-05).
 - **M5 row** of the slot table above (Bitters 1–2 on GR1) changes if the M5
   rewiring in [NOTES_M5_bitters_wiring.md](NOTES_M5_bitters_wiring.md) is
   confirmed (Bitter 1 on GR1, Bitter 2 on GR2) — see open question #26.
@@ -483,17 +512,41 @@ default:
 CREATE TABLE IF NOT EXISTS probes (
     name          VARCHAR PRIMARY KEY,
     magnet_name   VARCHAR REFERENCES magnets(name),
-    part_name     VARCHAR REFERENCES parts(name),
     type          VARCHAR,              -- voltage_taps | temperature | magnetic_field
-    rank          INTEGER,              -- order within (magnet, type), inner -> outer
-    labels        VARCHAR[],
-    points        JSON,                 -- [[x, y, z], ...] [m]
+    labels        VARCHAR[],            -- in order, inner -> outer
+    points        JSON,                 -- [[x, y, z], ...] [m], one per label
     metadata      JSON DEFAULT '{}'
 );
 ```
 
 Built to round-trip with `python_magnetgeo.Probe` (`name`, `type`,
-`labels`, `points`) so FEM setups can write probe YAML.
+`labels`, `points`) so FEM setups can write probe YAML. One row is one probe
+collection, attached to a **magnet** (never to a part); python_magnetdb's
+`Probe.part` is not carried over (data issue 6).
+
+**Role (2026-11-05):** probes are **FEM inputs**. They do not feed the
+section mapping; they are checked for coherence with it, so FEM results on
+probes can later be compared with measured `Ucoil` data (via
+`v_config_sections.probe_label`).
+
+**`voltage_taps` collection:** one label = one section, inner → outer;
+point *i* = the outer end tap of section *i*; the start of section 1 is
+the reference tap (inner current lead), implicit, not stored.
+
+**Coherence check** (view `v_probe_coherence`, flags only, never rejects),
+per magnet × housing-config version in which the magnet ran (the wiring
+changes, the probes stay on the magnet):
+
+- at most one `voltage_taps` collection per magnet;
+- label count = expected sections: N/2 (pair layout), N (per-helix
+  layout), number of Bitter parts (Bitters), or 1 when the GR has a single
+  channel (`M8-260305`);
+- points ordered by increasing radius;
+- point *i* within the radial range of the expected HP-side ring (rule 2 /
+  rule 3); last point at the outer current lead.
+
+Temperature and magnetic-field probes are not checked: no housing channel
+is tied to them.
 
 ### Reader architecture
 
@@ -624,7 +677,13 @@ needed (as for M8 on 2026-03-05, see data issue #11).
   version, whose `experiment_id` is the first occurrence. Each
   configuration therefore maps to exactly one housing version
   (`operating_configurations.housing_version`), even when the coefficients
-  stay the same across a wiring change.
+  stay the same across a wiring change. **Validity** (2026-11-05):
+  `valid_from` = start of the first file of the version, `valid_to` = start
+  of the next version of the assembly (or the assembly end). A header change
+  is a new version, never an error: coefficients refitted, a magnet's taps
+  moved (data issue #12) or the housing wiring changed are all "normal"
+  changes. Each version gets a `status`, see "Header versions,
+  commissioning and stale headers" below.
 - Files of class *data* or *empty* get a file-level flag
   (`no_parameter_line`) in the coverage view, never a configuration row.
 - **File quality on `experiments`** (step E of the cross-plan order, before
@@ -670,14 +729,54 @@ needed (as for M8 on 2026-03-05, see data issue #11).
   and the assembly (section mapping), not from the coefficients: M8 slots
   15–16 have `r0 = 0` with non-zero `a0`/`b0` but are unplugged since
   2026-03-05 (`M8-260305`). Slot 1 of M9 `M25032101` is `0 0 0` in both
-  `MAGFILEM9.conf` and the 2026-10-02 pupitre header: channel unplugged
-  (section mapping rule 5; open question #3 resolved).
-- **Header check** (logged, never rejected): a slot with non-zero
-  `r0/a0/b0` that is not among the channels of the housing-config version at
-  t0, or a mapped channel whose slot is all zero, adds `layout_mismatch` to
+  `MAGFILEM9.conf` and the 2026-10-02 pupitre header: not simply unplugged
+  — since 2025-05-09 its taps are read together with slot 2's on `Ucoil2`
+  (H1–H4, data issue #12; open question #3 revised).
+- **Header check** (logged, never rejected; information on the version, not
+  a request for a new housing version): a slot with non-zero `r0/a0/b0`
+  that is not among the channels of the housing-config version at t0, or a
+  mapped channel whose slot is all zero, adds `layout_mismatch` to
   `resolution_status`. This is what reveals a wiring change: the M8 header
   moved the Bitters to slot 14 on 2026-03-05 17:21:09, the first file with
-  the new wiring.
+  the new wiring. Not raised on `stale` / `commissioning` versions, whose
+  slots may reflect the previous assembly.
+
+#### Header versions, commissioning and stale headers (2026-11-05)
+
+When a **brand-new magnet** is used for the first time in an assembly, the
+first experiments are its **commissioning** (user, 2026-11-05): resistances
+are measured to set the reference resistances later used to monitor the
+magnet, and a run estimates its field factor (field at the centre / current).
+During these experiments the header still holds, at least at first, the
+**previous assembly's settings**. Line 1 of every experiment file of the two
+latest commissioning assemblies shows three phases:
+
+| Assembly (new insert) | Phase | Files | Header |
+|---|---|---|---|
+| `M9_A250121_00` (`M25012001`, from 2025-01-21) | stale | 2025.01.23 16:56 → 01.24 10:30 (2) | MagnetCode `M09052601` (previous insert), previous coefficients, no slot 1 |
+| | stale | 01.24 10:37 (1) | MagnetCode `M25012001`, previous coefficients |
+| | commissioning | 01.24 11:41 → 01.27 13:25 (35 files, 5 header versions) | slot 1 added (R00 0.6 → 0.540 → 0.530 → 0.525 → 0.521 mΩ), other slots refitted each time |
+| | valid | 01.27 14:06 → 03.21 (87) | stable reference |
+| `M9_A250401_00` (`M25032101`, from 2025-04-01) | stale | 04.01 16:29 → 04.03 13:18 (7) | MagnetCode `M25032101`, coefficients identical to the last header of `M9_A250121_00` |
+| | valid | 04.03 15:09 → 05.09 11:45 (25) | references of `M25032101` |
+| | valid | 05.09 14:31 → 07.14 (98) | taps changed: slot 1 empty, slot 2 R00 = 1.28641 mΩ = 0.518954 + 0.767459 (old slots 1 + 2, data issue #12) |
+
+- **`stale`** (detectable from the data): the version's coefficients are
+  identical to those of the last header of the housing's previous
+  assembly, or its MagnetCode is not the assembly's insert.
+- **`commissioning`:** a version inside the commissioning period of a
+  brand-new magnet. Its coefficients are being refitted; they are kept as
+  history, never used as references. **[unconfirmed, open question #32]**
+  end of the period: the first header version that then stays stable
+  (2025-01-27 14:06 for `M25012001`, 2025-04-03 15:09 for `M25032101`), or
+  an operational marker (the field-factor run, a recorded date).
+- **`valid`:** every other version. Only `valid` versions give L3 monitoring
+  rows (reference R00/Adv/Bdv/CT) and, in ETL v2, magnet parts.
+- **Commissioning experiments** (L3 raw tables, open question #24): the
+  experiments of the first assembly of a brand-new magnet, from the
+  assembly start to the end of commissioning. Whether a magnet moved to a
+  new assembly (e.g. `M23012001`, M9 2023-01 then M8 2023-09) also gets a
+  commissioning: **[unconfirmed, open question #33]**.
 
 ### Pupitre monitoring model
 
@@ -728,8 +827,7 @@ diagnostic.
   issue #7 is partly this reference mismatch.
 
 - Parts of the section come from the section mapping above (insert section
-  *k* → its helix pair; Bitters section *j* → that Bitter part; probes when
-  defined).
+  *k* → its helix pair; Bitters section *j* → that Bitter part).
 - **Insert:** `ct` is one global alpha for the material of the 2 consecutive
   helices. Expected value = resistance-weighted mean of the two helices in
   series:
@@ -1249,7 +1347,11 @@ following the existing `to_duckdb/tests/test_*_db.py` pattern.
    class (full / short / data / empty) classified correctly, including the
    M3 header with an empty `MagnetCode`; slots map to roles per the derived
    rule for M5 (Bitters 1–2), M7 (insert 1–7), M8/M9/M10; coverage per
-   housing reported from the reader's own classification.
+   housing reported from the reader's own classification;
+   `v_probe_coherence` on fixtures: a 14-helix pair-layout insert with a
+   7-label `voltage_taps` probe is coherent, with 6 labels it is flagged
+   (label count); a 2-label Bitters probe on M8 is flagged under
+   `M8-260305` (single channel) and coherent under `M8-211225`.
 3. **L3 characteristics** — `electrical_characteristics` +
    `to_duckdb/characteristics.py` (lookup API, `set_preferred`, binding),
    `flow_params`, `commissioning_field_factor` / `commissioning_resistance`
@@ -1317,7 +1419,7 @@ implementation.**
 | S1 | Signature regime robustness study ([PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md)), incl. a robust pupitre `Field` signature | — | before running: where the tooling lives; library fixes vs local work-arounds; RDP vs PELT; 3–4 test file pairs to pick. Deferred by that plan (2026-08-11): the "one pupitre file → several pigbrother files" case (no discovery logic in that direction yet) | **Methodology approved** 2026-08-11; execution choices to decide |
 | S2 | Fill `overview_records.signatures`, `plateaux`, `sync_info` with real `Signature` output (replacing the placeholder `_extract_signatures` in python_magnetrun `analysis/processing.py`); per-experiment `Field` signature (existing work: `stage/` writes `overview_experiments.field_signature` with a hand-picked `FIELD_THRESHOLD = 0.1`) | S1; 2a for channel names — the lag computation (`_compute_lag_correlation`) looks up pupitre current channels by their post-ETL names (`IH`/`IB` via `get_pupitre_current_channel`): use the spec's names, or the raw `Idcct*` columns | none beyond its dependencies | Plan to write, then approval |
 | S3 | `teb` as a time series: an ETL step shifting pupitre `teb` by the lag stored in `sync_info` (for magnet cooling modeling; signature plan "Related future work"). **Assumption to flag:** one clock offset per pupitre file, borrowed from the current-channel lag — no pigbrother temperature to verify it against | S2 (lag in `sync_info`), 2a (spec path) | none beyond its dependencies | Plan to write, then approval |
-| 1 | Pupitre ETL spec v1 ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)); revised 2026-11-03: one spec per (assembly, housing version), magnet parts keyed to a housing version (D1); creates `resolve_file_context` | H, R | none | **Plan revised 2026-11-03, awaiting approval** |
+| 1 | Pupitre ETL spec v1 ([PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)); revised 2026-11-03: one spec per (assembly, housing version), magnet parts keyed to a housing version (D1); creates `resolve_file_context`; revised 2026-11-05: magnet parts with their own validity windows (D1 = a) | H, R | none | **Done 2026-11-03** with D1 = b (parts A and B, branch `housing-config-versions`); the D1 = a revision of 2026-11-05 is documented, its code change still to approve |
 | 1b | Supra current `IS` for M8: `external` spec entries, hybrid loading moved from the dashboard to python_magnetrun (outline in [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md)) | 1 | #27 (Hybrid ↔ pupitre clock lag) to check before aligning | Outline agreed 2026-10-07; detailed plan to write, then approval |
 | 2a | Switch Pupitre callers (`load_mrun`/dashboards, `stress_map.py`) to the spec path | 1 + review of its step 5 comparison | none | Plan to write, then approval |
 | 2b | Phase 2: probes + L2 run configuration + `v_config_sections` | R (reuses `resolve_file_context` from step 1 if done first) | #2 (conf → experiment link, conf reader only), #17 (M10 coverage start), #20 (M3 only) | Phase plan to write, then approval |
@@ -1380,6 +1482,9 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
 6. **`python_magnetdb` (separate repo):** `Probe.geometry_config_to_yaml`
    uses a non-existent `self.geometry_config` and an unimported `copy` —
    any magnet with probes would fail `run_setup`. Not to be ported as is.
+   Also, `Probe.part` should not exist: probes are attached to the magnet
+   only (`Probe.magnet`); the DuckDB `probes` table has no part column
+   (fix in python_magnetdb, 2026-11-05).
 7. **Bad `materials.alpha` data:** every material checked (helices of
    `M25032101`, `M23012001`; `CuAg01` of the M9 Bitters) has
    `alpha = 0.0036`, while MAGFILE `ct` is 0.0035–0.004 per section. Known
@@ -1444,6 +1549,58 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
     it, `UH` included the Bitters voltage (+357 V) and `UB` was all-zero
     and dropped. *Follow-up (own plan):* recompute the stored statistics of
     the 50 M8 experiments since 2026-03-05 in `magnetdb.duckdb`.
+12. **Tap change of `M25032101` inside `M9_A250401_00` on 2025-05-09
+    (found 2026-11-05 from the line-1 headers).** From
+    `2025.05.09 - 14:31` slot 1 is `0 0 0` and slot 2's R00 becomes
+    1.28641 mΩ = 0.518954 + 0.767459, the R00 of the old slots 1 and 2:
+    H1–H4 are read together on `Ucoil2`, `Ucoil1` no longer carries a
+    section; kept in the later assemblies of `M25032101`. This confirms the
+    pupitre writer's comment about "4 helices on one channel" on M9, which
+    was set aside on 2026-10-08 (open question #3). The housing's GR
+    channels do not change (`UH` still sums `Ucoil1–14`), so it is not a
+    housing version: in the ETL it is a new magnet part from that date
+    (ETL plan D1 = a), in L2 a new header version.
+    **[unconfirmed]** that this is the intended wiring (user: such a change
+    "could be normal").
+    **Update 2026-11-07:** the ETL now derives each insert's taps from its
+    helix count (`Ucoil1–7` for 14 helices); the empty `Ucoil1` is kept as
+    a tap and adds 0 to `UH`, so the ETL needs no exception
+    ([PLAN_pupitre_checks_file.md](PLAN_pupitre_checks_file.md), revision 2).
+    Several other 14-helix inserts show empty `Ucoil1` (or `Ucoil1–2`) taps
+    (`M09052601`, `M20022001`, `M22011801`, `M12082401`): a section-mapping
+    question for L2, not for the ETL.
+13. **Insert supplies swapped, found by the check rule `IH - Icoil7`
+    (2026-11-07):**
+    - **M7, 2014-03-17 → 2014-04-15:** the insert is fed by A1 + A3
+      (`Idcct1 + Idcct3` = `Icoil7`, `Idcct2` = `Idcct4` = 0) in every
+      powered file, not A1 + A2; three isolated A1 + A3 files follow in
+      2016 (`2016.07.27 - 10:17`, `2016.08.03 - 19:38` and `20:18`) among
+      A1 + A2 ones. Fixed by the housing versions `M7-140317` (`IH = Idcct1 +
+      Idcct3`) and `M7-160726` (base again); the three 2016 files stay
+      tagged. With A1 + A3, `IH - Icoil7` still reaches 5.7–7.2 A (p99) at
+      ≈ 13.8 kA, a systematic offset (A3 DCCT calibration?) above the 5 A
+      tolerance: 16 files tagged, kept on purpose (2026-11-07).
+    - **M10, 2021-03-25 → 2021-07-10** (end of `M10_A201214_00`,
+      `M10_A210414_00`, `M10_A210519_00`): insert fed by A1 + A2, Bitters by
+      A3 + A4, the reverse of the M10 base wiring. Fixed by `M10-210325`
+      (`IH = Idcct1 + Idcct2`, `IB = Idcct3 + Idcct4`) and `M10-210929`. In
+      half of these files the Bitters ran on A3 alone (`Idcct4` = 0): tagged
+      by `A3_vs_A4`, a real imbalance.
+    - The stats computed with the old `IH` for these files (`compute_exp_stats`)
+      need a recompute after `housing sync` (A22).
+14. **`M8_A211225_00` is supras-only in DuckDB**, yet `Idcct1` reaches
+    6 856 A (a Bitters-group supply) and insert / Bitters taps carry signal
+    (`ch1–7`, `11`, `12`, `15`, `16`) in up to all 28 files: 181
+    channel-check tags (2026-11-07). Missing magnets in the assembly JSON,
+    or that supply and those taps served something else — to check.
+15. **`M10_A220223_00` (insert `M19071101`, 12 helices) reads taps 5–7
+    only from `2022.04.06 - 11:42:33`** (2–7 until `2022.04.02 - 14:22:58`),
+    up to ≈ 27 kA, while the DB keeps it until 2022-04-22; nothing changes
+    at 2022-04-22 in the pupitre files. Either a 6-helix insert from
+    ≈ 2022-04-06 (`M10_A220422_00` → `M10_A220406_00`?) or `M19071101`
+    cabled on 5–7 only — to check by the user (2026-11-07). Taps show the
+    cabling, not the magnet: the Bitters-only `M10_A241209_00` has taps 2–7
+    plugged.
 
 ---
 
@@ -1453,7 +1610,7 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
 |---|---|---|
 | 1 | MAGFILE semantics/units — **mostly resolved** in `magfile-defs.json` (from `magfile.txt`; FF in G/A per circuit and r0 scale checked against data). ~~units of `r0/a0/b0`~~ — confirmed mΩ, mΩ/A, mΩ/A² (2026-11-03, monitoring model recomputed from real files). Remaining: unit of `H<i>` (mH inferred); meaning and unit of `DeltaT0`; unit of `DeltaPFA/PFU` (mbar?, unused); ~~whether `Imax<n>` is per supply~~ — resolved 2026-10-08 (user): M8/M9/M10 one `Imax` per GR, M5 one per supply (A1, A2), M7 one for GR1. Note to explain in phase 2: M9 IH reached 29.5 kA with `Imax1` = 14.8 kA (limit not a hard cap on the measured current, or `IH = Idcct1 + Idcct2` is not the limited quantity?) | phase 2 typed columns |
 | 2 | MAGFILE conf → experiment link — only for **conf-only fields** (`Ivar`, `FF`, `Qnom`, surveillance), since the pupitre header links its fields to the experiment directly. `Date`/`Heure` is the file's **generation time**, not an experiment start, which favours a **validity window** (a conf applies from its generation time until the next one for that housing/assembly) over "nearest preceding experiment" | phase 2 reader |
-| 3 | Insert slot 1 is `0 0 0` for `M25032101` in both `MAGFILEM9.conf` and the 2026-10-02 pupitre header (so absent in live data too), while the magnet has 14 helices (7 pairs): **which** helix pair has no section — real voltage-tap probes not yet in DuckDB, pairing starting at slot 2, or H1H2 not instrumented? — **resolved 2026-10-08** (user): insert channel rules in the L2 section mapping (pair layout, `Ucoil7` = outermost pair; a null channel = unplugged or pair absent, told apart via `geometry_data` and probes). For `M25032101` (14 helices) `Ucoil1` is unplugged; the C++ writer comment about 4 helices on one channel is ignored. Per-helix layout: `Ucoil14` = outermost helix (confirmed) | — |
+| 3 | Insert slot 1 is `0 0 0` for `M25032101` in both `MAGFILEM9.conf` and the 2026-10-02 pupitre header (so absent in live data too), while the magnet has 14 helices (7 pairs): **which** helix pair has no section — real voltage-tap probes not yet in DuckDB, pairing starting at slot 2, or H1H2 not instrumented? — **resolved 2026-10-08** (user): insert channel rules in the L2 section mapping (pair layout, `Ucoil7` = outermost pair; a null channel = unplugged or pair absent, told apart via `geometry_data` and probes). For `M25032101` (14 helices) `Ucoil1` is unplugged; the C++ writer comment about 4 helices on one channel is ignored. Per-helix layout: `Ucoil14` = outermost helix (confirmed). **Revised 2026-11-05:** for `M25032101`, `Ucoil1` is empty because H1–H4 are read together on `Ucoil2` since 2025-05-09 (data issue #12), so the writer's comment was right; before that date slot 1 was a normal section | — |
 | 4 | ~~PID `jeu` 1–16~~ — resolved: `jeu` is just the parameter-set id (`numero_jeu`); 17–20 = M7–M10, 1–16 stored with no housing; threshold ranges from `configAlims/README.md` | — |
 | 5 | Primary-loop hysteresis: installation-wide or per housing | phase 1 |
 | 6 | ~~R/L ageing~~ — resolved: values change over time, `valid_from/valid_to` used in L3 | — |
@@ -1474,10 +1631,13 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
 | 21 | Should the M8 hybrid supra supply be an L1 `power_circuits` row (e.g. circuit `SUPRA`), or stay only as `reference_supra_current` binding? | phase 1 / 3 |
 | 22 | Source vocabulary: the commissioning plan used `measured` / `analytical` / `fem`; this plan uses `magfile_conf`, …, `measurement`, `fit`, `manual`. Recommended: keep this plan's list, `measured` → `measurement`; add `analytical` only if a model other than magnettools needs it | phase 3 |
 | 23 | Mutual-inductance shape: `vector` with explicit `order` (magnet-scipy layout, recommended) or one row per magnet pair (commissioning plan, easier SQL) | phase 3 |
-| 24 | Commissioning readings — **partly resolved 2026-10-07:** extracted from experiments when loading their pupitre data, only for files with a proper header (#29), computed after the ETL by `to_duckdb`. **Open [unconfirmed]:** candidate commissioning experiments have a given pupitre `Field` signature, still to be defined and checked against real commissioning runs | phase 3 (commissioning tables) |
+| 24 | Commissioning readings — **partly resolved 2026-10-07:** extracted from experiments when loading their pupitre data, only for files with a proper header (#29), computed after the ETL by `to_duckdb`. **Open [unconfirmed]:** candidate commissioning experiments have a given pupitre `Field` signature, still to be defined and checked against real commissioning runs. **Revised 2026-11-05 (user):** the commissioning experiments are the first experiments of the first assembly of a brand-new magnet (reference resistances, field-factor run), a criterion read from the database; their end and the case of moved magnets are open questions #32 and #33 | phase 3 (commissioning tables) |
 | 25 | Per-magnet field factor at commissioning: the measured centre field is the sum of all powered magnets (B = FF1·I₁ + FF2·I₂). Is one magnet powered at a time, or is FF fitted over several (I₁, I₂) setpoints? In the second case a row must store every circuit's current, not one `current` | phase 3 (commissioning tables) |
 | 26 | `housing_config.coil_assignment` is `MAP(role → GR)`: it cannot express two Bitters magnets on GR1/GR2 (M5 rewiring). Which key (magnet name, `Bitter1`/`Bitter2`, …)? Also affects the L2 slot rule for M5 and L1 `power_circuits` | M5 (step 4), phase 1 / 2 |
 | 27 | Do the Hybrid and pupitre clocks need a lag correction before `IS` is aligned with `merge_asof` (0.5 s)? Pupitre vs pigbrother lag is the subject of the signature robustness plan; Hybrid vs pupitre was never checked | step 1b |
 | 28 | Pupitre file with no assembly covering its time (e.g. data issue #9): build a housing-only spec (v1 content, no assembly-specific entries) with a warning (recommended), or refuse the ETL? | step 1 follow-ups / 2a |
 | 29 | ~~"Proper" pupitre header~~ — resolved 2026-10-08 from the pupitre writer's C++ code: defined by line 1 only; proper ⇔ `header_class = 'full'` (see L2 "Pupitre header reader") | — |
 | 30 | Monitoring-model L3 rows on M9: bind `Tin` to the GR1 inlet (`Tin1`, physically right) or to `Tin2`, which the pupitre used when the coefficients were in use (data issue #10)? | phase 3 |
+| 31 | Voltage-tap positions for the probe coherence check: are both current leads on the HP side (inferred from ring `bpside`, L2 section mapping rule 2)? Which z sign / end is HP in the geometry, to tell a tap on an HP-side ring from one on a BP-side ring? | phase 2 (`v_probe_coherence`) |
+| 32 | End of commissioning of a brand-new magnet (L2 "Header versions, commissioning and stale headers"): the first header version that then stays stable (2025-01-27 14:06 for `M25012001`, 2025-04-03 15:09 for `M25032101`), or an operational marker (field-factor run, a recorded date)? | phase 2 (`status`), phase 3 (commissioning tables) |
+| 33 | Does a magnet moved to a new assembly (e.g. `M23012001`: M9 from 2023-01, M8 from 2023-09) also go through a commissioning, or only a brand-new magnet? | phase 2 (`status`), phase 3 |

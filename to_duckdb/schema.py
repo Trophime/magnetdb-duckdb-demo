@@ -168,6 +168,53 @@ CREATE TABLE IF NOT EXISTS pupitre_etl_magnet (
     FOREIGN KEY (assembly_name, magnet_name) REFERENCES assembly_magnets (assembly_name, magnet_name)
 );
 
+-- File-check rules and tags (PLAN_file_check_rules.md). No foreign keys:
+-- references are checked in etl_spec.py.
+-- tags: <category>:<name>, one colour each (never #f8d7da / #fff3cd).
+CREATE TABLE IF NOT EXISTS tags (
+    name        VARCHAR PRIMARY KEY,
+    color       VARCHAR NOT NULL,
+    severity    INTEGER DEFAULT 1,
+    description VARCHAR
+);
+-- attached by the built-in channel check
+INSERT INTO tags VALUES ('check:channel_not_empty', '#e2d9f3', 1,
+    'A removed pupitre channel (Ucoil/Icoil/DRcoil/Tcal n) is not exactly 0')
+    ON CONFLICT DO NOTHING;
+
+-- One rule: housing set (housing rule), assembly_name (assembly rule) or
+-- assembly_name + magnet_name (magnet rule); housing_version NULL = all versions.
+CREATE SEQUENCE IF NOT EXISTS check_rules_id_seq START 1;
+CREATE TABLE IF NOT EXISTS check_rules (
+    id              INTEGER PRIMARY KEY DEFAULT nextval('check_rules_id_seq'),
+    name            VARCHAR NOT NULL,
+    housing         VARCHAR,
+    assembly_name   VARCHAR,
+    magnet_name     VARCHAR,
+    housing_version VARCHAR,
+    expr            VARCHAR NOT NULL,
+    stat            VARCHAR NOT NULL,
+    tol             DOUBLE  NOT NULL,
+    unit            VARCHAR,
+    tag             VARCHAR,
+    sources         VARCHAR[] DEFAULT ['pupitre'],
+    applies_to      VARCHAR DEFAULT 'experiments',
+    description     VARCHAR
+);
+
+-- Tags attached by failed checks. record_key: experiments.id as text
+-- (later overview_records.filename); rule: rule name, or ch<n> for a channel.
+CREATE TABLE IF NOT EXISTS record_tags (
+    record_table VARCHAR NOT NULL,
+    record_key   VARCHAR NOT NULL,
+    tag          VARCHAR NOT NULL,
+    rule         VARCHAR NOT NULL,
+    value        DOUBLE,
+    tolerance    DOUBLE,
+    tagged_at    TIMESTAMP DEFAULT now(),
+    PRIMARY KEY (record_table, record_key, tag, rule)
+);
+
 CREATE SEQUENCE IF NOT EXISTS operationaldata_id_seq START 1;
 
 CREATE TABLE IF NOT EXISTS operationaldata (
@@ -177,12 +224,20 @@ CREATE TABLE IF NOT EXISTS operationaldata (
     file        VARCHAR UNIQUE,
     assembly_name VARCHAR REFERENCES assemblies(name),
     type        VARCHAR DEFAULT 'Archive',
-    status      VARCHAR DEFAULT 'pending'
+    status      VARCHAR DEFAULT 'pending',
+    -- Per-file metadata, computed once by `populate operationaldata-metadata`
+    -- (PLAN_overview_records_from_operationaldata.md): file start/end as naive
+    -- timestamps in the DB timezone (UTC by default, like overview_records.t0),
+    -- and the operating mode of Overview files (NULL for other types).
+    t_start     TIMESTAMP,
+    t_end       TIMESTAMP,
+    mode        VARCHAR
 );
 
 -- idempotent migration for databases that predate the type column
 ALTER TABLE operationaldata ADD COLUMN IF NOT EXISTS type VARCHAR DEFAULT 'Archive';
--- the id sequence default migration is in _ensure_operationaldata_id_default()
+-- the id sequence default migration is in _ensure_operationaldata_id_default();
+-- t_start / t_end / mode on older databases: _ensure_operationaldata_metadata_columns()
 
 -- One row per processed overview file (OverviewRecord, data attribute excluded).
 -- sources_* columns hold the file-path lists from FileSet.
@@ -202,7 +257,7 @@ CREATE TABLE IF NOT EXISTS overview_records (
     sources_default           VARCHAR[],
     sources_trigger           VARCHAR[],
     sources_spike             VARCHAR[],
-    sources_stats             VARCHAR[],
+    sources_signal_stats      VARCHAR[],
     sources_hybrid_kHz        VARCHAR[],
     sources_hybrid_rms        VARCHAR[],
     sources_hybrid_trigger    VARCHAR[],
@@ -225,8 +280,8 @@ ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS plateaux JSON DEFAULT '{}'
 -- idempotent migration for databases that predate merged_into (dedup tombstone:
 -- NULL = live row; non-NULL = filename of the row this one was merged into)
 ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS merged_into VARCHAR;
--- idempotent migration for databases that predate sources_stats
-ALTER TABLE overview_records ADD COLUMN IF NOT EXISTS sources_stats VARCHAR[];
+-- sources_signal_stats (pigbrother Stats files, formerly sources_stats) is
+-- renamed / added in ensure_schema(), after this script.
 
 -- ── Operational statistics tables ────────────────────────────────────────────
 
@@ -496,6 +551,43 @@ def _ensure_operationaldata_id_default(con) -> None:
         )
 
 
+def _ensure_operationaldata_metadata_columns(con) -> bool:
+    """Add t_start / t_end / mode to an older operationaldata; True if any was added."""
+    present = {
+        row[0] for row in con.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'operationaldata'"
+        ).fetchall()
+    }
+    missing = [
+        (name, sql_type)
+        for name, sql_type in (("t_start", "TIMESTAMP"), ("t_end", "TIMESTAMP"), ("mode", "VARCHAR"))
+        if name not in present
+    ]
+    for name, sql_type in missing:
+        con.execute(f"ALTER TABLE operationaldata ADD COLUMN {name} {sql_type}")
+    return bool(missing)
+
+
+def _ensure_sources_signal_stats(con) -> bool:
+    """Rename overview_records.sources_stats (or add the column); True if changed."""
+    columns = {
+        row[0] for row in con.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'overview_records'"
+        ).fetchall()
+    }
+    if "sources_signal_stats" in columns:
+        return False
+    if "sources_stats" in columns:
+        con.execute(
+            "ALTER TABLE overview_records RENAME COLUMN sources_stats TO sources_signal_stats"
+        )
+    else:
+        con.execute("ALTER TABLE overview_records ADD COLUMN sources_signal_stats VARCHAR[]")
+    return True
+
+
 def ensure_schema(con) -> None:
     """Create all tables and apply idempotent migrations on *con*."""
     # users.hstart changed from TIMESTAMP[] (one row per acronym+housing) to a
@@ -536,3 +628,14 @@ def ensure_schema(con) -> None:
     con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS overview_records_ids VARCHAR[]")
     # idempotent migration for databases that predate the local_contact column
     con.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS local_contact VARCHAR[]")
+    # A24 migrations (PLAN_overview_records_from_operationaldata.md):
+    # operationaldata.t_start / t_end / mode, and overview_records.sources_stats
+    # renamed to sources_signal_stats (pigbrother Stats files, not DB
+    # statistics). DuckDB can't replay an ALTER on operationaldata from the WAL
+    # ("GetDefaultDatabase with no default database set": its id default is
+    # re-bound), so checkpoint at once: a writer killed later leaves no such
+    # ALTER in the WAL.
+    added = _ensure_operationaldata_metadata_columns(con)
+    renamed = _ensure_sources_signal_stats(con)
+    if added or renamed:
+        con.execute("CHECKPOINT")

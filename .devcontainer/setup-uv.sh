@@ -133,8 +133,8 @@ fi
 
 # --- Step 5: Install to_duckdb library and dashboard app dependencies ---
 echo "📊 Installing to_duckdb and the magnetdb dashboard..."
-uv pip install "./to_duckdb[test,notebook,cli]"
-uv pip install "./apps/dashboards/magnetdb[test]"
+uv pip install "./to_duckdb[test,notebook,cli,lint]"
+uv pip install "./apps/dashboards/magnetdb[test,lint]"
 
 echo "✅ UV Setup Complete! Activate it with: source $VENV/bin/activate"
 

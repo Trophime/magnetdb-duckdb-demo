@@ -25,4 +25,10 @@ SCALAR_CHANNEL_UNITS: dict[str, str] = {
     "field_mean": "tesla",
     "field_std": "tesla",
     "field_median": "tesla",
+    # op_run_scalars only: pupitre teb / BP means, in the pupitre units
+    # (pupitre-defs.json, no conversion), and their sample counts
+    "teb_mean": "degC",
+    "teb_count": "dimensionless",
+    "bp_mean": "bar",
+    "bp_count": "dimensionless",
 }

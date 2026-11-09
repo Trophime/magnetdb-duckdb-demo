@@ -67,6 +67,40 @@ test = ["pytest>=8.0.0,<10.0.0"]
 # marimo: interactive UI (apps/marimo); rich: used inside .ipynb cells
 notebook = ["marimo>=0.9.0,<1.0.0", "rich"]
 cli = ["duckdb-cli>=1.1.0,<2.0.0"]
+# Static checks, run from to_duckdb/:
+#   ruff check .                      # lint
+#   ty check                          # type check
+#   bandit -c pyproject.toml -r .     # security
+lint = ["ruff>=0.6.0", "ty>=0.0.1", "bandit[toml]>=1.7.0"]
 
 [tool.setuptools]
 packages = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["build", "*.egg-info", "*.ipynb"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "BLE"]
+ignore = ["E501", "W293", "F841"]
+
+[tool.ty.environment]
+python-version = "3.11"
+# Modules import each other flatly (`from schema import ...`); the sibling
+# packages are setuptools editable installs (import-hook finders), which ty
+# cannot follow, so their source trees are listed explicitly.
+extra-paths = [
+    ".",
+    "../python_magnetrun",
+    "../python_magnetgeo",
+    "../python_magnetcooling",
+    "../python_magnetsetup",
+]
+
+[tool.ty.src]
+exclude = ["build", "*.egg-info"]
+
+[tool.bandit]
+exclude_dirs = ["tests", "build", ".venv"]
+skips = ["B101"]  # assert_used

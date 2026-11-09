@@ -43,6 +43,9 @@ produced is noted in their section.
 
 - **`bdd.csv`** — Time series of magnet temperatures.
   Columns: `timestamp, teb, tsb, ted, tsd`.
+  `timestamp` is naive UTC (`mysql_connect.py --utc`, as exported by
+  `scripts/build_from_scratch.sh`); exports made before 2026-11 are Paris
+  local time.
 
 - **`temps.csv`** — Ambient/weather temperature time series.
   Columns: `time, temperature_2m [°C]`.

@@ -154,7 +154,7 @@ def load_overview_records(db_path=None):
                 housing AS Housing,
                 mode AS Mode,
                 t0,
-                array_to_string(COALESCE(sources_stats, []), ', ') AS "Stats"
+                array_to_string(COALESCE(sources_signal_stats, []), ', ') AS "Signal stats"
             FROM overview_records
             WHERE merged_into IS NULL
             ORDER BY t0 DESC NULLS LAST, filename
@@ -259,7 +259,7 @@ def overview_record_columns():
             if c in ("Overview Record", "Assembly")
             else {"name": c, "id": c}
         )
-        for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Stats")
+        for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Signal stats")
     ]
 
 
