@@ -71,7 +71,7 @@ from impact import (
     mark_hoop_stale,
     stale_summary,
 )
-from populate import FILE_TZ, as_aware
+from populate import _NAME_ONLY_TYPES, FILE_TZ, as_aware
 from schema import COIL_TYPES
 
 # ---------------------------------------------------------------------------
@@ -3867,6 +3867,9 @@ def _postprocess_overview_record(con, filename: str, verbose: bool = True) -> st
     the insert/upsert/from_dict writers, :func:`attach_assembly_to_overview_record`,
     and :func:`infer_overview_record_fields`.  A no-op until ``assembly_name`` is
     non-NULL and at least one overview source file is on record and readable.
+    The mode stored in ``operationaldata.mode`` for the first overview source
+    (by ``populate operationaldata-metadata``) is used when set; the file is
+    loaded only otherwise.
 
     Parameters
     ----------
@@ -3896,25 +3899,33 @@ def _postprocess_overview_record(con, filename: str, verbose: bool = True) -> st
     if not sources_overview:
         return "skipped_no_sources"
 
-    housing, _ = _parse_overview_filename(filename)
-    overview_path = _resolve_source_path(sources_overview[0], housing)
+    stored = con.execute(
+        "SELECT mode FROM operationaldata "
+        "WHERE type = 'Overview' AND name = ? AND mode IS NOT NULL LIMIT 1",
+        [Path(sources_overview[0]).stem],
+    ).fetchone()
+    if stored is not None:
+        mode = stored[0]
+    else:
+        housing, _ = _parse_overview_filename(filename)
+        overview_path = _resolve_source_path(sources_overview[0], housing)
 
-    from python_magnetrun.magnetdata import load_magnetdata
+        from python_magnetrun.magnetdata import load_magnetdata
 
-    try:
-        mdata = load_magnetdata(overview_path)
-        df_overview = mdata.Data["Courants_Alimentations"]
-    except Exception as exc:
-        if verbose:
-            print(f"  ! overview_record {filename}: could not read {overview_path}: {exc}")
-        return "skipped_no_sources"
+        try:
+            mdata = load_magnetdata(overview_path)
+            df_overview = mdata.Data["Courants_Alimentations"]
+        except Exception as exc:
+            if verbose:
+                print(f"  ! overview_record {filename}: could not read {overview_path}: {exc}")
+            return "skipped_no_sources"
 
-    try:
-        mode = infer_operating_mode(df_overview)
-    except ValueError as exc:
-        if verbose:
-            print(f"  ! overview_record {filename}: {exc}")
-        return "skipped_no_mode_data"
+        try:
+            mode = infer_operating_mode(df_overview)
+        except ValueError as exc:
+            if verbose:
+                print(f"  ! overview_record {filename}: {exc}")
+            return "skipped_no_mode_data"
 
     con.execute(
         "UPDATE overview_records SET mode = ? WHERE filename = ?",
@@ -4310,6 +4321,196 @@ def merge_duplicate_pupitre_records(
             f"across {len(groups)} group(s)."
         )
     return {"groups_checked": len(groups), "merges": n_merges}
+
+
+# operationaldata.type -> overview_records source column, for the SQL builder
+_OPERATIONALDATA_SOURCE_COLUMNS = {
+    "Archive": "sources_archive",
+    "Pupitre": "sources_pupitre",
+    "SignalStats": "sources_signal_stats",
+    "Default": "sources_default",
+    "Spike": "sources_spike",
+    "Trigger": "sources_trigger",
+}
+# select_files' minimum duration, applied to these types only (as discovery does)
+_MIN_DURATION_TYPES = ("Archive", "Pupitre")
+_MIN_SOURCE_DURATION_S = 30.0
+_UTC = ZoneInfo("UTC")
+
+
+def _sql_list(values) -> str:
+    """Render constant strings as a SQL ``IN`` list."""
+    return ", ".join(f"'{v}'" for v in values)
+
+
+def _weighted_scalar(scalars: dict, od_ids: list[int], prefix: str) -> float:
+    """``SUM(mean * count) / SUM(count)`` of ``<prefix>_mean`` over *od_ids*; 0.0 if none."""
+    total, count = 0.0, 0.0
+    for od_id in od_ids:
+        values = scalars.get(od_id, {})
+        if f"{prefix}_mean" in values and f"{prefix}_count" in values:
+            total += values[f"{prefix}_mean"] * values[f"{prefix}_count"]
+            count += values[f"{prefix}_count"]
+    return total / count if count else 0.0
+
+
+def build_overview_records_from_operationaldata(
+    con,
+    assembly_name: str,
+    reprocess: bool = False,
+    dry_run: bool = False,
+    db_tz: ZoneInfo = _UTC,
+    verbose: bool = True,
+) -> dict:
+    """Build ``overview_records`` rows of one assembly from ``operationaldata`` alone.
+
+    One row per ``Overview`` file of the assembly with stored ``t_start`` /
+    ``t_end`` (``populate operationaldata-metadata``); no file is read. Source
+    files are the ``operationaldata`` rows of any assembly of the same housing
+    whose ``[t_start, t_end]`` strictly overlaps the overview's, Archive and
+    Pupitre files of 30 s or less excepted (as ``select_files``). Default,
+    Spike and Trigger files are points in time, kept when
+    ``ov.t_start <= t_start < ov.t_end``. ``teb`` / ``bp`` are the
+    sample-weighted means of the ``teb_*`` / ``bp_*`` scalars of the pupitre
+    sources in ``op_run_scalars`` (0.0 when missing), and ``mode`` comes from
+    ``operationaldata.mode`` through :func:`_postprocess_overview_record`.
+    M8 assemblies are skipped: their hybrid files are not in
+    ``operationaldata``. The pupitre-duplicate merge
+    (:func:`merge_duplicate_pupitre_records`) is left to the caller.
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open connection with the current schema.
+    assembly_name : str
+        Assembly whose Overview files are turned into rows.
+    reprocess : bool, optional
+        Replace existing rows (by default they are skipped). The rewritten
+        row and the rows merged into it get ``merged_into = NULL``, so the
+        next merge sweep rebuilds the merges.
+    dry_run : bool, optional
+        Compute the rows but write nothing.
+    db_tz : :class:`~zoneinfo.ZoneInfo`, optional
+        Timezone of the stored naive timestamps (default UTC); ``t0`` is the
+        overview file-name time (minute precision) in this timezone.
+    verbose : bool, optional
+        Print one line per row.
+
+    Returns
+    -------
+    dict
+        ``{"written": int, "skipped_existing": int, "skipped_no_times": int,
+        "skipped_m8": int}``; ``written`` counts the rows written (or that
+        would be, with *dry_run*).
+    """
+    counts = {"written": 0, "skipped_existing": 0, "skipped_no_times": 0, "skipped_m8": 0}
+    housing_row = con.execute(
+        "SELECT housing FROM assemblies WHERE name = ?", [assembly_name]
+    ).fetchone()
+    housing = housing_row[0] if housing_row else None
+
+    n_without_times, n_overviews = con.execute(
+        "SELECT COUNT(*) FILTER (WHERE t_start IS NULL OR t_end IS NULL), COUNT(*) "
+        "FROM operationaldata WHERE assembly_name = ? AND type = 'Overview'",
+        [assembly_name],
+    ).fetchone()
+    if housing == "M8":
+        counts["skipped_m8"] = n_overviews
+        if verbose:
+            print(f"  ! {assembly_name}: M8 skipped (hybrid files are not in operationaldata)")
+        return counts
+    counts["skipped_no_times"] = n_without_times
+
+    rows = con.execute(
+        f"""
+        WITH src AS (
+            SELECT od.id, od.type, od.file, od.t_start, od.t_end
+            FROM operationaldata od JOIN assemblies sa ON sa.name = od.assembly_name
+            WHERE sa.housing = ? AND od.type IN ({_sql_list(_OPERATIONALDATA_SOURCE_COLUMNS)})
+              AND od.t_start IS NOT NULL AND od.t_end IS NOT NULL
+        )
+        SELECT ov.name, ov.file, ov.t_start, ov.t_end, src.id, src.type, src.file
+        FROM operationaldata ov
+        LEFT JOIN src ON CASE
+            WHEN src.type IN ({_sql_list(_NAME_ONLY_TYPES)})
+                THEN src.t_start >= ov.t_start AND src.t_start < ov.t_end
+            ELSE src.t_start < ov.t_end AND src.t_end > ov.t_start
+                AND (src.type NOT IN ({_sql_list(_MIN_DURATION_TYPES)})
+                     OR epoch(src.t_end) - epoch(src.t_start) > {_MIN_SOURCE_DURATION_S})
+        END
+        WHERE ov.assembly_name = ? AND ov.type = 'Overview'
+          AND ov.t_start IS NOT NULL AND ov.t_end IS NOT NULL
+        ORDER BY ov.t_start, ov.name
+        """,
+        [housing, assembly_name],
+    ).fetchall()
+
+    overviews: dict[str, dict] = {}
+    for name, ov_file, t_start, t_end, src_id, src_type, src_file in rows:
+        ov = overviews.setdefault(name, {
+            "file": ov_file, "t_start": t_start, "t_end": t_end,
+            "sources": {col: [] for col in _OPERATIONALDATA_SOURCE_COLUMNS.values()},
+            "pupitre_ids": [],
+        })
+        if src_id is None:
+            continue
+        ov["sources"][_OPERATIONALDATA_SOURCE_COLUMNS[src_type]].append(Path(src_file).name)
+        if src_type == "Pupitre":
+            ov["pupitre_ids"].append(src_id)
+
+    scalars: dict[int, dict[str, float]] = {}
+    for od_id, channel, value in con.execute(
+        "SELECT s.operationaldata_id, s.channel, s.value FROM op_run_scalars s "
+        "JOIN operationaldata od ON od.id = s.operationaldata_id "
+        "JOIN assemblies sa ON sa.name = od.assembly_name "
+        "WHERE sa.housing = ? AND od.type = 'Pupitre' "
+        "AND s.channel IN ('teb_mean', 'teb_count', 'bp_mean', 'bp_count')",
+        [housing],
+    ).fetchall():
+        scalars.setdefault(od_id, {})[channel] = value
+
+    for name, ov in overviews.items():
+        if not reprocess and con.execute(
+            "SELECT 1 FROM overview_records WHERE filename = ?", [name]
+        ).fetchone():
+            counts["skipped_existing"] += 1
+            continue
+
+        _, t0_local = _parse_overview_filename(name)
+        columns = {
+            "filename": name,
+            "assembly_name": assembly_name,
+            "housing": housing,
+            "mode": None,  # set by _postprocess_overview_record from operationaldata.mode
+            "t0": t0_local.astimezone(db_tz).replace(tzinfo=None),
+            "duration": (ov["t_end"] - ov["t_start"]).total_seconds(),
+            "teb": _weighted_scalar(scalars, ov["pupitre_ids"], "teb"),
+            "bp": _weighted_scalar(scalars, ov["pupitre_ids"], "bp"),
+            **{col: [] for col in _OVERVIEW_SOURCE_LIST_COLUMNS},
+            **{col: {} for col in _OVERVIEW_JSON_COLUMNS},
+        }
+        columns["sources_overview"] = [Path(ov["file"]).name]
+        columns.update({col: sorted(names) for col, names in ov["sources"].items()})
+        counts["written"] += 1
+
+        if dry_run:
+            if verbose:
+                n_sources = sum(len(v) for v in ov["sources"].values())
+                print(
+                    f"  [dry-run] overview_record  {name}  duration={columns['duration']:.1f}s  "
+                    f"{n_sources} source file(s)"
+                )
+            continue
+        if reprocess:
+            con.execute(
+                "UPDATE overview_records SET merged_into = NULL "
+                "WHERE filename = ? OR merged_into = ?",
+                [name, name],
+            )
+        _write_overview_record_row(
+            con, columns, on_conflict="replace" if reprocess else "skip", verbose=verbose
+        )
+    return counts
 
 
 def update_assembly_magnet(con, assembly_name: str, magnet_name: str, **kwargs) -> None:

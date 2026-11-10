@@ -72,6 +72,7 @@ Unified CLI entry point for the student MagnetDB DuckDB.
     python magnetdb.py populate overview-records [--assembly ASSEMBLY ...] [--all] [--reprocess] [--dry-run]
     python magnetdb.py populate overview-records-from-archive [--assembly ASSEMBLY ...] [--all] [--reprocess] [--dry-run]
     python magnetdb.py populate overview-records-from-json <json_file> [--assembly ASSEMBLY] [--db-tz ...] [--reprocess] [--dry-run] [--db ...]
+    python magnetdb.py populate overview-records-from-operationaldata [--assembly ASSEMBLY ...] [--all] [--db-tz ...] [--reprocess] [--max-gap-seconds S] [--dry-run]
 
     python magnetdb.py hoop-stress compute  [--assembly ASSEMBLY ...] [--all] [--db ...] [--magnet-type H|B|S|all]
                                             [--bins 0,100,200,...] [--parquet-dir ...] [--geometries ...]
@@ -114,6 +115,7 @@ from magnet_geometry import refresh_geometry_problem
 from crud import (
     _log_operation,
     _resolve_source_path,
+    build_overview_records_from_operationaldata,
     check_geometry_data,
     decommission_assembly,
     delete_assembly,
@@ -1728,6 +1730,51 @@ def cmd_populate_overview_records_infer(args) -> None:
     print("\nDone.")
 
 
+def cmd_populate_overview_records_from_operationaldata(args) -> None:
+    db_path = args.db
+    if not Path(db_path).exists():
+        print(f"Error: '{db_path}' does not exist.")
+        sys.exit(1)
+    try:
+        db_tz = ZoneInfo(args.db_tz)
+    except (ValueError, KeyError):
+        print(f"Error: Unknown timezone '{args.db_tz}'")
+        sys.exit(1)
+
+    assembly_names = _resolve_assembly_names(args, db_path)
+    if not assembly_names:
+        print("No assemblies specified. Use --assembly ASSEMBLY or --all.")
+        sys.exit(1)
+
+    with duckdb.connect(db_path, read_only=args.dry_run) as con:
+        if not args.dry_run:
+            ensure_schema(con)
+        all_counts: dict[str, dict] = {}
+        for assembly_name in assembly_names:
+            print(f"\nAssembly: {assembly_name}")
+            counts = build_overview_records_from_operationaldata(
+                con, assembly_name, reprocess=args.reprocess, dry_run=args.dry_run, db_tz=db_tz,
+            )
+            print(
+                f"  {counts['written']} written, {counts['skipped_existing']} already present, "
+                f"{counts['skipped_no_times']} without t_start/t_end, "
+                f"{counts['skipped_m8']} M8 skipped"
+            )
+            all_counts[assembly_name] = counts
+        if args.dry_run:
+            return
+
+        print("\nChecking for pupitre-duplicate overview_records …")
+        merges = merge_duplicate_pupitre_records(
+            con, verbose=True, max_gap_seconds=args.max_gap_seconds
+        )
+        for assembly_name, counts in all_counts.items():
+            _log_operation(
+                con, "build", "overview_records", assembly_name,
+                details={**counts, "merges": merges["merges"]},
+            )
+
+
 def cmd_populate_overview_records(args) -> None:
     try:
         from python_magnetrun.analysis.processing import (
@@ -2045,6 +2092,8 @@ _DISPATCH = {
     ("populate",          "overview-records-from-archive"): cmd_populate_overview_records_from_archive,
     ("populate",          "overview-records-from-json"):   cmd_populate_overview_records_from_json,
     ("populate",          "overview-records-infer"):     cmd_populate_overview_records_infer,
+    ("populate",          "overview-records-from-operationaldata"):
+        cmd_populate_overview_records_from_operationaldata,
     ("hoop-stress",       "compute"):                    cmd_hoop_stress_compute,
     ("hoop-stress",       "barchart"):                  cmd_hoop_stress_barchart,
     ("hoop-stress",       "history"):                   cmd_hoop_stress_history,
@@ -2678,7 +2727,7 @@ def build_parser() -> argparse.ArgumentParser:
     # ── populate ─────────────────────────────────────────────────────────────
     pop_p = entity.add_parser("populate", help="Populate data tables from files.")
     pop_sub = pop_p.add_subparsers(dest="action", required=True,
-                                   metavar="{operationaldata,operationaldata-metadata,experiments,overview-records,overview-records-from-archive,overview-records-from-json}")
+                                   metavar="{operationaldata,operationaldata-metadata,experiments,overview-records,overview-records-from-archive,overview-records-from-json,overview-records-from-operationaldata}")
 
     # populate operationaldata
     p_opdata = pop_sub.add_parser(
@@ -2874,6 +2923,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_ov_infer.add_argument("--dry-run", action="store_true",
                             help="List rows that would be processed without writing to the DB.")
+
+    # populate overview-records-from-operationaldata
+    p_ov_ops = pop_sub.add_parser(
+        "overview-records-from-operationaldata",
+        help="Build overview_records rows with SQL over operationaldata (no file read).",
+        description=(
+            "One overview_records row per Overview file with stored t_start / t_end "
+            "(populate operationaldata-metadata): sources by time overlap, teb/bp from "
+            "op_run_scalars, mode from operationaldata. M8 assemblies are skipped. "
+            "Then merges pupitre duplicates, as overview-records-infer."
+        ),
+    )
+    _db_arg(p_ov_ops)
+    _assemblies_arg(p_ov_ops)
+    p_ov_ops.add_argument(
+        "--db-tz", default="UTC", dest="db_tz",
+        help="Timezone of the stored timestamps (default: UTC, as overview_records.t0)",
+    )
+    p_ov_ops.add_argument("--reprocess", action="store_true",
+                          help="Replace existing rows (default: skip them).")
+    p_ov_ops.add_argument(
+        "--max-gap-seconds", type=float, default=60.0, dest="max_gap_seconds",
+        help="Max real-time gap (seconds) between two pupitre-sharing overview_records "
+             "for them to be merged as duplicates (default: 60.0).",
+    )
+    p_ov_ops.add_argument("--dry-run", action="store_true",
+                          help="Compute the rows without writing to the DB.")
 
     # ── hoop-stress ───────────────────────────────────────────────────────────
     hs_p = entity.add_parser("hoop-stress",

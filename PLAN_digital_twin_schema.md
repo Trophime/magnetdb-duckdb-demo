@@ -1615,11 +1615,39 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
       by `A3_vs_A4`, a real imbalance.
     - The stats computed with the old `IH` for these files (`compute_exp_stats`)
       need a recompute after `housing sync` (A22).
-14. **`M8_A211225_00` is supras-only in DuckDB**, yet `Idcct1` reaches
-    6 856 A (a Bitters-group supply) and insert / Bitters taps carry signal
-    (`ch1–7`, `11`, `12`, `15`, `16`) in up to all 28 files: 181
-    channel-check tags (2026-11-07). Missing magnets in the assembly JSON,
-    or that supply and those taps served something else — to check.
+14. **[FIXED 2026-11-09] `M8_A211225_00` is supras-only in DuckDB**, yet
+    `Idcct1` reaches 6 856 A (a Bitters-group supply) and insert / Bitters
+    taps carry signal (`ch1–7`, `11`, `12`, `15`, `16`) in up to all 28
+    files: 181 channel-check tags (2026-11-07). Missing magnets in the
+    assembly JSON, or that supply and those taps served something else — to
+    check.
+    Checked on the 28 pupitre files and EXPERIENCES_LOG (2026-11-09):
+    - 2022-11-24 → 2023-07-25 (17 files, 12-slot pupitre, stale header
+      `HL-28_1_BI04_1_BE02_1_13/05/2014`): only the B supply (Idcct1/2, up
+      to IB = 30.5 kA, 9.0 T), Bitters voltage on `Ucoil11`/`Ucoil12`
+      (Icoil11/12 = IB), no `Ucoil13–16` columns, one hydraulic circuit;
+      Field/IB = 2.94 × 10⁻⁴ T/A in every powered file; M8e (Bitters)
+      sessions in the log. So M8Bitters was in the assembly.
+    - 2023-09-13 → 2023-09-15 (11 files, 16-slot pupitre, header
+      `M23012001`): insert on the H supply (Idcct3/4, up to IH = 12 kA,
+      10.7 T) on `Ucoil1–7`, Bitters on `Ucoil15`/`Ucoil16` with the same
+      Field/IB ratio; M8i sessions from 2023-09-13 13:45. These are runs of
+      `M8_A230919_00`, six days before its recorded commissioning.
+
+    Fix (user decision, option A): `M8_A211225_00` = Hybrid + M8Bitters
+    until 2023-09-13 07:00; `M8_A230919_00` commissioned 2023-09-13 08:00
+    (name kept; assembly names are not parsed for dates); M8Bitters
+    `assembled_at` 2021-12-25 (hifimagnet-projects JSON). Housing versions:
+    `M8-211225` now carries the 12-slot wiring (`voltage_channels_gr1` =
+    Ucoil11/12, `voltage_channels_gr2` = Ucoil1–10, an exception to the
+    empty-base rule) and the new `M8-230913` (2023-09-13T13:48:50+02:00, first
+    16-slot file) is back to the base wiring. Renaming `M8_A230919_00` to
+    `M8_A230913_00` is planned in
+    [PLAN_m8_assembly_rename.md](PLAN_m8_assembly_rename.md) (not approved).
+    Takes effect at the next build;
+    `assembly update` cannot change assembly dates or magnets. Not handled:
+    `Ucoil15`/`16` read ≈ 238 V at < 50 A on `2023.09.13 - 13:48:50` and
+    `13:53:31` (left to the check rules).
 15. **`M10_A220223_00` (insert `M19071101`, 12 helices) reads taps 5–7
     only from `2022.04.06 - 11:42:33`** (2–7 until `2022.04.02 - 14:22:58`),
     up to ≈ 27 kA, while the DB keeps it until 2022-04-22; nothing changes
