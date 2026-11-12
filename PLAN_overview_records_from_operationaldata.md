@@ -330,6 +330,15 @@ taken on approval:
     → verify: `--help` lists the steps; `--from operationaldata --to
     overview-infer` on a scratch DB copy runs clean.
 
+### Follow-up after phase G
+
+- [PLAN_overview_mode_gr_mapping.md](PLAN_overview_mode_gr_mapping.md)
+  (data issue #17, not approved): the stored `operationaldata.mode` uses
+  `Courant_GR1` as IH, wrong on M8/M10; 27 of 1148 classified M8/M10
+  Overview files change mode once fixed. It does not block phase G: the
+  step-13 "`mode` identical" check compares two results of the same
+  function.
+
 ## Assumptions & open questions
 
 1. **Conflict with ROADMAP A13 / `to_duckdb/TODOs.md`.** They propose dropping

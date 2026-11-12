@@ -726,7 +726,19 @@ flag broken files.
     python_magnetrun, fixing its hours range, which is empty for a run that
     crosses midnight (`range(start.hour, end.hour + 1)`);
   - removing the dashboard's own `hybrid:I_BOB` path is a later step;
-  - **check first** (digital twin open question #27): whether the Hybrid and
-    pupitre clocks need a lag correction before the 0.5 s `merge_asof`
-    alignment — pupitre vs pigbrother clocks do differ
+  - **clock lag** (digital twin open question #27, measured 2026-11-08):
+    the Hybrid and pupitre clocks differ by minutes (−190 s on M8
+    `2026.10.30 - 09:10:03`, pupitre time + lag = Hybrid time, no drift
+    over the run); pupitre vs pigbrother clocks differ too, and the lags
+    vary from file to file
     ([PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md)).
+    Design points for the 1b plan:
+    - shift `I_BOB` by the lag **before** the 0.5 s `merge_asof`;
+    - load Hybrid hours covering the shifted window: with −190 s, a run
+      starting in the first ~3 min of an hour needs the previous hour;
+    - lag source: `overview_records.sync_info` (S2, lags computed per
+      overview record once the pupitre / pigbrother / Hybrid sources are
+      attached), with a per-file estimate as fallback (IB / IH vs Hybrid
+      `ALIM1` / `ALIM2`, loaded with `LoadOptions.sessions_log`, or
+      `SupraField` vs `I_BOB`; tool: python_magnetrun
+      `examples/hybrid_pupitre_lag.py`).
