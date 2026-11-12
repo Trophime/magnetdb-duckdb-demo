@@ -207,11 +207,11 @@ def _local_to_db(ts: str, db_tz: ZoneInfo) -> datetime:
     return local.astimezone(db_tz).replace(tzinfo=None)
 
 
-def _overview_mode(path: Path, verbose: bool) -> str | None:
-    """Operating mode of one Overview file, or None when it cannot be inferred."""
+def _overview_mode(path: Path, housing: str | None, verbose: bool) -> str | None:
+    """Operating mode of one Overview file (IH / IB channels of *housing* at the file time), or None."""
     from python_magnetrun import magnetdata
 
-    from crud import infer_operating_mode
+    from crud import _overview_current_channels, _parse_overview_filename, infer_operating_mode
 
     try:
         df = magnetdata.load_magnetdata(str(path)).Data["Courants_Alimentations"]
@@ -220,7 +220,8 @@ def _overview_mode(path: Path, verbose: bool) -> str | None:
             print(f"  ! {path.name}: could not read Courants_Alimentations: {exc}")
         return None
     try:
-        return infer_operating_mode(df)
+        ih, ib = _overview_current_channels(housing, _parse_overview_filename(path.stem)[1])
+        return infer_operating_mode(df, ih=ih, ib=ib)
     except ValueError as exc:
         if verbose:
             print(f"  ! {path.name}: {exc}")
@@ -324,7 +325,7 @@ def fill_operationaldata_metadata(
                 continue
             t_start, t_end = _local_to_db(start, db_tz), _local_to_db(end, db_tz)
 
-        mode = _overview_mode(path, verbose) if file_type == "Overview" else None
+        mode = _overview_mode(path, housing, verbose) if file_type == "Overview" else None
         if not dry_run:
             con.execute(
                 "UPDATE operationaldata SET t_start = ?, t_end = ?, mode = ? WHERE id = ?",

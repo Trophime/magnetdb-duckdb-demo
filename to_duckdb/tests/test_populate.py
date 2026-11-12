@@ -190,6 +190,44 @@ def test_fill_operationaldata_metadata_stores_utc_times_and_overview_mode(
     assert ramp_overview == ["M10_Overview_250115-1200.tdms"]  # only Overview files loaded
 
 
+def test_fill_operationaldata_metadata_mode_uses_housing_channels(con_populated, monkeypatch):
+    """M10 (ASSEMBLY_01): IH is GR2, except during M10-210325 where it is GR1 (data issue #17)."""
+    import pandas as pd
+
+    from populate import fill_operationaldata_metadata
+
+    # The insert follows the Bitters (slope 1) up to 250 A, then rises 10 times faster:
+    # NORMAL with the fit window on the Bitters, ECO with it on the insert.
+    bitters = [float(v) for v in range(0, 1001, 5)]
+    insert = [v if v <= 250 else 250 + 10 * (v - 250) for v in bitters]
+    frames = {
+        "M10_Overview_250115-1200.tdms": pd.DataFrame(
+            {"Courant_GR1": bitters, "Courant_GR2": insert}),
+        "M10_Overview_210429-1509.tdms": pd.DataFrame(
+            {"Courant_GR1": insert, "Courant_GR2": bitters}),
+    }
+    monkeypatch.setattr(
+        "python_magnetrun.magnetdata.load_magnetdata",
+        lambda path: _FakeMData(frames[Path(path).name]),
+    )
+    _add_files(
+        con_populated,
+        ("pbsurv/M10/Overview/M10_Overview_250115-1200.tdms", "Overview"),
+        ("pbsurv/M10/Overview/M10_Overview_210429-1509.tdms", "Overview"),
+    )
+    fake, _calls = _fake_extract_data({
+        "M10_Overview_250115-1200.tdms": ("2025-01-15 12:00:00", "2025-01-15 13:00:00"),
+        "M10_Overview_210429-1509.tdms": ("2021-04-29 15:09:00", "2021-04-29 16:00:00"),
+    })
+    monkeypatch.setattr("python_magnetrun.utils.files.extract_data", fake)
+
+    fill_operationaldata_metadata(con_populated, "ASSEMBLY_01", records_base=RECORDS, verbose=False)
+
+    meta = _metadata(con_populated)
+    assert meta["M10_Overview_250115-1200.tdms"][2] == "NORMAL"
+    assert meta["M10_Overview_210429-1509.tdms"][2] == "NORMAL"
+
+
 def test_fill_operationaldata_metadata_skips_filled_rows_unless_reprocess(
     con_populated, monkeypatch, ramp_overview
 ):

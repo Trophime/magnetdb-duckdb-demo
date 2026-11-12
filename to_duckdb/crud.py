@@ -3759,50 +3759,78 @@ def _mean_across_frames(dfs: list, column: str) -> float:
     return total / count if count else 0.0
 
 
-def infer_operating_mode(df) -> str:
+def _overview_current_channels(housing: str | None, t0: datetime | None) -> tuple[str, str]:
+    """``(ih, ib)`` Overview current channels of *housing* at *t0* (data issue #17).
+
+    GR2 is IH when the housing version maps ``Courant_GR1`` to ``IB`` and
+    ``Courant_GR2`` to ``IH`` (M8, M10 outside the ``M10-210325`` swap);
+    otherwise, and for an unknown housing, GR1 is IH. Without *t0* the base
+    wiring is used.
+    """
+    from python_magnetrun.housing_config import HOUSING_CONFIGS
+
+    default = ("Courant_GR1", "Courant_GR2")
+    cfg = HOUSING_CONFIGS.get(housing)
+    if cfg is None:
+        return default
+    if t0 is not None:
+        cfg = cfg.at(t0)
+    groups = (
+        cfg.get_pupitre_current_channel("Courant_GR1"),
+        cfg.get_pupitre_current_channel("Courant_GR2"),
+    )
+    return ("Courant_GR2", "Courant_GR1") if groups == ("IB", "IH") else default
+
+
+def infer_operating_mode(df, ih: str = "Courant_GR1", ib: str = "Courant_GR2") -> str:
     """Classify the operating mode from the IH(IB) relation near IB = 0.
 
     Ported from the housing_summary mode-inference heuristic: fits a line
-    to ``Courant_GR1`` (IH) vs ``Courant_GR2`` (IB) for IB in a low-current
-    window and classifies the slope.
+    to the insert current *ih* vs the Bitters current *ib* for IB in a
+    low-current window and classifies the slope.
 
     Parameters
     ----------
     df : :class:`~pandas.DataFrame`
-        Must contain ``Courant_GR1`` and ``Courant_GR2`` columns (bare TDMS
-        channel names from the ``Courants_Alimentations`` group).
+        Overview ``Courants_Alimentations`` group (bare TDMS channel names);
+        must contain *ih* and/or *ib*.
+    ih : str, optional
+        Channel holding the insert current IH [A]. Default ``"Courant_GR1"``
+        (M9); see :func:`_overview_current_channels` for the channel of a
+        housing version.
+    ib : str, optional
+        Channel holding the Bitters current IB [A]. Default ``"Courant_GR2"``.
 
     Returns
     -------
     str
-        ``"NORMAL"``, ``"ECO"``, or ``"UNKNOWN"``. Only one of ``Courant_GR1``/
-        ``Courant_GR2`` present means a single-channel housing, not an
-        inconclusive fit, so ``"NORMAL"`` is returned in that case.
+        ``"NORMAL"``, ``"ECO"``, or ``"UNKNOWN"``. Only one of *ih* / *ib*
+        present means a single-channel housing, not an inconclusive fit, so
+        ``"NORMAL"`` is returned in that case.
 
     Raises
     ------
     ValueError
-        If neither ``Courant_GR1`` nor ``Courant_GR2`` is present — this
-        indicates a malformed/incomplete source file, not a classification
-        outcome.
+        If neither *ih* nor *ib* is present — this indicates a
+        malformed/incomplete source file, not a classification outcome.
     """
     import numpy as np
 
     ib_zero_threshold = 50
     ih_zero_threshold = 50
 
-    has_ih = "Courant_GR1" in df
-    has_ib = "Courant_GR2" in df
+    has_ih = ih in df
+    has_ib = ib in df
     if not has_ih and not has_ib:
         raise ValueError(
-            "infer_operating_mode: neither Courant_GR1 nor Courant_GR2 present"
+            f"infer_operating_mode: neither {ih} nor {ib} present"
         )
     if has_ih != has_ib:
         return "NORMAL"
 
     try:
-        IH = np.asarray(df["Courant_GR1"], dtype=float)
-        IB = np.asarray(df["Courant_GR2"], dtype=float)
+        IH = np.asarray(df[ih], dtype=float)
+        IB = np.asarray(df[ib], dtype=float)
     except TypeError:
         return "UNKNOWN"
 
@@ -3907,7 +3935,7 @@ def _postprocess_overview_record(con, filename: str, verbose: bool = True) -> st
     if stored is not None:
         mode = stored[0]
     else:
-        housing, _ = _parse_overview_filename(filename)
+        housing, t0 = _parse_overview_filename(filename)
         overview_path = _resolve_source_path(sources_overview[0], housing)
 
         from python_magnetrun.magnetdata import load_magnetdata
@@ -3921,7 +3949,8 @@ def _postprocess_overview_record(con, filename: str, verbose: bool = True) -> st
             return "skipped_no_sources"
 
         try:
-            mode = infer_operating_mode(df_overview)
+            ih, ib = _overview_current_channels(housing, t0)
+            mode = infer_operating_mode(df_overview, ih=ih, ib=ib)
         except ValueError as exc:
             if verbose:
                 print(f"  ! overview_record {filename}: {exc}")

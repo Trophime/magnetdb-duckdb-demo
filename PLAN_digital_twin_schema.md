@@ -1687,7 +1687,8 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
     of #27 (residual 273 / 356 A → 7.5 / 4.8 A). Masked samples are still
     0; switching to NaN is a separate plan. Unclosed log rows can widen the
     windows (study note, open question 4).
-17. **`to_duckdb` `infer_operating_mode` assumes `Courant_GR1` = IH and
+17. **[FIXED in code 2026-11-12; stored modes not yet reprocessed]
+    `to_duckdb` `infer_operating_mode` assumes `Courant_GR1` = IH and
     `Courant_GR2` = IB**, true on M9 only: on M8 and M10 GR1 feeds the
     Bitters (`reference_gr1_current` = `IB`), so the IH(IB) fit is
     inverted there (M5, M7: one circuit, NORMAL, fine). NORMAL vs ECO still
@@ -1700,6 +1701,16 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
     `reference_gr1_current` / `reference_gr2_current`, keep the
     single-circuit case as NORMAL, then check the stored
     `operationaldata.mode` values on M8/M10.
+    Fix ([PLAN_overview_mode_gr_mapping.md](PLAN_overview_mode_gr_mapping.md),
+    plan B): `crud._overview_current_channels(housing, t0)` reads the
+    version in force through python_magnetrun
+    `get_pupitre_current_channel` (GR2 is IH when GR1 → `IB` and GR2 → `IH`,
+    else GR1); `infer_operating_mode(df, ih=, ib=)`; both callers pass the
+    channels. The M10 supply swap is covered by the new
+    `pigbrother_current_map` of `M10-210325`
+    ([PLAN_pigbrother_pupitre_current_channels.md](PLAN_pigbrother_pupitre_current_channels.md)).
+    DBs built before the fix (`magnetdb-2026-11-10.duckdb` included) keep
+    the old M8/M10 modes until reprocessed (plan B steps 6–7) or rebuilt.
 18. **24 pupitre files stored under two housings** (found 2026-11-10 on
     `magnetdb-2026-11-05`, byte-identical copies checked with `cmp`): each
     file is copied into another housing's folder, so its experiment (and its

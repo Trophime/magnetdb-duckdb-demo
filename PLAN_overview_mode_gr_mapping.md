@@ -1,8 +1,10 @@
 # Plan: operating mode with the right IH / IB channels (data issue #17)
 
-**Status (2026-11-09): drafted, not approved.** Follow-up of phase G of
-[PLAN_overview_records_from_operationaldata.md](PLAN_overview_records_from_operationaldata.md);
-to run after it. Needs `approve` before any step.
+**Status (2026-11-12): revised as plan B (see the end) and approved; steps
+1–4 done and committed, not pushed. Push, calcul22 pull and the reprocessing
+of a DB copy (steps 5–7) wait for a go-ahead.** Follow-up of phase G of
+[PLAN_overview_records_from_operationaldata.md](PLAN_overview_records_from_operationaldata.md),
+done before the rest of phase G (it does not block it).
 
 ## Problem
 
@@ -147,3 +149,52 @@ Commits on a separate go-ahead.
    matching (sync / lag) pairs the wrong currents during the M10 swap
    (2021-03-25 → 2021-07-10). Same root cause; separate plan if needed.
 5. The ECO / NORMAL thresholds (0.66–1.5) and the fit window are kept.
+
+## Plan B (revision approved 2026-11-12)
+
+User decision: no formula parsing in `to_duckdb`. Question 4 became
+[PLAN_pigbrother_pupitre_current_channels.md](PLAN_pigbrother_pupitre_current_channels.md)
+(plan A, committed: python_magnetrun `e4c1654`, superproject `0fcb682`): new
+`HousingConfig.pigbrother_current_map`, set in `M10-210325` to
+`{"GR1": "IH", "GR2": "IB"}`. Question 3: data issue #17 is committed, so it
+is marked there.
+
+`_overview_current_channels(housing, t0)` reads
+`HOUSING_CONFIGS[housing].at(t0).get_pupitre_current_channel("Courant_GR1"/"Courant_GR2")`:
+`("IB", "IH")` → `("Courant_GR2", "Courant_GR1")`, anything else (M9, M5, M7,
+the M10 swap, an unknown housing) → `("Courant_GR1", "Courant_GR2")`; no
+`t0` → base wiring. `t0` comes from the Overview file name
+(`_parse_overview_filename`) in both callers; `_overview_mode(path, housing,
+verbose)`.
+
+Remaining steps:
+
+5. Commit (superproject; python_magnetrun is already committed), push, then
+   on calcul22 `git pull` + `git submodule update`. → verify: calcul22
+   `crud.py` has `_overview_current_channels`, `.at()` there returns the map
+   for `M10-210325`.
+6. On calcul22 in `screen`: copy `magnetdb-2026-11-10.duckdb` to
+   `~/magnetdb-checks/magnetdb-2026-11-10.mode17.duckdb`, then
+   `magnetdb.py populate operationaldata-metadata --type Overview --reprocess
+   --records-base ~/LNCMIG-Data/records` with `--assembly` for the 40 M8 /
+   M10 assemblies. → verify (read-only, copy vs reference): ≈ 27 modes
+   changed, 0 in the swap period, M9 untouched, `t_start`/`t_end` unchanged,
+   reference SHA-256 unchanged.
+7. On the copy, `UPDATE overview_records SET mode = operationaldata.mode`
+   (M8/M10 Overview rows, same file) rather than
+   `overview-records-from-operationaldata --reprocess` (not validated before
+   phase G). → verify: 0 rows where the two modes differ.
+
+The copy keeps `M10-210325` without the map in `housing_config_versions`
+(`housing sync` reports, never overwrites); nothing reads it from the DB.
+
+### Results (2026-11-12, calcul24)
+
+- Step 1 baseline: `to_duckdb` 838 passed, 3 skipped.
+- Step 2: 13 new tests (`test_crud.py`: keywords ×3,
+  `_overview_current_channels` ×8, postprocess load path; `test_populate.py`:
+  M10 file outside and during the swap). All failed before the change; on the
+  synthetic M10 pair today's code gives ECO, the right channels NORMAL.
+- Step 3: 851 passed, 3 skipped (838 + 13). `ruff`: the 17 findings in the
+  four files predate the change.
+- Step 4: data issue #17 marked fixed in code (stored modes pending).

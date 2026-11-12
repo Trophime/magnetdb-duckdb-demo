@@ -2417,6 +2417,63 @@ def test_infer_operating_mode_normal_when_only_ib_present():
     assert infer_operating_mode(df) == "NORMAL"
 
 
+def _bitters_gr1_insert_gr2():
+    """M10-style pair: GR1 = Bitters, GR2 = insert (data issue #17).
+
+    The insert follows the Bitters (slope 1) up to 250 A, then rises 10 times
+    faster: the fit window taken on the Bitters gives NORMAL, the one taken on
+    the insert current gives ECO.
+    """
+    ib = [float(v) for v in range(0, 1001, 5)]
+    ih = [v if v <= 250 else 250 + 10 * (v - 250) for v in ib]
+    return {"Courant_GR1": ib, "Courant_GR2": ih}
+
+
+def test_infer_operating_mode_ih_ib_keywords_select_the_channels():
+    df = _bitters_gr1_insert_gr2()
+    assert infer_operating_mode(df) == "ECO"  # GR1 taken as IH: wrong on M10
+    assert infer_operating_mode(df, ih="Courant_GR2", ib="Courant_GR1") == "NORMAL"
+
+
+def test_infer_operating_mode_keywords_single_channel_is_normal():
+    df = {"Courant_GR2": [100.0, 200.0, 300.0]}
+    assert infer_operating_mode(df, ih="Courant_GR2", ib="Courant_GR1") == "NORMAL"
+
+
+def test_infer_operating_mode_keywords_raise_when_both_missing():
+    with pytest.raises(ValueError):
+        infer_operating_mode({}, ih="Courant_GR2", ib="Courant_GR1")
+
+
+# ---------------------------------------------------------------------------
+# _overview_current_channels()
+# ---------------------------------------------------------------------------
+
+GR1_IH = ("Courant_GR1", "Courant_GR2")
+GR2_IH = ("Courant_GR2", "Courant_GR1")
+
+
+@pytest.mark.parametrize(
+    "housing, t0, expected",
+    [
+        ("M9", datetime(2022, 1, 27, 17, 56, tzinfo=FILE_TZ), GR1_IH),
+        ("M8", datetime(2026, 3, 6, 9, 11, tzinfo=FILE_TZ), GR2_IH),
+        ("M10", datetime(2022, 1, 15, 12, 0, tzinfo=FILE_TZ), GR2_IH),
+        # M10-210325: supplies A1 + A2 (GR1) feed the insert
+        ("M10", datetime(2021, 4, 29, 15, 9, tzinfo=FILE_TZ), GR1_IH),
+        ("M10", None, GR2_IH),  # no time: base wiring
+        # single circuit, unknown housing: today's default
+        ("M5", datetime(2015, 1, 1, tzinfo=FILE_TZ), GR1_IH),
+        ("M7", datetime(2014, 3, 20, tzinfo=FILE_TZ), GR1_IH),
+        ("X99", datetime(2022, 1, 1, tzinfo=FILE_TZ), GR1_IH),
+    ],
+)
+def test_overview_current_channels(housing, t0, expected):
+    from crud import _overview_current_channels
+
+    assert _overview_current_channels(housing, t0) == expected
+
+
 # ---------------------------------------------------------------------------
 # _postprocess_overview_record()
 # ---------------------------------------------------------------------------
@@ -2612,6 +2669,35 @@ def test_postprocess_overview_record_loads_file_when_stored_mode_is_null(con, mo
     assert status == "applied"
     row = con.execute(
         "SELECT mode FROM overview_records WHERE filename = 'M9_Overview_220127-1756'"
+    ).fetchone()
+    assert row == ("NORMAL",)
+
+
+def test_postprocess_overview_record_load_path_uses_housing_channels(con, monkeypatch):
+    """On M10 the loaded file is classified with GR2 as IH (data issue #17)."""
+    insert_assembly(con, {
+        "name": "M10_ASSEMBLY_T", "housing": "M10",
+        "commissioned_at": "2025-01-01 00:00:00", "decommissioned_at": None,
+    }, verbose=False)
+    monkeypatch.setattr(
+        "python_magnetrun.magnetdata.load_magnetdata",
+        lambda path: _FakeTdmsData(_bitters_gr1_insert_gr2()),
+    )
+    insert_overview_record_from_dict(
+        con,
+        {
+            "filename": "M10_Overview_250115-1200",
+            "assembly_name": "M10_ASSEMBLY_T",
+            "sources_overview": ["M10_Overview_250115-1200.tdms"],
+        },
+        verbose=False,
+    )
+
+    status = _postprocess_overview_record(con, "M10_Overview_250115-1200", verbose=False)
+
+    assert status == "applied"
+    row = con.execute(
+        "SELECT mode FROM overview_records WHERE filename = 'M10_Overview_250115-1200'"
     ).fetchone()
     assert row == ("NORMAL",)
 
