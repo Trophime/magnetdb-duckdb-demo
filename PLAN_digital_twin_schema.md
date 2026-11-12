@@ -1057,12 +1057,25 @@ Procedure, as implemented (uncommitted) for M8 in
 - **Pupitre `Field` and pigbrother `Champ_magn` are computed**, by design:
   both apply the factors in use to the circuit currents (`Champ_magn` [mT]
   = `Field` [T] × 1000; fits exact to 0.05–0.1 mT, e.g. M9 2026-05-08:
-  7.329 / 3.766 G/A, M9 2026-10-29: 8.943 / 3.634 G/A). Neither is a
-  measured field; the "Hall probe" description of `Champ_magn` in
-  `pigbrother-defs.json` is wrong (separate python_magnetrun fix). Fitting
-  them recovers the factors in use per experiment, see
+  7.329 / 3.766 G/A, M9 2026-10-29: 8.943 / 3.634 G/A). Each system uses
+  its own configured factors, which may not be synced between pupitre and
+  pigbrother (so the two channels can differ). Neither is a measured field;
+  the "Hall probe" / "Axial field" descriptions in the defs JSON are wrong
+  (separate python_magnetrun fix). Fitting them recovers the factors in
+  use per experiment, see
   [PLAN_header_field_factor_study.md](PLAN_header_field_factor_study.md);
-  the source of a measured field is open question #34.
+  the measured field comes from the pickup coil (below, open question #34).
+- **Configured factors are recoverable per file** by a least-squares fit of
+  the recorded field on the circuit currents, unless the two currents are
+  proportional (2026-11-10: pupitre M9 2025-01-27 16:22:31 → 8.926 / 3.766
+  G/A, residual ≤ 2.3 mT; pigbrother M10 Overview 250127-1605 → 3.402 /
+  7.343 G/A). Such rows, if stored, are **configured** values
+  (`source_ref` naming the file), never measured ones.
+- **The only physical field measurement** is the **pickup-coil** step of the
+  commissioning process (user, 2026-11-10); those data are **not available
+  yet**. Measured FF rows are blocked until they are (see
+  [Commissioning measurements](#commissioning-measurements-raw), open
+  questions #24 and #25).
 - **M8:** `TotalField = Field + SupraField`, with `SupraField = ffS·IS`
   (supra current from Hybrid `I_BOB`); ffS in use = **11.837 G/A**
   (SupraField / I_BOB on `2026.10.30 - 09:10:03`, after the clock-lag
@@ -1144,12 +1157,12 @@ CREATE TABLE IF NOT EXISTS commissioning_field_factor (
     assembly_name  VARCHAR REFERENCES assemblies(name),
     magnet_name    VARCHAR REFERENCES magnets(name),
     current        DOUBLE NOT NULL,     -- [A] [unconfirmed, open question #25]
-    field          DOUBLE NOT NULL,     -- [T], at the assembly field centre
+    field          DOUBLE NOT NULL,     -- [T], at the assembly field centre, pickup coil (not pupitre Field)
     flow_rate      DOUBLE,              -- [m^3/s]
     tin            DOUBLE,              -- [K]
     measured_at    TIMESTAMP,
     experiment_id  INTEGER REFERENCES experiments(id),  -- backing raw file, when any
-    source_ref     VARCHAR,             -- manual entry | pupitre file + plateau (open question #24)
+    source_ref     VARCHAR,             -- pickup-coil file/entry for field; pupitre file + plateau for current (open question #24)
     notes          VARCHAR
 );
 
@@ -1185,6 +1198,14 @@ CREATE TABLE IF NOT EXISTS commissioning_resistance (
   for M5, `IB1` / `UB1` / `IB2` / `UB2` — and python_magnetrun never writes
   to the database. Plateau detection finds the PID-stabilized setpoints, so
   this depends on step S2.
+- **Field source for `commissioning_field_factor` (user, 2026-11-10):** the
+  `field` column comes from the **pickup-coil** measurement taken during
+  commissioning, not from pupitre `Field` (an FF×I recomputation, see
+  [Field factor](#field-factor): fitting it would only return the
+  configured factor). Pupitre files give the current and the plateau only.
+  The pickup-coil data are **not available yet**, so this table cannot be
+  filled with measured values until they are; `commissioning_resistance` is
+  not affected.
 
 ### Units and defs files
 
@@ -1679,6 +1700,25 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
     `reference_gr1_current` / `reference_gr2_current`, keep the
     single-circuit case as NORMAL, then check the stored
     `operationaldata.mode` values on M8/M10.
+18. **24 pupitre files stored under two housings** (found 2026-11-10 on
+    `magnetdb-2026-11-05`, byte-identical copies checked with `cmp`): each
+    file is copied into another housing's folder, so its experiment (and its
+    `operationaldata` Pupitre row) is inserted twice, under two assemblies.
+    - 5 M10 files, 2019-12-04 → 12-07 (header `M19071101`), copied into
+      `M5/`: wrong copies = experiment ids 2938–2942 (`M5_A140101_00`),
+      right ones 716–720 (`M10_A190429_00`).
+    - 13 M10 Bitters-only files, 2020-02-06 → 03-06 (`Idcct3/4` = 0, stale
+      header naming `M19071101`), copied into `M5/`: wrong copies = ids
+      2956–2968, right ones 721–733 (`M10_A200122_00`).
+    - 6 M9 files, 2025-01-27 15:35:40 → 16:33:39 (header `M25012001`),
+      copied into `M10/`: wrong copies = ids 2027–2032 (`M10_A241209_00`),
+      right ones 5896–5901 (`M9_A250121_00`). M10 did run that afternoon
+      (Overview `Champ_magn` 28.7 T at 16:28 Paris) but has no pupitre file
+      of its own.
+    - Cross-source comparisons (pupitre vs pigbrother of the same housing)
+      can pair two different magnets; check the header magnet against the
+      assembly first. Fix (skip rule in the build, stats recompute) not yet
+      planned.
 
 ---
 
@@ -1709,8 +1749,8 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
 | 21 | Should the M8 hybrid supra supply be an L1 `power_circuits` row (e.g. circuit `SUPRA`), or stay only as `reference_supra_current` binding? | phase 1 / 3 |
 | 22 | Source vocabulary: the commissioning plan used `measured` / `analytical` / `fem`; this plan uses `magfile_conf`, …, `measurement`, `fit`, `manual`. Recommended: keep this plan's list, `measured` → `measurement`; add `analytical` only if a model other than magnettools needs it | phase 3 |
 | 23 | Mutual-inductance shape: `vector` with explicit `order` (magnet-scipy layout, recommended) or one row per magnet pair (commissioning plan, easier SQL) | phase 3 |
-| 24 | Commissioning readings — **partly resolved 2026-10-07:** extracted from experiments when loading their pupitre data, only for files with a proper header (#29), computed after the ETL by `to_duckdb`. **Open [unconfirmed]:** candidate commissioning experiments have a given pupitre `Field` signature, still to be defined and checked against real commissioning runs. **Revised 2026-11-05 (user):** the commissioning experiments are the first experiments of the first assembly of a brand-new magnet (reference resistances, field-factor run), a criterion read from the database; their end and the case of moved magnets are open questions #32 and #33. Study notes (header validity, field factors in use, lags): [PLAN_header_field_factor_study.md](PLAN_header_field_factor_study.md) | phase 3 (commissioning tables) |
-| 25 | Per-magnet field factor at commissioning: the measured centre field is the sum of all powered magnets (B = FF1·I₁ + FF2·I₂). Is one magnet powered at a time, or is FF fitted over several (I₁, I₂) setpoints? In the second case a row must store every circuit's current, not one `current`. **Note 2026-11-08 (factors in use):** fitting the computed `Field` on IH / IB recovers the factors in use, separable only where the IH(IB) relation is not a single ratio. M8 NORMAL runs co-ramp IH and IB (slope ≈ 0.97, condition number 800–3700), so one NORMAL file only fixes ffH·0.97 + ffB. As on M9/M10, the operating-mode inference picks the separating runs: the ECO run `2026.10.28 - 09:02:02` and the low-current test `2026.11.03 - 11:17:21` (condition number 13–17) give ffH ≈ 8.926 / ffB ≈ 2.946 G/A, consistent with the pooled fit of 17 files (8.930 / 2.942); see [PLAN_header_field_factor_study.md](PLAN_header_field_factor_study.md) and data issue #17 | phase 3 (commissioning tables) |
+| 24 | Commissioning readings — **partly resolved 2026-10-07:** extracted from experiments when loading their pupitre data, only for files with a proper header (#29), computed after the ETL by `to_duckdb`. **Open [unconfirmed]:** candidate commissioning experiments have a given pupitre `Field` signature, still to be defined and checked against real commissioning runs. **Revised 2026-11-05 (user):** the commissioning experiments are the first experiments of the first assembly of a brand-new magnet (reference resistances, field-factor run), a criterion read from the database; their end and the case of moved magnets are open questions #32 and #33. **Revised 2026-11-10 (user):** the field of the field-factor run is measured with a **pickup coil**, not read from pupitre `Field` (an FF×I recomputation); the pupitre files give the current and plateau only. Pickup-coil data **not available yet**. Study notes (header validity, field factors in use, lags): [PLAN_header_field_factor_study.md](PLAN_header_field_factor_study.md) | phase 3 (commissioning tables) |
+| 25 | Per-magnet field factor at commissioning: the measured centre field is the sum of all powered magnets (B = FF1·I₁ + FF2·I₂). Is one magnet powered at a time, or is FF fitted over several (I₁, I₂) setpoints? In the second case a row must store every circuit's current, not one `current`. **Note 2026-11-08 (factors in use):** fitting the computed `Field` on IH / IB recovers the factors in use, separable only where the IH(IB) relation is not a single ratio. M8 NORMAL runs co-ramp IH and IB (slope ≈ 0.97, condition number 800–3700), so one NORMAL file only fixes ffH·0.97 + ffB. As on M9/M10, the operating-mode inference picks the separating runs: the ECO run `2026.10.28 - 09:02:02` and the low-current test `2026.11.03 - 11:17:21` (condition number 13–17) give ffH ≈ 8.926 / ffB ≈ 2.946 G/A, consistent with the pooled fit of 17 files (8.930 / 2.942); see [PLAN_header_field_factor_study.md](PLAN_header_field_factor_study.md) and data issue #17. **Partly answered 2026-11-10 (user):** the centre field is measured with a pickup coil at commissioning (data not available yet); pupitre `Field` / pigbrother `Champ_magn` are FF×I recomputations and only give the **configured** factors (recoverable by a per-file fit), never a measured FF. The setpoint layout question stays open | phase 3 (commissioning tables) |
 | 26 | `housing_config.coil_assignment` is `MAP(role → GR)`: it cannot express two Bitters magnets on GR1/GR2 (M5 rewiring). Which key (magnet name, `Bitter1`/`Bitter2`, …)? Also affects the L2 slot rule for M5 and L1 `power_circuits` | M5 (step 4), phase 1 / 2 |
 | 27 | Do the Hybrid and pupitre clocks need a lag correction before `IS` is aligned with `merge_asof` (0.5 s)? Pupitre vs pigbrother lag is the subject of the signature robustness plan; Hybrid vs pupitre was never checked. **Partly resolved 2026-11-08: yes.** Measured with python_magnetrun `examples/hybrid_pupitre_lag.py` on M8 `2026.10.30 - 09:10:03.txt` (pupitre time + lag = Hybrid time): −190 s for IB vs `ALIM1` and IH vs `ALIM2`, −191 s for `SupraField` vs `I_BOB`; no drift over the 5 h run (residual 7.5 / 4.8 A with the session-log mask, data issue #16). Clock lags vary from file to file (pupitre ↔ pigbrother as well), so the lag is stored per overview record in `sync_info` (S2), with a per-file estimate as fallback. Open: only one Hybrid run checked | step 1b |
 | 28 | Pupitre file with no assembly covering its time (e.g. data issue #9): build a housing-only spec (v1 content, no assembly-specific entries) with a warning (recommended), or refuse the ETL? | step 1 follow-ups / 2a |
@@ -1719,4 +1759,4 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
 | 31 | Voltage-tap positions for the probe coherence check: are both current leads on the HP side (inferred from ring `bpside`, L2 section mapping rule 2)? Which z sign / end is HP in the geometry, to tell a tap on an HP-side ring from one on a BP-side ring? | phase 2 (`v_probe_coherence`) |
 | 32 | End of commissioning of a brand-new magnet (L2 "Header versions, commissioning and stale headers"): the first header version that then stays stable (2025-01-27 14:06 for `M25012001`, 2025-04-03 15:09 for `M25032101`), or an operational marker (field-factor run, a recorded date)? Material from the study in [PLAN_header_field_factor_study.md](PLAN_header_field_factor_study.md) (header versions, operator-only sessions as a hint) | phase 2 (`status`), phase 3 (commissioning tables) |
 | 33 | Does a magnet moved to a new assembly (e.g. `M23012001`: M9 from 2023-01, M8 from 2023-09) also go through a commissioning, or only a brand-new magnet? | phase 2 (`status`), phase 3 |
-| 34 | Where does the **measured** centre field of a commissioning come from (NMR or Hall probe read by a separate system, manual measurement, another pigbrother group or file)? Pupitre `Field` and pigbrother `Champ_magn` are both computed from the factors in use (L3 "Field factor"), so neither gives a measured field factor. If kept somewhere, it can be compared with the factors in use; if not, measured factors are entered by hand (L3 commissioning tables). See [PLAN_header_field_factor_study.md](PLAN_header_field_factor_study.md) | phase 3 (commissioning tables) |
+| 34 | Where does the **measured** centre field of a commissioning come from? Pupitre `Field` and pigbrother `Champ_magn` are both computed from the factors in use (L3 "Field factor"), so neither gives a measured field factor. **Partly resolved 2026-11-10 (user):** from the **pickup-coil** step of the commissioning; those data are **not available yet**. Open: where and in which format the pickup-coil data are kept (once available, they can be compared with the factors in use), or whether measured factors are entered by hand (L3 commissioning tables). See [PLAN_header_field_factor_study.md](PLAN_header_field_factor_study.md) | phase 3 (commissioning tables) |
