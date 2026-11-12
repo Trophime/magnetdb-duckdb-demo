@@ -3,6 +3,10 @@
 **Status (2026-11-07): approved; steps 1–5 done** (see Results; step 5 on
 a scratch copy of `magnetdb-2026-11-05.duckdb`, the repo DBs hold no rules
 yet). Step 6 (dashboard) and the rest of step 7 (docs) are left.
+**Step 6 revised 2026-11-12:** it also shows file quality (step E of
+[PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md):
+`file_integrity`, `file_checks`) and the check columns in the experiment
+tables (decisions "Check columns" to "Clicked cell" below).
 **Since 2026-11-07** ([PLAN_pupitre_checks_file.md](PLAN_pupitre_checks_file.md)):
 rules may also be **global** (no housing, no assembly; lowest precedence),
 the step 5 per-assembly `IH_vs_Icoil2` rules are replaced by one global
@@ -43,6 +47,11 @@ missing-date colours.
 | Naming | The spec's per-magnet entry (`channels`, `remove`, `add`) is the **magnet wiring**: `set_magnet_part` → `set_magnet_wiring`, `etl set-magnet … <wiring.json>`. **Rules** are the checks; **checks** are their results |
 | Sources (later) | Rules carry `sources` (default `["pupitre"]`) and `applies_to` (default `experiments`); anything else is refused for now. A multi-source rule will name columns as `` `pupitre.Idcct1` `` (follow-up) |
 | CLI | New top-level domains `tag add\|update\|list\|remove` and `rule add\|remove\|show` (`check` is the consistency check) |
+| Check columns (2026-11-12) | Every experiment table (Assembly, Magnet, Part stats, research area) gets `File integrity` (`ok` / `truncated` / `unreadable`; blank = not checked) and `ETL checks` (`ok` / `N failed` / `load error`; blank = `[]`, not checked). The tooltip of each gives the details: `file_checks` (reason, rows read, rows dropped) and every failed `etl_checks` entry, tagged or not (untagged rules, `housing_version`). Checks with `ok: None` are only listed in the tooltip |
+| File-integrity colours (2026-11-12) | Fixed: `truncated` `#ffe5d0`; `unreadable` and an ETL `load` result `#f1aeb5`. `tag add`/`tag update` also refuse these two colours |
+| Precedence (2026-11-12) | The Experiment cell takes, in order: `unreadable`, `truncated`, then the tag with the highest `severity`. The cell that causes it (`File integrity` or `ETL checks`) gets the same colour |
+| Legend (2026-11-12) | One line above each experiment table: the two file-integrity colours and the tags present in the table |
+| Clicked cell (2026-11-12) | `cell_selectable=False` on these tables: Dash's highlight of the last clicked cell was mistaken for a flag |
 
 ## Storage (DuckDB)
 
@@ -79,10 +88,12 @@ foreign keys don't cascade and restrict updates of referenced rows).
 | `to_duckdb/tests/test_etl_spec.py`, `test_check_experiment_files.py`, `test_magnetdb.py` | edit |
 | `to_duckdb/tests/test_tags.py` | create |
 | `to_duckdb/docs/schema.md`, `PLAN_pupitre_etl_spec.md` | edit |
-| `apps/dashboards/magnetdb/src/magnetdb_analysis.py` | edit: `get_file_tags(...)` (empty on an older DB) |
-| `apps/dashboards/magnetdb/src/dash_selectors.py` | edit: tag colour style and tooltip helpers |
+| `to_duckdb/etl_spec.py`, `to_duckdb/tests/test_tags.py` | edit (step 6): refuse the two file-integrity colours |
+| `apps/dashboards/magnetdb/src/magnetdb_analysis.py` | edit: `get_file_tags(...)` (empty on an older DB); `get_experiments_for_filters` also selects `file_integrity`, `file_checks`, `etl_checks` (NULL when a column is missing on an older DB) |
+| `apps/dashboards/magnetdb/src/dash_selectors.py` | edit: tag colour style and tooltip helpers; file-integrity colours, check columns and legend helpers |
 | `apps/dashboards/magnetdb/src/pages/file_viewer.py` | edit: coloured `dd-file` labels, note under the selector |
-| `apps/dashboards/magnetdb/src/pages/{assembly_stats,magnet_stats,part_stats,stats_research_area}.py` | edit: Experiment cell colour and tooltip |
+| `apps/dashboards/magnetdb/src/pages/{assembly_stats,magnet_stats,part_stats,stats_research_area}.py` | edit: the three columns in the experiment queries; Experiment cell colour and tooltip; `File integrity` / `ETL checks` columns; legend; `cell_selectable=False` |
+| `apps/dashboards/magnetdb/src/locales/{en,fr,de,nl}/LC_MESSAGES/magnetdb.po` | edit: new labels |
 | `apps/dashboards/magnetdb/tests/…` | edit / create |
 
 ## Approach / verification
@@ -103,6 +114,17 @@ foreign keys don't cascade and restrict updates of referenced rows).
    non-empty removed channel gets `check:channel_not_empty`.
 6. Dashboard → verify: dashboard tests pass; the user checks colours,
    tooltips and note in the running app.
+   Revised 2026-11-12:
+   1. Tests first for the helpers (check labels, tooltips, precedence,
+      legend) and the colour refusal in `etl_spec` → verify: they fail.
+   2. Helpers, queries, pages, `.po` → verify: dashboard tests (with
+      `--ignore=tests/mrun_test.py`) and `to_duckdb` tests pass, counts
+      compared with the baseline.
+   3. On a scratchpad copy of `magnetdb-2026-11-10.duckdb` (no check run
+      yet: `file_integrity` blank, `etl_checks` `[]`, `record_tags` empty):
+      `check_experiment_files.py --assembly M9_A260707_00`, then with
+      `--etl` → verify: the user checks the columns, colours, tooltips and
+      legend in the running app, and that a clicked cell stays uncoloured.
 7. Docs, this plan → verify: `magnetdb.py tag --help`, `rule --help` read
    correctly.
 

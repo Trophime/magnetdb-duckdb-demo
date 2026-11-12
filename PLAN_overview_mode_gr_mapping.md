@@ -1,8 +1,8 @@
 # Plan: operating mode with the right IH / IB channels (data issue #17)
 
-**Status (2026-11-12): revised as plan B (see the end) and approved; steps
-1–4 done and committed, not pushed. Push, calcul22 pull and the reprocessing
-of a DB copy (steps 5–7) wait for a go-ahead.** Follow-up of phase G of
+**Status (2026-11-12): revised as plan B (see the end), done. Code
+committed and pushed; stored modes corrected on the calcul22 copy
+`~/magnetdb-checks/magnetdb-2026-11-10.mode17.duckdb` (see Results).** Follow-up of phase G of
 [PLAN_overview_records_from_operationaldata.md](PLAN_overview_records_from_operationaldata.md),
 done before the rest of phase G (it does not block it).
 
@@ -198,3 +198,21 @@ The copy keeps `M10-210325` without the map in `housing_config_versions`
 - Step 3: 851 passed, 3 skipped (838 + 13). `ruff`: the 17 findings in the
   four files predate the change.
 - Step 4: data issue #17 marked fixed in code (stored modes pending).
+- Step 5: pushed (python_magnetrun `e4c1654`, superproject `88108f3`);
+  calcul22 updated by the user; there `.at()` gives the `M10-210325` map and
+  `_overview_current_channels` (GR1, GR2) during the swap, (GR2, GR1) in 2022.
+- Step 6 (calcul22, copy `~/magnetdb-checks/magnetdb-2026-11-10.mode17.duckdb`,
+  log `mode17.log` next to it): 1430 Overview files of the 40 M8/M10
+  assemblies in ≈ 7 min, 0 errors. Copy vs reference: 28 modes changed —
+  M10 24 (10 ECO→NORMAL, 14 NORMAL→ECO, as in the 2026-11-09 findings),
+  M8 4 (`M8_A230913_00`: `M8_Overview_250402-1131` ECO→NORMAL,
+  `250604-1120` NORMAL→ECO, `260320-0910` ECO→NORMAL, `261028-0858`
+  NORMAL→ECO; to be checked by the user, DCCT ↔ supply only confirmed on
+  M10); swap period 94 files, 0 changed; `t_start`/`t_end`, M5/M7/M9 and
+  other types unchanged; no new NULL mode. Reference SHA-256 unchanged.
+- Step 7 (copy only): 19 `overview_records` rows updated (M10 18, M8 1:
+  `M8_Overview_260320-0910`); the 9 other changed files have no overview
+  record. After: 0 rows where the two modes differ; M10 600 ECO / 292
+  NORMAL (was 598 / 294), M8 1 ECO / 36 NORMAL (was 2 / 35).
+- The copy is the candidate DB to deploy on calcul18; the reference
+  `to_duckdb/magnetdb-2026-11-10.duckdb` keeps the old modes.
