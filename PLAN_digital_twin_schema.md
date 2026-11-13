@@ -1739,8 +1739,14 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
       of its own.
     - Cross-source comparisons (pupitre vs pigbrother of the same housing)
       can pair two different magnets; check the header magnet against the
-      assembly first. Fix (skip rule in the build, stats recompute) not yet
-      planned.
+      assembly first.
+    - **Fixed 2026-11-13 (next build):** the 24 wrong copies are listed in
+      `hifimagnet-projects/magnetdb.json/pupitre_skip.json`
+      (`<housing>/<file name>` + reason) and left out by `populate
+      experiments` / `populate operationaldata --skip-file` (build steps
+      `experiments` and `operationaldata`). Checked on a scratch build: none
+      of the 24 copies inserted, the 24 originals kept. Existing DBs keep the
+      duplicates until the next full rebuild.
 
 ---
 

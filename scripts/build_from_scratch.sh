@@ -66,6 +66,10 @@ JSON=~/github/hifimagnet-projects/magnetdb.json
 STATUS_FILE=$JSON/magnet_status.json
 # pupitre check tags, rules and magnet wirings (PLAN_pupitre_checks_file.md)
 CHECKS_FILE=$JSON/pupitre_checks.json
+# pupitre files not to load: copies under the wrong housing (data issue #18)
+SKIP_FILE=$JSON/pupitre_skip.json
+SKIP_ARGS=()
+if [ -f "$SKIP_FILE" ]; then SKIP_ARGS=(--skip-file "$SKIP_FILE"); fi
 RECORDS=~/LNCMIG-Data/records
 DATA_DIR=~/github/magnetdb-duckdb-demo/Data
 LOG="$DB.log"
@@ -90,6 +94,9 @@ BUILD_FAILED=0
 
 echo "Building $DB (steps $FROM → $TO, log: $LOG)"
 echo "### run $(date '+%F %T') --from $FROM --to $TO" >> "$LOG"
+if [ ! -f "$SKIP_FILE" ]; then
+    echo "Note: no $SKIP_FILE, so no pupitre file is skipped." | tee -a "$LOG"
+fi
 
 # --- display helpers --------------------------------------------------------
 # Each step prints its title, sends its output to $LOG, then prints its status.
@@ -320,7 +327,7 @@ section check "Check database consistency" python magnetdb.py check --db "$DB" |
 
 # Populate experiments
 section experiments "Populate experiments" \
-    python magnetdb.py populate  experiments --all --db $DB --records-base $RECORDS
+    python magnetdb.py populate  experiments --all --db $DB --records-base $RECORDS "${SKIP_ARGS[@]}"
 # Ingest per-experiment statistics (idempotent)
 section exp-stats "Ingest per-experiment statistics" ingest_exp_stats
 # Pupitre file quality, then the ETL checks and tags (need the wirings, housing
@@ -330,7 +337,7 @@ section etl-check "Run pupitre ETL checks and tags" check_files --etl
 
 # Populate OperationalData
 section operationaldata "Populate operationaldata" \
-    python magnetdb.py populate  operationaldata --all --db $DB --records-base $RECORDS --type Overview Archive Spike Default SignalStats Trigger Pupitre
+    python magnetdb.py populate  operationaldata --all --db $DB --records-base $RECORDS --type Overview Archive Spike Default SignalStats Trigger Pupitre "${SKIP_ARGS[@]}"
 # Start/end time of every operationaldata file, and the mode of Overview files,
 # computed once (PLAN_overview_records_from_operationaldata.md; about 3-3.5 h,
 # mostly pupitre and Overview metadata reads over the records mount)

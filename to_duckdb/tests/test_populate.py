@@ -1,5 +1,6 @@
 """Unit tests for populate.py's operationaldata path handling."""
 
+import json
 from datetime import datetime
 from pathlib import Path
 
@@ -14,6 +15,63 @@ from populate import (
     resolve_operationaldata_path,
     scan_tdms_subdir,
 )
+
+
+# ---------------------------------------------------------------------------
+# Pupitre skip list (data issue #18)
+# ---------------------------------------------------------------------------
+
+
+def _skip_file(tmp_path, entries):
+    path = tmp_path / "pupitre_skip.json"
+    path.write_text(json.dumps({"description": "test", "files": entries}))
+    return path
+
+
+def test_load_pupitre_skip_list_returns_housing_file_keys(tmp_path, capsys):
+    from populate import load_pupitre_skip_list
+
+    srv = tmp_path / "srv-data-install" / "M5"
+    srv.mkdir(parents=True)
+    (srv / "2019.12.04 - 00:46:53.txt").touch()
+    path = _skip_file(tmp_path, [
+        {"file": "M5/2019.12.04 - 00:46:53.txt", "reason": "copy of the M10 file"},
+        {"file": "M10/2025.01.27 - 15:35:40.txt", "reason": "copy of the M9 file"},
+    ])
+
+    keys = load_pupitre_skip_list(path, records_base=tmp_path)
+
+    assert keys == frozenset({"M5/2019.12.04 - 00:46:53.txt", "M10/2025.01.27 - 15:35:40.txt"})
+    # a listed file that does not exist is kept, with a warning (typo check)
+    out = capsys.readouterr().out
+    assert "M10/2025.01.27 - 15:35:40.txt" in out
+    assert "M5/2019.12.04 - 00:46:53.txt" not in out
+
+
+@pytest.mark.parametrize("entry", [
+    {"file": "2019.12.04 - 00:46:53.txt", "reason": "no housing folder"},
+    {"file": "M5/sub/2019.12.04 - 00:46:53.txt", "reason": "nested folder"},
+    {"file": "M5/2019.12.04 - 00:46:53.txt"},  # no reason
+])
+def test_load_pupitre_skip_list_rejects_invalid_entries(tmp_path, entry):
+    from populate import load_pupitre_skip_list
+
+    with pytest.raises(ValueError):
+        load_pupitre_skip_list(_skip_file(tmp_path, [entry]), records_base=tmp_path)
+
+
+def test_split_skipped_matches_housing_and_file_name():
+    from populate import split_skipped
+
+    ts = datetime(2019, 12, 4, tzinfo=FILE_TZ)
+    srv = Path("/records/srv-data-install/M5")
+    matches = [(srv / "a.txt", ts), (srv / "b.txt", ts)]
+
+    # "M10/b.txt": same name under another housing, not skipped here
+    kept, excluded = split_skipped(matches, "M5", frozenset({"M5/a.txt", "M10/b.txt"}))
+
+    assert [p.name for p, _ in kept] == ["b.txt"]
+    assert [p.name for p, _ in excluded] == ["a.txt"]
 
 
 # ---------------------------------------------------------------------------

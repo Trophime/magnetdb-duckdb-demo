@@ -431,6 +431,65 @@ def parse_pupitre_file_ts(filename: str) -> datetime | None:
         return None
 
 
+def load_pupitre_skip_list(
+    path: Path,
+    records_base: Path = _RECORDS_BASE,
+    srv_subdir: str = _SRV_SUBDIR,
+) -> frozenset[str]:
+    """Read the list of pupitre files the build must not load (data issue #18).
+
+    The file is JSON: ``{"description": ..., "files": [{"file":
+    "<housing>/<file name>", "reason": ...}, ...]}``, with ``file`` relative to
+    ``records_base / srv_subdir``. The housing folder is part of the key, so a
+    copy stored under the wrong housing is skipped while the original, which
+    has the same file name, is kept.
+
+    Parameters
+    ----------
+    path : :class:`~pathlib.Path`
+        The JSON skip list (``hifimagnet-projects/magnetdb.json/pupitre_skip.json``).
+    records_base : :class:`~pathlib.Path`, optional
+        Root of the records tree, to warn about listed files that do not exist.
+    srv_subdir : str, optional
+        Subdirectory of *records_base* holding the pupitre TXT files.
+
+    Returns
+    -------
+    frozenset[str]
+        ``"<housing>/<file name>"`` keys.
+
+    Raises
+    ------
+    ValueError
+        If an entry has no ``reason`` or its ``file`` is not ``<housing>/<file name>``.
+    """
+    import json
+
+    keys = set()
+    for entry in json.loads(Path(path).read_text(encoding="utf-8")).get("files", []):
+        key = entry.get("file", "")
+        parts = key.split("/")
+        if len(parts) != 2 or not all(parts) or not entry.get("reason"):
+            raise ValueError(
+                f"{path}: invalid entry {entry!r} "
+                "(needs 'file' = '<housing>/<file name>' and a 'reason')"
+            )
+        if not (Path(records_base) / srv_subdir / key).exists():
+            print(f"[WARN] {Path(path).name}: {key} not found under {Path(records_base) / srv_subdir}")
+        keys.add(key)
+    return frozenset(keys)
+
+
+def split_skipped(
+    matches: list[tuple[Path, datetime]], housing: str, skip: frozenset[str]
+) -> tuple[list[tuple[Path, datetime]], list[tuple[Path, datetime]]]:
+    """Split pupitre *matches* of *housing* into (kept, excluded by the *skip* list)."""
+    kept, excluded = [], []
+    for match in matches:
+        (excluded if f"{housing}/{match[0].name}" in skip else kept).append(match)
+    return kept, excluded
+
+
 def find_and_register_pupitre(
     assembly:         dict,
     db_path:      str,
@@ -438,11 +497,13 @@ def find_and_register_pupitre(
     dry_run:      bool,
     records_base: Path = _RECORDS_BASE,
     srv_subdir:   str  = _SRV_SUBDIR,
+    skip:         frozenset[str] = frozenset(),
 ) -> list[tuple[Path, datetime]]:
     """Scan for pupitre TXT files in the assembly's operational window.
 
-    Returns matched (path, timestamp) pairs. Writes to operationaldata
-    unless *dry_run* is True.
+    Returns matched (path, timestamp) pairs, without the files of the *skip*
+    list (:func:`load_pupitre_skip_list`). Writes to operationaldata unless
+    *dry_run* is True.
     """
     housing = assembly["housing"]
     if not housing:
@@ -467,7 +528,10 @@ def find_and_register_pupitre(
             continue
         matches.append((fpath, ts))
 
+    matches, excluded = split_skipped(matches, housing, skip)
     print(f"[OK]   {pupitre_dir}/  — {len(matches)} file(s) matched")
+    for fpath, _ in excluded:
+        print(f"[SKIP] {housing}/{fpath.name}  (listed in the skip file)")
 
     if matches and not dry_run:
         from crud import _log_operation
@@ -481,7 +545,7 @@ def find_and_register_pupitre(
             skipped = len(matches) - new_count
             _log_operation(
                 con, "populate", "operationaldata", assembly["name"],
-                details={"inserted": new_count, "skipped": skipped},
+                details={"inserted": new_count, "skipped": skipped, "excluded": len(excluded)},
             )
         print(
             f"\noperationaldata: inserted {new_count} new row(s)"

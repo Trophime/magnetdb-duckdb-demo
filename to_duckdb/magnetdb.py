@@ -187,6 +187,10 @@ from populate import (
 from populate import (
     load_assembly as _load_assembly,
 )
+from populate import (
+    load_pupitre_skip_list,
+    split_skipped,
+)
 from schema import COIL_TYPES, ensure_schema
 
 # ---------------------------------------------------------------------------
@@ -1464,6 +1468,10 @@ def cmd_populate_operationaldata(args) -> None:
     active_types = args.types if args.types else ALL_POPULATE_TYPES
     tdms_types = [t for t in active_types if t != "Pupitre"]
     do_pupitre = "Pupitre" in active_types
+    skip = (
+        load_pupitre_skip_list(Path(args.skip_file), records_base, args.srv_subdir)
+        if args.skip_file and do_pupitre else frozenset()
+    )
 
     for assembly_name in assembly_names:
         assembly = _load_assembly(assembly_name, db_path)
@@ -1474,7 +1482,7 @@ def cmd_populate_operationaldata(args) -> None:
         if do_pupitre:
             _pupitre_find_and_register(
                 assembly, db_path, db_tz, dry_run=args.dry_run,
-                records_base=records_base, srv_subdir=args.srv_subdir,
+                records_base=records_base, srv_subdir=args.srv_subdir, skip=skip,
             )
         if tdms_types:
             _tdms_find_and_register(
@@ -1543,6 +1551,10 @@ def cmd_populate_experiments(args) -> None:
         sys.exit(1)
 
     records_base = Path(args.records_base)
+    skip = (
+        load_pupitre_skip_list(Path(args.skip_file), records_base, args.srv_subdir)
+        if args.skip_file else frozenset()
+    )
 
     for assembly_name in assembly_names:
         assembly = _load_assembly(assembly_name, db_path)
@@ -1557,6 +1569,17 @@ def cmd_populate_experiments(args) -> None:
             assembly, db_path, db_tz, dry_run=True,
             records_base=records_base, srv_subdir=args.srv_subdir,
         )
+        # files of the skip list (data issue #18): not inserted, logged
+        matches, excluded = split_skipped(matches, assembly["housing"], skip)
+        for fpath, _ in excluded:
+            print(f"[SKIP] {assembly['housing']}/{fpath.name}  (listed in the skip file)")
+        if excluded and not args.dry_run:
+            with duckdb.connect(db_path) as con:
+                ensure_schema(con)
+                _log_operation(
+                    con, "skip", "experiments", assembly_name,
+                    details={"excluded": [fpath.name for fpath, _ in excluded]},
+                )
 
         if not matches:
             continue
@@ -2112,6 +2135,14 @@ def _input_dir_arg(p: argparse.ArgumentParser) -> None:
     p.add_argument("--input-dir", dest="input_dir", default=None,
                    help="Directory to look up the JSON file in "
                         "(default: use the path given to json_file as-is)")
+
+
+def _skip_file_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--skip-file", dest="skip_file", default=None, metavar="FILE",
+        help="JSON list of pupitre files not to load, as '<housing>/<file name>' "
+             "(hifimagnet-projects/magnetdb.json/pupitre_skip.json; data issue #18)",
+    )
 
 
 def _assemblies_arg(p: argparse.ArgumentParser) -> None:
@@ -2758,6 +2789,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_opdata.add_argument("--dry-run", action="store_true",
                           help="Match files but do not write to the DB.")
+    _skip_file_arg(p_opdata)
 
     # populate operationaldata-metadata
     p_opmeta = pop_sub.add_parser(
@@ -2809,6 +2841,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_exp.add_argument("--dry-run", action="store_true",
                        help="Match files but do not write to the DB.")
+    _skip_file_arg(p_exp)
 
     # populate overview-records
     p_ov = pop_sub.add_parser(

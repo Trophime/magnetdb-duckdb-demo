@@ -34,6 +34,7 @@ python magnetdb.py populate operationaldata --all --db-tz Europe/Paris
 | `--pbsurv` | `pbsurv` | Subdirectory of `records-base` for TDMS files |
 | `--db-tz` | `UTC` | Timezone of `commissioned_at` / `decommissioned_at` in the DB |
 | `--dry-run` | — | Match files without writing to the DB |
+| `--skip-file FILE` | — | Pupitre files not to register (see [skip list](#pupitre-skip-list)); their count is added to the `operation_log` row |
 
 ---
 
@@ -57,6 +58,23 @@ python magnetdb.py populate experiments --all --db-tz Europe/Paris
 | `--srv-subdir` | `srv-data-install` | Subdirectory of `records-base` for pupitre TXT files |
 | `--db-tz` | `UTC` | Timezone of `commissioned_at` / `decommissioned_at` in the DB |
 | `--dry-run` | — | Match files without writing to the DB |
+| `--skip-file FILE` | — | Pupitre files not to insert (see [skip list](#pupitre-skip-list)); an `operation_log` row `skip` lists them |
+
+### Pupitre skip list
+
+Some pupitre files are byte-identical copies stored under the wrong housing folder; loading them would insert their experiment twice, under two assemblies (data issue #18). They cannot be removed from the records server, so the build leaves them out with `--skip-file hifimagnet-projects/magnetdb.json/pupitre_skip.json` (`populate experiments` and `populate operationaldata`):
+
+```json
+{
+  "description": "...",
+  "files": [
+    {"file": "M5/2019.12.04 - 00:46:53.txt",
+     "reason": "byte-identical copy of M10/2019.12.04 - 00:46:53.txt (header M19071101, M10_A190429_00)"}
+  ]
+}
+```
+
+`file` is `<housing>/<file name>` relative to `srv-data-install`: the original, with the same name in its own housing folder, is kept. Each entry needs a `reason`; a listed file that does not exist only prints a warning.
 
 ---
 

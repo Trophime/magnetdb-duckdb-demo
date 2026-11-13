@@ -1114,6 +1114,52 @@ def test_cli_populate_operationaldata_metadata_fills_and_logs(tmp_path, monkeypa
     assert rows == [("metadata", "ASSEMBLY_JSON_01", "ok")]
 
 
+def _pupitre_tree_with_skip_file(tmp_path):
+    """Two M10 pupitre files and a skip list naming one of them (and an M9 namesake)."""
+    srv = tmp_path / "srv-data-install" / "M10"
+    srv.mkdir(parents=True)
+    for name in ("2025.07.15 - 12:00:05.txt", "2025.07.16 - 09:00:00.txt"):
+        (srv / name).write_text("")
+    skip = tmp_path / "pupitre_skip.json"
+    skip.write_text(json.dumps({"files": [
+        {"file": "M10/2025.07.16 - 09:00:00.txt", "reason": "copy of an M9 file"},
+        {"file": "M9/2025.07.15 - 12:00:05.txt", "reason": "same name, other housing"},
+    ]}))
+    return skip
+
+
+def test_cli_populate_experiments_skip_file(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)  # ASSEMBLY_JSON_01, housing M10, commissioned 2025-01-01
+    skip = _pupitre_tree_with_skip_file(tmp_path)
+
+    def files():
+        with duckdb.connect(str(db), read_only=True) as con:
+            return {f for (f,) in con.execute("SELECT file FROM experiments").fetchall()}
+
+    before = files()  # the assembly JSON already holds experiments
+    _run(monkeypatch, "populate", "experiments", "--assembly", "ASSEMBLY_JSON_01",
+         "--records-base", str(tmp_path), "--skip-file", str(skip), "--db", str(db))
+
+    assert files() - before == {"2025.07.15 - 12:00:05.txt"}
+    skips = [(rec, json.loads(d)) for op, rec, _s, d in _log_rows(db, "experiments") if op == "skip"]
+    assert skips == [("ASSEMBLY_JSON_01", {"excluded": ["2025.07.16 - 09:00:00.txt"]})]
+
+
+def test_cli_populate_operationaldata_pupitre_skip_file(tmp_path, monkeypatch):
+    db = _db_with_assembly(tmp_path)
+    skip = _pupitre_tree_with_skip_file(tmp_path)
+
+    _run(monkeypatch, "populate", "operationaldata", "--assembly", "ASSEMBLY_JSON_01",
+         "--type", "Pupitre", "--records-base", str(tmp_path), "--skip-file", str(skip),
+         "--db", str(db))
+
+    with duckdb.connect(str(db), read_only=True) as con:
+        files = [f for (f,) in con.execute("SELECT file FROM operationaldata").fetchall()]
+    assert files == ["srv-data-install/M10/2025.07.15 - 12:00:05.txt"]
+    details = [json.loads(d) for op, _r, _s, d in _log_rows(db, "operationaldata") if op == "populate"]
+    assert details == [{"inserted": 1, "skipped": 0, "excluded": 1}]
+
+
 def _db_with_overview_operationaldata(tmp_path):
     """ASSEMBLY_JSON_01 (M10) with one Overview file whose times and mode are stored."""
     db = _db_with_assembly(tmp_path)
