@@ -53,7 +53,7 @@ today:
 
 | # | Item | Plan | Effort |
 |---|---|---|---|
-| 4 | **File-check rules step 6** (file-quality and check columns, tag colours and tooltips, revised 2026-11-12), then **step 7** (docs). Tested on the `.mode17` copy after running the two file checks on it (calcul22, `screen`) | [PLAN_file_check_rules.md](PLAN_file_check_rules.md) | M |
+| 4 | **File-check rules step 6** (file-quality and check columns, tag colours and tooltips, revised 2026-11-12), then **step 7** (docs). Tested on the `.mode17` copy after running the two file checks on it (calcul22, `screen`) | ✅ 2026-11-13 (tested on calcul24 on a copy with both checks on all files; the user's check in the running app is still to report); [PLAN_file_check_rules.md](PLAN_file_check_rules.md) | M |
 | 5 | **C8**: About page, operation log 10 per page (optional) | [PLAN_dashboard_tables_newest_first.md](PLAN_dashboard_tables_newest_first.md) | S |
 | 5b | **I_BOB overlay fix** (part D): `load_hybrid_supra_current` takes the date from the pupitre start time; today it raises `ValueError` on every real M8 row (stored kHz names have no date) | [PLAN_m8_overview_records.md](PLAN_m8_overview_records.md) | S |
 

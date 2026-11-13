@@ -12,9 +12,15 @@ housing_config_versions  wiring changes of a housing over time: from valid_from
                      (TIMESTAMPTZ), overrides (JSON, HousingConfig fields) apply to
                      the base wiring — loaded from the bundled JSON "versions"
                      (e.g. M8-260305: M8 Bitters read on Ucoil14)
-pupitre_etl_magnet   magnet parts of the Pupitre ETL spec, one per (assembly, magnet,
-                     housing version): channels, remove, add, current check
+pupitre_etl_magnet   magnet wiring of the Pupitre ETL spec, one per (assembly, magnet,
+                     housing version): channels, remove, add
                      (experiments.etl_checks / etl_checked_at hold the ETL check results)
+tags                 file tags: name (<category>:<name>), color, severity, description
+                     (seeded: check:channel_not_empty) — see "File checks and tags"
+check_rules          check rules: expr, stat, tol, unit, tag; global, housing,
+                     assembly or magnet level, optionally one housing version
+record_tags          tags attached to records: (record_table, record_key, tag, rule)
+                     with the failing value and tolerance
 sites                operational configurations (housing, commissioning dates)
 site_magnets         magnets active in a site — positional & temporal metadata
 experiments          operational records (TSV files) attached to a site
@@ -42,6 +48,34 @@ hoop_stress_fatigue     per-part rainflow cycle counts: n_cycles, sum_range3 (Mi
 ```
 
 The authoritative DDL is in [`schema.py`](../schema.py).
+
+---
+
+## File checks and tags
+
+Each pupitre file is checked twice by `check_experiment_files.py` (build steps
+`file-check` and `etl-check`):
+
+| `experiments` column | Filled by | Content |
+|---|---|---|
+| `header_class` | plain run | first line: `full`, `short`, `data` or `empty` |
+| `file_integrity` | plain run | `ok`, `truncated` (rows dropped from a corrupt tail) or `unreadable` |
+| `file_checks` | plain run | JSON: `reason`, `rows_read`, `rows_dropped` |
+| `etl_checks` | `--etl` | JSON list of the `prepare_pupitre` results: `housing_version`, one `rule` per check rule, one `channel` per removed channel, or a single `load` result when the file cannot be loaded |
+| `file_checked_at`, `etl_checked_at` | each run | time of the check |
+
+A failed rule with a `tag`, and a failed `channel` check
+(`check:channel_not_empty`), add a `record_tags` row (`record_table =
+'experiments'`, `record_key` = the experiment id); re-checking a file replaces
+its rows. Rules and tags are defined with `magnetdb.py rule` / `tag` and kept
+across rebuilds in `hifimagnet-projects/magnetdb.json/pupitre_checks.json`
+(`etl import` / `etl dump`).
+
+The dashboards' experiment tables show `File integrity` and `ETL checks` and
+colour the experiment by precedence: `unreadable` or a `load` error
+(`#f1aeb5`), `truncated` (`#ffe5d0`), then the tag with the highest
+`severity` (its `color`). A tag cannot use these two colours, the geometry-problem
+colour `#f8d7da`, the missing-date colour `#fff3cd`, or another tag's colour.
 
 ---
 

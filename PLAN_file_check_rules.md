@@ -1,8 +1,8 @@
 # Plan: configurable file-check rules, tags and colours
 
-**Status (2026-11-07): approved; steps 1–5 done** (see Results; step 5 on
-a scratch copy of `magnetdb-2026-11-05.duckdb`, the repo DBs hold no rules
-yet). Step 6 (dashboard) and the rest of step 7 (docs) are left.
+**Status (2026-11-13): steps 1–7 done** (see Results). Step 6 revision
+approved 2026-11-13; the user's check in the running app (6.3) is still to
+report.
 **Step 6 revised 2026-11-12:** it also shows file quality (step E of
 [PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md):
 `file_integrity`, `file_checks`) and the check columns in the experiment
@@ -185,9 +185,35 @@ foreign keys don't cascade and restrict updates of referenced rows).
      summary line, although its help says "Only print the summary".
    - The rules and wirings exist only in the scratch copy: a rebuild loses
      them (where to keep them needs its own plan).
-7. (part, 2026-11-07) `PLAN_pupitre_etl_spec.md` uses the wiring and rules
-   naming (its D1 = a text included); `to_duckdb/docs/schema.md` and the
-   python_magnetrun README are still to do.
+6. (2026-11-13) Dashboard, as revised on 2026-11-12:
+   - one helper, `dash_selectors.experiment_table`, builds every experiment
+     table (Assembly, Magnet, Part stats main table, research area): the
+     page's columns + `File integrity` + `ETL checks`, colours keyed on a
+     hidden `_flag` column (so they survive sorting), tooltips, legend,
+     `cell_selectable=False`. The pages' table is now an `html.Div` filled by
+     the callback (`children` instead of `data`). The Part stats fatigue and
+     hoop-stress tables are unchanged;
+   - `magnetdb_analysis`: `experiment_check_columns_sql` (NULL on an older
+     DB; `ANY_VALUE` in the grouped page queries), `get_file_tags`,
+     `get_file_checks_for_assembly`; `get_experiments_for_filters` selects
+     the three columns;
+   - File viewer: coloured `dd-file` options (`file_option`) and a note under
+     the selector (`file_check_note`);
+   - `etl_spec.RESERVED_COLORS` also refuses `#ffe5d0` and `#f1aeb5`;
+   - 15 labels in the four `.po` catalogs (compiled with `pybabel` on a copy).
+
+   Tests: dashboard 201 passed (34 new, `--ignore=tests/mrun_test.py`),
+   to_duckdb 864 passed, 3 skipped. On a scratch copy of the 2026-11-10 DB
+   with both checks run on all 6548 files: the Assembly table builds in
+   1.3 s (all rows; tooltips ≈ 1 MB unfiltered) with 1076 `dcct_mismatch`,
+   302 `channel_not_empty`, 25 `current_mismatch`, 12 truncated and 10
+   unreadable rows.
+7. (2026-11-07, finished 2026-11-13) `PLAN_pupitre_etl_spec.md` uses the
+   wiring and rules naming (its D1 = a text included);
+   `to_duckdb/docs/schema.md` gets the new tables and a "File checks and
+   tags" section; the python_magnetrun README describes rules instead of the
+   `Icoil` check; `magnetdb.py tag add --help` lists the four reserved
+   colours.
 
 Deviations from the file list above:
 
