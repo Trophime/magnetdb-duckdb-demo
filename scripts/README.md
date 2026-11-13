@@ -26,6 +26,8 @@ path is taken from the current directory). `--help` lists the options.
 | `check` | Check database consistency |
 | `experiments` | Populate experiments |
 | `exp-stats` | Ingest per-experiment statistics |
+| `file-check` | Check pupitre file quality (`check_experiment_files.py`) |
+| `etl-check` | Run pupitre ETL checks and tags (`check_experiment_files.py --etl`) |
 | `operationaldata` | Populate operationaldata |
 | `op-stats` | Ingest per-file operational statistics |
 | `overview-json` | Load overview records from JSON |

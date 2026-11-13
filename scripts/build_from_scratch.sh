@@ -2,7 +2,7 @@
 set -eo pipefail
 
 # step IDs, in build order (see --help)
-STEPS=(create assemblies statuses etl-config check experiments exp-stats operationaldata
+STEPS=(create assemblies statuses etl-config check experiments exp-stats file-check etl-check operationaldata
        operationaldata-metadata op-stats
        overview-json overview-ops overview-infer export users link-users unlinked-users)
 
@@ -59,6 +59,8 @@ if [ -n "$DB" ] && [ "${DB#/}" = "$DB" ]; then DB="$PWD/$DB"; fi
 
 cd $(dirname "$0")/../to_duckdb
 [ -n "$DB" ] || DB="$PWD/magnetdb-$(date +%Y-%m-%d).duckdb"
+# the submodule's copy, whatever branch a separate python_magnetrun checkout is on
+MYSQL_CONNECT="$(cd .. && pwd)/python_magnetrun/examples/mysql_connect.py"
 JSON=~/github/hifimagnet-projects/magnetdb.json
 # known magnet status changes (dead, retired, ...), applied in file order
 STATUS_FILE=$JSON/magnet_status.json
@@ -175,6 +177,17 @@ ingest_exp_stats() {
     STEP_NOTE="${COUNTS[0]} processed, ${COUNTS[1]} skipped, ${COUNTS[2]} errors"
 }
 
+# check_files [--etl]: pupitre file quality (file_integrity, ...), or with --etl
+# the spec-driven ETL checks and their record_tags (check_experiment_files.py)
+check_files() {
+    local tmp
+    tmp=$(mktemp) || return 1
+    python check_experiment_files.py --db "$DB" --records-base "$RECORDS" "$@" 2>&1 \
+        | tee "$tmp" || { rm -f "$tmp"; return 1; }
+    STEP_NOTE=$(sed -n 's/^Done — //p' "$tmp")
+    rm -f "$tmp"
+}
+
 ingest_op_stats() {
     local assemblies assembly tmp
     assemblies=$(list_assemblies) || return 1
@@ -200,7 +213,8 @@ load_overview_records() {
 }
 
 export_source_data() {
-    # record the directory from which the script is run
+    # only for the untracked .envrc (credentials) of this checkout: the script run
+    # is the submodule's $MYSQL_CONNECT, whatever branch this checkout is on
     pushd ~/github/python_magnetrun/examples || return 1
 
     # Use direnv to define environment variables such as USERDB_API_KEY and SUPERVISION_DB credentials
@@ -235,24 +249,24 @@ export_source_data() {
 
     # SUPERVISION DB: HStart/HStop (local text) are what the users steps read;
     # the timestamp column is unreliable and unused
-    python ./mysql_connect.py --mode export --format csv --no-utc \
+    python "$MYSQL_CONNECT" --mode export --format csv --no-utc \
        --output-dir $DATA_DIR/ --tables EXPERIENCES_LOG \
        --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_SUPERVISION || return 1
 
     # Get water temperature input/output from HX (naive UTC)
-    python ./mysql_connect.py --mode export --format csv --utc \
+    python "$MYSQL_CONNECT" --mode export --format csv --utc \
        --output-dir $DATA_DIR/ --tables bdd \
        --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_SUPERVISION || return 1
 
     # Get water Power and Cooling loop parameters (change_date time zone unknown: kept as stored)
-    python ./mysql_connect.py --mode export --format csv --no-utc \
+    python "$MYSQL_CONNECT" --mode export --format csv --no-utc \
        --output-dir $DATA_DIR/ --tables site_parameters \
        --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_MAGNETS || return 1
 
     # Get logs from Cirrus (local time, like the raw cirrus logs and pupitre filenames)
     local table
     for table in cirrusA1 cirrusA2 cirrusA3 cirrusA4; do
-        python ./mysql_connect.py --mode export --format csv --no-utc \
+        python "$MYSQL_CONNECT" --mode export --format csv --no-utc \
            --output-dir $DATA_DIR/ --tables $table --time-field date --sort-time asc \
            --host $MYSQL_HOST --user $MYSQL_USER --password $MYSQL_PASSWORD --database $MYSQL_DB_LOGS || return 1
     done
@@ -309,6 +323,10 @@ section experiments "Populate experiments" \
     python magnetdb.py populate  experiments --all --db $DB --records-base $RECORDS
 # Ingest per-experiment statistics (idempotent)
 section exp-stats "Ingest per-experiment statistics" ingest_exp_stats
+# Pupitre file quality, then the ETL checks and tags (need the wirings, housing
+# versions and rules loaded by the assemblies and etl-config steps)
+section file-check "Check pupitre file quality" check_files
+section etl-check "Run pupitre ETL checks and tags" check_files --etl
 
 # Populate OperationalData
 section operationaldata "Populate operationaldata" \
