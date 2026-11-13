@@ -82,6 +82,7 @@ def layout(assembly=None, file=None, **kwargs):
                         value=file,
                         placeholder=i18n._("Choose a file..."),
                     ),
+                    html.Div(id="fv-file-checks"),
                     html.Br(),
                     html.Div(id="fv-file-stats", style={"marginBottom": "10px"}),
                     selectors.graph(
@@ -247,7 +248,23 @@ def update_file_dropdown(selected_assembly, selected_db):
     files = selectors.newest_first(
         db.get_files_for_assembly(selected_assembly, "experiments", selected_db)
     )
-    return [{"label": f, "value": f} for f in files]
+    # coloured like the file's row in the experiment tables (file quality, tags)
+    checks = db.get_file_checks_for_assembly(selected_assembly, selected_db)
+    return [selectors.file_option(f, checks.get(f)) for f in files]
+
+
+@dash.callback(
+    Output("fv-file-checks", "children"),
+    Input("dd-file", "value"),
+    Input("dd-assembly", "value"),
+    Input("dd-database", "value"),
+)
+def update_file_checks_note(selected_file, selected_assembly, selected_db):
+    """Show the selected file's integrity, tags and failed checks (see :func:`dash_selectors.file_check_note`)."""
+    if not selected_file or not selected_assembly:
+        return ""
+    checks = db.get_file_checks_for_assembly(selected_assembly, selected_db)
+    return selectors.file_check_note(checks.get(selected_file))
 
 
 @dash.callback(

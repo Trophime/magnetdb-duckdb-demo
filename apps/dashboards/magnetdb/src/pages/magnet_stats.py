@@ -70,7 +70,8 @@ def load_data(db_path=None):
     -------
     :class:`~pandas.DataFrame`
         One row per (experiment, magnet) pair, with columns matching
-        ``EXP_RUN_SCALARS_COLUMNS`` plus ``Housing``.
+        ``EXP_RUN_SCALARS_COLUMNS`` plus ``Housing`` and the file-check
+        columns (:func:`magnetdb_analysis.experiment_check_columns_sql`).
     """
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
@@ -100,7 +101,8 @@ def load_data(db_path=None):
                 ROUND(MAX(CASE WHEN s.channel = 'heat_extracted_j' THEN s.value END) / {J_TO_KWH}, 2) AS "Extracted heat (kWh)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Magnet Time (s)",
-            e.status AS Status
+            e.status AS Status,
+            {db.experiment_check_columns_sql(con, aggregate=True)}
             FROM experiments AS e
             JOIN assembly_magnets AS sm ON e.assembly_name = sm.assembly_name
             LEFT JOIN exp_run_scalars AS s ON e.id = s.experiment_id
@@ -361,7 +363,7 @@ def _build_page_content(
     table_start_date=None,
     table_end_date=None,
 ):
-    """Build the figures, table rows, and summary text for a loaded (experiment, magnet) dataframe.
+    """Build the figures, experiments table, and summary text for a loaded (experiment, magnet) dataframe.
 
     Parameters
     ----------
@@ -385,7 +387,8 @@ def _build_page_content(
     Returns
     -------
     tuple
-        ``(fig_field_on, table_records, summary)``.
+        ``(fig_field_on, experiments_table, summary)``, the table being
+        :func:`dash_selectors.experiment_table`.
     """
     exp_df = df.drop_duplicates(subset="ID").copy()
 
@@ -416,6 +419,13 @@ def _build_page_content(
     table_df["Experiment"] = table_source_df.apply(experiment_link, axis=1)
     table_df["Magnet"] = table_source_df.apply(magnet_link, axis=1)
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
+    table = selectors.experiment_table(
+        table_df,
+        table_columns(),
+        db.get_file_tags(db_path),
+        page_size=20,
+        extra_style=selectors.missing_date_style("Experiment"),
+    )
 
     summary = [
         i18n._("Processed: {n}").format(n=(exp_df["Status"] == "STATS DONE").sum())
@@ -423,7 +433,7 @@ def _build_page_content(
 
     return (
         fig_field_on,
-        table_df.to_dict("records"),
+        table,
         summary,
     )
 
@@ -529,17 +539,8 @@ def layout(magnet=None, **kwargs):
                                 i18n._("Filter by experiment date"),
                                 style={"marginBottom": "10px"},
                             ),
-                            DataTable(
-                                id="magnet-stats-table",
-                                columns=table_columns(),
-                                data=[],
-                                page_size=20,
-                                sort_action="native",
-                                style_table={"overflowX": "auto"},
-                                style_cell={"textAlign": "center", "padding": "6px"},
-                                style_header={"fontWeight": "auto"},
-                                style_data_conditional=selectors.missing_date_style("Experiment"),
-                            ),
+                            # legend + table (selectors.experiment_table), filled by the callback
+                            html.Div(id="magnet-stats-table"),
                         ],
                         style={"padding": "10px"},
                     ),
@@ -559,7 +560,7 @@ def layout(magnet=None, **kwargs):
 @dash.callback(
     Output("magnet-stats-fig-field-on", "figure"),
     Output("magnet-stats-fig-field-on", "style"),
-    Output("magnet-stats-table", "data"),
+    Output("magnet-stats-table", "children"),
     Output("magnet-stats-summary", "children"),
     Output("magnet-stats-magnet-filter", "options"),
     Output("magnet-stats-status-filter", "options"),
@@ -677,7 +678,7 @@ def update_magnet_stats(
 
     (
         fig_field_on,
-        table_records,
+        experiments_table,
         summary,
     ) = _build_page_content(
         plot_df,
@@ -708,7 +709,7 @@ def update_magnet_stats(
     return (
         fig_field_on,
         fig_field_on_style,
-        table_records,
+        experiments_table,
         summary,
         magnet_options,
         status_options,

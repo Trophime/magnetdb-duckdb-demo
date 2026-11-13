@@ -2805,6 +2805,123 @@ def get_research_area_field_bin_stats_by_year(housing=None, year=None, research_
         return conn.execute(query, params).df()
 
 
+_EXPERIMENT_CHECK_COLUMNS = ("file_integrity", "file_checks", "etl_checks")
+
+
+def experiment_check_columns_sql(conn, alias="e", aggregate=False):
+    """SQL select list for the file-check columns of ``experiments``.
+
+    Parameters
+    ----------
+    conn : duckdb.DuckDBPyConnection
+        Open connection, used to see which columns exist.
+    alias : str, optional
+        Alias of ``experiments`` in the query.
+    aggregate : bool, optional
+        Wrap each column in ``ANY_VALUE`` for a query grouped by experiment.
+
+    Returns
+    -------
+    str
+        ``file_integrity``, ``file_checks`` and ``etl_checks`` (JSON as
+        text), each ``NULL`` when the column is missing (a DB built before
+        the file checks).
+    """
+    present = {
+        name
+        for (name,) in conn.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name = 'experiments'"
+        ).fetchall()
+    }
+    parts = []
+    for col in _EXPERIMENT_CHECK_COLUMNS:
+        if col not in present:
+            parts.append(f"NULL AS {col}")
+        elif aggregate:
+            parts.append(f"ANY_VALUE({alias}.{col}) AS {col}")
+        else:
+            parts.append(f"{alias}.{col} AS {col}")
+    return ", ".join(parts)
+
+
+def get_file_tags(db_path=None):
+    """Return the tags of each experiment file, most severe first.
+
+    Parameters
+    ----------
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    dict[int, list[dict]]
+        ``experiments.id`` → one dict per ``record_tags`` row (``tag``,
+        ``rule``, ``value``, ``tolerance``, and the tag's ``color``,
+        ``severity`` and ``description``), ordered by severity (highest
+        first), then tag and rule. Empty on a DB without ``tags`` /
+        ``record_tags``.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        tables = {
+            name
+            for (name,) in conn.execute(
+                "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+            ).fetchall()
+        }
+        if not {"tags", "record_tags"} <= tables:
+            return {}
+        rows = conn.execute(
+            """
+            SELECT t.record_key, t.tag, t.rule, t.value, t.tolerance, g.color, g.severity, g.description
+            FROM record_tags AS t JOIN tags AS g ON g.name = t.tag
+            WHERE t.record_table = 'experiments'
+            ORDER BY g.severity DESC, t.tag, t.rule
+            """
+        ).fetchall()
+    tags = {}
+    for key, tag, rule, value, tolerance, color, severity, description in rows:
+        tags.setdefault(int(key), []).append({
+            "tag": tag, "rule": rule, "value": value, "tolerance": tolerance,
+            "color": color, "severity": severity, "description": description,
+        })
+    return tags
+
+
+def get_file_checks_for_assembly(assembly_name, db_path=None):
+    """Return the file checks and tags of each experiment file of an assembly.
+
+    Parameters
+    ----------
+    assembly_name : str
+        ``assemblies.name``.
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    dict[str, dict]
+        ``experiments.file`` → ``file_integrity``, ``file_checks``,
+        ``etl_checks`` (see :func:`experiment_check_columns_sql`) and
+        ``tags`` (see :func:`get_file_tags`).
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        rows = conn.execute(
+            f"SELECT e.id, e.file, {experiment_check_columns_sql(conn)} "
+            "FROM experiments AS e WHERE e.assembly_name = ?",
+            [assembly_name],
+        ).fetchall()
+    tags = get_file_tags(db_path)
+    return {
+        file: {
+            "file_integrity": integrity,
+            "file_checks": file_checks,
+            "etl_checks": etl_checks,
+            "tags": tags.get(exp_id, []),
+        }
+        for exp_id, file, integrity, file_checks, etl_checks in rows
+    }
+
+
 def get_experiments_for_filters(housing=None, year=None, research_area=None, user=None, db_path=None):
     """Return experiments linked to users matching the given filters.
 
@@ -2831,11 +2948,12 @@ def get_experiments_for_filters(housing=None, year=None, research_area=None, use
     :class:`~pandas.DataFrame`
         One row per distinct experiment linked to a matching ``users``
         session, with columns ``id``, ``name``, ``description``, ``file``,
-        ``assembly_name`` and ``status``, ascending by the timestamp parsed
-        from ``file``.
+        ``assembly_name``, ``status`` and the file-check columns of
+        :func:`experiment_check_columns_sql`, ascending by the timestamp
+        parsed from ``file``.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
-        query = """
+        query = f"""
             WITH filtered_users AS (
                 SELECT *
                 FROM users
@@ -2844,7 +2962,8 @@ def get_experiments_for_filters(housing=None, year=None, research_area=None, use
                     AND (? IS NULL OR COALESCE(research_area, 'Undefined') = ?)
                     AND (? IS NULL OR acronym = ?)
             )
-            SELECT DISTINCT e.id, e.name, e.description, e.file, e.assembly_name, e.status
+            SELECT DISTINCT e.id, e.name, e.description, e.file, e.assembly_name, e.status,
+                {experiment_check_columns_sql(conn)}
             FROM filtered_users AS u, UNNEST(u.experiments_ids) AS t(eid)
             JOIN experiments AS e ON e.id = t.eid
             ORDER BY e.name

@@ -1,3 +1,5 @@
+import json
+
 import dash_bootstrap_components as dbc
 import i18n
 import magnetdb_analysis as db
@@ -15,6 +17,16 @@ GEOMETRY_PROBLEM_COLOR = "#f8d7da"
 
 # Background of a date cell left empty (date not set in the database).
 MISSING_DATE_COLOR = "#fff3cd"
+
+# Fixed file-integrity colours of the experiment tables (PLAN_file_check_rules.md);
+# to_duckdb's etl_spec refuses them, and the two above, as tag colours.
+TRUNCATED_COLOR = "#ffe5d0"
+UNREADABLE_COLOR = "#f1aeb5"
+
+FILE_INTEGRITY_COLUMN = "File integrity"
+ETL_CHECKS_COLUMN = "ETL checks"
+# hidden column holding each row's colour key, so colours survive sorting
+_FLAG_COLUMN = "_flag"
 
 
 def missing_date_style(*columns, status_column=None):
@@ -722,3 +734,341 @@ def file_stats_banner(
         content,
         style={"fontStyle": "italic", "color": "#333", "padding": "6px 0"},
     )
+
+
+# ---------------------------------------------------------------------------
+# File quality and ETL checks (PLAN_file_check_rules.md step 6)
+# ---------------------------------------------------------------------------
+
+
+def _json_value(value):
+    """Parse a JSON column value (text or already parsed); None for missing values."""
+    if isinstance(value, str):
+        return json.loads(value)
+    if isinstance(value, (list, dict)):
+        return value
+    return None
+
+
+def file_integrity_label(file_integrity):
+    """Return the ``File integrity`` cell text: ``ok`` / ``truncated`` / ``unreadable``, blank if not checked."""
+    return file_integrity if isinstance(file_integrity, str) else ""
+
+
+def etl_checks_label(etl_checks):
+    """Return the ``ETL checks`` cell text.
+
+    Parameters
+    ----------
+    etl_checks : str or list or None
+        ``experiments.etl_checks`` (JSON text or parsed list).
+
+    Returns
+    -------
+    str
+        Blank when not checked or empty, ``load error`` when the file could
+        not be loaded, ``N failed`` when N checks failed, else ``ok``.
+        Checks that could not be evaluated (``ok: None``) do not count.
+    """
+    checks = _json_value(etl_checks) or []
+    if not checks:
+        return ""
+    if any(c.get("kind") == "load" for c in checks):
+        return i18n._("load error")
+    n_failed = sum(c.get("ok") is False for c in checks)
+    return i18n._("{n} failed").format(n=n_failed) if n_failed else "ok"
+
+
+def _check_line(check):
+    """One tooltip line for a failed or not evaluated ETL check."""
+    kind = check.get("kind")
+    if kind == "rule":
+        if check.get("ok") is None:
+            missing = ", ".join(check.get("missing") or [])
+            if missing:
+                return i18n._("{name}: not evaluated (missing {columns})").format(
+                    name=check.get("name"), columns=missing
+                )
+            return i18n._("{name}: not evaluated").format(name=check.get("name"))
+        unit = f" {check['unit']}" if check.get("unit") else ""
+        value = check.get("value")
+        value_text = f"{value:.4g}" if isinstance(value, (int, float)) else "?"
+        tag = f" ({check['tag']})" if check.get("tag") else ""
+        return (
+            f"{check.get('name')}: {check.get('stat')} = {value_text}{unit} "
+            f"> {check.get('tol'):g}{unit}{tag}"
+        )
+    if kind == "channel":
+        fields = ", ".join(f"{k} = {v:.4g}" for k, v in (check.get("fields") or {}).items())
+        return i18n._("channel {n} not empty: {fields}").format(n=check.get("channel"), fields=fields)
+    if kind == "housing_version":
+        return i18n._("housing version: spec {spec}, data {data}").format(
+            spec=check.get("spec"), data=check.get("data")
+        )
+    if kind == "load":
+        return i18n._("load error: {reason}").format(reason=check.get("reason", ""))
+    return json.dumps(check)
+
+
+def etl_checks_tooltip(etl_checks):
+    """Return the ``ETL checks`` tooltip (markdown list): failed checks, then those not evaluated.
+
+    Parameters
+    ----------
+    etl_checks : str or list or None
+        ``experiments.etl_checks`` (JSON text or parsed list).
+
+    Returns
+    -------
+    str
+        Every failed check, tagged or not (rules, channels, housing version,
+        load error), then the rules that could not be evaluated; blank when
+        there is none.
+    """
+    checks = _json_value(etl_checks) or []
+    shown = [c for c in checks if c.get("ok") is False or c.get("kind") == "load"]
+    shown += [c for c in checks if c.get("ok") is None and c.get("kind") != "load"]
+    return "\n".join(f"- {_check_line(c)}" for c in shown)
+
+
+def file_integrity_tooltip(file_checks):
+    """Return the ``File integrity`` tooltip (markdown list) from ``experiments.file_checks``; blank if none."""
+    details = _json_value(file_checks) or {}
+    labels = (
+        ("reason", i18n._("reason")),
+        ("rows_read", i18n._("rows read")),
+        ("rows_dropped", i18n._("rows dropped")),
+    )
+    return "\n".join(f"- {label}: {details[key]}" for key, label in labels if key in details)
+
+
+def tags_tooltip(tags):
+    """Return the ``Experiment`` tooltip (markdown list): each tag with its rules and description."""
+    by_tag = {}
+    for tag in tags:
+        by_tag.setdefault(tag["tag"], {"rules": [], "description": tag.get("description")})
+        by_tag[tag["tag"]]["rules"].append(tag["rule"])
+    lines = []
+    for name, info in by_tag.items():
+        description = f": {info['description']}" if info["description"] else ""
+        lines.append(f"- {name} ({', '.join(info['rules'])}){description}")
+    return "\n".join(lines)
+
+
+def experiment_flag(file_integrity, etl_checks, tags):
+    """Return the colour of an experiment row, and the cell that causes it.
+
+    Parameters
+    ----------
+    file_integrity : str or None
+        ``experiments.file_integrity``.
+    etl_checks : str or list or None
+        ``experiments.etl_checks``.
+    tags : list of dict
+        The file's tags (:func:`magnetdb_analysis.get_file_tags`).
+
+    Returns
+    -------
+    dict or None
+        ``{"key", "color", "column"}`` by precedence: ``unreadable``, an ETL
+        ``load error`` (both :data:`UNREADABLE_COLOR`), ``truncated``
+        (:data:`TRUNCATED_COLOR`), then the tag with the highest severity
+        (ties by name); ``None`` for a clean or unchecked file.
+    """
+    if file_integrity == "unreadable":
+        return {"key": "unreadable", "color": UNREADABLE_COLOR, "column": FILE_INTEGRITY_COLUMN}
+    if any(c.get("kind") == "load" for c in _json_value(etl_checks) or []):
+        return {"key": "load error", "color": UNREADABLE_COLOR, "column": ETL_CHECKS_COLUMN}
+    if file_integrity == "truncated":
+        return {"key": "truncated", "color": TRUNCATED_COLOR, "column": FILE_INTEGRITY_COLUMN}
+    if tags:
+        top = min(tags, key=lambda t: (-t["severity"], t["tag"]))
+        return {"key": top["tag"], "color": top["color"], "column": ETL_CHECKS_COLUMN}
+    return None
+
+
+def _check_flag(check):
+    """:func:`experiment_flag` of a :func:`magnetdb_analysis.get_file_checks_for_assembly` entry (or None)."""
+    if not check:
+        return None
+    return experiment_flag(check.get("file_integrity"), check.get("etl_checks"), check.get("tags") or [])
+
+
+def file_option(file, check):
+    """Return the File viewer's ``dd-file`` option for *file*, coloured like its experiment row.
+
+    Parameters
+    ----------
+    file : str
+        ``experiments.file``.
+    check : dict or None
+        Its :func:`magnetdb_analysis.get_file_checks_for_assembly` entry.
+
+    Returns
+    -------
+    dict
+        ``{"label", "value"}``; for a flagged file (:func:`experiment_flag`)
+        the label is a coloured ``Span`` and ``search`` keeps it searchable.
+    """
+    flag = _check_flag(check)
+    if not flag:
+        return {"label": file, "value": file}
+    label = html.Span(file, style={"backgroundColor": flag["color"], "padding": "0 4px",
+                                   "borderRadius": "3px"})
+    return {"label": label, "value": file, "search": file}
+
+
+def file_check_note(check):
+    """Return the note shown under the File viewer's file selector.
+
+    Parameters
+    ----------
+    check : dict or None
+        The selected file's :func:`magnetdb_analysis.get_file_checks_for_assembly` entry.
+
+    Returns
+    -------
+    :class:`~dash.html.Div` or str
+        For a flagged file, a box in its colour with the file integrity, the
+        tags and the failed or not evaluated ETL checks; ``""`` otherwise.
+    """
+    flag = _check_flag(check)
+    if not flag:
+        return ""
+    lines = [
+        f"**{i18n._('File integrity')}**: {file_integrity_label(check.get('file_integrity')) or '–'}"
+        f" · **{i18n._('ETL checks')}**: {etl_checks_label(check.get('etl_checks')) or '–'}"
+    ]
+    for text in (
+        tags_tooltip(check.get("tags") or []),
+        file_integrity_tooltip(check.get("file_checks")),
+        etl_checks_tooltip(check.get("etl_checks")),
+    ):
+        if text:
+            lines.append(text)
+    return html.Div(
+        dcc.Markdown("\n\n".join(lines)),
+        style={"backgroundColor": flag["color"], "padding": "6px 12px", "borderRadius": "6px",
+               "marginTop": "6px"},
+    )
+
+
+def _legend_chip(text, color, title=None):
+    return html.Span(
+        text,
+        title=title,
+        style={"backgroundColor": color, "padding": "2px 6px", "marginLeft": "6px",
+               "borderRadius": "4px", "whiteSpace": "nowrap"},
+    )
+
+
+def file_check_legend(tags):
+    """Return the one-line colour legend: the two file-integrity colours, then *tags* (most severe first)."""
+    distinct = {}
+    for tag in tags:
+        distinct.setdefault(tag["tag"], tag)
+    chips = [
+        _legend_chip(i18n._("truncated"), TRUNCATED_COLOR),
+        _legend_chip(i18n._("unreadable / load error"), UNREADABLE_COLOR),
+    ] + [
+        _legend_chip(t["tag"], t["color"], t.get("description"))
+        for t in sorted(distinct.values(), key=lambda t: (-t["severity"], t["tag"]))
+    ]
+    return html.Div(
+        [html.Span(i18n._("Colours:"), style={"fontStyle": "italic"})] + chips,
+        style={"marginBottom": "6px", "fontSize": "0.9em"},
+    )
+
+
+def experiment_table(
+    table_df, columns, tags_by_id, id_column="ID", page_size=10, extra_style=None, table_id=None
+):
+    """Build an experiment `DataTable` with its file-check columns, colours, tooltips and legend.
+
+    Parameters
+    ----------
+    table_df : :class:`~pandas.DataFrame`
+        Rows to show, already formatted (links, dates), with an *id_column*
+        (``experiments.id``) and the raw ``file_integrity``, ``file_checks``
+        and ``etl_checks`` columns (missing values allowed).
+    columns : list of dict
+        `DataTable` columns for the page's own fields; ``File integrity``,
+        ``ETL checks`` and the hidden flag column are appended.
+    tags_by_id : dict[int, list[dict]]
+        :func:`magnetdb_analysis.get_file_tags`.
+    id_column : str, optional
+        Column holding ``experiments.id``.
+    page_size : int, optional
+        Rows per page.
+    extra_style : list of dict, optional
+        Other ``style_data_conditional`` rules (e.g. :func:`missing_date_style`),
+        kept first.
+    table_id : str, optional
+        Component id of the `DataTable`.
+
+    Returns
+    -------
+    :class:`~dash.html.Div`
+        The legend (:func:`file_check_legend`) above the `DataTable`. The
+        ``Experiment`` cell and the cell causing it take the row's colour
+        (:func:`experiment_flag`), keyed on a hidden column so it survives
+        sorting; cells are not selectable (Dash's highlight of the clicked
+        cell looked like a flag).
+    """
+    data, tooltips, flags, present_tags = [], [], {}, []
+    for record in table_df.to_dict("records"):
+        integrity = record.pop("file_integrity", None)
+        integrity = integrity if isinstance(integrity, str) else None
+        file_checks = record.pop("file_checks", None)
+        etl_checks = record.pop("etl_checks", None)
+        exp_id = record.get(id_column)
+        tags = tags_by_id.get(int(exp_id), []) if pd.notna(exp_id) else []
+        flag = experiment_flag(integrity, etl_checks, tags)
+
+        record[FILE_INTEGRITY_COLUMN] = file_integrity_label(integrity)
+        record[ETL_CHECKS_COLUMN] = etl_checks_label(etl_checks)
+        record[_FLAG_COLUMN] = flag["key"] if flag else ""
+        if flag:
+            flags[flag["key"]] = flag
+        present_tags += tags
+
+        tooltip = {}
+        for column, text in (
+            ("Experiment", tags_tooltip(tags)),
+            (FILE_INTEGRITY_COLUMN, file_integrity_tooltip(file_checks)),
+            (ETL_CHECKS_COLUMN, etl_checks_tooltip(etl_checks)),
+        ):
+            if text:
+                tooltip[column] = {"value": text, "type": "markdown"}
+        data.append(record)
+        tooltips.append(tooltip)
+
+    flag_rules = [
+        {"if": {"filter_query": f'{{{_FLAG_COLUMN}}} = "{key}"', "column_id": column},
+         "backgroundColor": flag["color"]}
+        for key, flag in flags.items()
+        for column in ("Experiment", flag["column"])
+    ]
+    table_kwargs = {"id": table_id} if table_id else {}
+    table = DataTable(
+        columns=list(columns) + [
+            {"name": i18n._("File integrity"), "id": FILE_INTEGRITY_COLUMN},
+            {"name": i18n._("ETL checks"), "id": ETL_CHECKS_COLUMN},
+            {"name": _FLAG_COLUMN, "id": _FLAG_COLUMN},
+        ],
+        data=data,
+        page_size=page_size,
+        sort_action="native",
+        style_table={"overflowX": "auto"},
+        style_cell={"textAlign": "center", "padding": "6px"},
+        style_header={"fontWeight": "bold"},
+        style_data_conditional=list(extra_style or []) + flag_rules,
+        tooltip_data=tooltips,
+        tooltip_duration=None,
+        hidden_columns=[_FLAG_COLUMN],
+        # no "Toggle columns" button for the hidden flag column
+        css=[{"selector": ".show-hide", "rule": "display: none"}],
+        cell_selectable=False,
+        **table_kwargs,
+    )
+    return html.Div([file_check_legend(present_tags), table])

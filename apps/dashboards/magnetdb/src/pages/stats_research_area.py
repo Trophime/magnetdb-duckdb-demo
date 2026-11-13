@@ -53,8 +53,22 @@ def _no_data_message(text):
     return html.Div(text, style={"color": "#888", "fontStyle": "italic"})
 
 
-def _experiments_section(exp_df):
-    """Build the "Matching experiments" accordion content for a filtered dataframe, newest first."""
+def _experiments_section(exp_df, tags_by_id):
+    """Build the "Matching experiments" accordion content for a filtered dataframe, newest first.
+
+    Parameters
+    ----------
+    exp_df : :class:`~pandas.DataFrame`
+        Rows from :func:`magnetdb_analysis.get_experiments_for_filters`.
+    tags_by_id : dict[int, list[dict]]
+        :func:`magnetdb_analysis.get_file_tags`.
+
+    Returns
+    -------
+    :class:`~dash.html.Div`
+        A "no experiments" message, or the colour legend and the table
+        (:func:`dash_selectors.experiment_table`).
+    """
     if exp_df.empty:
         return _no_data_message(i18n._("No experiments found for the current filters."))
     source_df = exp_df.rename(
@@ -72,17 +86,18 @@ def _experiments_section(exp_df):
     table_df = source_df.drop(columns=["File"])
     table_df["Experiment"] = source_df.apply(experiment_link, axis=1)
     table_df["Assembly"] = source_df.apply(assembly_link, axis=1)
-    table_df = table_df[["Experiment", "Assembly", "Housing", "Status"]]
+    table_df = table_df[
+        ["Experiment", "Assembly", "Housing", "Status",
+         "id", "file_integrity", "file_checks", "etl_checks"]
+    ]
 
-    return DataTable(
-        columns=experiments_columns(),
-        data=table_df.to_dict("records"),
+    return selectors.experiment_table(
+        table_df,
+        experiments_columns(),
+        tags_by_id,
+        id_column="id",
         page_size=10,
-        sort_action="native",
-        style_table={"overflowX": "auto"},
-        style_cell={"textAlign": "center", "padding": "6px"},
-        style_header={"fontWeight": "bold"},
-        style_data_conditional=selectors.missing_date_style("Experiment"),
+        extra_style=selectors.missing_date_style("Experiment"),
     )
 
 
@@ -416,7 +431,7 @@ def update(selected_db, research_area, housing, year, user):
             housing=housing, year=year, research_area=research_area, user=user, db_path=selected_db
         )
         section_style = {**section_style, "display": "block"}
-        exp_content = _experiments_section(exp_df)
+        exp_content = _experiments_section(exp_df, db.get_file_tags(selected_db))
         ov_content = _overview_records_section(ov_df)
     else:
         section_style = {**section_style, "display": "none"}

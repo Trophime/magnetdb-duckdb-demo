@@ -776,3 +776,63 @@ msgstr "Koeling"
 #: src/dash_selectors.py:56
 msgid "Be patient while data are processed…"
 msgstr "Even geduld, de gegevens worden verwerkt…"
+
+#: src/dash_selectors.py
+msgid "File integrity"
+msgstr "Bestandsintegriteit"
+
+#: src/dash_selectors.py
+msgid "ETL checks"
+msgstr "ETL-controles"
+
+#: src/dash_selectors.py
+msgid "load error"
+msgstr "laadfout"
+
+#: src/dash_selectors.py
+msgid "{n} failed"
+msgstr "{n} mislukt"
+
+#: src/dash_selectors.py
+msgid "{name}: not evaluated (missing {columns})"
+msgstr "{name}: niet geëvalueerd (ontbreekt {columns})"
+
+#: src/dash_selectors.py
+msgid "{name}: not evaluated"
+msgstr "{name}: niet geëvalueerd"
+
+#: src/dash_selectors.py
+msgid "channel {n} not empty: {fields}"
+msgstr "kanaal {n} niet leeg: {fields}"
+
+#: src/dash_selectors.py
+msgid "housing version: spec {spec}, data {data}"
+msgstr "housingversie: spec {spec}, data {data}"
+
+#: src/dash_selectors.py
+msgid "load error: {reason}"
+msgstr "laadfout: {reason}"
+
+#: src/dash_selectors.py
+msgid "reason"
+msgstr "reden"
+
+#: src/dash_selectors.py
+msgid "rows read"
+msgstr "gelezen regels"
+
+#: src/dash_selectors.py
+msgid "rows dropped"
+msgstr "verworpen regels"
+
+#: src/dash_selectors.py
+msgid "truncated"
+msgstr "afgekapt"
+
+#: src/dash_selectors.py
+msgid "unreadable / load error"
+msgstr "onleesbaar / laadfout"
+
+#: src/dash_selectors.py
+msgid "Colours:"
+msgstr "Kleuren:"

@@ -75,7 +75,8 @@ def load_data(db_path=None):
     -------
     :class:`~pandas.DataFrame`
         One row per (experiment, part) pair, with columns matching
-        ``EXP_PART_BIN_STATS_COLUMNS`` plus ``Housing``.
+        ``EXP_PART_BIN_STATS_COLUMNS`` plus ``Housing`` and the file-check
+        columns (:func:`magnetdb_analysis.experiment_check_columns_sql`).
     """
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
@@ -97,14 +98,15 @@ def load_data(db_path=None):
     if n_scalars == 0:
         _warn_exp_part_bin_stats("is empty", db_path)
 
-    df = con.execute("""
+    df = con.execute(f"""
             SELECT
                 e.id AS ID, e.name AS Experiment, p.name AS Part, p.type AS Type,
                 mp.magnet_name AS Magnet, e.assembly_name AS Assembly, e.file AS File,
                 ROUND(MAX(fo.value) / 3600, 2) AS "Time (h)",
                 ROUND(MAX(CASE WHEN s.channel = 'hoop_stress_proxy' THEN s.max_x END), 1) AS "Peak hoop stress proxy (A^2)",
                 CASE WHEN hp.experiment_id IS NOT NULL THEN 'Computed' ELSE 'Not computed' END AS "Hoop Stress Status",
-            e.status AS Status
+            e.status AS Status,
+            {db.experiment_check_columns_sql(con, aggregate=True)}
             FROM experiments AS e
             JOIN assembly_magnets AS sm ON e.assembly_name = sm.assembly_name
             JOIN magnet_parts AS mp ON mp.magnet_name = sm.magnet_name
@@ -579,7 +581,7 @@ def _build_page_content(
     table_start_date=None,
     table_end_date=None,
 ):
-    """Build the figures, table rows, and summary text for a loaded (experiment, part) dataframe.
+    """Build the figures, experiments table, and summary text for a loaded (experiment, part) dataframe.
 
     Parameters
     ----------
@@ -625,6 +627,13 @@ def _build_page_content(
     table_df["Part"] = table_source_df.apply(part_link, axis=1)
     table_df["Magnet"] = table_source_df.apply(magnet_link, axis=1)
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
+    table = selectors.experiment_table(
+        table_df,
+        table_columns(),
+        db.get_file_tags(db_path),
+        page_size=20,
+        extra_style=selectors.missing_date_style("Experiment"),
+    )
 
     summary = [
         i18n._("Processed: {n}").format(n=(exp_df["Status"] == "STATS DONE").sum())
@@ -632,7 +641,7 @@ def _build_page_content(
 
     return (
         fig_magnet_time,
-        table_df.to_dict("records"),
+        table,
         summary,
     )
 
@@ -816,17 +825,8 @@ def layout(part=None, **kwargs):
                                 i18n._("Filter by experiment date"),
                                 style={"marginBottom": "10px"},
                             ),
-                            DataTable(
-                                id="part-stats-table",
-                                columns=table_columns(),
-                                data=[],
-                                page_size=20,
-                                sort_action="native",
-                                style_table={"overflowX": "auto"},
-                                style_cell={"textAlign": "center", "padding": "6px"},
-                                style_header={"fontWeight": "auto"},
-                                style_data_conditional=selectors.missing_date_style("Experiment"),
-                            ),
+                            # legend + table (selectors.experiment_table), filled by the callback
+                            html.Div(id="part-stats-table"),
                         ],
                         style={"padding": "10px"},
                     ),
@@ -846,7 +846,7 @@ def layout(part=None, **kwargs):
 @dash.callback(
     Output("part-stats-fig-magnet-time", "figure"),
     Output("part-stats-fig-magnet-time", "style"),
-    Output("part-stats-table", "data"),
+    Output("part-stats-table", "children"),
     Output("part-stats-summary", "children"),
     Output("part-stats-part-filter", "options"),
     Output("part-stats-status-filter", "options"),
@@ -986,7 +986,7 @@ def update_part_stats(
 
     (
         fig_magnet_time,
-        table_records,
+        experiments_table,
         summary,
     ) = _build_page_content(
         plot_df,
@@ -1014,7 +1014,7 @@ def update_part_stats(
     return (
         fig_magnet_time,
         fig_magnet_time_style,
-        table_records,
+        experiments_table,
         summary,
         part_options,
         status_options,

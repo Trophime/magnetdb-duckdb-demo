@@ -782,3 +782,63 @@ msgstr "Refroidissement"
 #: src/dash_selectors.py:56
 msgid "Be patient while data are processed…"
 msgstr "Patientez pendant le traitement des données…"
+
+#: src/dash_selectors.py
+msgid "File integrity"
+msgstr "Intégrité du fichier"
+
+#: src/dash_selectors.py
+msgid "ETL checks"
+msgstr "Contrôles ETL"
+
+#: src/dash_selectors.py
+msgid "load error"
+msgstr "erreur de chargement"
+
+#: src/dash_selectors.py
+msgid "{n} failed"
+msgstr "{n} en échec"
+
+#: src/dash_selectors.py
+msgid "{name}: not evaluated (missing {columns})"
+msgstr "{name} : non évalué (manque {columns})"
+
+#: src/dash_selectors.py
+msgid "{name}: not evaluated"
+msgstr "{name} : non évalué"
+
+#: src/dash_selectors.py
+msgid "channel {n} not empty: {fields}"
+msgstr "voie {n} non vide : {fields}"
+
+#: src/dash_selectors.py
+msgid "housing version: spec {spec}, data {data}"
+msgstr "version du site : spec {spec}, données {data}"
+
+#: src/dash_selectors.py
+msgid "load error: {reason}"
+msgstr "erreur de chargement : {reason}"
+
+#: src/dash_selectors.py
+msgid "reason"
+msgstr "raison"
+
+#: src/dash_selectors.py
+msgid "rows read"
+msgstr "lignes lues"
+
+#: src/dash_selectors.py
+msgid "rows dropped"
+msgstr "lignes écartées"
+
+#: src/dash_selectors.py
+msgid "truncated"
+msgstr "tronqué"
+
+#: src/dash_selectors.py
+msgid "unreadable / load error"
+msgstr "illisible / erreur de chargement"
+
+#: src/dash_selectors.py
+msgid "Colours:"
+msgstr "Couleurs :"

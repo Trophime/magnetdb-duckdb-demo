@@ -78,7 +78,8 @@ def load_data(db_path=None):
     -------
     :class:`~pandas.DataFrame`
         One row per experiment, with columns matching
-        ``EXP_RUN_SCALARS_COLUMNS`` plus ``Housing`` and ``Commissioned``.
+        ``EXP_RUN_SCALARS_COLUMNS`` plus ``Housing``, ``Commissioned`` and
+        the file-check columns (:func:`magnetdb_analysis.experiment_check_columns_sql`).
     """
     db_path = db_path or db.DB_PATH
     con = duckdb.connect(db_path, read_only=True)
@@ -108,7 +109,8 @@ def load_data(db_path=None):
                 ROUND(MAX(CASE WHEN s.channel = 'duration_s' THEN s.value END), 2) AS "Duration (s)",
                 ROUND(MAX(CASE WHEN s.channel = 'duration_field_on_s' THEN s.value END), 2) AS "Magnet Time (s)",
             e.status AS Status,
-            st.commissioned_at AS Commissioned
+            st.commissioned_at AS Commissioned,
+            {db.experiment_check_columns_sql(con, aggregate=True)}
             FROM experiments AS e
             LEFT JOIN exp_run_scalars AS s ON e.id = s.experiment_id
             LEFT JOIN assemblies AS st ON e.assembly_name = st.name
@@ -336,7 +338,7 @@ def _build_page_content(
     table_start_date=None,
     table_end_date=None,
 ):
-    """Build the figures, table rows, and summary text for a loaded experiments dataframe.
+    """Build the figures, experiments table, and summary text for a loaded experiments dataframe.
 
     Parameters
     ----------
@@ -481,6 +483,13 @@ def _build_page_content(
     table_df = table_source_df.drop(columns=["File"])
     table_df["Experiment"] = table_source_df.apply(experiment_link, axis=1)
     table_df["Assembly"] = table_source_df.apply(assembly_link, axis=1)
+    table = selectors.experiment_table(
+        table_df,
+        table_columns(),
+        db.get_file_tags(db_path),
+        page_size=20,
+        extra_style=selectors.missing_date_style("Experiment"),
+    )
 
     summary = [i18n._("Processed: {n}").format(n=(df["Status"] == "STATS DONE").sum())]
 
@@ -489,7 +498,7 @@ def _build_page_content(
         fig_per_assembly,
         fig_field_on,
         fig_field_bins,
-        table_df.to_dict("records"),
+        table,
         summary,
     )
 
@@ -594,17 +603,8 @@ def layout(assembly=None, **kwargs):
                                 i18n._("Filter by experiment date"),
                                 style={"marginBottom": "10px"},
                             ),
-                            DataTable(
-                                id="assembly-stats-table",
-                                columns=table_columns(),
-                                data=[],
-                                page_size=20,
-                                sort_action="native",
-                                style_table={"overflowX": "auto"},
-                                style_cell={"textAlign": "center", "padding": "6px"},
-                                style_header={"fontWeight": "auto"},
-                                style_data_conditional=selectors.missing_date_style("Experiment"),
-                            ),
+                            # legend + table (selectors.experiment_table), filled by the callback
+                            html.Div(id="assembly-stats-table"),
                         ],
                         style={"padding": "10px"},
                     ),
@@ -628,7 +628,7 @@ def layout(assembly=None, **kwargs):
     Output("fig-field-on", "figure"),
     Output("fig-field-on", "style"),
     Output("fig-field-bins", "figure"),
-    Output("assembly-stats-table", "data"),
+    Output("assembly-stats-table", "children"),
     Output("assembly-stats-summary", "children"),
     Output("assembly-stats-assembly-filter", "options"),
     Output("assembly-stats-housing-filter", "options"),
@@ -761,7 +761,7 @@ def update_assembly_stats(
         fig_per_assembly,
         fig_field_on,
         fig_field_bins,
-        table_records,
+        experiments_table,
         summary,
     ) = _build_page_content(
         plot_df,
@@ -784,7 +784,7 @@ def update_assembly_stats(
         fig_field_on,
         fig_field_on_style,
         fig_field_bins,
-        table_records,
+        experiments_table,
         summary,
         assembly_options,
         housing_options,

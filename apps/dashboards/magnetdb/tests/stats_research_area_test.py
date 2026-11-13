@@ -19,9 +19,14 @@ def test_experiments_section_newest_first():
         "file": ["a.txt", "b.txt", "c.txt"],
         "assembly_name": ["M9_A1", "M9_A2", "M10_A3"],
         "status": ["old", "mid", "new"],
+        "id": [1, 2, 3],
+        "file_integrity": ["ok", "truncated", None],
+        "file_checks": [None, None, None],
+        "etl_checks": ["[]", "[]", None],
     })
-    table = ra._experiments_section(exp_df)
+    _legend, table = ra._experiments_section(exp_df, tags_by_id={}).children
     assert [r["Status"] for r in table.data] == ["new", "mid", "old"]
+    assert [r["File integrity"] for r in table.data] == ["", "truncated", "ok"]
 
 
 def test_overview_records_section_newest_first():
