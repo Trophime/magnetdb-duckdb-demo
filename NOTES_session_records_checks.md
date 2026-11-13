@@ -41,7 +41,7 @@ merged into `housing-config-versions` on 2026-11-04):
 | Step 0: 11 `corrupt_tail` pupitre files since 2018 | ✅ all kept by `select_files`, end = start + `exp_run_scalars.duration_s` (± 1 s); the 7 `unreadable` files still skipped |
 | Step 0: Archive end, modification time vs TDMS properties (129 archives, M5/M9/M10, 2018–2026) | ⚠️ 0.2 ms vs 1–4 s median (up to 21 s) per file; never rejected; properties gave no end for 10 files. 121/129 within 60 s, **8 small files (0–26 MB) off by up to 219 s** (expected < 60 s) |
 | Step 0: `magnetrun analysis` before/after, 46 M9 overviews of July 2025 | ⚠️ `2025.07.01 - 09:58:01.txt` now listed as expected, **but 3 overviews gained a wrong archive** (see [issue 1](#1-modification-time-is-wrong-for-small-archives)). Run time 7422 s → 6607 s (−11 %) |
-| (a) M10 2019 (pupitre only) | ✅ 206 sessions, 192 `anchor=pupitre`; the 14 without files are unpowered (`Paimant` 0) or capped sessions. 8.3 min |
+| (a) M10 2019 (pupitre only) | ✅ 206 sessions, 192 `anchor=pupitre`; the 14 without files have `Paimant` 0.0 (< 0.05 MWh, not necessarily unpowered: see [EXPERIENCES_LOG fields](Data/README.md#experiences_log-fields)) or are capped sessions. 8.3 min |
 | (b) M9 2018 (archive + pupitre) | ✅ 337 sessions: 300 with archives, 308 with pupitre files; 25 unlogged. 32 min |
 | (c) M9 2025 vs `Data/M9_summary-2025.json` | ❌ 307/330 overviews in a logged session (expected ≥ 312); 19 more in unlogged records (326 in total); the last 4 last 18–27 s and are dropped by the existing 30 s minimum of `select_files`. **3 h 42 min** |
 | (d) unlogged campaigns | ✅ M9 April 2024: 13 unlogged records, one per day on 10–12, 17–19, 24–26 Apr (pupitre only). M10 May 2018: 6 unlogged records on 18–23 May (archive + pupitre) |

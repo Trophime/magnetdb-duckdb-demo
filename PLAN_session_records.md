@@ -131,8 +131,10 @@ already handle archive-anchored sessions, but they have not been run for
 ### 3. Duplicates, short sessions, merging coils
 
 - Exact duplicate rows exist only in 2006–2015; none after 2018.
-- 544 sessions are shorter than 5 min: 9 contain a powered run, all have zero
-  `Paimant`. Keep and flag.
+- 544 sessions are shorter than 5 min: 9 contain a powered run, all have
+  `Paimant` 0.0 (logged with 0.1 MWh resolution, so < 0.05 MWh: see
+  [EXPERIENCES_LOG fields](Data/README.md#experiences_log-fields)). Keep and
+  flag.
 - Merging the `i`/`e` rows of a housing whose windows overlap works: only 12
   merged groups mix two non-operator user codes, mostly typos (`GSC01-118` /
   `GCS01-118`, `TEST` / `Test`, `GMS12-119` / `GMS12-129`).

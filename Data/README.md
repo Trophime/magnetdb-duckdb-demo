@@ -33,11 +33,38 @@ produced is noted in their section.
   Do not use `timestamp`: it drifts from `HStart` since 2020 (≈7.5 h in
   2025–26). `EXPLOIT.` and `EXPLOIT` are the same operator account.
   See [Producing a sessions file](#producing-a-sessions-file).
+  Field meanings: [EXPERIENCES_LOG fields](#experiences_log-fields).
 
 - **`unmatched_users.csv`** — Leftovers from fuzzy-matching experience
   log users against proposal acronyms.
   Columns: `acronym, magnets, session_count, first_hstart, last_hstop,
   closest_proposal_acronym, fuzzy_score`.
+
+### EXPERIENCES_LOG fields
+
+One row per coil and session. Every numeric column is stored with one
+decimal in SUPERVISION (the CSV export does not round). *To fill*: meaning
+not established yet.
+
+| Field | Meaning | Unit | Notes |
+|---|---|---|---|
+| `timestamp` | Time the row was written | — | Drifts from `HStart` since 2020 (≈ 7.5 h in 2025–26): do not use |
+| `UserCode` | User code, e.g. `GRD06-125` | — | `EXPLOIT.` and `EXPLOIT` are the operator account |
+| `UserName` | *To fill* | — | |
+| `OperatorName` | Operator on duty | — | |
+| `Magnet` | Coil: `<housing>i` = insert, `<housing>e` = Bitters (`M8i`, `M9e`, …) | — | No suffix for M1–M7 |
+| `ElecGroup` | Group label of the coil (1 or 2) | — | Fixed per coil, not the supply group: M9 `i` → 1, `e` → 2; M8, M10 `e` → 1, `i` → 2. During the M10 supply swap (2021-03-25 → 2021-07-10) `M10i` stays on 2 |
+| `HStart`, `HStop` | Session start and stop | Paris local time (text) | Spurious AM/PM marker; `HStop` blank for unclosed sessions |
+| `MinuteCount` | Session length | min | |
+| `Paimant` | Electrical energy delivered to the coil | MWh (presumed) | Resolution 0.1 MWh: 0.0 means < 0.05 MWh, not "unpowered" (M8 2026-10-28 08:55 session: 1.76 / 1.72 kWh from the pupitre file, logged 0.0) |
+| `Pmax` | *To fill* | *To fill* | Values up to 1e14 (sentinel?) |
+| `Phydraulique` | *To fill* | *To fill* | |
+| `Ptotale` | *To fill* | *To fill* | Equals `Paimant` + `Phydraulique` in 6 344 rows (the recent ones), not in 16 850 (mostly older) |
+| `dDepassement` | *To fill* | *To fill* | Contains 2147483647 (INT_MAX) |
+| `nDepassement` | *To fill* | *To fill* | Contains 2147483647 (INT_MAX) |
+| `Cout` | *To fill* | *To fill* | Values up to 6e14 |
+| `Qtotale` | *To fill* | *To fill* | Values up to 9.9e14 |
+| `QCout` | *To fill* | *To fill* | Values up to 8.5e14 |
 
 ## Time series
 
