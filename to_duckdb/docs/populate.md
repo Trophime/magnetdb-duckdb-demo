@@ -233,7 +233,7 @@ One row per `Overview` file of the assembly that has `t_start` and `t_end`:
 | `teb`, `bp` | `SUM(mean · count) / SUM(count)` over the pupitre sources; `0.0` when the scalars are missing |
 | `mode` | `operationaldata.mode` of the Overview file |
 
-Hybrid and run-log lists and the JSON columns stay empty. M8 assemblies are skipped: their hybrid files are not in `operationaldata`, so they keep the `summary.json` path (`overview-records-from-json`). Existing rows are skipped unless `--reprocess`; with it, the rewritten row and the rows merged into it become live again (`merged_into = NULL`). The pupitre-duplicate merge of `overview-records-infer` then runs over the table.
+Run-log lists and the JSON columns stay empty. Hybrid files (M8) are not in `operationaldata`: a new row has empty hybrid lists, and a row replaced with `--reprocess` keeps the hybrid lists it had (loaded from `summary.json` by `overview-records-from-json`). Existing rows are skipped unless `--reprocess`; with it, the rewritten row and the rows merged into it become live again (`merged_into = NULL`). The pupitre-duplicate merge of `overview-records-infer` then runs over the table.
 
 ```bash
 # Preview the rows of one assembly

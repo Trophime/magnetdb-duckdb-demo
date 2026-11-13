@@ -10,7 +10,7 @@ Status: **approved 2026-11-07, in progress** (first draft 2026-11-06)
 | D — `teb`/`BP` scalars | ✅; equal to the `infer` path on a real pupitre file |
 | E — SQL builder, stored mode | ✅ (2026-11-09; decisions at the end of phase E) |
 | F — dashboard, docs | ✅ (`get_stats_files_for_assembly` and the Stats viewer page keep their names) |
-| G — validation, build script | steps 13–14 done 2026-11-13 on the 2026-11-10 `.mode17` DB ([results](#phase-g-results-2026-11-13)); decision 2 implemented (incident ends); step 15 (`overview-ops`) left |
+| G — validation, build script | steps 13–14 done 2026-11-13 on the 2026-11-10 `.mode17` DB ([results](#phase-g-results-2026-11-13)); decision 2 implemented (incident ends); step 15 done: `overview-ops` runs after `overview-json` with `--reprocess` (order revised by [PLAN_m8_overview_records.md](PLAN_m8_overview_records.md) part B, which also builds M8) |
 
 Open: files still being written (question 3).
 Decided 2026-11-07: A13 keeps `operationaldata` (question 1); the 2026-11

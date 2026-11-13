@@ -4,7 +4,7 @@ set -eo pipefail
 # step IDs, in build order (see --help)
 STEPS=(create assemblies statuses etl-config check experiments exp-stats operationaldata
        operationaldata-metadata op-stats
-       overview-json overview-infer export users link-users unlinked-users)
+       overview-json overview-ops overview-infer export users link-users unlinked-users)
 
 usage() {
     cat <<EOF
@@ -328,6 +328,12 @@ section op-stats "Ingest per-file operational statistics" ingest_op_stats
 # mv summary.json to ../Data/M9_summary-2025.json
 # Populate overview_records from JSON
 section overview-json "Load overview records from JSON" load_overview_records
+# Rebuild every overview_records row that has an Overview in operationaldata with
+# SQL (sources by overlap, teb/bp, stored mode); rows keep the hybrid lists loaded
+# from JSON (M8). Must run after overview-json, which skips existing rows
+# (PLAN_overview_records_from_operationaldata.md phase G, PLAN_m8_overview_records.md part B)
+section overview-ops "Build overview records from operationaldata" \
+    python magnetdb.py populate overview-records-from-operationaldata --all --reprocess --db $DB
 # Consolidate overview_records and remove duplicates
 section overview-infer "Consolidate overview records" python magnetdb.py populate overview-records-infer --db $DB
 

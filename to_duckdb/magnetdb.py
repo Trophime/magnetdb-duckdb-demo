@@ -1758,8 +1758,7 @@ def cmd_populate_overview_records_from_operationaldata(args) -> None:
             )
             print(
                 f"  {counts['written']} written, {counts['skipped_existing']} already present, "
-                f"{counts['skipped_no_times']} without t_start/t_end, "
-                f"{counts['skipped_m8']} M8 skipped"
+                f"{counts['skipped_no_times']} without t_start/t_end"
             )
             all_counts[assembly_name] = counts
         if args.dry_run:
@@ -2932,7 +2931,8 @@ def build_parser() -> argparse.ArgumentParser:
         description=(
             "One overview_records row per Overview file with stored t_start / t_end "
             "(populate operationaldata-metadata): sources by time overlap, teb/bp from "
-            "op_run_scalars, mode from operationaldata. M8 assemblies are skipped. "
+            "op_run_scalars, mode from operationaldata. Replaced rows keep their hybrid "
+            "(M8) source lists. "
             "Then merges pupitre duplicates, as overview-records-infer."
         ),
     )

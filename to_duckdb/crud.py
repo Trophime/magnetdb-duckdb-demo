@@ -4363,6 +4363,10 @@ _OPERATIONALDATA_SOURCE_COLUMNS = {
 }
 # select_files' minimum duration, applied to these types only (as discovery does)
 _MIN_DURATION_TYPES = ("Archive", "Pupitre")
+# Hybrid files (M8) are not in operationaldata: a replaced row keeps these lists.
+_HYBRID_SOURCE_COLUMNS = (
+    "sources_hybrid_kHz", "sources_hybrid_rms", "sources_hybrid_trigger", "sources_hybrid_vprocess",
+)
 _MIN_SOURCE_DURATION_S = 30.0
 _UTC = ZoneInfo("UTC")
 
@@ -4405,9 +4409,11 @@ def build_overview_records_from_operationaldata(
     sample-weighted means of the ``teb_*`` / ``bp_*`` scalars of the pupitre
     sources in ``op_run_scalars`` (0.0 when missing), and ``mode`` comes from
     ``operationaldata.mode`` through :func:`_postprocess_overview_record`.
-    M8 assemblies are skipped: their hybrid files are not in
-    ``operationaldata``. The pupitre-duplicate merge
-    (:func:`merge_duplicate_pupitre_records`) is left to the caller.
+    Hybrid files (M8) are not in ``operationaldata``: a new row has empty
+    ``sources_hybrid_*`` lists, and a replaced row keeps the ones it had
+    (loaded from ``summary.json`` by ``overview-records-from-json``). The
+    pupitre-duplicate merge (:func:`merge_duplicate_pupitre_records`) is left
+    to the caller.
 
     Parameters
     ----------
@@ -4416,9 +4422,10 @@ def build_overview_records_from_operationaldata(
     assembly_name : str
         Assembly whose Overview files are turned into rows.
     reprocess : bool, optional
-        Replace existing rows (by default they are skipped). The rewritten
-        row and the rows merged into it get ``merged_into = NULL``, so the
-        next merge sweep rebuilds the merges.
+        Replace existing rows (by default they are skipped), keeping their
+        ``sources_hybrid_*`` lists. The rewritten row and the rows merged
+        into it get ``merged_into = NULL``, so the next merge sweep rebuilds
+        the merges.
     dry_run : bool, optional
         Compute the rows but write nothing.
     db_tz : :class:`~zoneinfo.ZoneInfo`, optional
@@ -4430,27 +4437,20 @@ def build_overview_records_from_operationaldata(
     Returns
     -------
     dict
-        ``{"written": int, "skipped_existing": int, "skipped_no_times": int,
-        "skipped_m8": int}``; ``written`` counts the rows written (or that
-        would be, with *dry_run*).
+        ``{"written": int, "skipped_existing": int, "skipped_no_times": int}``;
+        ``written`` counts the rows written (or that would be, with *dry_run*).
     """
-    counts = {"written": 0, "skipped_existing": 0, "skipped_no_times": 0, "skipped_m8": 0}
+    counts = {"written": 0, "skipped_existing": 0, "skipped_no_times": 0}
     housing_row = con.execute(
         "SELECT housing FROM assemblies WHERE name = ?", [assembly_name]
     ).fetchone()
     housing = housing_row[0] if housing_row else None
 
-    n_without_times, n_overviews = con.execute(
-        "SELECT COUNT(*) FILTER (WHERE t_start IS NULL OR t_end IS NULL), COUNT(*) "
+    (counts["skipped_no_times"],) = con.execute(
+        "SELECT COUNT(*) FILTER (WHERE t_start IS NULL OR t_end IS NULL) "
         "FROM operationaldata WHERE assembly_name = ? AND type = 'Overview'",
         [assembly_name],
     ).fetchone()
-    if housing == "M8":
-        counts["skipped_m8"] = n_overviews
-        if verbose:
-            print(f"  ! {assembly_name}: M8 skipped (hybrid files are not in operationaldata)")
-        return counts
-    counts["skipped_no_times"] = n_without_times
 
     rows = con.execute(
         f"""
@@ -4523,6 +4523,15 @@ def build_overview_records_from_operationaldata(
         }
         columns["sources_overview"] = [Path(ov["file"]).name]
         columns.update({col: sorted(names) for col, names in ov["sources"].items()})
+        if reprocess:
+            existing = con.execute(
+                f"SELECT {', '.join(_HYBRID_SOURCE_COLUMNS)} FROM overview_records WHERE filename = ?",
+                [name],
+            ).fetchone()
+            if existing:
+                columns.update(
+                    {col: list(v or []) for col, v in zip(_HYBRID_SOURCE_COLUMNS, existing, strict=True)}
+                )
         counts["written"] += 1
 
         if dry_run:

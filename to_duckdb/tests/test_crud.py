@@ -2787,7 +2787,7 @@ def test_build_overview_records_from_operationaldata_selects_sources(con, no_fil
 
     counts = build_overview_records_from_operationaldata(con, "M9_ASSEMBLY_B", verbose=False)
 
-    assert counts == {"written": 1, "skipped_existing": 0, "skipped_no_times": 0, "skipped_m8": 0}
+    assert counts == {"written": 1, "skipped_existing": 0, "skipped_no_times": 0}
     row = _overview_row(con)
     assert row == {
         "filename": _OV_NAME,
@@ -2870,15 +2870,69 @@ def test_build_overview_records_from_operationaldata_weights_teb_bp(con, no_file
     assert row["bp"] == pytest.approx(23.0)
 
 
-def test_build_overview_records_from_operationaldata_skips_m8(con, no_file_loads):
+_M8_OV_NAME = "M8_Overview_220127-1756"
+_HYBRID_COLUMNS = ("sources_hybrid_kHz", "sources_hybrid_rms",
+                   "sources_hybrid_trigger", "sources_hybrid_vprocess")
+
+
+def _m8_overview_with_pupitre(con) -> None:
+    """One M8 Overview with one pupitre source carrying teb / bp scalars."""
     insert_assembly(con, {"name": "M8_ASSEMBLY", "housing": "M8",
                           "commissioned_at": "2022-01-01 00:00:00"}, verbose=False)
-    _od_overview(con, "M8_Overview_220127-1756", assembly="M8_ASSEMBLY", housing="M8")
+    _od_overview(con, _M8_OV_NAME, assembly="M8_ASSEMBLY", housing="M8")
+    p = _od(con, "srv-data-install/M8/2022.01.27 - 17:56:30.txt", "Pupitre",
+            datetime(2022, 1, 27, 16, 56, 30), datetime(2022, 1, 27, 17, 50),
+            assembly="M8_ASSEMBLY")
+    _od_scalars(con, p, teb_mean=12.0, teb_count=10, bp_mean=4.0, bp_count=10)
+
+
+def _hybrid_lists(con, filename=_M8_OV_NAME) -> tuple:
+    return con.execute(
+        f"SELECT {', '.join(_HYBRID_COLUMNS)} FROM overview_records WHERE filename = ?", [filename]
+    ).fetchone()
+
+
+def test_build_overview_records_from_operationaldata_builds_m8(con, no_file_loads):
+    _m8_overview_with_pupitre(con)
 
     counts = build_overview_records_from_operationaldata(con, "M8_ASSEMBLY", verbose=False)
 
-    assert counts == {"written": 0, "skipped_existing": 0, "skipped_no_times": 0, "skipped_m8": 1}
-    assert _overview_row(con, "M8_Overview_220127-1756") is None
+    assert counts == {"written": 1, "skipped_existing": 0, "skipped_no_times": 0}
+    row = _overview_row(con, _M8_OV_NAME)
+    assert row["housing"] == "M8"
+    assert row["mode"] == "NORMAL"
+    assert row["sources_pupitre"] == ["2022.01.27 - 17:56:30.txt"]
+    assert row["teb"] == pytest.approx(12.0)
+    assert row["bp"] == pytest.approx(4.0)
+    assert _hybrid_lists(con) == ([], [], [], [])
+
+
+def test_build_overview_records_from_operationaldata_keeps_hybrid_lists_on_replace(
+    con, no_file_loads
+):
+    """An M8 row loaded from summary.json keeps its hybrid lists when the builder rewrites it."""
+    _m8_overview_with_pupitre(con)
+    hybrid = (["13HOST_1_LIST_0.bin"],
+              ["FEPC-LNCMI__2022-01-27_1600--2022-01-27_1700.rms"],
+              ["TRIGGER__2022-01-27__17-00"],
+              ["20220127_160000__20220127_165959.vprocess"])
+    insert_overview_record_from_dict(
+        con,
+        {"filename": _M8_OV_NAME, "assembly_name": "M8_ASSEMBLY", "duration": 1.0,
+         **dict(zip(_HYBRID_COLUMNS, hybrid, strict=True))},
+        verbose=False,
+    )
+
+    counts = build_overview_records_from_operationaldata(
+        con, "M8_ASSEMBLY", reprocess=True, verbose=False
+    )
+
+    assert counts["written"] == 1
+    row = _overview_row(con, _M8_OV_NAME)
+    assert row["duration"] == 3600.0
+    assert row["sources_pupitre"] == ["2022.01.27 - 17:56:30.txt"]
+    assert row["teb"] == pytest.approx(12.0)
+    assert _hybrid_lists(con) == hybrid
 
 
 def test_build_overview_records_from_operationaldata_skips_rows_without_times(con, no_file_loads):
@@ -2887,7 +2941,7 @@ def test_build_overview_records_from_operationaldata_skips_rows_without_times(co
 
     counts = build_overview_records_from_operationaldata(con, "M9_ASSEMBLY_B", verbose=False)
 
-    assert counts == {"written": 0, "skipped_existing": 0, "skipped_no_times": 1, "skipped_m8": 0}
+    assert counts == {"written": 0, "skipped_existing": 0, "skipped_no_times": 1}
     assert _overview_row(con) is None
 
 

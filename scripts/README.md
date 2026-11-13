@@ -29,6 +29,7 @@ path is taken from the current directory). `--help` lists the options.
 | `operationaldata` | Populate operationaldata |
 | `op-stats` | Ingest per-file operational statistics |
 | `overview-json` | Load overview records from JSON |
+| `overview-ops` | Build overview records from operationaldata (rebuilds the rows loaded from JSON; keeps their hybrid lists) |
 | `overview-infer` | Consolidate overview records |
 | `export` | Export source data |
 | `users` | Build users table |
