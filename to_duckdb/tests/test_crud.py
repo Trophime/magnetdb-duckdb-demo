@@ -1,7 +1,7 @@
 """Unit tests for crud.py — one function per concern."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -2809,6 +2809,28 @@ def test_build_overview_records_from_operationaldata_selects_sources(con, no_fil
         "sources_pupitre_runlog": [],
         "merged_into": None,
     }
+
+
+def test_build_overview_records_from_operationaldata_incident_capture_overlap(con, no_file_loads):
+    """A Default/Trigger capture named just before the overview is kept when its read end overlaps it."""
+    _insert_m9_assemblies(con)
+    _od_overview(con)
+    dflt = "pbsurv/M9/Fichiers_Default/"
+    # named 20 s before the start, capture read up to 40 s after it: kept
+    _od(con, dflt + "M9_Default_220127-175545_Courants50Hz.tdms", "Default",
+        _OV_START - timedelta(seconds=20), _OV_START + timedelta(seconds=40))
+    # named 19 s before the start, never read (t_end = t_start): excluded
+    _od(con, dflt + "M9_Default_220127-175546_DefautNums.tdms", "Default",
+        _OV_START - timedelta(seconds=19))
+    # capture read, ends exactly at the overview start: strict overlap, excluded
+    _od(con, "pbsurv/M9/Fichiers_Manuel_Trig/M9_ManuelTrig_220127-175505.tdms", "Trigger",
+        _OV_START - timedelta(seconds=60), _OV_START)
+
+    build_overview_records_from_operationaldata(con, "M9_ASSEMBLY_B", verbose=False)
+
+    row = _overview_row(con)
+    assert row["sources_default"] == ["M9_Default_220127-175545_Courants50Hz.tdms"]
+    assert row["sources_trigger"] == []
 
 
 def test_build_overview_records_from_operationaldata_crosses_midnight(con, no_file_loads):

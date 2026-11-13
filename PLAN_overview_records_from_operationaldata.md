@@ -10,7 +10,7 @@ Status: **approved 2026-11-07, in progress** (first draft 2026-11-06)
 | D — `teb`/`BP` scalars | ✅; equal to the `infer` path on a real pupitre file |
 | E — SQL builder, stored mode | ✅ (2026-11-09; decisions at the end of phase E) |
 | F — dashboard, docs | ✅ (`get_stats_files_for_assembly` and the Stats viewer page keep their names) |
-| G — validation, build script | step 15 partly done ahead of validation, for the 2026-11 rebuild: SignalStats/Trigger registered and `operationaldata-metadata` step added; `overview-ops` waits for phase E |
+| G — validation, build script | steps 13–14 done 2026-11-13 on the 2026-11-10 `.mode17` DB ([results](#phase-g-results-2026-11-13)); decision 2 implemented (incident ends); step 15 (`overview-ops`) left |
 
 Open: files still being written (question 3).
 Decided 2026-11-07: A13 keeps `operationaldata` (question 1); the 2026-11
@@ -329,6 +329,56 @@ taken on approval:
     `overview-infer` stays for those rows and the pupitre merge.
     → verify: `--help` lists the steps; `--from operationaldata --to
     overview-infer` on a scratch DB copy runs clean.
+
+### Phase G results (2026-11-13)
+
+Steps 13–14 ran on scratch copies of `magnetdb-2026-11-10.mode17.duckdb` (the
+candidate DB), not of the 11-05 DB: the 11-10 build had already registered
+SignalStats/Trigger, filled the metadata and computed the `teb_*` / `bp_*`
+scalars (step 13.1–13.3). Scripts and reports are not kept in the repo.
+
+- **`M9_A220118_00` (237 rows) and `M10_A230509_00` (254 rows):** same
+  filenames, `mode` and `merged_into`; `duration` within 1 s except 2 rows
+  that were 0.0; `teb` / `bp` > 0 on every row with a pupitre source (`teb`
+  5.3–25.2, `bp` 2.9–4.5).
+- **`--all`:** 3 371 rows written in 61 s (calcul24), against ≈ 12 min 17 s
+  for `overview-json` and ≈ 22 s for `overview-infer` in the 11-10 build
+  (calcul22, from its `operation_log`). The 26 M9 Overview files without a
+  stored mode are still opened over the mount. M8 unchanged (skipped).
+  `mode` identical on the 1 915 rows found in both DBs.
+- **New rows accepted (user, 2026-11-13):** ≈ 1 450 overviews with no
+  `summary.json` (M5, M7 for the first time; M9/M10 2019–2021 and 2026).
+- **Sources:** no Archive, Pupitre or Spike file lost. Added: Archive +321
+  (archives started earlier, files after midnight), Spike +710 (after
+  midnight), Pupitre +62, SignalStats +2 070 (newly registered); 25 new
+  pupitre-duplicate merges (overnight M10 runs of 2022-07-19/20 and
+  2023-02-07), which explain the 6 large `duration` increases. Other
+  `duration` differences: 14 rows were 0.0, 88 by exactly 1 s, 2 by 30 s.
+- The `operationaldata-metadata` step took 8 h 06 in the 11-10 build, not
+  the 3–3.5 h estimated in open question 8.
+
+**Decision 2 (user, 2026-11-13): read the incident ends near an overview
+start.** With name-only times, 34 Default/Trigger file–overview pairs were
+lost: captures that start up to 73 s before an overview and run into it.
+Read-only measurements (`extract_data` on those files and on 60 sampled
+2015–2026 files): data start at the name time and last 30, 60 or 90 s (90 s
+through 2023, 30 or 60 s since 2024, so the length can't be inferred from
+the date). A fixed pre-start margin was a trade-off (60 s: 32/34 recovered,
+14 pairs added that the reference did not have; 90 s: 34/34, 39 added).
+Implemented instead:
+
+- `fill_operationaldata_metadata` gains a second pass: Default/Trigger rows
+  with `t_end = t_start` and an Overview of the same housing starting less
+  than `_MAX_INCIDENT_CAPTURE_S` (90 s) after them are read with
+  `extract_data`, and their real `t_end` is stored (`incident_ends` count).
+- The builder keeps a name-only file when `t_start < ov.t_end` and either
+  `t_start >= ov.t_start` (as before) or `t_end > ov.t_start`.
+
+Checked on a scratch copy: the pass read 73 files in 70 s, no error; all 34
+pairs are back (Default +38, Trigger +7 pairs); every Default/Trigger pair
+outside its own overview's range comes from an overview merged into that
+row; nothing else changes (one `teb` differs in the 16th digit).
+to_duckdb tests: 854 passed, 3 skipped.
 
 ### Follow-up after phase G
 

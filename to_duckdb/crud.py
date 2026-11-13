@@ -4399,7 +4399,9 @@ def build_overview_records_from_operationaldata(
     whose ``[t_start, t_end]`` strictly overlaps the overview's, Archive and
     Pupitre files of 30 s or less excepted (as ``select_files``). Default,
     Spike and Trigger files are points in time, kept when
-    ``ov.t_start <= t_start < ov.t_end``. ``teb`` / ``bp`` are the
+    ``ov.t_start <= t_start < ov.t_end``, or when their real end (read by
+    ``populate operationaldata-metadata`` for Default / Trigger files named
+    just before an Overview start) is after ``ov.t_start``. ``teb`` / ``bp`` are the
     sample-weighted means of the ``teb_*`` / ``bp_*`` scalars of the pupitre
     sources in ``op_run_scalars`` (0.0 when missing), and ``mode`` comes from
     ``operationaldata.mode`` through :func:`_postprocess_overview_record`.
@@ -4462,7 +4464,8 @@ def build_overview_records_from_operationaldata(
         FROM operationaldata ov
         LEFT JOIN src ON CASE
             WHEN src.type IN ({_sql_list(_NAME_ONLY_TYPES)})
-                THEN src.t_start >= ov.t_start AND src.t_start < ov.t_end
+                THEN src.t_start < ov.t_end
+                    AND (src.t_start >= ov.t_start OR src.t_end > ov.t_start)
             ELSE src.t_start < ov.t_end AND src.t_end > ov.t_start
                 AND (src.type NOT IN ({_sql_list(_MIN_DURATION_TYPES)})
                      OR epoch(src.t_end) - epoch(src.t_start) > {_MIN_SOURCE_DURATION_S})

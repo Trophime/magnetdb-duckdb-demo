@@ -323,3 +323,88 @@ def test_fill_operationaldata_metadata_incident_files_from_name_only(
     assert meta["M10_ManuelTrig_250115-120700.tdms"] == (
         datetime(2025, 1, 15, 11, 7), datetime(2025, 1, 15, 11, 7), None
     )
+
+
+def test_fill_operationaldata_metadata_reads_incident_ends_near_overview_start(
+    con_populated, monkeypatch, ramp_overview
+):
+    """Only Default/Trigger files named < 90 s before an Overview start are read, for their end."""
+    from populate import fill_operationaldata_metadata
+
+    _add_files(
+        con_populated,
+        ("pbsurv/M10/Overview/M10_Overview_250115-1200.tdms", "Overview"),
+        # 30 s before the overview start: read
+        ("pbsurv/M10/Fichiers_Default/M10_Default_250115-115930_DefautNums.tdms", "Default"),
+        # 10 s before: read
+        ("pbsurv/M10/Fichiers_Manuel_Trig/M10_ManuelTrig_250115-115950.tdms", "Trigger"),
+        # 10 min before, inside the overview, and a Spike just before: not read
+        ("pbsurv/M10/Fichiers_Default/M10_Default_250115-115000_DefautNums.tdms", "Default"),
+        ("pbsurv/M10/Fichiers_Default/M10_Default_250115-121000_DefautNums.tdms", "Default"),
+        ("pbsurv/M10/Fichiers_Spike/M10_Spikes_250115-115955.tdms", "Spike"),
+    )
+    fake, calls = _fake_extract_data({
+        "M10_Overview_250115-1200.tdms": ("2025-01-15 12:00:00", "2025-01-15 13:00:00"),
+        "M10_Default_250115-115930_DefautNums.tdms": ("2025-01-15 11:59:30", "2025-01-15 12:00:30"),
+        "M10_ManuelTrig_250115-115950.tdms": ("2025-01-15 11:59:50", "2025-01-15 12:01:20"),
+    })
+    monkeypatch.setattr("python_magnetrun.utils.files.extract_data", fake)
+
+    counts = fill_operationaldata_metadata(
+        con_populated, "ASSEMBLY_01", records_base=RECORDS, verbose=False
+    )
+
+    assert counts["incident_ends"] == 2
+    assert sorted(c[0] for c in calls) == [
+        "M10_Default_250115-115930_DefautNums.tdms",
+        "M10_ManuelTrig_250115-115950.tdms",
+        "M10_Overview_250115-1200.tdms",
+    ]
+    meta = _metadata(con_populated)
+    # January: Europe/Paris = UTC+1; t_start stays the name time
+    assert meta["M10_Default_250115-115930_DefautNums.tdms"] == (
+        datetime(2025, 1, 15, 10, 59, 30), datetime(2025, 1, 15, 11, 0, 30), None
+    )
+    assert meta["M10_ManuelTrig_250115-115950.tdms"] == (
+        datetime(2025, 1, 15, 10, 59, 50), datetime(2025, 1, 15, 11, 1, 20), None
+    )
+    assert meta["M10_Default_250115-115000_DefautNums.tdms"][:2] == (
+        datetime(2025, 1, 15, 10, 50), datetime(2025, 1, 15, 10, 50)
+    )
+
+    # a second run reads nothing: the ends are stored
+    counts = fill_operationaldata_metadata(
+        con_populated, "ASSEMBLY_01", records_base=RECORDS, verbose=False
+    )
+    assert counts["incident_ends"] == 0
+    assert len(calls) == 3
+
+
+def test_fill_operationaldata_metadata_incident_ends_dry_run_writes_nothing(
+    con_populated, monkeypatch, ramp_overview
+):
+    from populate import fill_operationaldata_metadata
+
+    _add_files(
+        con_populated,
+        ("pbsurv/M10/Overview/M10_Overview_250115-1200.tdms", "Overview"),
+        ("pbsurv/M10/Fichiers_Default/M10_Default_250115-115930_DefautNums.tdms", "Default"),
+    )
+    fake, _calls = _fake_extract_data({
+        "M10_Overview_250115-1200.tdms": ("2025-01-15 12:00:00", "2025-01-15 13:00:00"),
+        "M10_Default_250115-115930_DefautNums.tdms": ("2025-01-15 11:59:30", "2025-01-15 12:00:30"),
+    })
+    monkeypatch.setattr("python_magnetrun.utils.files.extract_data", fake)
+    fill_operationaldata_metadata(con_populated, "ASSEMBLY_01", records_base=RECORDS, verbose=False,
+                                  types=["Overview", "Default"])
+    con_populated.execute(
+        "UPDATE operationaldata SET t_end = t_start WHERE type = 'Default'"
+    )
+
+    counts = fill_operationaldata_metadata(
+        con_populated, "ASSEMBLY_01", records_base=RECORDS, dry_run=True, verbose=False
+    )
+
+    assert counts["incident_ends"] == 1
+    start, end, _ = _metadata(con_populated)["M10_Default_250115-115930_DefautNums.tdms"]
+    assert end == start

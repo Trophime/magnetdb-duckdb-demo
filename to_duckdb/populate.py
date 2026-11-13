@@ -198,6 +198,13 @@ def resolve_operationaldata_path(relpath: str, records_base: Path = _RECORDS_BAS
 # (about 8 h saved on the first metadata pass, mostly Spike files).
 _NAME_ONLY_TYPES = frozenset({"Spike", "Default", "Trigger"})
 
+# Default / Trigger captures start at their name time and last 30, 60 or 90 s
+# (measured on 2015-2026 files, 2026-11-13). Only those named less than this
+# before an Overview start can overlap it while their name time lies outside
+# it, so only they are read, for their real end.
+_INCIDENT_END_TYPES = ("Default", "Trigger")
+_MAX_INCIDENT_CAPTURE_S = 90
+
 
 def _local_to_db(ts: str, db_tz: ZoneInfo) -> datetime:
     """Convert a ``python_magnetrun`` local (Europe/Paris) timestamp to naive *db_tz*."""
@@ -245,8 +252,12 @@ def fill_operationaldata_metadata(
     TDMS properties, Archive mtime, last pupitre line), so no data is loaded
     except for Overview files, whose ``Courants_Alimentations`` group is
     loaded once to infer the operating mode. Spike, Default and Trigger
-    captures (:data:`_NAME_ONLY_TYPES`) are not read at all: both
-    ``t_start`` and ``t_end`` are the time in their name. Each row is
+    captures (:data:`_NAME_ONLY_TYPES`) are not read: both ``t_start`` and
+    ``t_end`` are the time in their name. A second pass then reads the
+    Default and Trigger files named less than
+    :data:`_MAX_INCIDENT_CAPTURE_S` before the start of an Overview of the
+    same housing, and stores their real ``t_end``, so the SQL builder can
+    match a capture that starts just before an overview. Each row is
     written as soon as it is computed, so an interrupted run resumes where
     it stopped.
 
@@ -275,8 +286,10 @@ def fill_operationaldata_metadata(
     Returns
     -------
     dict
-        ``{"filled": int, "no_time_range": int, "errors": list[tuple[str, str]]}``;
-        ``filled`` counts the rows written (or that would be, with *dry_run*).
+        ``{"filled": int, "no_time_range": int, "incident_ends": int,
+        "errors": list[tuple[str, str]]}``; ``filled`` counts the rows
+        written (or that would be, with *dry_run*), ``incident_ends`` the
+        Default / Trigger files read for their end.
     """
     from python_magnetrun.utils import files as mr_files
 
@@ -297,7 +310,7 @@ def fill_operationaldata_metadata(
         params,
     ).fetchall()
 
-    counts: dict = {"filled": 0, "no_time_range": 0, "errors": []}
+    counts: dict = {"filled": 0, "no_time_range": 0, "incident_ends": 0, "errors": []}
     for od_id, relpath, file_type in rows:
         path = resolve_operationaldata_path(relpath, records_base)
         if file_type in _NAME_ONLY_TYPES:
@@ -336,7 +349,58 @@ def fill_operationaldata_metadata(
             prefix = "[dry-run] " if dry_run else ""
             suffix = f"  mode={mode}" if file_type == "Overview" else ""
             print(f"  {prefix}{relpath}  {t_start} → {t_end}{suffix}")
+
+    if not types or set(types) & set(_INCIDENT_END_TYPES):
+        _fill_incident_ends(
+            con, assembly_name, housing, records_base, db_tz, dry_run, verbose, counts
+        )
     return counts
+
+
+def _fill_incident_ends(
+    con, assembly_name, housing, records_base, db_tz, dry_run, verbose, counts
+) -> None:
+    """Read the real end of Default/Trigger files named just before an Overview start (updates *counts*)."""
+    from python_magnetrun.utils import files as mr_files
+
+    rows = con.execute(
+        f"""
+        SELECT od.id, od.file FROM operationaldata od
+        WHERE od.assembly_name = ? AND od.type IN ({', '.join('?' * len(_INCIDENT_END_TYPES))})
+          AND od.t_end = od.t_start
+          AND EXISTS (
+              SELECT 1 FROM operationaldata ov JOIN assemblies a ON a.name = ov.assembly_name
+              WHERE ov.type = 'Overview' AND a.housing = ?
+                AND ov.t_start > od.t_start
+                AND ov.t_start < od.t_start + INTERVAL {_MAX_INCIDENT_CAPTURE_S} SECOND)
+        ORDER BY od.id
+        """,
+        [assembly_name, *_INCIDENT_END_TYPES, housing],
+    ).fetchall()
+
+    for od_id, relpath in rows:
+        path = resolve_operationaldata_path(relpath, records_base)
+        try:
+            _start, end, _skip = mr_files.extract_data(
+                str(path), housing, assembly="", key=None, dry_run=False
+            )
+        except (OSError, ValueError, RuntimeError, UnicodeDecodeError) as exc:
+            counts["errors"].append((relpath, str(exc)))
+            if verbose:
+                print(f"  [ERROR] {relpath}: {exc}")
+            continue
+        if not end:
+            counts["no_time_range"] += 1
+            if verbose:
+                print(f"  ! {relpath}: no end time")
+            continue
+        t_end = _local_to_db(end, db_tz)
+        if not dry_run:
+            con.execute("UPDATE operationaldata SET t_end = ? WHERE id = ?", [t_end, od_id])
+        counts["incident_ends"] += 1
+        if verbose:
+            prefix = "[dry-run] " if dry_run else ""
+            print(f"  {prefix}{relpath}  end read: {t_end}")
 
 
 def _assembly_window(

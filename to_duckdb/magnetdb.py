@@ -1511,7 +1511,7 @@ def cmd_populate_operationaldata_metadata(args) -> None:
             )
             print(
                 f"  {counts['filled']} filled, {counts['no_time_range']} without time range, "
-                f"{len(counts['errors'])} errors"
+                f"{counts['incident_ends']} incident end(s) read, {len(counts['errors'])} errors"
             )
             if not args.dry_run:
                 _log_operation(
@@ -1520,6 +1520,7 @@ def cmd_populate_operationaldata_metadata(args) -> None:
                     details={
                         "filled": counts["filled"],
                         "no_time_range": counts["no_time_range"],
+                        "incident_ends": counts["incident_ends"],
                         "errors": counts["errors"][:20],
                     },
                 )

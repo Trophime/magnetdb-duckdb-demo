@@ -229,7 +229,7 @@ One row per `Overview` file of the assembly that has `t_start` and `t_end`:
 | `filename` | the Overview file stem |
 | `t0` | time in the file name (minute precision), in `--db-tz` |
 | `duration` | `t_end − t_start` [s] |
-| `sources_*` | files of the same housing (any assembly) whose `[t_start, t_end]` strictly overlaps the overview's; Archive and Pupitre files of 30 s or less are left out. Default, Spike and Trigger files are points in time, kept when `ov.t_start <= t_start < ov.t_end` |
+| `sources_*` | files of the same housing (any assembly) whose `[t_start, t_end]` strictly overlaps the overview's; Archive and Pupitre files of 30 s or less are left out. Default, Spike and Trigger files are points in time, kept when `ov.t_start <= t_start < ov.t_end`. A Default or Trigger capture starts at its name time and lasts 30 to 90 s: `populate operationaldata-metadata` reads the end of those named less than 90 s before an Overview start, and they are also kept when that end is after `ov.t_start` |
 | `teb`, `bp` | `SUM(mean · count) / SUM(count)` over the pupitre sources; `0.0` when the scalars are missing |
 | `mode` | `operationaldata.mode` of the Overview file |
 
