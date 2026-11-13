@@ -57,9 +57,9 @@ def test_m9_with_insert_wiring(con):
 
 def test_m8_spec_follows_wiring_change(con):
     wiring = {"channels": ["Ucoil15", "Ucoil16"]}
-    set_magnet_wiring(con, "M8_A230919_00", "M8Bi", "M8-230913", wiring)
-    before = _spec(con, "M8_A230919_00", 2026, 3, 5, 15, 56)
-    after = _spec(con, "M8_A230919_00", 2026, 3, 5, 17, 22)
+    set_magnet_wiring(con, "M8_A230913_00", "M8Bi", "M8-230913", wiring)
+    before = _spec(con, "M8_A230913_00", 2026, 3, 5, 15, 56)
+    after = _spec(con, "M8_A230913_00", 2026, 3, 5, 17, 22)
     assert before.housing["version"] == "M8-230913"
     assert before.add["UB"]["formula"] == "UB = Ucoil15 + Ucoil16"
     assert "M8Bi" in before.magnets
@@ -69,18 +69,18 @@ def test_m8_spec_follows_wiring_change(con):
 
 
 def test_export_one_file_per_version(con, tmp_path):
-    paths = export_pupitre_etl_spec(con, "M8_A230919_00", tmp_path)
+    paths = export_pupitre_etl_spec(con, "M8_A230913_00", tmp_path)
     assert sorted(p.name for p in paths) == [
-        "M8_A230919_00.M8-230913.pupitre-etl.json",
-        "M8_A230919_00.M8-260305.pupitre-etl.json",
+        "M8_A230913_00.M8-230913.pupitre-etl.json",
+        "M8_A230913_00.M8-260305.pupitre-etl.json",
     ]
-    loaded = load_pupitre_etl_spec(tmp_path / "M8_A230919_00.M8-260305.pupitre-etl.json")
-    assert loaded == _spec(con, "M8_A230919_00", 2026, 3, 6)
+    loaded = load_pupitre_etl_spec(tmp_path / "M8_A230913_00.M8-260305.pupitre-etl.json")
+    assert loaded == _spec(con, "M8_A230913_00", 2026, 3, 6)
 
 
 def test_export_one_version(con, tmp_path):
-    paths = export_pupitre_etl_spec(con, "M8_A230919_00", tmp_path, version="M8-260305")
-    assert [p.name for p in paths] == ["M8_A230919_00.M8-260305.pupitre-etl.json"]
+    paths = export_pupitre_etl_spec(con, "M8_A230913_00", tmp_path, version="M8-260305")
+    assert [p.name for p in paths] == ["M8_A230913_00.M8-260305.pupitre-etl.json"]
 
 
 def test_wiring_for_magnet_outside_assembly_refused(con):
@@ -220,8 +220,8 @@ def test_derived_wiring_label_follows_housing(con):
 def test_derived_wiring_follows_housing_version(con):
     """M8-260305 reads the Bitters on Ucoil14: the insert wiring must not remove it."""
     _helices(con, "M23012001", 12)
-    before = _spec(con, "M8_A230919_00", 2026, 3, 5, 15, 56)  # M8-230913
-    after = _spec(con, "M8_A230919_00", 2026, 3, 5, 17, 22)  # M8-260305
+    before = _spec(con, "M8_A230913_00", 2026, 3, 5, 15, 56)  # M8-230913
+    after = _spec(con, "M8_A230913_00", 2026, 3, 5, 17, 22)  # M8-260305
     assert before.magnets["M23012001"]["remove"] == _ucoils([1, *range(8, 15)])
     assert after.magnets["M23012001"]["remove"] == _ucoils([1, *range(8, 14)])
     assert after.add["UB"]["formula"] == "UB = Ucoil14"

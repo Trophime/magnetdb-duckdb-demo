@@ -26,7 +26,7 @@ Usage
 -----
     python check_experiment_files.py --db magnetdb-2026-10-08.duckdb
     python check_experiment_files.py --db magnetdb-2026-10-08.duckdb --assembly M10_A230509_00 --recheck
-    python check_experiment_files.py --db magnetdb-2026-10-08.duckdb --etl --recheck --assembly M8_A230919_00
+    python check_experiment_files.py --db magnetdb-2026-10-08.duckdb --etl --recheck --assembly M8_A230913_00
 """
 
 import argparse

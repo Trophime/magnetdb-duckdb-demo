@@ -145,14 +145,14 @@ def test_housing_rule_in_spec(con):
 
 def test_rule_applies_to_all_versions_by_default(con):
     add_rule(con, "r", "Idcct1 - Idcct2", "max_abs", 5.0, housing="M8")
-    assert "r" in _rules(con, "M8_A230919_00", (2026, 3, 5, 15, 56))  # M8-211225
-    assert "r" in _rules(con, "M8_A230919_00", (2026, 3, 6))  # M8-260305
+    assert "r" in _rules(con, "M8_A230913_00", (2026, 3, 5, 15, 56))  # M8-230913
+    assert "r" in _rules(con, "M8_A230913_00", (2026, 3, 6))  # M8-260305
 
 
 def test_rule_restricted_to_one_version(con):
     add_rule(con, "r", "Idcct1 - Idcct2", "max_abs", 5.0, housing="M8", version="M8-260305")
-    assert "r" not in _rules(con, "M8_A230919_00", (2026, 3, 5, 15, 56))
-    assert "r" in _rules(con, "M8_A230919_00", (2026, 3, 6))
+    assert "r" not in _rules(con, "M8_A230913_00", (2026, 3, 5, 15, 56))
+    assert "r" in _rules(con, "M8_A230913_00", (2026, 3, 6))
 
 
 def test_override_order(con):
@@ -248,7 +248,7 @@ def test_rule_changes_logged(con):
 def test_global_rule_applies_to_every_housing(con):
     add_rule(con, "IH_vs_Icoil7", "IH - Icoil7", "p99_abs", 5.0, unit="A")
     for assembly, when in (("M9_A260602_00", (2026, 6, 10)), ("M10_X", (2024, 6, 1)),
-                           ("M8_A230919_00", (2026, 3, 6))):
+                           ("M8_A230913_00", (2026, 3, 6))):
         rule = _rules(con, assembly, when)["IH_vs_Icoil7"]
         assert (rule["tol"], rule["scope"]) == (5.0, "global")
 

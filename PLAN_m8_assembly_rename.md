@@ -1,7 +1,12 @@
 # Plan: rename `M8_A230919_00` → `M8_A230913_00`
 
-**Status (2026-11-09): drafted, not approved.** To run after the rebuild from
-scratch in progress on calcul22. Needs `approve` before any step.
+**Status (2026-11-13): done.** Steps 0–2 by the user (hifimagnet-projects
+`58b5ac3`); step 5 checked 2026-11-12 (the 2026-11-10 build has
+`M8_A211225_00`, `M8_A230913_00`); steps 3–4 on 2026-11-13: name replaced in
+`check_experiment_files.py` and the `to_duckdb` tests (the test fixture keeps
+its 2023-09-19 dates: with the real 2023-09-13 08:00 start the export test
+also gets an `M8-211225` file, see data issue #14), `to_duckdb` 851 passed,
+3 skipped.
 
 ## Why
 

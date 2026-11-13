@@ -1657,9 +1657,15 @@ Steps 1, E, S1, 2b and 2c can run in parallel.
     `M8-211225` now carries the 12-slot wiring (`voltage_channels_gr1` =
     Ucoil11/12, `voltage_channels_gr2` = Ucoil1–10, an exception to the
     empty-base rule) and the new `M8-230913` (2023-09-13T13:48:50+02:00, first
-    16-slot file) is back to the base wiring. Renaming `M8_A230919_00` to
-    `M8_A230913_00` is planned in
-    [PLAN_m8_assembly_rename.md](PLAN_m8_assembly_rename.md) (not approved).
+    16-slot file) is back to the base wiring. Renamed to `M8_A230913_00` on
+    2026-11-09 (hifimagnet-projects `58b5ac3`,
+    [PLAN_m8_assembly_rename.md](PLAN_m8_assembly_rename.md)); in the DB
+    since the 2026-11-10 build, and in `to_duckdb` code and tests since
+    2026-11-13. Its start (`2023-09-13 08:00:00`) precedes `M8-230913`
+    (13:48:50+02:00): checked 2026-11-13, no M8 file lies in between (last
+    M8 file before: 2023-07-25; first after: `2023.09.13 - 13:48:50.txt`),
+    so the overlap only adds an `M8-211225` file to `etl export` of
+    `M8_A230913_00`; left as is (user, 2026-11-13).
     Takes effect at the next build;
     `assembly update` cannot change assembly dates or magnets. Not handled:
     `Ucoil15`/`16` read ≈ 238 V at < 50 A on `2023.09.13 - 13:48:50` and

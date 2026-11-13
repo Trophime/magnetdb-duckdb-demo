@@ -26,7 +26,7 @@ MAGNETS = [
 ASSEMBLIES = [
     ("M9_A260602_00", "M9", "2026-06-02 08:00:00", None, ["M25032101", "M9Bi"]),
     ("M9_B", "M9", "2025-01-01 08:00:00", "2026-06-01 07:00:00", ["MX", "M9Bi"]),
-    ("M8_A230919_00", "M8", "2023-09-19 08:00:00", None, ["M23012001", "M8Bi", "Hybrid"]),
+    ("M8_A230913_00", "M8", "2023-09-19 08:00:00", None, ["M23012001", "M8Bi", "Hybrid"]),
     ("M8_S", "M8", "2021-12-25 08:00:00", "2023-09-19 07:00:00", ["Hybrid"]),
     ("M10_B", "M10", "2025-01-01 08:00:00", None, ["M10Bi"]),
     ("M10_X", "M10", "2024-01-01 08:00:00", "2024-12-31 07:00:00", ["MX", "M10Bi"]),
@@ -101,7 +101,7 @@ def test_unregistered_file_by_time_window(con, tmp_path):
 )
 def test_m8_housing_version(con, tmp_path, date, version):
     ctx = resolve_file_context(con, write_pupitre(tmp_path / "M8", date))
-    assert (ctx.assembly, ctx.housing_version) == ("M8_A230919_00", version)
+    assert (ctx.assembly, ctx.housing_version) == ("M8_A230913_00", version)
 
 
 def test_no_assembly_covers_file(con, tmp_path):
