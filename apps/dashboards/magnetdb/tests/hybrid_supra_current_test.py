@@ -106,6 +106,29 @@ def test_load_hybrid_supra_current_downsamples_to_1hz(monkeypatch):
     np.testing.assert_allclose(result["I_BOB"], 10.0, atol=0.01)
 
 
+def test_load_hybrid_supra_current_takes_date_from_start(monkeypatch):
+    """overview_records stores kHz basenames (no date): the day comes from `start` (UTC)."""
+    fs = 1000.0
+    elapsed = np.arange(0, 2 * fs) / fs
+    fake_run = _FakeHybridRun(data=np.full_like(elapsed, 5.0), elapsed=elapsed)
+    calls = []
+
+    def fake_fromdir(**kwargs):
+        calls.append(kwargs)
+        return fake_run
+
+    monkeypatch.setattr(db.HybridRun, "fromdir", staticmethod(fake_fromdir))
+    db.load_hybrid_supra_current.cache_clear()
+
+    result = db.load_hybrid_supra_current(
+        "13HOST_1_LIST_0.bin", "M8", "M8_A230913_00",
+        pd.Timestamp("2026-03-05 13:42:13"), pd.Timestamp("2026-03-05 13:42:14"),
+    )
+
+    assert [c["date_str"] for c in calls] == ["2026-03-05"]
+    assert len(result) == 2
+
+
 def test_load_hybrid_supra_current_matches_pupitre_grid_via_merge_asof(monkeypatch):
     """The alignment step used in update_outputs (merge_asof onto the
     Pupitre file's own timestamps) must preserve Pupitre's exact grid,

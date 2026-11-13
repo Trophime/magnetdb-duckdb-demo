@@ -2464,9 +2464,6 @@ def get_hybrid_khz_source(housing, pupitre_filename, db_path=None):
     return result[0] if result else None
 
 
-_HYBRID_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
-
-
 @functools.lru_cache(maxsize=32)
 def load_hybrid_supra_current(hybrid_source, housing, assembly_name, start, end):
     """Load the Hybrid supra current (I_BOB), downsampled to 1 Hz.
@@ -2474,32 +2471,26 @@ def load_hybrid_supra_current(hybrid_source, housing, assembly_name, start, end)
     Parameters
     ----------
     hybrid_source : str
-        One entry of ``overview_records.sources_hybrid_kHz`` (must contain a
-        ``YYYY-MM-DD`` date), as returned by :func:`get_hybrid_khz_source`.
+        One entry of ``overview_records.sources_hybrid_kHz``, as returned by
+        :func:`get_hybrid_khz_source` (a basename: the kHz day folder is
+        taken from *start*).
     housing : str
         Housing name (e.g. ``"M8"``).
     assembly_name : str
         ``assemblies.name`` the current experiment is attached to.
     start, end : :class:`~datetime.datetime`
         Naive-UTC start/end of the Pupitre experiment (e.g. from
-        ``MagnetData.get_time_range()``) — restricts which hourly kHz files
-        are read, and anchors the elapsed-seconds time array they return.
+        ``MagnetData.get_time_range()``) — select the kHz day folder (named
+        by UTC date) and the hourly files read, and anchor the elapsed-seconds
+        time array they return.
 
     Returns
     -------
     :class:`~pandas.DataFrame`
         Columns ``timestamp`` (naive UTC) and ``I_BOB`` [A], one row per
         second.
-
-    Raises
-    ------
-    ValueError
-        If *hybrid_source* does not contain a ``YYYY-MM-DD`` date.
     """
-    match = _HYBRID_DATE_RE.search(hybrid_source)
-    if match is None:
-        raise ValueError(f"Cannot extract a date from hybrid source {hybrid_source!r}")
-    date_str = match.group(0)
+    date_str = start.strftime("%Y-%m-%d")
 
     hrun = HybridRun.fromdir(
         base_dir=HYBRID_DATA_DIR,
