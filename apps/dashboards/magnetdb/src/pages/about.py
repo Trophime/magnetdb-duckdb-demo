@@ -65,7 +65,7 @@ def layout(**kwargs):
                                 id="about-log-table",
                                 columns=log_table_columns(),
                                 data=[],
-                                page_size=20,
+                                page_size=10,
                                 sort_action="native",
                                 style_table={"overflowX": "auto"},
                                 style_cell={"textAlign": "center", "padding": "6px"},

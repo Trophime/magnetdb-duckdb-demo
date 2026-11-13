@@ -1,5 +1,8 @@
 # Plan: newest-first dashboard tables + collapsible About operation log
 
+**Status: done.** The last step, `page_size=10` on the About log (ROADMAP
+C8), landed 2026-11-13 with `tests/about_test.py`.
+
 ## Goal
 
 Every dashboard `DataTable` whose rows carry a date — a timestamp column

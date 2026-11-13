@@ -239,7 +239,7 @@ the schema plan's own step R (header resolution order) is listed as **R (header)
 | C5 | Table technology for trend columns (great_tables nanoplot vs DataTable+base64 vs ag-grid Enterprise) | [PLAN_m1_project_sort.md §3b](PLAN_m1_project_sort.md) | 💡 decision open | ? | [Q6](#open-questions) |
 | C6 | M1-note dashboards: pigbrother `Champ_magn` in overview (13), fault annotations (26/30), commissioning (45), magnet_scipy comparison (46), energy balance (47) | [PLAN_m1_project_sort.md](PLAN_m1_project_sort.md) | 💡 | M each | 45 → B step 5; 46 → B step 6 |
 | C7 | Comparison-page performance (`PERFORMANCE_PLAN.md`) | — | ❌ plan file removed; page in `pages_disabled/` | — | — |
-| C8 | About page: operation log 10 per page (latest first) | [PLAN_dashboard_tables_newest_first.md](PLAN_dashboard_tables_newest_first.md) | 📝 remainder of an implemented plan (collapsible since `0987dae`; `about.py` still `page_size=20`) | S | — |
+| C8 | About page: operation log 10 per page (latest first) | [PLAN_dashboard_tables_newest_first.md](PLAN_dashboard_tables_newest_first.md) | ✅ 2026-11-13 (`page_size=10`; collapsible since `0987dae`) | S | — |
 | C9 | Wide-format CSV download | [PLAN_csv_download.md](apps/dashboards/magnetdb/PLAN_csv_download.md) | 📝 proposed 2026-11-03 | ? | — |
 | C10 | Hybrid viewer page | [PLAN_hybrid_viewer.md](apps/dashboards/magnetdb/PLAN_hybrid_viewer.md) | 📝 drafted 2026-11-03 | ? | relates to B step 1b (hybrid loading moved into python_magnetrun) |
 
