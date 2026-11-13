@@ -30,7 +30,13 @@ _IDCCT = re.compile(r"Idcct\d+")
 _TAG_NAME = re.compile(r"[a-z]+:[a-z0-9_]+")
 _TAG_COLOR = re.compile(r"#[0-9a-f]{6}")
 CHANNEL_TAG = "check:channel_not_empty"
-RESERVED_COLORS = {"#f8d7da": "geometry problems", "#fff3cd": "missing dates"}
+RESERVED_COLORS = {
+    "#f8d7da": "geometry problems",
+    "#fff3cd": "missing dates",
+    # fixed file-integrity colours of the dashboards' experiment tables
+    "#ffe5d0": "truncated files",
+    "#f1aeb5": "unreadable files",
+}
 RULE_SOURCES = ["pupitre"]
 RULE_APPLIES_TO = "experiments"
 
@@ -397,8 +403,9 @@ def add_tag(con, name: str, color: str, severity: int = 1, description: str | No
         ``<category>:<name>``, lowercase letters, digits and ``_``
         (e.g. ``"check:current_mismatch"``).
     color : str
-        ``#rrggbb``; not ``#f8d7da`` (geometry problems), ``#fff3cd``
-        (missing dates) or a colour another tag uses.
+        ``#rrggbb``; not one of :data:`RESERVED_COLORS` (geometry problems,
+        missing dates, truncated and unreadable files) or a colour another tag
+        uses.
     severity : int, optional
         Higher is more severe; the most severe tag of a file sets its colour.
     description : str, optional

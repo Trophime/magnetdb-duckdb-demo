@@ -2617,7 +2617,8 @@ def build_parser() -> argparse.ArgumentParser:
         tag_x.add_argument("name", help="Tag name <category>:<name>, e.g. check:current_mismatch")
         tag_x.add_argument("--color", required=action == "add", default=None,
                            help="#rrggbb; not #f8d7da (geometry problems), #fff3cd "
-                                "(missing dates) or another tag's colour")
+                                "(missing dates), #ffe5d0 (truncated files), #f1aeb5 "
+                                "(unreadable files) or another tag's colour")
         tag_x.add_argument("--severity", type=int, default=1 if action == "add" else None,
                            help="Higher = more severe; the most severe tag sets a file's colour"
                                 + (" (default: 1)" if action == "add" else ""))

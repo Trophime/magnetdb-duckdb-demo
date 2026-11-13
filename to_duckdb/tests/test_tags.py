@@ -74,6 +74,9 @@ def test_bad_tag_name_refused(con, name):
         ("#fff", "colour"),
         ("#F8D7DA", "geometry"),
         ("#fff3cd", "missing dates"),
+        # the dashboards' fixed file-integrity colours
+        ("#FFE5D0", "truncated files"),
+        ("#f1aeb5", "unreadable files"),
         ("#e2d9f3", CHANNEL_TAG),
     ],
 )
