@@ -1456,6 +1456,16 @@ def report_sample(con, n: int) -> None:
     print(sample.to_string(index=False))
 
 
+def _print_tech_staff_reminder(db: Path, proposals: Path) -> None:
+    """Warn that rewriting ``users`` dropped ``LNCMI Tech Staff`` and print the command that sets it again."""
+    script = Path(__file__).resolve().with_name("find_research_area_candidates.py")
+    print(
+        "WARNING: the users rows were rewritten, so research_area 'LNCMI Tech Staff' "
+        "(EXPLOIT., *test* and MAINTENANCE acronyms) is no longer set. Run:\n"
+        f"  python {script} --apply-tech-staff --db {db} --proposals {proposals}"
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -1634,6 +1644,8 @@ def main() -> None:
         else:
             replace_all_users(con, users, verbose=False, housing_filter=housing_filter)
             print(f"Replaced 'users' contents with {len(users)} rows ({args.db})")
+        # both writes reset research_area: the Tech Staff tag must be set again
+        _print_tech_staff_reminder(args.db, args.proposals)
 
         report_missing_hstop(con)
         report_data_quality(con)

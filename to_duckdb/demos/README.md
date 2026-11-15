@@ -91,11 +91,19 @@ python to_duckdb/demos/users_table_demo.py --link-only --margin 0
 Helps resolve `users` rows with `research_area IS NULL`. Splits them into
 two buckets:
 
-- **Tech Staff**: acronym is `"EXPLOIT."` or contains `"test"`
-  (case-insensitive) — internal LNCMI exploitation/testing sessions, never
-  backed by a real proposal. Reported only by default; pass
+- **Tech Staff**: acronym is `"EXPLOIT."`, contains `"test"`, or starts
+  with `"mainten"` (MAINTENANCE codes, including the typo `MAINTENABCE`), all
+  case-insensitive — internal LNCMI exploitation, testing and maintenance
+  sessions, never backed by a real proposal. Reported only by default; pass
   `--apply-tech-staff` to write `research_area = "LNCMI Tech Staff"` for
   these rows (only `research_area` is touched).
+
+  The build applies it as its last step, `tech-staff`
+  (`scripts/build_from_scratch.sh`), because rewriting `users` drops the tag:
+  `users_table_demo.py` (default mode and `--sync`) ends with a warning and the
+  `--apply-tech-staff` command to run, and a build run that rebuilds `users`
+  without `tech-staff` (e.g. `--from users --to users`) ends with a warning and
+  `scripts/build_from_scratch.sh --from tech-staff --db <DB>`.
 - **Candidate search**: the remaining genuinely-unmatched acronyms
   (`research_area`/`call_number`/`access_mode` all `NULL`) are searched
   against `proposals.csv` for proposals whose date coverage (exact
@@ -118,7 +126,7 @@ python to_duckdb/demos/find_research_area_candidates.py --top 5 --min-score 0.5
 | `--top` | `10` | Maximum candidates printed per acronym |
 | `--acronym` | none (all acronyms) | Restrict the candidate search to a single acronym |
 | `--min-score` | `0.0` | Minimum acronym-similarity score for a candidate to be shown |
-| `--apply-tech-staff` | off (dry run) | Write `research_area='LNCMI Tech Staff'` for the tech-staff bucket |
+| `--apply-tech-staff` | off (dry run) | Write `research_area='LNCMI Tech Staff'` for the tech-staff bucket (EXPLOIT., *test* and MAINTENANCE acronyms) |
 
 ---
 

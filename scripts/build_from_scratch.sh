@@ -4,7 +4,8 @@ set -eo pipefail
 # step IDs, in build order (see --help)
 STEPS=(create assemblies statuses etl-config check experiments exp-stats file-check etl-check operationaldata
        operationaldata-metadata op-stats
-       overview-json overview-ops overview-infer export users link-users unlinked-users)
+       overview-json overview-ops overview-infer export users link-users unlinked-users
+       tech-staff)
 
 usage() {
     cat <<EOF
@@ -376,6 +377,19 @@ section link-users "Link users" python demos/users_table_demo.py --link-only --d
 
 # Check users that are not linked (nor associated with any records -- either experiments or overview records)
 section unlinked-users "List unlinked users" python demos/list_users_unlinked.py --db $DB
+
+# Tag internal LNCMI sessions (EXPLOIT., *test*, MAINTENANCE) as research_area 'LNCMI Tech Staff'
+# (last operation on users: rebuilding users drops the tag)
+section tech-staff "Tag LNCMI Tech Staff users" \
+    python demos/find_research_area_candidates.py --apply-tech-staff --db $DB \
+        --proposals $DATA_DIR/proposals.csv
+
+# rebuilding users drops the 'LNCMI Tech Staff' tag: tell the caller how to set it again
+if wanted users && ! wanted tech-staff; then
+    echo -e "\033[33mWarning:\033[0m the users table was rebuilt without the tech-staff step;" \
+            "research_area 'LNCMI Tech Staff' is not set. Run:"
+    echo "  scripts/build_from_scratch.sh --from tech-staff --db $DB"
+fi
 
 if [ "$BUILD_FAILED" -ne 0 ]; then
     echo -e "\033[31mBuild finished with failures\033[0m (see $LOG)"

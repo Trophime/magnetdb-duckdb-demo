@@ -5,11 +5,13 @@ and the experiments_ids fallback margin.
 
 import csv
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 
 from crud import insert_assembly
 from demos.users_table_demo import (
+    _print_tech_staff_reminder,
     build_users,
     insert_users,
     load_acronym_corrections,
@@ -281,3 +283,16 @@ def test_margin_picks_nearest_row_of_same_user(con_linking):
         "SELECT hstart, experiments_ids FROM users ORDER BY hstart"
     ).fetchall()
     assert [ids for _, ids in rows] == [None, [1]]
+
+
+def test_tech_staff_reminder_gives_the_command_to_run(capsys, tmp_path):
+    """Rebuilding users drops 'LNCMI Tech Staff': the warning names the command that sets it again."""
+    db = tmp_path / "magnetdb.duckdb"
+    proposals = tmp_path / "proposals.csv"
+
+    _print_tech_staff_reminder(db, proposals)
+
+    out = capsys.readouterr().out
+    assert "LNCMI Tech Staff" in out
+    script = Path(__file__).resolve().parents[1] / "demos" / "find_research_area_candidates.py"
+    assert f"{script} --apply-tech-staff --db {db} --proposals {proposals}" in out

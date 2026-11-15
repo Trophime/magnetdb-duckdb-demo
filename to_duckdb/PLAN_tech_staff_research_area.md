@@ -1,6 +1,12 @@
 # Plan: MAINTENANCE codes in `LNCMI Tech Staff`, applied by the build
 
-Status: plan approved for saving (2026-11-03); implementation awaiting approval.
+Status: **done 2026-11-15** (implementation approved 2026-11-15). Checked on
+a scratch copy of `magnetdb-2026-11-10.mode17.duckdb` instead of the 10-08 DB:
+`--from tech-staff --to tech-staff` tags 1134 rows (13 acronyms);
+`--from users --to users` ends with the build warning (and the demo's warning
+in `$DB.log`); the printed command restores the tag (1132 rows: the local
+`Data/EXPERIENCES_LOG.csv` stops on 2026-11-06, before two `EXPLOIT.` sessions);
+`--from users` through `tech-staff` gives no warning. to_duckdb 867 passed.
 
 ## Goal
 

@@ -5,11 +5,13 @@ Standalone script — not wired into ``users_table_demo.py`` or
 ``magnetdb.py`` yet. Splits ``users`` rows with ``research_area IS NULL``
 into two buckets:
 
-- **Tech Staff**: acronym is ``"EXPLOIT."`` or contains ``"test"``
-  (case-insensitive) — these are internal LNCMI exploitation/testing
-  sessions, never backed by a real proposal, so searching ``proposals.csv``
-  for them is pointless. Reported only, unless ``--apply-tech-staff`` is
-  passed, in which case ``research_area`` is set to ``"LNCMI Tech Staff"``.
+- **Tech Staff**: acronym is ``"EXPLOIT."``, contains ``"test"``, or starts
+  with ``"mainten"`` (MAINTENANCE codes, including the typo ``MAINTENABCE``),
+  all case-insensitive — these are internal LNCMI exploitation, testing and
+  maintenance sessions, never backed by a real proposal, so searching
+  ``proposals.csv`` for them is pointless. Reported only, unless
+  ``--apply-tech-staff`` is passed, in which case ``research_area`` is set to
+  ``"LNCMI Tech Staff"`` (the build's last step, ``tech-staff``).
 - **Candidate search**: the remaining genuinely-unmatched acronyms
   (``research_area``/``call_number``/``access_mode`` all ``NULL``) are
   searched against ``proposals.csv`` for proposals whose date coverage
@@ -64,7 +66,7 @@ def load_proposals(proposals_path: Path) -> list[dict[str, str]]:
 
 def _is_tech_staff_acronym_sql() -> str:
     """SQL boolean expression identifying a tech-staff placeholder acronym."""
-    return "(acronym = 'EXPLOIT.' OR acronym ILIKE '%test%')"
+    return "(acronym = 'EXPLOIT.' OR acronym ILIKE '%test%' OR acronym ILIKE 'mainten%')"
 
 
 def fetch_tech_staff_rows(con) -> list[tuple[str, int]]:
@@ -79,8 +81,8 @@ def fetch_tech_staff_rows(con) -> list[tuple[str, int]]:
     -------
     list[tuple[str, int]]
         ``(acronym, row_count)`` pairs, sorted by acronym, for rows with
-        ``research_area IS NULL`` whose acronym is ``"EXPLOIT."`` or
-        contains ``"test"`` (case-insensitive).
+        ``research_area IS NULL`` whose acronym is ``"EXPLOIT."``, contains
+        ``"test"`` or starts with ``"mainten"`` (case-insensitive).
     """
     return con.execute(
         f"SELECT acronym, COUNT(*) FROM users WHERE research_area IS NULL "
@@ -288,8 +290,8 @@ def main() -> None:
         "--apply-tech-staff",
         action="store_true",
         help="Write research_area='LNCMI Tech Staff' for the tech-staff bucket "
-        "(EXPLOIT./*test* acronyms). Without this flag, that bucket is only "
-        "reported, not written.",
+        "(EXPLOIT., *test* and MAINTENANCE acronyms). Without this flag, that "
+        "bucket is only reported, not written.",
     )
     args = parser.parse_args()
 
@@ -298,7 +300,7 @@ def main() -> None:
         tech_staff_rows = fetch_tech_staff_rows(con)
         total_tech_staff = sum(count for _, count in tech_staff_rows)
         print(
-            f"LNCMI Tech Staff bucket (EXPLOIT./*test* acronyms): "
+            f"LNCMI Tech Staff bucket (EXPLOIT., *test* and MAINTENANCE acronyms): "
             f"{total_tech_staff} rows across {len(tech_staff_rows)} acronyms"
         )
         for acronym, count in tech_staff_rows:
