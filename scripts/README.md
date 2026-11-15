@@ -23,12 +23,14 @@ path is taken from the current directory). `--help` lists the options.
 | `create` | Create database |
 | `assemblies` | Load assemblies |
 | `statuses` | Set known magnet statuses |
+| `etl-config` | Load pupitre checks: tags, rules, magnet wirings (`$JSON/pupitre_checks.json`, `etl import`) |
 | `check` | Check database consistency |
-| `experiments` | Populate experiments |
+| `experiments` | Populate experiments (leaves out the files of `$JSON/pupitre_skip.json`) |
 | `exp-stats` | Ingest per-experiment statistics |
 | `file-check` | Check pupitre file quality (`check_experiment_files.py`) |
 | `etl-check` | Run pupitre ETL checks and tags (`check_experiment_files.py --etl`) |
-| `operationaldata` | Populate operationaldata |
+| `operationaldata` | Populate operationaldata (pupitre files: same skip list) |
+| `operationaldata-metadata` | Store file start/end times and the Overview mode (`populate operationaldata-metadata`) |
 | `op-stats` | Ingest per-file operational statistics |
 | `overview-json` | Load overview records from JSON |
 | `overview-ops` | Build overview records from operationaldata (rebuilds the rows loaded from JSON; keeps their hybrid lists) |
@@ -37,17 +39,23 @@ path is taken from the current directory). `--help` lists the options.
 | `users` | Build users table |
 | `link-users` | Link users |
 | `unlinked-users` | List unlinked users |
+| `tech-staff` | Tag LNCMI Tech Staff users (EXPLOIT., *test*, MAINTENANCE acronyms); last step, since rebuilding `users` drops the tag |
 
 Example, re-running the export and the user tables on an existing database:
 
 ```bash
-scripts/build_from_scratch.sh --from export --db to_duckdb/magnetdb-2026-10-08.duckdb
+scripts/build_from_scratch.sh --from export --db to_duckdb/magnetdb-2026-11-10.duckdb
 ```
 
 Paths (`JSON`, `RECORDS`, `DATA_DIR`) are set at the top of the script.
 Known magnet status changes (dead, retired, …) are read from
 `$JSON/magnet_status.json` and applied in file order, so keep its entries
-sorted by `changed_at`, oldest first.
+sorted by `changed_at`, oldest first. `$JSON/pupitre_checks.json` (tags,
+check rules, magnet wirings) and `$JSON/pupitre_skip.json` (pupitre files not
+to load: copies stored under the wrong housing, data issue #18) are optional:
+without the first, `etl-config` is `SKIPPED`; without the second, the build
+prints a note and loads every file.
+The export step runs the submodule's `python_magnetrun/examples/mysql_connect.py`.
 The data-export section needs `USERDB_API_KEY` and the `MYSQL_*` variables,
 loaded by direnv from `~/github/python_magnetrun/examples/.envrc`.
 

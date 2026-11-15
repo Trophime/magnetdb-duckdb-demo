@@ -64,25 +64,30 @@ For the database CLI and schema reference, see
 
 [`scripts/build_from_scratch.sh`](scripts/build_from_scratch.sh) rebuilds the
 database from scratch into `to_duckdb/magnetdb-<YYYY-MM-DD>.duckdb`: it loads
-the assemblies, magnet statuses, experiments, operational data and their
-statistics, overview records and the users table. Each step prints `OK`,
-`FAILED` or `SKIPPED`; the command output goes to `<database>.log`.
+the assemblies, magnet statuses, pupitre check rules, experiments and their
+statistics, file-quality and ETL checks (with their tags), operational data
+and their statistics, overview records and the users table, and finally tags
+the LNCMI Tech Staff sessions. Each step prints `OK`, `FAILED` or `SKIPPED`;
+the command output goes to `<database>.log`. A full build reads every file of
+the records tree and takes about 1.5 days (2026-11 builds on calcul22): run
+it in `screen`.
 
 ```bash
 source .venv/bin/activate
 scripts/build_from_scratch.sh
 ```
 
-It needs the assembly JSON files (`~/github/hifimagnet-projects/magnetdb.json`)
-and the records tree (`~/LNCMIG-Data/records`). Refreshing the source CSVs in
-`Data/` needs credentials loaded by direnv from
+It needs the assembly JSON files (`~/github/hifimagnet-projects/magnetdb.json`,
+which also holds `magnet_status.json`, `pupitre_checks.json` and
+`pupitre_skip.json`) and the records tree (`~/LNCMIG-Data/records`).
+Refreshing the source CSVs in `Data/` needs credentials loaded by direnv from
 `~/github/python_magnetrun/examples/.envrc`; without them that step is skipped
 and the existing files are used.
 
 To re-run part of a build on an existing database:
 
 ```bash
-scripts/build_from_scratch.sh --from export --db to_duckdb/magnetdb-2026-10-08.duckdb
+scripts/build_from_scratch.sh --from export --db to_duckdb/magnetdb-2026-11-10.duckdb
 ```
 
 See [scripts/README.md](scripts/README.md) for the step IDs and the other
