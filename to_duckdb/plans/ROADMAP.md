@@ -1,6 +1,6 @@
 # to_duckdb — Roadmap
 
-> Workspace-level view (all tracks, status as of 2026-10-16): [../ROADMAP.md](../ROADMAP.md). This file is the detailed `to_duckdb` history up to 2026-08-21.
+> Workspace-level view (all tracks, status as of 2026-10-16): [../../ROADMAP.md](../../ROADMAP.md). This file is the detailed `to_duckdb` history up to 2026-08-21.
 
 Status: draft — all 3 open questions now have a concrete path forward (see
 "Open Questions" below), none is a true blocker anymore: processing-status
@@ -220,7 +220,7 @@ not yet sizeable).
   append-only `status_history` JSON log. New `assembly decommission`,
   `part view`/`update-status`, `magnet update-status` CLI subcommands, a
   `check --entity assembly` audit, and full test coverage. Documented in
-  [to_duckdb/docs/schema.md](docs/schema.md#lifecycle) (with a mermaid
+  [to_duckdb/docs/schema.md](../docs/schema.md#lifecycle) (with a mermaid
   diagram) and checked off in `TODOs.md`.
 - `apps/dashboards/magnetdb/PLAN_dashboard_hierarchy_rework.md` — **new
   (2026-08-14), pending approval**. Covers the `TODOs.md` "New features"

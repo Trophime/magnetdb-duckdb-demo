@@ -1,8 +1,8 @@
 # Note: the M19 combined run (M9 + M10 powered together)
 
 **Status (2026-11-10): note only, design open.** Background for ROADMAP item
-G8 "Special experiments (M19, negative IH/IB)" ([ROADMAP.md](ROADMAP.md),
-[to_duckdb/TODOs.md](to_duckdb/TODOs.md)). It records facts and options; it
+G8 "Special experiments (M19, negative IH/IB)" ([ROADMAP.md](../ROADMAP.md),
+[../to_duckdb/TODOs.md](../to_duckdb/TODOs.md)). It records facts and options; it
 proposes no schema change. Mateo's negative IH/IB experiments, the other half
 of G8, are not covered here.
 
@@ -11,7 +11,7 @@ All findings below were checked read-only on 2026-11-10 against
 
 ## What M19 is
 
-From [to_duckdb/TODOs.md](to_duckdb/TODOs.md): "M19 test M9 with 18 MW and
+From [../to_duckdb/TODOs.md](../to_duckdb/TODOs.md): "M19 test M9 with 18 MW and
 M10 with 10 MW". The M9 and M10 housings ran **at the same time**, and the
 pigbrother acquisition logged them under a separate housing prefix, `M19`.
 A copy of the data sits in a folder named `20240206_30MW` (about 30 MW in
@@ -99,13 +99,13 @@ Pupitre files (`experiments`) on the M19 days:
 - `assemblies.housing` only takes M5, M7, M8, M9 and M10. There is no M19
   assembly.
 - `populate` scans `pbsurv/<assembly.housing>/<subdir>`
-  ([to_duckdb/populate.py](to_duckdb/populate.py), `pbsurv_dir / housing /
+  ([../to_duckdb/populate.py](../to_duckdb/populate.py), `pbsurv_dir / housing /
   …`). No assembly has `housing = "M19"`, so **0 rows** of `operationaldata`
   come from `pbsurv/M19` (M9: 26 903 rows, M10: 17 376).
 - The schema assumes:
   - one housing per assembly;
   - no overlap between two assemblies of the same housing
-    ([to_duckdb/docs/schema.md](to_duckdb/docs/schema.md));
+    ([../to_duckdb/docs/schema.md](../to_duckdb/docs/schema.md));
   - one `assembly_name` per `operationaldata` / `overview_records` row.
 
   An M19 file belongs to two assemblies at once.

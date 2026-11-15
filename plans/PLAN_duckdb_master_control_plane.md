@@ -50,7 +50,7 @@ The rules:
    - `ensure_schema` runs when the API starts.
 2. **Jobs that write DuckDB** (`populate`, `compute_*_stats`, hoop stress) run
    as background jobs inside the API process. They already follow the right
-   pattern ([parallel.py](to_duckdb/parallel.py): read once, run pure
+   pattern ([parallel.py](../to_duckdb/parallel.py): read once, run pure
    workers, write from the calling thread).
 3. **The dashboards read a snapshot.** After each write batch, the API flushes
    the database to disk and copies it (120 MB, well under a second), replacing

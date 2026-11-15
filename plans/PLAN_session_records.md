@@ -35,12 +35,12 @@ Read-only queries on `Data/EXPERIENCES_LOG.csv`,
 
 ### How discovery works today
 
-[`FileDiscovery.discover`](python_magnetrun/python_magnetrun/analysis/loaders.py)
+[`FileDiscovery.discover`](../python_magnetrun/python_magnetrun/analysis/loaders.py)
 starts from one Overview TDMS file:
 
 1. Parse the start time from the filename and open the file to get the end time.
 2. Glob the whole day for archive, pupitre and incident files.
-3. [`select_files`](python_magnetrun/python_magnetrun/utils/files.py) opens each
+3. [`select_files`](../python_magnetrun/python_magnetrun/utils/files.py) opens each
    candidate to get its time range and keeps those that overlap.
 4. For M8, pick the hybrid (CEA) files by UTC hour, from the overview's duration.
 
@@ -133,7 +133,7 @@ already handle archive-anchored sessions, but they have not been run for
 - Exact duplicate rows exist only in 2006–2015; none after 2018.
 - 544 sessions are shorter than 5 min: 9 contain a powered run, all have
   `Paimant` 0.0 (logged with 0.1 MWh resolution, so < 0.05 MWh: see
-  [EXPERIENCES_LOG fields](Data/README.md#experiences_log-fields)). Keep and
+  [EXPERIENCES_LOG fields](../Data/README.md#experiences_log-fields)). Keep and
   flag.
 - Merging the `i`/`e` rows of a housing whose windows overlap works: only 12
   merged groups mix two non-operator user codes, mostly typos (`GSC01-118` /

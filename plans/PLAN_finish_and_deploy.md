@@ -25,7 +25,7 @@ Done this week:
   `~/magnetdb-checks/magnetdb-2026-11-10.mode17.duckdb`
   ([PLAN_overview_mode_gr_mapping.md](PLAN_overview_mode_gr_mapping.md),
   [PLAN_pigbrother_pupitre_current_channels.md](PLAN_pigbrother_pupitre_current_channels.md)).
-- `EXPERIENCES_LOG` field table in [Data/README.md](Data/README.md).
+- `EXPERIENCES_LOG` field table in [../Data/README.md](../Data/README.md).
 
 The candidate DB (the `.mode17` copy) compared with the DB calcul18 serves
 today:
@@ -45,7 +45,7 @@ today:
 | # | Item | Plan | Effort | Why before deploying |
 |---|---|---|---|---|
 | 1 | **A24 phase G**: validate the SQL builder on a copy of the 2026-11-10 DB (steps 13–14), then add the `overview-ops` build step (step 15) | [PLAN_overview_records_from_operationaldata.md](PLAN_overview_records_from_operationaldata.md) | M | fills `teb` / `BP` |
-| 2 | **Build script**: add the two file-check steps (`check_experiment_files.py`, plain and `--etl`); call the submodule's `mysql_connect.py` by path in the export step (today it runs the copy in the separate `~/github/python_magnetrun` checkout) | ✅ 2026-11-13 (plan approved in chat): steps `file-check` and `etl-check` after `exp-stats`; `$MYSQL_CONNECT`; [scripts/build_from_scratch.sh](scripts/build_from_scratch.sh) | S | file quality and tags in every new build |
+| 2 | **Build script**: add the two file-check steps (`check_experiment_files.py`, plain and `--etl`); call the submodule's `mysql_connect.py` by path in the export step (today it runs the copy in the separate `~/github/python_magnetrun` checkout) | ✅ 2026-11-13 (plan approved in chat): steps `file-check` and `etl-check` after `exp-stats`; `$MYSQL_CONNECT`; [../scripts/build_from_scratch.sh](../scripts/build_from_scratch.sh) | S | file quality and tags in every new build |
 | 3 | **Data issue #18**: skip rule for the 24 pupitre files stored under two housings | ✅ 2026-11-13 (plan approved in chat): `pupitre_skip.json` in `hifimagnet-projects` (to commit there), `--skip-file` on `populate experiments` / `operationaldata`; issue #18 in [PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md) | S–M | today they count twice in M5 / M10 experiments and stats |
 | 3b | **M8 in the SQL builder** (part B): all 128 M8 overviews get a row; the 37 existing rows keep their hybrid lists; build order `overview-json` → `overview-ops --reprocess` → `overview-infer` (revises phase G step 15) | [PLAN_m8_overview_records.md](PLAN_m8_overview_records.md) | S | only 37 of 128 M8 overviews have a row today, none with `teb` |
 
@@ -81,20 +81,20 @@ run on a copy; item 3b goes with item 1 (same build step).
 
 ## After the deployment
 
-- E1 → A2 → hoop stress (A22): [python_magnetsetup/PLAN_supra_umagnet.md](python_magnetsetup/PLAN_supra_umagnet.md),
-  [to_duckdb/PLAN_hoop_stress_part_names.md](to_duckdb/PLAN_hoop_stress_part_names.md);
+- E1 → A2 → hoop stress (A22): [../python_magnetsetup/PLAN_supra_umagnet.md](../python_magnetsetup/PLAN_supra_umagnet.md),
+  [../to_duckdb/plans/PLAN_hoop_stress_part_names.md](../to_duckdb/plans/PLAN_hoop_stress_part_names.md);
   needs magnettools in the environment (F4).
 - Hybrid files in `operationaldata` (part C of
   [PLAN_m8_overview_records.md](PLAN_m8_overview_records.md)): year folders in
   `HybridData`, hybrid kinds matched by overlap, paths instead of basenames;
   answers A20's layout question.
-- C9 [CSV download](apps/dashboards/magnetdb/PLAN_csv_download.md), C10
-  [Hybrid viewer](apps/dashboards/magnetdb/PLAN_hybrid_viewer.md).
-- A1 [exp-stats performance](to_duckdb/PLAN_exp_stats_performance.md), if a
+- C9 [CSV download](../apps/dashboards/magnetdb/plans/PLAN_csv_download.md), C10
+  [Hybrid viewer](../apps/dashboards/magnetdb/plans/PLAN_hybrid_viewer.md).
+- A1 [exp-stats performance](../to_duckdb/plans/PLAN_exp_stats_performance.md), if a
   later rebuild is too slow.
 - Tester issues from F7 (GitHub issue template).
 
-Any time: update the [ROADMAP](ROADMAP.md) snapshot (dated 2026-11-07) once
+Any time: update the [ROADMAP](../ROADMAP.md) snapshot (dated 2026-11-07) once
 its uncommitted edits are committed.
 
 ## Decisions to confirm

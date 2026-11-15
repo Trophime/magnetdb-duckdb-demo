@@ -16,14 +16,14 @@ warnings.
 
 ## Current state
 
-- [`crud.py:651`](to_duckdb/crud.py#L651) (`insert_part`) and
-  [`crud.py:765`](to_duckdb/crud.py#L765) (`insert_magnet`) only use
+- [`crud.py:651`](../to_duckdb/crud.py#L651) (`insert_part`) and
+  [`crud.py:765`](../to_duckdb/crud.py#L765) (`insert_magnet`) only use
   `manufactured_at_from_name` / `assembled_at_from_name`
   (`[HR]YYMMDDXX` / `MYYMMDDXX`). Hand-named Bitters and supra parts and
   magnets silently get `NULL`, even when their JSON has a date.
 - The same name-derived date timestamps status events:
-  [`crud.py:989`](to_duckdb/crud.py#L989) ("Attached to magnet") and
-  [`crud.py:855`](to_duckdb/crud.py#L855) ("Superseded" plus automatic
+  [`crud.py:989`](../to_duckdb/crud.py#L989) ("Attached to magnet") and
+  [`crud.py:855`](../to_duckdb/crud.py#L855) ("Superseded" plus automatic
   closure of the assembly). For Bitters names it is `None`, so those events
   get the import time. This is where the `2026-10-08T10:3x` entries in
   `status_history` come from, together with a third path missed here (see

@@ -1,12 +1,12 @@
 # userdb
-See: [to_duckdb/PLAN_users_multi_source.md](PLAN_users_multi_source.md)
+See: [to_duckdb/PLAN_users_multi_source.md](plans/PLAN_users_multi_source.md)
 - [ ] by default remove users entries with a hstart before the first ever commissioned date in the duckdb database (see site table
 - [ ] instead of loading EXPERIENCES_LOG.csv, load this table directly from SUPERVISON DB
 - [ ] same for proposal table, load it directly from EMFL user DB API
 
 
 # stress
-See: [to_duckdb/docs/hoop-stress.md](docs/hoop-stress.md) and [to_duckdb/PLAN_hoop_stress_history.md](PLAN_hoop_stress_history.md)
+See: [to_duckdb/docs/hoop-stress.md](docs/hoop-stress.md) and [to_duckdb/PLAN_hoop_stress_history.md](plans/PLAN_hoop_stress_history.md)
 - [ ] `magnetdb.py hoop-stress compute` | Compute and persist hoop-stress bin stats + fatigue -- do not compute fatigue at this point
 - [x] test if fatigue can be used like a cumulative stats?? — answered: `sum_range3` is additive to float precision in practice, `n_cycles` is close but not exact (small boundary-residual effect); not a general guarantee, see [to_duckdb/docs/hoop-stress.md](docs/hoop-stress.md#is-fatigue-additive-across-experiments)
 - [ ] **POSTPONED, must come back to — `--check` mode must work smoothly.**
@@ -36,7 +36,7 @@ See: [to_duckdb/docs/hoop-stress.md](docs/hoop-stress.md) and [to_duckdb/PLAN_ho
 - [ ] remove uneeded tables and columns: sum_x2_dt columns -- hoop proxy (operationaldata stays: file index for overview_records, PLAN_overview_records_from_operationaldata.md)
 
 # scheduler
-See: [to_duckdb/PLAN_scheduled_populate.md](PLAN_scheduled_populate.md)
+See: [to_duckdb/PLAN_scheduled_populate.md](plans/PLAN_scheduled_populate.md)
 - [ ] add a scheduler to run the above scripts on a regular basis (cron job or similar) -- see claude calcul22
 
 # Operational parameters
@@ -44,14 +44,14 @@ See: [to_duckdb/PLAN_scheduled_populate.md](PLAN_scheduled_populate.md)
 
 # New features
 - [x] work on life cycle of magnets and parts -- status for magnet|part with some standardized values (in_operation|in_stock|retired|dead) along with a json struct to hold description of the status, the date of the status change and eventually reports/images on incidents, maintenance, etc. -- done: assembly/magnet/part status is now rule-driven with cascades and an append-only `status_history` log, see [to_duckdb/docs/schema.md](docs/schema.md#lifecycle)
-  See: [to_duckdb/PLAN_lifecycle_status.md](PLAN_lifecycle_status.md)
+  See: [to_duckdb/PLAN_lifecycle_status.md](plans/PLAN_lifecycle_status.md)
 - [ ] correct and update [python_magnetrun/examples/bilan.py](python_magnetrun/examples/bilan.py)
 - [ ] update numerical commissionning
 - [ ] prepare data structure to store commissionning data and results in duckdb for site -- aka assembly -- and propagate to magnets
 - [ ] how to flag experiments/overview-records to know what processing has been done on them (stress, fatigue, etc.) and what is still to be done 
 - [ ] how to include cooling models by M1 student for better simulations especially for primary heat exchanger
 - [ ] rework dashboards to start with housing and then go "down" to magnet, with a link to the overview-records and the stress/fatigue results
-  See: [apps/dashboards/magnetdb/PLAN_dashboard_hierarchy_rework.md](../apps/dashboards/magnetdb/PLAN_dashboard_hierarchy_rework.md) (awaiting approval)
+  See: [apps/dashboards/magnetdb/PLAN_dashboard_hierarchy_rework.md](../apps/dashboards/magnetdb/plans/PLAN_dashboard_hierarchy_rework.md) (awaiting approval)
   - create a dashboard for housings
     - display stats for energy, magnet time per housing per year
     - make the table display site with housing, commissionning date, decomissionning date, status, energy, magnet time, binary field history -- like great tables

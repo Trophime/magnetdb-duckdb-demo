@@ -178,7 +178,7 @@ Outline only, to be revised and approved after F7.
    rule chosen for Default/Trigger (phase G decision 2).
 4. Remove the part-B carry-over and the M8 dependency on `summary.json`; the
    dashboard can use the stored path.
-5. A20 ([to_duckdb/PLAN_archive_magnet_hybrid_runlog.md](to_duckdb/PLAN_archive_magnet_hybrid_runlog.md)):
+5. A20 ([../to_duckdb/plans/PLAN_archive_magnet_hybrid_runlog.md](../to_duckdb/plans/PLAN_archive_magnet_hybrid_runlog.md)):
    open question 1 (CEA layout) is answered by the findings above.
 
 ## Assumptions & open questions

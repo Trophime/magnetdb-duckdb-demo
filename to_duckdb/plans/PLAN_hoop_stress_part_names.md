@@ -2,7 +2,7 @@
 
 **Status:** proposed 2026-10-15, not yet approved.
 
-**Depends on:** [`python_magnetsetup/PLAN_supra_umagnet.md`](../python_magnetsetup/PLAN_supra_umagnet.md)
+**Depends on:** [`python_magnetsetup/PLAN_supra_umagnet.md`](../../python_magnetsetup/PLAN_supra_umagnet.md)
 — fixes `magnet_setup()`'s Supra branch. Not required for this refactor, but
 best executed first: until it lands, assemblies with a Supras magnet
 (`M8_A211225_00`, `M8_A230919_00`) fail at `load_magnettools`, so step 6 below
@@ -148,7 +148,7 @@ Parquet column names are already part names today.
   and re-plan.
 - **Supras** — `magnet_setup`'s Supra branch is broken in python_magnetsetup;
   fixed separately in
-  [`python_magnetsetup/PLAN_supra_umagnet.md`](../python_magnetsetup/PLAN_supra_umagnet.md).
+  [`python_magnetsetup/PLAN_supra_umagnet.md`](../../python_magnetsetup/PLAN_supra_umagnet.md).
   This plan does not touch python_magnetsetup.
 - **API change** — `validate_fast_from_pupitre` gets a new required `coil_parts`
   parameter and loses the `H{k}_fast` naming, without a shim. Its only callers

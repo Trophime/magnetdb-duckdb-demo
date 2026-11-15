@@ -11,7 +11,7 @@ Related plans:
   questions #24, #25, #27, #32, #33;
 - [PLAN_pupitre_etl_spec.md](PLAN_pupitre_etl_spec.md): step 1b (supra
   current `IS` from Hybrid `I_BOB`);
-- [PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md)
+- [PLAN_signature_regime_robustness.md](../apps/dashboards/magnetdb/plans/PLAN_signature_regime_robustness.md)
   (S1): `Field` signature thresholds.
 
 ## Context and goal
@@ -138,7 +138,7 @@ Files `2026.10.30 - 09:10:03` and `2025.11.05 - 14:42:13`:
 ### Pupitre ↔ Hybrid lag (open question #27)
 
 Measured with
-[`python_magnetrun/examples/hybrid_pupitre_lag.py`](python_magnetrun/examples/hybrid_pupitre_lag.py)
+[`python_magnetrun/examples/hybrid_pupitre_lag.py`](../python_magnetrun/examples/hybrid_pupitre_lag.py)
 on M8 `2026.10.30 - 09:10:03.txt` (whole run, hours 8–13 UTC); convention
 pupitre time + lag = Hybrid time:
 
@@ -336,13 +336,13 @@ Recommendations first.
 
 ## Tools
 
-- [`to_duckdb/demos/magnet_first_signatures.py`](to_duckdb/demos/magnet_first_signatures.py):
+- [`to_duckdb/demos/magnet_first_signatures.py`](../to_duckdb/demos/magnet_first_signatures.py):
   first valid experiment per magnet and its `Field` signature;
-- [`python_magnetrun/examples/hybrid_pupitre_lag.py`](python_magnetrun/examples/hybrid_pupitre_lag.py):
+- [`python_magnetrun/examples/hybrid_pupitre_lag.py`](../python_magnetrun/examples/hybrid_pupitre_lag.py):
   pupitre ↔ Hybrid lag and alignment plot; `--sessions-log` for the
   session-log mask;
-- [`Data/EXPERIENCES_LOG.csv`](Data/EXPERIENCES_LOG.csv): SUPERVISION
+- [`Data/EXPERIENCES_LOG.csv`](../Data/EXPERIENCES_LOG.csv): SUPERVISION
   session log (coil, `ElecGroup`, `HStart`/`HStop` in Paris local time),
   read by python_magnetrun `analysis/sessions.py`; DuckDB `users` table
   built from it by
-  [`to_duckdb/demos/users_table_demo.py`](to_duckdb/demos/users_table_demo.py).
+  [`to_duckdb/demos/users_table_demo.py`](../to_duckdb/demos/users_table_demo.py).

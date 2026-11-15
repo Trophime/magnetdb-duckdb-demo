@@ -5,7 +5,7 @@ Status: methodology approved (2026-08-11), revised (2026-08-12) to anchor on the
 ## Related (added 2026-10-07)
 
 This plan is step **S1** of the cross-plan order in
-[PLAN_digital_twin_schema.md](../../../PLAN_digital_twin_schema.md#cross-plan-order-blockers-and-approvals).
+[PLAN_digital_twin_schema.md](../../../../plans/PLAN_digital_twin_schema.md#cross-plan-order-blockers-and-approvals).
 It depends on no other plan; these depend on it:
 
 - **S2** — fill `overview_records.signatures`, `plateaux` and `sync_info`

@@ -15,7 +15,7 @@ Since the M8 fix of 2026-11-09 (data issue #14 in
 holding M23012001 + M8Bitters + Hybrid is commissioned on **2023-09-13**,
 not 2023-09-19, but it still carries the old name. The code never parses an
 assembly name for a date, except
-[scripts/list_assembly_configs.sh](scripts/list_assembly_configs.sh), which
+[../scripts/list_assembly_configs.sh](../scripts/list_assembly_configs.sh), which
 sorts the assembly files by their `_AYYMMDD_` date to set the load order of
 the build. The order is the same with 230913 (after `M8_A211225_00`); the
 rename only makes the name match the date.

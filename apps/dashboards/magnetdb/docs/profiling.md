@@ -1,7 +1,7 @@
 # Profiling the dashboard and notebooks
 
 Tool basics (what each tool measures, install extras) are covered in
-[`python_magnetrun/docs/profiling.md`](../../../python_magnetrun/docs/profiling.md) — that
+[`python_magnetrun/docs/profiling.md`](../../../../python_magnetrun/docs/profiling.md) — that
 doc targets the `python_magnetrun` CLI entry points. This doc covers the same tools applied
 to two different shapes of program: the live Dash server (`magnetdb_app.py`) and Jupyter
 notebooks, where "run the CLI under a profiler" doesn't apply directly.
@@ -45,7 +45,7 @@ gitignored — nothing to clean up manually.
 ### 2. line_profiler — a specific callback or function
 
 Best once cProfile/snakeviz has pointed at a specific function, e.g.
-`update_single_pair_graph` in [`comparison.py`](../src/pages/comparison.py) or `load_data` /
+`update_single_pair_graph` in [`comparison.py`](../../src/pages/comparison.py) or `load_data` /
 `load_mrun_object` in `magnetdb_analysis.py`.
 
 Decorate temporarily:
@@ -70,7 +70,7 @@ Remove the `@profile` decorator before committing.
 ### 3. memory_profiler — whole-session timeline
 
 Better than cProfile for the "5 concurrent callbacks all cold-parsing the same file"
-scenario described in [`PERFORMANCE_PLAN.md`](../PERFORMANCE_PLAN.md) — it plots RSS across
+scenario described in [`PERFORMANCE_PLAN.md`](../../PERFORMANCE_PLAN.md) — it plots RSS across
 the *entire* server session, so concurrent parses show up as overlapping spikes instead of
 isolated per-request numbers:
 

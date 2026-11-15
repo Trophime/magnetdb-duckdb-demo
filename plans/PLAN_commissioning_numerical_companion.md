@@ -42,7 +42,7 @@ of current (see `flow_params` on `overview_records` / Postgres
    comparison.
 
 Grounding for this design:
-- [to_duckdb/schema.py](to_duckdb/schema.py) / [to_duckdb/docs/schema.md](to_duckdb/docs/schema.md) — existing table conventions (natural-name PKs, JSON payload columns, per-table sequences, `experiments`/`operationaldata` file-tracking pattern, `op_part_bin_stats`/`hoop_stress_bin_stats` as precedent for per-part derived-quantity tables).
+- [../to_duckdb/schema.py](../to_duckdb/schema.py) / [../to_duckdb/docs/schema.md](../to_duckdb/docs/schema.md) — existing table conventions (natural-name PKs, JSON payload columns, per-table sequences, `experiments`/`operationaldata` file-tracking pattern, `op_part_bin_stats`/`hoop_stress_bin_stats` as precedent for per-part derived-quantity tables).
 - [PLAN_duckdb_postgres_merge.md](PLAN_duckdb_postgres_merge.md) — DuckDB vs. Postgres split; confirms `flow_params` already exists (Postgres `Magnet.flow_params`, DuckDB `overview_records.flow_params`) and that Postgres already has a heavier `simulations`/`simulation_currents` FEM-job model, which this is deliberately lighter-weight than.
 - `magnet-scipy` (`~/github/magnet-scipy`) — `RLCircuitPID` takes `R` (constant or `resistance_csv` giving R(I,T)), `L` (scalar), PID gains (`Kp/Ki/Kd_low/high` + thresholds); `CoupledRLCircuitsPID` takes an NxN `mutual_inductances` matrix. No direct `field_factor` parameter in magnet-scipy itself — it's used downstream to convert simulated current into a comparable field trace for validation against measured field.
 - `python_magnetapi/inductances.py` — existing FEM-based inductance computation pipeline (site/magnet), confirming inductance has an "FEM source" in addition to measurement/analytical.

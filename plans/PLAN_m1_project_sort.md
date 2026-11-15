@@ -6,9 +6,9 @@ individual items still need their own scoping/approval when picked up.
 
 Source: [`M1project_from_iphone.txt`](M1project_from_iphone.txt) (50
 freeform, mostly-French, dictated project-idea items). Cross-checked against
-[`to_duckdb/ROADMAP.md`](to_duckdb/ROADMAP.md),
-[`to_duckdb/TODOs.md`](to_duckdb/TODOs.md), and
-[`python_magnetrun/prompts/ROADMAP.md`](python_magnetrun/prompts/ROADMAP.md).
+[`to_duckdb/ROADMAP.md`](../to_duckdb/plans/ROADMAP.md),
+[`to_duckdb/TODOs.md`](../to_duckdb/TODOs.md), and
+[`python_magnetrun/prompts/ROADMAP.md`](../python_magnetrun/prompts/ROADMAP.md).
 Item numbers below refer to line numbers in the source note.
 
 ## Section 0 — Already done, no action needed

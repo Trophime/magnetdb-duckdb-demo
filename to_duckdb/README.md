@@ -105,8 +105,8 @@ Default DB: `magnetdb.duckdb` in the current directory.
 | `assembly add/view/update/delete` | Manage assemblies + experiment records; `add --status-file` applies known retirements/deaths when parts are reused | [loading.md](docs/loading.md), [schema.md](docs/schema.md) |
 | `assembly update-magnet` | Patch positional/temporal AssemblyMagnet fields | [loading.md](docs/loading.md) |
 | `housing view` | List housing configs | [loading.md](docs/loading.md#housing-configs) |
-| `etl import FILE [--dry-run]` / `etl dump FILE` | Load (all or nothing, rows absent from the file kept) or write the pupitre check tags, rules and magnet wirings; the build loads `hifimagnet-projects/magnetdb.json/pupitre_checks.json` (step `etl-config`); an insert without a stored wiring gets the pair-layout wiring of its helix count | [PLAN_pupitre_checks_file.md](../PLAN_pupitre_checks_file.md) |
-| `rule add/remove/show [--housing H \| --assembly A [--magnet M]] [--version V]` | Check rules on pupitre files; without `--housing` / `--assembly` a rule is global (every housing; narrower rules override it) | [PLAN_file_check_rules.md](../PLAN_file_check_rules.md) |
+| `etl import FILE [--dry-run]` / `etl dump FILE` | Load (all or nothing, rows absent from the file kept) or write the pupitre check tags, rules and magnet wirings; the build loads `hifimagnet-projects/magnetdb.json/pupitre_checks.json` (step `etl-config`); an insert without a stored wiring gets the pair-layout wiring of its helix count | [PLAN_pupitre_checks_file.md](../plans/PLAN_pupitre_checks_file.md) |
+| `rule add/remove/show [--housing H \| --assembly A [--magnet M]] [--version V]` | Check rules on pupitre files; without `--housing` / `--assembly` a rule is global (every housing; narrower rules override it) | [PLAN_file_check_rules.md](../plans/PLAN_file_check_rules.md) |
 | `experiments view` | List experiment records | [populate.md](docs/populate.md#experiments-view) |
 | `operationaldata view` | List operationaldata records | [populate.md](docs/populate.md#operationaldata-view) |
 | `overview-records view` | List overview_records | [populate.md](docs/populate.md#overview-records-view) |
@@ -298,7 +298,7 @@ reprocess with `--magnet-type all` (the default).
 
 Known gaps and next steps (angles, magnet bores, updating the inputs that
 have no `update` command yet, …) are listed in
-[PLAN_update_impact_tracking.md](../PLAN_update_impact_tracking.md#follow-ups-not-in-this-plan-each-needs-its-own-plan-and-approval).
+[PLAN_update_impact_tracking.md](../plans/PLAN_update_impact_tracking.md#follow-ups-not-in-this-plan-each-needs-its-own-plan-and-approval).
 
 ---
 
@@ -307,7 +307,7 @@ have no `update` command yet, …) are listed in
 Some insert magnets have helices but no rings. `suggest_rings.py` proposes a
 ring for each gap between consecutive helices (H1H2, H2H3, …), taken from the
 ring JSON files when one fits, otherwise a placeholder ring. Rules and
-background: [PLAN_insert_rings.md](../PLAN_insert_rings.md).
+background: [PLAN_insert_rings.md](../plans/PLAN_insert_rings.md).
 
 - **Fit**: every radius within `--tolerance` (default 0.1 mm) of helix i's
   `r` followed by helix i+1's `r`, and the same drawing number, revision

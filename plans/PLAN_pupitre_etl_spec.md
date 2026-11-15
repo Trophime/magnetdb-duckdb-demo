@@ -643,7 +643,7 @@ flag broken files.
   creates the new shape; only scratch databases built since part B have the
   old one (drop the empty table, `ensure_schema` recreates it).
 - **DuckDB foreign keys don't cascade.** Removing an assembly–magnet link
-  (e.g. [PLAN_part_delete.md](to_duckdb/PLAN_part_delete.md)) must delete its
+  (e.g. [PLAN_part_delete.md](../to_duckdb/plans/PLAN_part_delete.md)) must delete its
   `pupitre_etl_magnet` rows first.
 - **No caller is switched yet** (`load_mrun`, the dashboards,
   `stress_map.py`): the new path is opt-in. Making it the default is a later
@@ -731,7 +731,7 @@ flag broken files.
     `2026.10.30 - 09:10:03`, pupitre time + lag = Hybrid time, no drift
     over the run); pupitre vs pigbrother clocks differ too, and the lags
     vary from file to file
-    ([PLAN_signature_regime_robustness.md](apps/dashboards/magnetdb/PLAN_signature_regime_robustness.md)).
+    ([PLAN_signature_regime_robustness.md](../apps/dashboards/magnetdb/plans/PLAN_signature_regime_robustness.md)).
     Design points for the 1b plan:
     - shift `I_BOB` by the lag **before** the 0.5 s `merge_asof`;
     - load Hybrid hours covering the shifted window: with −190 s, a run

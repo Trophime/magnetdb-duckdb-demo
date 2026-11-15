@@ -192,7 +192,7 @@ the order is:
    the importer and all-or-nothing fixes).
 4. ~~Run the report on `magnetdb-scratch`~~ (approved by the user, rule 4b
    version: 81 real rings, 21 placeholders), kept in
-   [`rings_report.txt`](rings_report.txt).
+   [`rings_report.txt`](../rings_report.txt).
 5. ~~Run `suggest_rings.py --write`~~ (done: additions only in the 8 magnet
    files, 21 `R261029xx.json`; a second run changes nothing).
 6. ~~Partial build into a new scratch database~~ (`magnetdb-scratch-rings`):

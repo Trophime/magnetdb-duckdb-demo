@@ -75,7 +75,7 @@ way it comes out.
   pytest to_duckdb/tests -k hoop`: 36 passed (34 from Phase 4 + these 2),
   `test_stress_map.py` still 12/12.
 - **Done** — finding documented in
-  [docs/hoop-stress.md](docs/hoop-stress.md#is-fatigue-additive-across-experiments)
+  [../docs/hoop-stress.md](../docs/hoop-stress.md#is-fatigue-additive-across-experiments)
   and `TODOs.md`'s stress-section line checked off.
 
 ## Assumptions & open questions

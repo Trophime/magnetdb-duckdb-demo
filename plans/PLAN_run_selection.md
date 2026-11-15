@@ -159,7 +159,7 @@ pigbrother files of the same housing can pair two different magnets.
 | 3 | Field step for Overview files | store `field_max` / mean [T] per Overview file from `Champ_magn`/1000 (extension of A24) / keep field experiments-only for now |
 | 4 | Field for overview records without #3 | borrow `field_max` from the experiments in `sources_pupitre` / no field criterion on overview records |
 | 5 | Output | screen only / also CSV / JSON (e.g. to feed `demos/archive_magnet_data.py` or the dashboard) |
-| 6 | Time-zone bug in `overview-records view --from/--to` ([crud.py:2667-2672](to_duckdb/crud.py#L2667-L2672)): local input compared with UTC `t0`, off by 1 h (winter) / 2 h (summer) | fix in the `select` plan / separate plan |
+| 6 | Time-zone bug in `overview-records view --from/--to` ([crud.py:2667-2672](../to_duckdb/crud.py#L2667-L2672)): local input compared with UTC `t0`, off by 1 h (winter) / 2 h (summer) | fix in the `select` plan / separate plan |
 | 7 | Assembly dates (Paris-naive, read as UTC by some readers) | A: store in UTC (convert JSON on insert, migrate rows, convert back in `etl export` and displays) / **B: declare them Paris local, fix the three UTC readers, document in the schema** (no migration); now or later |
 | 8 | Per-file FF fit (least squares of recorded field on circuit currents) as a source of **configured** factors | worth planning? Fails when the two currents are proportional; one factor per circuit |
 | 9 | Duplicate pupitre copies (data issue #16) | skip them in the build before cross-source selection (explicit list, or header magnet vs assembly check) and recompute stats / leave for a separate cleanup |
@@ -168,12 +168,12 @@ pigbrother files of the same housing can pair two different magnets.
 
 ## Related
 
-- [ROADMAP.md](ROADMAP.md): A24 (operationaldata metadata), S1 (signature
+- [ROADMAP.md](../ROADMAP.md): A24 (operationaldata metadata), S1 (signature
   study), S2 (plateaux).
 - [PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md): §Field factor,
   §Commissioning measurements, data issue #16, open questions #24/#25.
 - [PLAN_session_records.md](PLAN_session_records.md): clocks and time zones.
-- [to_duckdb/select_experiments_by_time.py](to_duckdb/select_experiments_by_time.py):
+- [../to_duckdb/select_experiments_by_time.py](../to_duckdb/select_experiments_by_time.py):
   existing selector with the 08:00 → 07:00 Paris operational day.
 - [to_duckdb/demos/magnet-assembly-history.py](to_duckdb/demos/magnet-assembly-history.py):
   a magnet's assemblies (dates via `COALESCE(link, assembly)`).
