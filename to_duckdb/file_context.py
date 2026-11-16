@@ -24,9 +24,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
-from crud import _housing_config_dict, exists
 from python_magnetrun.housing_config import HousingConfig
 from python_magnetrun.utils.timestamps import parse_txt_filename
+
+from crud import _housing_config_dict, exists
 
 PUPITRE_TZ = ZoneInfo("Europe/Paris")
 

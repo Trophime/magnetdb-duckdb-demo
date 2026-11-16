@@ -5,13 +5,14 @@ Self-contained proposal for the About page: delete this file to drop it.
 
 import dash
 import dash_bootstrap_components as dbc
-import dash_selectors as selectors
-import i18n
-import magnetdb_analysis as db
 import pandas as pd
 import plotly.graph_objects as go
 from dash import Input, Output, dcc, html
 from natsort import natsorted
+
+import dash_selectors as selectors
+import i18n
+import magnetdb_analysis as db
 
 dash.register_page(
     __name__,

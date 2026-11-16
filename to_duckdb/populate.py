@@ -34,6 +34,7 @@ except ImportError:
 
 import duckdb
 from python_magnetrun.data_dirs import PIGBROTHER_DATA_DIR, PUPITRE_DATA_DIR
+
 from schema import ensure_schema
 
 # ---------------------------------------------------------------------------

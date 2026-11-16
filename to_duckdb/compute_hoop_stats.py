@@ -44,6 +44,7 @@ import duckdb
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+
 from config import DEFAULT_DB
 from crud import _log_operation
 from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE

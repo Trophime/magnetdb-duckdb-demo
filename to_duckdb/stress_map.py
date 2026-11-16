@@ -44,14 +44,15 @@ import duckdb
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from config import DEFAULT_DB
-from enums import MagnetType, PartType
-from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE
-from populate import _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
 from python_magnetrun.magnetdata import load_magnetdata
 from python_magnetrun.runetl import prepareData
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
 from python_magnetsetup.config import appenv
+
+from config import DEFAULT_DB
+from enums import MagnetType, PartType
+from populate import _RECORDS_BASE as _DEFAULT_RECORDS_BASE
+from populate import _SRV_SUBDIR as _DEFAULT_SRV_SUBDIR
 
 # magnettools (also imported by python_magnetsetup.ana) is optional: only the
 # hoop-stress computations need it, and load_magnettools() checks for it.

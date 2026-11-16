@@ -24,6 +24,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import duckdb
+
 from config import DEFAULT_DB
 from crud import view_experiments
 from populate import FILE_TZ

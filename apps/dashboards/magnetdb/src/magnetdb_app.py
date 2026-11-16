@@ -4,9 +4,10 @@ import os
 import dash
 import dash_bootstrap_components as dbc
 import flask
+from dash import Dash, Input, Output, State, dcc, html
+
 import i18n
 import magnetdb_analysis as db
-from dash import Dash, Input, Output, State, dcc, html
 
 app = Dash(
     __name__,

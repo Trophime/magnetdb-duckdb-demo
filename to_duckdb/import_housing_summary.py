@@ -33,7 +33,7 @@ def compute_field_signature(mdata, field, threshold):
 
 # # HOUSING SUMMARY
 # ### Load and merge the housing summary files
-# 
+#
 
 # In[12]:
 
@@ -52,7 +52,7 @@ for file in sorted(DATA_DIR.glob("*_summary-*.json")):
     housing = file.stem.split("_")[0]
     year = int(file.stem[-4: ])
 
-    with open(file, "r") as f:
+    with open(file) as f:
         data = json.load(f)
 
     df = pd.json_normalize(data)
@@ -129,7 +129,7 @@ print("\nTABLE SCHEMA: ",
     ).fetchdf()
 )
 ## Count imported records
-print("\nNUMBER OF ROWS:", 
+print("\nNUMBER OF ROWS:",
     con.execute(
         """
             SELECT COUNT(*) FROM housing_summary
@@ -276,7 +276,7 @@ with Progress() as progress:
                         field_time_on = ?,
                         field_signature = ?
                     WHERE rowid = ?
-                """, 
+                """,
                 (float(field.max()), float(field.mean()), int((field > FIELD_THRESHOLD).sum()), field_signature, int(rowid))
             )
 

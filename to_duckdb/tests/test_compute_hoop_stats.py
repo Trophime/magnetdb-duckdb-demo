@@ -29,12 +29,12 @@ from compute_hoop_stats import (
     save_hoop_parquet,
 )
 from crud import (
+    insert_assembly,
+    insert_assembly_magnets,
     insert_experiments,
     insert_magnet,
     insert_magnet_part_row,
     insert_part,
-    insert_assembly,
-    insert_assembly_magnets,
 )
 from schema import ensure_schema
 

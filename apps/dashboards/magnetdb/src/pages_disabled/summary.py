@@ -1,15 +1,16 @@
 import dash
 import dash_bootstrap_components as dbc
-import magnetdb_analysis as db
 import pandas as pd
 import plotly.graph_objects as go
 from dash import MATCH, Input, Output, State, dcc, html
+
+import magnetdb_analysis as db
 from magnetdb_plot import create_plot
 
 # --- 1. ENREGISTREMENT DE LA PAGE ---
 dash.register_page(
-    __name__, 
-    path='/summary', 
+    __name__,
+    path='/summary',
     name="Housing Summary",
     order=6
 )
@@ -152,7 +153,7 @@ def generate_all_files_ui(selected_pupitre, housing):
                                 id={'type': 'summary-checklist', 'file': file_name, 'group': group_name},
                                 options=options,
                                 value=[],
-                                labelStyle={'display': 'block', 'marginLeft': '25px', 'marginBottom': '4px'} 
+                                labelStyle={'display': 'block', 'marginLeft': '25px', 'marginBottom': '4px'}
                             )
                         ], style={'width': '250px', 'flexShrink': 0, 'padding': '10px', 'borderRight': '1px solid #ddd', 'backgroundColor': '#ffffff'}),
                         
@@ -178,7 +179,7 @@ def generate_all_files_ui(selected_pupitre, housing):
     return all_files_html
 
 
-# Callback 4: Mettre à jour le graphique ciblé 
+# Callback 4: Mettre à jour le graphique ciblé
 @dash.callback(
     Output({'type': 'summary-graph', 'file': MATCH, 'group': MATCH}, 'figure'),
     Input({'type': 'summary-checklist', 'file': MATCH, 'group': MATCH}, 'value'),

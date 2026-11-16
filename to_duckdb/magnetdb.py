@@ -109,9 +109,9 @@ except ImportError:
     from backports.zoneinfo import ZoneInfo  # type: ignore[no-redef]
 
 import duckdb
+
 from checks import print_check_report, run_checks
 from config import DEFAULT_DB
-from magnet_geometry import refresh_geometry_problem
 from crud import (
     _log_operation,
     _resolve_source_path,
@@ -164,6 +164,7 @@ from crud import (
     view_part,
     view_parts,
 )
+from magnet_geometry import refresh_geometry_problem
 from populate import (
     _PBSURV as _DEFAULT_PBSURV,
 )
@@ -175,9 +176,9 @@ from populate import (
 )
 from populate import (
     ALL_POPULATE_TYPES,
-)
-from populate import (
     fill_operationaldata_metadata,
+    load_pupitre_skip_list,
+    split_skipped,
 )
 from populate import (
     find_and_register_pupitre as _pupitre_find_and_register,
@@ -187,10 +188,6 @@ from populate import (
 )
 from populate import (
     load_assembly as _load_assembly,
-)
-from populate import (
-    load_pupitre_skip_list,
-    split_skipped,
 )
 from schema import COIL_TYPES, ensure_schema
 

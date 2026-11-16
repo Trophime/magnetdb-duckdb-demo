@@ -1,13 +1,14 @@
 import json
 
 import dash_bootstrap_components as dbc
-import i18n
-import magnetdb_analysis as db
 import pandas as pd
 from dash import dcc, html
 from dash.dash_table import DataTable
-from experiment_links import file_viewer_href, magnet_link
 from natsort import natsorted
+
+import i18n
+import magnetdb_analysis as db
+from experiment_links import file_viewer_href, magnet_link
 
 ALL = "All"
 

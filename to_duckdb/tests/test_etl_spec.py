@@ -6,9 +6,9 @@ from zoneinfo import ZoneInfo
 
 import duckdb
 import pytest
+from python_magnetrun.runetl import PupitreEtlSpec, load_pupitre_etl_spec
 
 from etl_spec import build_pupitre_etl_spec, export_pupitre_etl_spec, set_magnet_wiring
-from python_magnetrun.runetl import PupitreEtlSpec, load_pupitre_etl_spec
 from tests.test_file_context import build_db
 
 PARIS = ZoneInfo("Europe/Paris")

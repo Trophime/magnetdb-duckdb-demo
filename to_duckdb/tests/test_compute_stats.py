@@ -6,12 +6,12 @@ import pandas as pd
 import polars as pl
 import pytest
 from pint import DimensionalityError
+from python_magnetrun.magnetdata_base import _make_ureg
 
 from compute_exp_stats import compute_scalars as compute_exp_scalars
 from compute_exp_stats import load_file as load_exp_file
 from compute_op_stats import compute_scalars as compute_op_scalars
 from compute_op_stats import load_file as load_op_file
-from python_magnetrun.magnetdata_base import _make_ureg
 
 _SCALAR_FNS = [compute_exp_scalars, compute_op_scalars]
 _LOAD_FNS = [load_exp_file, load_op_file]
@@ -174,8 +174,10 @@ def test_load_file_reraises_io_error_while_reading(load_file, tmp_path, monkeypa
 
 def test_get_experiments_skips_unreadable_and_single_row(tmp_path):
     import duckdb
+
     from compute_exp_stats import get_experiments
-    from magnetdb import _add_assembly as add_assembly, _add_magnet as add_magnet
+    from magnetdb import _add_assembly as add_assembly
+    from magnetdb import _add_magnet as add_magnet
     from tests.conftest import ASSEMBLY_JSON, MAGNET_JSON
 
     db = tmp_path / "test.duckdb"

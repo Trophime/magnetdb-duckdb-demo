@@ -1,16 +1,17 @@
 import dash
 import dash_bootstrap_components as dbc
-import dash_selectors as selectors
 import duckdb
-import i18n
-import magnetdb_analysis as db
 import pandas as pd
 import plotly.express as px
 from dash import Input, Output, dcc, html
 from dash.dash_table import DataTable
-from experiment_links import assembly_link
 from natsort import natsorted
 from plotly import graph_objects as go
+
+import dash_selectors as selectors
+import i18n
+import magnetdb_analysis as db
+from experiment_links import assembly_link
 
 dash.register_page(
     __name__, path="/housings", name="Housings", order=2, title=lambda: i18n._("Housings")

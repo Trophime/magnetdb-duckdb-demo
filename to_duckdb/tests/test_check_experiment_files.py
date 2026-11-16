@@ -5,7 +5,8 @@ import json
 import duckdb
 
 import check_experiment_files
-from magnetdb import _add_assembly as add_assembly, _add_magnet as add_magnet
+from magnetdb import _add_assembly as add_assembly
+from magnetdb import _add_magnet as add_magnet
 from tests.conftest import ASSEMBLY_JSON, MAGNET_JSON
 
 ASSEMBLY = ASSEMBLY_JSON["name"]

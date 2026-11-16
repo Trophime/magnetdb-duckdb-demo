@@ -11,7 +11,7 @@ df = md.getPandasData(path)
 
 FILE = Path("../Data for Stage/M9_Summary-2025.json")
 
-with open(FILE, "r") as f:
+with open(FILE) as f:
     data = json.load(f)
 
 df = pd.json_normalize(data)

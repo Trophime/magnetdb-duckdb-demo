@@ -1,6 +1,7 @@
 import dash
-import magnetdb_analysis as db
 from dash import Input, Output, callback, dcc, html
+
+import magnetdb_analysis as db
 
 dash.register_page(__name__, path="/metrics", name="Metrics", order=6)
 

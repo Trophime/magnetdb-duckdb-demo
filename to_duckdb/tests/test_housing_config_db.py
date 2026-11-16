@@ -6,22 +6,22 @@ go to pytest's tmp_path.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
 import pytest
 
-from schema import ensure_schema
 from crud import (
     _derive_housing_config_dict,
     _housing_config_data_from_magnetrun,
+    export_housing_config_json,
     insert_housing_config,
     insert_housing_config_from_magnetrun,
-    export_housing_config_json,
     sync_housing_config_from_magnetrun,
     view_housing_config,
 )
+from schema import ensure_schema
 
 # ---------------------------------------------------------------------------
 # Reference JSON files (read-only)
@@ -450,7 +450,7 @@ class TestHousingConfigVersions:
             ("M8-211225", "M8"), ("M8-230913", "M8"), ("M8-260305", "M8"),
         ]
         _, _, valid_from, overrides, _ = rows[2]
-        assert valid_from == datetime(2026, 3, 5, 16, 21, 9, tzinfo=timezone.utc)
+        assert valid_from == datetime(2026, 3, 5, 16, 21, 9, tzinfo=UTC)
         assert json.loads(overrides)["voltage_channels_gr1"] == ["Ucoil14"]
         assert json.loads(rows[0][3])["voltage_channels_gr1"] == ["Ucoil11", "Ucoil12"]
         assert json.loads(rows[1][3]) == {}
@@ -544,7 +544,7 @@ class TestSyncHousingConfig:
         valid_from = con.execute(
             "SELECT valid_from FROM housing_config_versions WHERE name = 'M8-260305'"
         ).fetchone()[0]
-        assert valid_from == datetime(2026, 3, 5, 23, 0, tzinfo=timezone.utc)  # unchanged
+        assert valid_from == datetime(2026, 3, 5, 23, 0, tzinfo=UTC)  # unchanged
 
     def test_sync_all_housings(self, con):
         result = sync_housing_config_from_magnetrun(con, verbose=False)
@@ -556,7 +556,7 @@ class TestSyncHousingConfig:
 
     def test_view_lists_versions(self, con, capsys):
         sync_housing_config_from_magnetrun(con, "M8", verbose=False)
-        view_housing_config(con, "M8", at=datetime(2026, 3, 6, tzinfo=timezone.utc))
+        view_housing_config(con, "M8", at=datetime(2026, 3, 6, tzinfo=UTC))
         out = capsys.readouterr().out
         assert "  M8-211225" in out
         assert "* M8-260305" in out

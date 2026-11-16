@@ -9,7 +9,8 @@ import pytest
 import compute_exp_stats
 import compute_op_stats
 import record_io
-from magnetdb import _add_assembly as add_assembly, _add_magnet as add_magnet
+from magnetdb import _add_assembly as add_assembly
+from magnetdb import _add_magnet as add_magnet
 from tests.conftest import ASSEMBLY_JSON, MAGNET_JSON
 
 ASSEMBLY = ASSEMBLY_JSON["name"]

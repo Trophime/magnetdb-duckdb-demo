@@ -10,7 +10,6 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from schema import ensure_schema
 from crud import (
     delete_material,
     exists,
@@ -19,6 +18,7 @@ from crud import (
     view_material,
     view_materials,
 )
+from schema import ensure_schema
 
 # ---------------------------------------------------------------------------
 # Reference JSON files (read-only)

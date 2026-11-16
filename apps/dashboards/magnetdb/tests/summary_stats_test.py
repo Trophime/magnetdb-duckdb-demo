@@ -3,9 +3,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import pandas as pd
+
 import magnetdb_analysis as db
 import magnetdb_plot as plot
-import pandas as pd
 
 DB_PATH = str(Path(__file__).resolve().parents[4] / "to_duckdb" / "test-magnetdb.duckdb")
 DB_2026_10_08_PATH = str(

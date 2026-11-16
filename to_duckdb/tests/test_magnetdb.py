@@ -6,10 +6,10 @@ from datetime import datetime
 import duckdb
 import pytest
 
+from magnetdb import _add_assembly as add_assembly
+from magnetdb import _add_magnet as add_magnet
 from magnetdb import main
-from magnetdb import _add_magnet as add_magnet, _add_assembly as add_assembly
-from tests.conftest import MAGNET_JSON, ASSEMBLY_JSON
-
+from tests.conftest import ASSEMBLY_JSON, MAGNET_JSON
 
 # ---------------------------------------------------------------------------
 # Helpers

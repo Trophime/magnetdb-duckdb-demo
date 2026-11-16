@@ -44,6 +44,7 @@ from pathlib import Path
 import duckdb
 import numpy as np
 import pandas as pd
+
 from config import DEFAULT_DB, MW_TO_W, SCALAR_CHANNEL_UNITS
 from populate import (
     _RECORDS_BASE as _DEFAULT_RECORDS_BASE,

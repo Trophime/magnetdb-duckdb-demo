@@ -8,10 +8,11 @@ import pytest
 
 import magnetdb
 from crud import update_magnet_status
-from magnetdb import _add_magnet as add_magnet, _add_assembly as add_assembly, _validate_assembly
+from magnetdb import _add_assembly as add_assembly
+from magnetdb import _add_magnet as add_magnet
+from magnetdb import _validate_assembly
 from schema import ensure_schema
-from tests.conftest import MAGNET_JSON, ASSEMBLY_JSON
-
+from tests.conftest import ASSEMBLY_JSON, MAGNET_JSON
 
 # ---------------------------------------------------------------------------
 # Helpers

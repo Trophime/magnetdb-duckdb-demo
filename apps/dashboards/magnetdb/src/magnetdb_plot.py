@@ -4,7 +4,6 @@ import os
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-import i18n
 import numpy as np
 import pandas as pd
 import pint
@@ -14,6 +13,8 @@ from python_magnetrun.utils.downsampling import DownsampleConfig, downsample_dat
 from python_magnetrun.utils.files import classify_pigbrother_file
 from python_magnetrun.utils.timestamps import parse_filename_timestamp
 from python_magnetrun.utils.timezone import local_to_utc_naive, series_utc_to_local_naive
+
+import i18n
 
 logger = logging.getLogger(__name__)
 
@@ -767,7 +768,7 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
 
     # 1. TRI CHRONOLOGIQUE
     files_data = sorted(
-        files_data, 
+        files_data,
         key=lambda item: item['df']['timestamp'].min() if item['df'] is not None and not item['df'].empty and 'timestamp' in item['df'].columns else item['file']
     )
 
@@ -856,9 +857,9 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
                 sub_df = df_plot[sensor] if (isinstance(df_plot, dict) and sensor in df_plot) else df_plot
                 short_name = sensor.split('/')[-1]
                 
-                if sensor in sub_df.columns: 
+                if sensor in sub_df.columns:
                     target_col = sensor
-                elif short_name in sub_df.columns: 
+                elif short_name in sub_df.columns:
                     target_col = short_name
 
                 if target_col and x_col in sub_df.columns:
@@ -902,14 +903,14 @@ def create_comparison_plot(files_data: list, x_col: str, method: str, t0_absolu=
                         y_point = sub_df[target_col].iloc[max_idx]
 
                         fig.add_trace(go.Scatter(
-                            x=[x_point], 
-                            y=[y_point], 
+                            x=[x_point],
+                            y=[y_point],
                             mode='markers+text',
                             text=[event_label],
                             textposition="top center",
                             textfont={'color': style.color if style else "red", 'size': 11, 'family': "Arial Black"},
                             marker={
-                                'size': 14, 
+                                'size': 14,
                                 'symbol': 'x' if file_type == 'default' else 'star',
                                 'color': style.color if style else "red",
                                 'line': {'width': 2, 'color': 'DarkSlateGrey'}

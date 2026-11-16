@@ -1,12 +1,14 @@
 import dash
-import dash_selectors as selectors
 import duckdb
-import i18n
-import magnetdb_analysis as db
 import pandas as pd
 import plotly.express as px
 from dash import Input, Output, html
 from dash.dash_table import DataTable
+from plotly import graph_objects as go
+
+import dash_selectors as selectors
+import i18n
+import magnetdb_analysis as db
 from experiment_links import (
     assembly_link,
     experiment_link,
@@ -14,7 +16,6 @@ from experiment_links import (
     overview_record_link,
     part_link,
 )
-from plotly import graph_objects as go
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
 dash.register_page(

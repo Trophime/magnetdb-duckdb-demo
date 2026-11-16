@@ -20,10 +20,11 @@ import json
 
 import dash
 import dash_bootstrap_components as dbc
-import i18n
-import magnetdb_plot as plot
 from dash import ALL, MATCH, Input, Output, State, ctx, dcc, html, no_update
 from dash.exceptions import PreventUpdate
+
+import i18n
+import magnetdb_plot as plot
 
 # Plotly/d3's default qualitative "category10" palette — the same 10 colors
 # FileTypeStyles' source-type defaults are already drawn from, plus the

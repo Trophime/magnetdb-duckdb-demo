@@ -74,7 +74,7 @@ def update_table(selected_table):
         # 2. Conversion complète : inclut les tableaux NumPy (np.ndarray), listes, dicts, etc.
         for col in df.columns:
             df[col] = df[col].apply(
-                lambda x: str(x.tolist()) if isinstance(x, np.ndarray) 
+                lambda x: str(x.tolist()) if isinstance(x, np.ndarray)
                 else (str(x) if isinstance(x, (list, dict, tuple, set)) else x)
             )
 

@@ -2,22 +2,23 @@ import os
 
 import dash
 import dash_bootstrap_components as dbc
-import magnetdb_analysis as db
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from dash import ALL, MATCH, Input, Output, Patch, State, ctx, dcc, html
 from dash.exceptions import PreventUpdate
+from python_magnetrun.utils.files import classify_pigbrother_file
+
+import magnetdb_analysis as db
 from magnetdb_plot import create_comparison_plot
 from metrics import evaluate_metrics, generate_metrics_report
-from python_magnetrun.utils.files import classify_pigbrother_file
 
 TARGET_TABLE = 'operationaldata'
 
 # --- 1. ENREGISTREMENT ET LAYOUT DASH ---
 dash.register_page(
-    __name__, 
-    path='/comparison', 
+    __name__,
+    path='/comparison',
     name="Multi-file comparison",
     order=5
 )
@@ -79,9 +80,9 @@ layout = html.Div([
 
             dcc.Store(id='sync-offsets-store', data={}),
             html.Div(id='sync-offsets-display', style={
-                'padding': '15px', 
-                'marginTop': '20px', 
-                'backgroundColor': '#e9ecef', 
+                'padding': '15px',
+                'marginTop': '20px',
+                'backgroundColor': '#e9ecef',
                 'borderRadius': '8px',
                 'borderLeft': '4px solid #007bff'
             }),
@@ -152,7 +153,7 @@ def update_file_dropdown(selected_assembly, selected_db):
 
     # 3. Construire les options Dash en plaçant Pupitre suivi immédiatement de ses PigBrother
     options = []
-    seen_values = set()  # Évite les doublons 
+    seen_values = set()  # Évite les doublons
 
     for group in matched_groups:
         p_base = os.path.basename(group['p_file'])
@@ -240,9 +241,9 @@ def generate_pair_blocks(selected_group, selected_files, selected_assembly):
 
         block = html.Details([
             
-            # 1. LE BOUTON ACCORDÉON 
+            # 1. LE BOUTON ACCORDÉON
             html.Summary(f"📂 {pair_title}", style={
-                'fontWeight': 'bold', 
+                'fontWeight': 'bold',
                 'cursor': 'pointer',
                 'padding': '10px 15px',
                 'backgroundColor': '#e9ecef',
@@ -251,7 +252,7 @@ def generate_pair_blocks(selected_group, selected_files, selected_assembly):
                 'fontSize': '14px'
             }),
             
-            # 2. LE CONTENU 
+            # 2. LE CONTENU
             html.Div([
                 
                 # Colonne Gauche (Checklist)
@@ -261,7 +262,7 @@ def generate_pair_blocks(selected_group, selected_files, selected_assembly):
                         id={'type': 'pair-checklist', 'index': pair_id},
                         options=options,
                         value=default_values,
-                        labelStyle={'display': 'block', 'marginLeft': '10px', 'marginBottom': '4px', 'fontSize': '13px'} 
+                        labelStyle={'display': 'block', 'marginLeft': '10px', 'marginBottom': '4px', 'fontSize': '13px'}
                     )
                 ], style={
                     'width': '280px',
@@ -278,7 +279,7 @@ def generate_pair_blocks(selected_group, selected_files, selected_assembly):
                             id={'type': 'pair-graph', 'index': pair_id},
                             style={'height': '650px'}
                         )
-                    ], 
+                    ],
                     style={
                         'flexGrow': 1,
                         'minWidth': '0',
@@ -306,7 +307,7 @@ def generate_pair_blocks(selected_group, selected_files, selected_assembly):
     return blocks, ""
 
 
-# Calcul centralisé des décalages temporels 
+# Calcul centralisé des décalages temporels
 @dash.callback(
     Output('sync-offsets-store', 'data'),
     Output('sync-offsets-display', 'children'),
@@ -330,7 +331,7 @@ def calculate_all_offsets(selected_files, selected_assembly):
         pupitres = [f for f in selected_files if f.endswith('.txt')]
         master_files = pupitres if pupitres else [selected_files[0]]
         
-    # 2. CONSTRUIRE LA TIMELINE CONTINUE DU MAÎTRE 
+    # 2. CONSTRUIRE LA TIMELINE CONTINUE DU MAÎTRE
     df_master_list = []
     for f in master_files:
         df_part = db.get_group_dataframe(f, housing, 'Courants_Alimentations')
@@ -358,7 +359,7 @@ def calculate_all_offsets(selected_files, selected_assembly):
     for f in selected_files:
         # A. Les fichiers qui composent le maître ne bougent pas
         if f in master_files:
-            sync_data['offsets'][f] = 0.0  
+            sync_data['offsets'][f] = 0.0
             display_elements.append(html.Div([
                 html.Span(f"{f} : ", style={'fontWeight': 'bold'}),
                 html.Span("0.000 s (T0)", style={'color': '#007bff'})
@@ -381,9 +382,9 @@ def calculate_all_offsets(selected_files, selected_assembly):
             col_target = 'Idcct1' if f.endswith('.txt') else 'Courant_A1'
             
             lag = db.get_lag(
-                df_pupitre=df_master, 
-                df_pb=df_target, 
-                column_current_pupitre=col_master, 
+                df_pupitre=df_master,
+                df_pb=df_target,
+                column_current_pupitre=col_master,
                 column_current_pigbrother=col_target
             )
             
@@ -412,9 +413,9 @@ def calculate_all_offsets(selected_files, selected_assembly):
                 results = evaluate_metrics(y_ref, y_sec_unaligned, y_sec_aligned)
                 
                 generate_metrics_report(
-                    file_ref=master_files[0], 
+                    file_ref=master_files[0],
                     sensor_ref=col_master,
-                    file_sec=f,               
+                    file_sec=f,
                     sensor_sec=col_target,
                     results=results,
                     lag_seconds=lag
@@ -521,7 +522,7 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
     # Re-application du zoom conservé si nécessaire
     if x_range is not None:
         fig.update_layout(
-            xaxis_range=x_range, 
+            xaxis_range=x_range,
             xaxis_autorange=False
         )
 
@@ -530,10 +531,10 @@ def update_single_pair_graph(selected_pair_channels, xaxis_type, selected_method
 # Synchronisation du zoom entre tous les accordéons
 @dash.callback(
     Output({'type': 'pair-graph', 'index': ALL}, 'figure', allow_duplicate=True),
-    Output('zoom-state', 'data'),  
+    Output('zoom-state', 'data'),
     Input({'type': 'pair-graph', 'index': ALL}, 'relayoutData'),
     State({'type': 'pair-graph', 'index': ALL}, 'id'),
-    State('zoom-state', 'data'),   
+    State('zoom-state', 'data'),
     prevent_initial_call=True
 )
 def sync_zoom_comparison(relayout_data_list, graph_ids, current_zoom):

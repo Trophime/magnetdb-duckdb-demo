@@ -1,15 +1,15 @@
 """Integration tests for add_magnet.py."""
 
-import json
 import copy
+import json
 
 import duckdb
 import pytest
 
 import magnetdb
-from magnetdb import _add_magnet as add_magnet, _validate_magnet
+from magnetdb import _add_magnet as add_magnet
+from magnetdb import _validate_magnet
 from tests.conftest import MAGNET_JSON
-
 
 # ---------------------------------------------------------------------------
 # Helpers

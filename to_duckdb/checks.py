@@ -384,8 +384,9 @@ def check_dates(con, name: str | None = None) -> list[dict]:
     list[dict]
         Result dicts ``{"entity", "name", "ok", "problems"}``.
     """
-    from crud import _parse_overview_filename
     from python_magnetrun.utils.timestamps import parse_filename_timestamp
+
+    from crud import _parse_overview_filename
 
     def rows(query: str, name_column: str) -> list[tuple]:
         if name:

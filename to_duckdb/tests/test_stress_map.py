@@ -5,10 +5,15 @@ import argparse
 import pandas as pd
 import polars as pl
 import pytest
+from python_magnetrun.magnetdata_base import _make_ureg
 
 import stress_map
-from python_magnetrun.magnetdata_base import _make_ureg
-from stress_map import _assert_current_units, _section_index_at_z, compute_fatigue, compute_stress_stats
+from stress_map import (
+    _assert_current_units,
+    _section_index_at_z,
+    compute_fatigue,
+    compute_stress_stats,
+)
 
 try:
     import magnettools.magnettools as mt

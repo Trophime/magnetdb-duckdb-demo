@@ -18,13 +18,14 @@ DuckDB (PLAN_pupitre_etl_spec.md, step 5).
 import json
 import re
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+from python_magnetrun.housing_config import HousingConfig
+from python_magnetrun.runetl import PupitreEtlSpec, check_rule, save_pupitre_etl_spec
 
 from crud import _housing_config_dict, _log_operation
 from file_context import PUPITRE_TZ
-from python_magnetrun.housing_config import HousingConfig
-from python_magnetrun.runetl import PupitreEtlSpec, check_rule, save_pupitre_etl_spec
 
 _IDCCT = re.compile(r"Idcct\d+")
 _TAG_NAME = re.compile(r"[a-z]+:[a-z0-9_]+")
@@ -271,7 +272,7 @@ def spec_time(con, assembly: str, version: str | None = None) -> datetime:
     """
     a_start, a_end = _assembly_window(con, assembly)
     if version is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return now if a_end is None or now < a_end else a_end - timedelta(seconds=1)
     for name, start, end in _version_windows(con, _housing_of(con, assembly)):
         if name == version and _overlaps(start, end, a_start, a_end):

@@ -9,23 +9,24 @@ from functools import wraps
 from pathlib import Path
 
 import duckdb
-import magnetdb_plot as plot
 import numpy as np
 import pandas as pd
 import pint
 import scipy.signal as sg
 from natsort import natsorted
+from python_magnetrun.data_dirs import HYBRID_DATA_DIR
 from python_magnetrun.field_defs import (
     load_defs,
     match_channels_across_formats,
     resolve_defs_file,
 )
-from python_magnetrun.data_dirs import HYBRID_DATA_DIR
 from python_magnetrun.housing_config import get_housing_config
 from python_magnetrun.hybrid.hybrid_run import HybridRun
 from python_magnetrun.magnetdata_base import DataType
 from python_magnetrun.MagnetRun import load_mrun
 from python_magnetrun.utils.timestamps import parse_txt_filename
+
+import magnetdb_plot as plot
 
 try:
     from zoneinfo import ZoneInfo
@@ -1439,7 +1440,7 @@ def load_json_config(filepath):
     """Load a JSON configuration file and return its content as a dictionary."""
     if os.path.exists(filepath):
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             print(f"Error loading JSON config {filepath}: {e}")
@@ -1465,7 +1466,7 @@ def _load_group_order() -> list[str]:
     for candidate in (_USER_GROUP_ORDER_PATH, _BUNDLED_GROUP_ORDER_PATH):
         if candidate.exists():
             try:
-                with open(candidate, "r", encoding="utf-8") as f:
+                with open(candidate, encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
                 print(f"Error loading group order {candidate}: {e}")
@@ -1838,14 +1839,14 @@ def get_lag(df_pupitre, df_pb, column_current_pupitre='Idcct1', column_current_p
     y_pb = df_pb[column_current_pigbrother].values
 
     # 2. Identify the TRUE overlap zone (INTERSECTION, not union)
-    t_min = max(t_pupitre.min(), t_pb.min())  
-    t_max = min(t_pupitre.max(), t_pb.max())  
+    t_min = max(t_pupitre.min(), t_pb.min())
+    t_max = min(t_pupitre.max(), t_pb.max())
 
     if t_max - t_min < 10.0:
         return 0.0
 
     # 3. Create a common time vector with a fixed step (dt) for interpolation
-    dt = 0.05  
+    dt = 0.05
     t_commun = np.arange(t_min, t_max, dt)
 
     # 4. Linear interpolation of both signals onto the common time vector
@@ -1860,7 +1861,7 @@ def get_lag(df_pupitre, df_pb, column_current_pupitre='Idcct1', column_current_p
     dy_pupitre = np.gradient(y_pup_norm)
     dy_pb = np.gradient(y_pb_norm)
 
-    # 7. Correlation using FFT 
+    # 7. Correlation using FFT
     correlation = sg.correlate(dy_pupitre, dy_pb, mode='full', method='fft')
     lags = sg.correlation_lags(len(dy_pupitre), len(dy_pb), mode='full')
 

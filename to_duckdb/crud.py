@@ -58,7 +58,7 @@ view_operation_log(con, table_filter, operation_filter, record_name_filter, stat
 import getpass
 import json
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -2495,7 +2495,7 @@ def view_housing_config(con, name: str, at: datetime | None = None) -> None:
     ).fetchall()
     if versions:
         paris = ZoneInfo("Europe/Paris")
-        when = at or datetime.now(timezone.utc)
+        when = at or datetime.now(UTC)
         active = None
         for v_name, valid_from, _, _ in versions:
             if valid_from <= when:
@@ -3899,9 +3899,9 @@ def infer_operating_mode(df, ih: str = "Courant_GR1", ib: str = "Courant_GR2") -
         return "NORMAL"
 
     fit_max_current = 0.25 * np.nanmax(IB)
-    fit_mask = (ib_zero_threshold < IB) & (IB < fit_max_current)
+    fit_mask = (ib_zero_threshold < IB) & (fit_max_current > IB)
     if fit_mask.sum() < 10:
-        fit_mask = IB > ib_zero_threshold
+        fit_mask = ib_zero_threshold < IB
 
     x, y = IB[fit_mask], IH[fit_mask]
     if len(x) < 2:

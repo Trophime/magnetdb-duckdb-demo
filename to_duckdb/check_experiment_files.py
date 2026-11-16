@@ -34,13 +34,14 @@ import json
 from pathlib import Path
 
 import duckdb
+from python_magnetrun.magnetdata import load_magnetdata
+from python_magnetrun.runetl import PupitreEtlSpec, prepare_pupitre
+from python_magnetrun.utils.validation import classify_pupitre_header
+
 from config import DEFAULT_DB
 from etl_spec import build_pupitre_etl_spec, replace_record_tags
 from file_context import file_start
 from populate import _RECORDS_BASE, _SRV_SUBDIR
-from python_magnetrun.magnetdata import load_magnetdata
-from python_magnetrun.runetl import PupitreEtlSpec, prepare_pupitre
-from python_magnetrun.utils.validation import classify_pupitre_header
 from schema import ensure_schema
 
 DEFAULT_RECORDS_BASE = str(_RECORDS_BASE)

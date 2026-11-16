@@ -1,9 +1,10 @@
 import dash
+from dash import Input, Output, html
+from dash.dash_table import DataTable
+
 import dash_selectors as selectors
 import i18n
 import magnetdb_analysis as db
-from dash import Input, Output, html
-from dash.dash_table import DataTable
 
 dash.register_page(
     __name__,

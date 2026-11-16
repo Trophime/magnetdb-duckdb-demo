@@ -1,10 +1,5 @@
 import dash
-import dash_selectors as selectors
-import i18n
-import magnetdb_analysis as db
-import magnetdb_plot as plot
 import pandas as pd
-import style_editor
 from dash import (
     ALL,
     Input,
@@ -19,6 +14,12 @@ from dash import (
 from dash.exceptions import PreventUpdate
 from plotly import graph_objects as go
 from python_magnetrun.utils.timezone import local_to_utc_naive
+
+import dash_selectors as selectors
+import i18n
+import magnetdb_analysis as db
+import magnetdb_plot as plot
+import style_editor
 
 dash.register_page(
     __name__,

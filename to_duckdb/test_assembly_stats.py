@@ -2,6 +2,7 @@
 
 
 import duckdb
+
 from compute_exp_stats import ingest_assembly
 
 assembly = "M10_A251112_00"

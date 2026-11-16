@@ -2,8 +2,8 @@
 Shared fixtures and test-data constants for the to_duckdb test suite.
 """
 
-import pytest
 import duckdb
+import pytest
 
 from schema import ensure_schema
 
@@ -140,11 +140,11 @@ def con():
 def con_populated(con):
     """Connection with two materials, two parts, one magnet, and one assembly pre-loaded."""
     from crud import (
+        insert_assembly,
         insert_magnet,
         insert_magnet_part_row,
         insert_material,
         insert_part,
-        insert_assembly,
     )
     insert_material(con, MATERIAL_COPPER, verbose=False)
     insert_material(con, MATERIAL_STEEL, verbose=False)
