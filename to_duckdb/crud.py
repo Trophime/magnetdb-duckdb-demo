@@ -1744,6 +1744,49 @@ def _magnet_entry_name(entry) -> str:
     return entry if isinstance(entry, str) else entry["name"]
 
 
+def retired_magnet_errors(con, assembly_name: str, magnet_entries: list) -> list[str]:
+    """List the retired or dead magnets that would be newly linked to an assembly.
+
+    Parameters
+    ----------
+    con : duckdb.DuckDBPyConnection
+        Open DuckDB connection.
+    assembly_name : str
+        Assembly the magnets are about to be linked to.
+    magnet_entries : list
+        Plain magnet names or dicts with a ``name`` key, as accepted by
+        :func:`insert_assembly_magnets`.
+
+    Returns
+    -------
+    list of str
+        One message per ``retired`` or ``dead`` magnet, naming the magnet,
+        its status and the description of its last ``status_history``
+        entry. Magnets already linked to *assembly_name* are skipped. Empty
+        when every magnet can be linked.
+    """
+    errors = []
+    for entry in magnet_entries:
+        magnet_name = _magnet_entry_name(entry)
+        if con.execute(
+            "SELECT 1 FROM assembly_magnets WHERE assembly_name = ? AND magnet_name = ?",
+            [assembly_name, magnet_name],
+        ).fetchone():
+            continue
+        row = con.execute(
+            "SELECT status, status_history FROM magnets WHERE name = ?", [magnet_name]
+        ).fetchone()
+        if row is None or row[0] not in (LifecycleStatus.RETIRED.value, LifecycleStatus.DEAD.value):
+            continue
+        history = json.loads(row[1] or "[]")
+        reason = history[-1].get("description") if history else ""
+        errors.append(
+            f"magnet '{magnet_name}' is {row[0]}" + (f" ({reason})" if reason else "")
+            + f" and cannot be linked to assembly '{assembly_name}'."
+        )
+    return errors
+
+
 def insert_assembly_magnets(
     con, assembly_name: str, magnet_entries: list, verbose: bool = True
 ) -> None:
@@ -1768,6 +1811,13 @@ def insert_assembly_magnets(
     A ``[WARN]`` is printed when a newly linked magnet's ``assembled_at``
     falls on a later day than the link's ``commissioned_at`` (the entry's
     own, else *assembly_name*'s); the magnet is linked anyway.
+
+    Raises
+    ------
+    ValueError
+        If an entry not yet linked to *assembly_name* names a ``retired`` or
+        ``dead`` magnet (see :func:`retired_magnet_errors`); nothing is
+        inserted.
     """
     try:
         _insert_assembly_magnets(con, assembly_name, magnet_entries, verbose=verbose)
@@ -1802,6 +1852,10 @@ def _warn_magnet_assembled_after_commissioning(
 def _insert_assembly_magnets(
     con, assembly_name: str, magnet_entries: list, verbose: bool = True
 ) -> None:
+    errors = retired_magnet_errors(con, assembly_name, magnet_entries)
+    if errors:
+        raise ValueError(" ".join(errors))
+
     assembly_active = _assembly_is_active(con, assembly_name)
     assembly_row = con.execute(
         "SELECT commissioned_at FROM assemblies WHERE name = ?", [assembly_name]

@@ -7,6 +7,7 @@ import duckdb
 import pytest
 
 import magnetdb
+from crud import update_magnet_status
 from magnetdb import _add_magnet as add_magnet, _add_assembly as add_assembly, _validate_assembly
 from schema import ensure_schema
 from tests.conftest import MAGNET_JSON, ASSEMBLY_JSON
@@ -364,3 +365,39 @@ def test_add_assembly_failing_records_leave_nothing(tmp_path, monkeypatch):
 
     assert _fetch_one(db, "SELECT COUNT(*) FROM magnets WHERE name = 'MAG_OK'")[0] == 0
     assert _fetch_one(db, "SELECT COUNT(*) FROM assemblies WHERE name = 'A_FAIL'")[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Retired or dead magnets (PLAN_retired_magnet_guard.md)
+# ---------------------------------------------------------------------------
+
+
+def _db_with_retired_magnet(tmp_path):
+    """Return a db_path where MAG_JSON is retired and MAG_JSON_2 sits in the open M10 assembly A_OPEN."""
+    db = _db_with_magnet(tmp_path)
+    add_magnet(_second_magnet(), db)
+    add_assembly({**_assembly("A_OPEN", ["MAG_JSON_2"]), "commissioned_at": "2024-01-01 08:00:00"}, db)
+    with duckdb.connect(str(db)) as con:
+        update_magnet_status(con, "MAG_JSON", "retired", description="Superseded by magnet 'NEW_MAG'.",
+                             changed_at="2024-06-01 07:00:00", verbose=False)
+    return db
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_add_assembly_refuses_retired_magnet_and_writes_nothing(tmp_path, capsys, dry_run):
+    db = _db_with_retired_magnet(tmp_path)
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        add_assembly(_assembly("A_LATER", ["MAG_JSON"]), db, dry_run=dry_run)
+
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "MAG_JSON" in out
+    assert "retired" in out
+    assert "Superseded by magnet 'NEW_MAG'." in out
+    assert "Nothing written." in out
+    assert _fetch_one(db, "SELECT COUNT(*) FROM assemblies WHERE name = 'A_LATER'")[0] == 0
+    assert _fetch_one(
+        db, "SELECT status, decommissioned_at FROM assemblies WHERE name = 'A_OPEN'"
+    ) == ("in_operation", None)

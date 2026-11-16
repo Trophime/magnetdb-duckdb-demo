@@ -140,6 +140,7 @@ from crud import (
     resolve_assembled_at,
     resolve_manufactured_at,
     resolve_overview_assembly,
+    retired_magnet_errors,
     update_assembly_from_json,
     update_assembly_magnet,
     update_magnet_from_json,
@@ -504,6 +505,17 @@ def _add_magnet(
                 print(f"  • {c}")
             print("Nothing written. Re-adding only accepts identical content.")
             sys.exit(1)
+        if con is not None:
+            part_conflicts = _part_conflicts(con, parts)
+        else:
+            with duckdb.connect(str(db_path), read_only=True) as chk:
+                part_conflicts = _part_conflicts(chk, parts)
+        if part_conflicts:
+            print(f"Magnet '{data['name']}' reuses part IDs that exist with another design office reference:")
+            for c in part_conflicts:
+                print(f"  • {c}")
+            print("Nothing written.")
+            sys.exit(1)
 
     if dry_run:
         coil_parts = [p for p in parts if p.get("type") in COIL_TYPES]
@@ -607,6 +619,21 @@ def _magnet_conflicts(con, data: dict) -> list[str]:
         conflicts.append(f"parts linked in DB but not in JSON: {sorted(set(db_parts) - set(json_parts))}")
     if not conflicts:
         conflicts.append(f"part order: JSON={json_parts} DB={db_parts}")
+    return conflicts
+
+
+def _part_conflicts(con, parts: list) -> list[str]:
+    """Parts of *parts* that exist in the DB under a different, non-empty ``design_office_reference``."""
+    conflicts = []
+    for part in parts:
+        json_ref = part.get("design_office_reference")
+        if not json_ref:
+            continue
+        row = con.execute(
+            "SELECT design_office_reference FROM parts WHERE name = ?", [part["name"]]
+        ).fetchone()
+        if row and row[0] and row[0] != json_ref:
+            conflicts.append(f"part '{part['name']}': JSON={json_ref!r} DB={row[0]!r}")
     return conflicts
 
 
@@ -715,6 +742,8 @@ def _add_assembly(data: dict, db_path, dry_run: bool = False, magnet_dir=None, k
         _exit_on_missing_magnets(_ensure_magnets(
             data.get("magnets", []), db_path, magnet_dir, dry_run=True, known_statuses=known_statuses
         ))
+        with duckdb.connect(str(db_path), read_only=True) as chk:
+            _exit_on_retired_magnets(chk, data)
         magnet_names = [_magnet_name(e) for e in data.get("magnets", [])]
         print("[dry-run] Validation passed. Would insert:")
         print(f"  assembly     : {data['name']}  [{data.get('housing', '?')}]")
@@ -741,6 +770,17 @@ def _exit_on_assembly_conflicts(con, data: dict) -> None:
         sys.exit(1)
 
 
+def _exit_on_retired_magnets(con, data: dict) -> None:
+    """Exit 1 if *data*'s assembly would newly link a retired or dead magnet."""
+    errors = retired_magnet_errors(con, data["name"], data.get("magnets", []))
+    if errors:
+        print(f"Assembly '{data['name']}' cannot be loaded:")
+        for e in errors:
+            print(f"  • {e}")
+        print("Nothing written.")
+        sys.exit(1)
+
+
 def _exit_on_missing_magnets(missing_errors: list[str]) -> None:
     """Exit 1 if some magnets could not be resolved."""
     if missing_errors:
@@ -755,6 +795,7 @@ def _write_assembly(con, data: dict, db_path: Path, magnet_dir: Path, known_stat
     _exit_on_missing_magnets(_ensure_magnets(
         data.get("magnets", []), db_path, magnet_dir, known_statuses=known_statuses, con=con
     ))
+    _exit_on_retired_magnets(con, data)
     assembly_name = data["name"]
     print(f"\nAdding assembly '{assembly_name}' to {db_path.name} …\n")
 

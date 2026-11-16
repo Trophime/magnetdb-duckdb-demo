@@ -1114,6 +1114,47 @@ def test_insert_assembly_magnets_auto_closes_predecessor_on_different_housing(co
     ).fetchone() is not None
 
 
+def _retire_mag_01(con, status="retired"):
+    update_magnet_status(
+        con, "MAG_01", status, description="Superseded by magnet 'NEW_MAG'.",
+        changed_at="2020-02-20 07:00:00",
+        dead_parts=["ALL"] if status == "dead" else None, verbose=False,
+    )
+
+
+@pytest.mark.parametrize("status", ["retired", "dead"])
+def test_insert_assembly_magnets_refuses_retired_or_dead_magnet(con_populated, status):
+    _retire_mag_01(con_populated, status)
+
+    with pytest.raises(ValueError) as exc:
+        insert_assembly_magnets(con_populated, "ASSEMBLY_01", ["MAG_01"], verbose=False)
+
+    message = str(exc.value)
+    assert "MAG_01" in message
+    assert status in message
+    assert "Superseded by magnet 'NEW_MAG'." in message
+    assert con_populated.execute("SELECT COUNT(*) FROM assembly_magnets").fetchone()[0] == 0
+
+
+def test_insert_assembly_magnets_retired_magnet_blocks_the_whole_list(con_populated):
+    insert_magnet(con_populated, {**MAGNET_DATA, "name": "MAG_OK"}, "insert", verbose=False)
+    _retire_mag_01(con_populated)
+
+    with pytest.raises(ValueError):
+        insert_assembly_magnets(con_populated, "ASSEMBLY_01", ["MAG_OK", "MAG_01"], verbose=False)
+
+    assert con_populated.execute("SELECT COUNT(*) FROM assembly_magnets").fetchone()[0] == 0
+
+
+def test_insert_assembly_magnets_skips_retired_magnet_already_linked(con_populated):
+    insert_assembly_magnets(con_populated, "ASSEMBLY_01", ["MAG_01"], verbose=False)
+    _retire_mag_01(con_populated)
+
+    insert_assembly_magnets(con_populated, "ASSEMBLY_01", ["MAG_01"], verbose=False)
+
+    assert con_populated.execute("SELECT COUNT(*) FROM assembly_magnets").fetchone()[0] == 1
+
+
 # ---------------------------------------------------------------------------
 # insert_experiments()
 # ---------------------------------------------------------------------------

@@ -307,3 +307,31 @@ def test_add_magnet_failure_rolls_back_reclaim_of_old_holder(tmp_path):
     assert _fetch_one(db, "SELECT status FROM magnets WHERE name = 'MAG_JSON'")[0] == "in_operation"
     assert _fetch_one(db, "SELECT status FROM parts WHERE name = 'R_JSON_01'")[0] == "in_operation"
     assert _fetch_one(db, "SELECT COUNT(*) FROM magnets WHERE name = 'MAG_B'")[0] == 0
+
+
+# ---------------------------------------------------------------------------
+# Part-ID collisions (PLAN_retired_magnet_guard.md, part B)
+# ---------------------------------------------------------------------------
+
+
+def test_add_magnet_refuses_part_with_other_design_office_reference(tmp_path, capsys):
+    db = tmp_path / "test.duckdb"
+    first = copy.deepcopy(MAGNET_JSON)
+    first["parts"][1]["design_office_reference"] = "HL-27-033-C"
+    add_magnet(first, db)
+    second = _magnet_reusing_ring()
+    second["parts"][1]["design_office_reference"] = "HL-27-033-D"
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exc:
+        add_magnet(second, db)
+
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "R_JSON_01" in out
+    assert "HL-27-033-C" in out
+    assert "HL-27-033-D" in out
+    assert "Nothing written." in out
+    assert _fetch_one(db, "SELECT COUNT(*) FROM magnets WHERE name = 'MAG_B'")[0] == 0
+    assert _fetch_one(db, "SELECT COUNT(*) FROM parts WHERE name = 'H_MAG_B'")[0] == 0
+    assert _fetch_one(db, "SELECT status FROM magnets WHERE name = 'MAG_JSON'")[0] == "in_operation"
