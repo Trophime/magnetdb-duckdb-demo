@@ -1,6 +1,6 @@
 # Plan: guard against retired magnets and part-ID collisions
 
-**Status:** awaiting approval
+**Status:** done 2026-11-16 (`ecc8cb7`, parts A and B)
 
 ## Goal
 
