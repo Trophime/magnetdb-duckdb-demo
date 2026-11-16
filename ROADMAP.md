@@ -35,8 +35,8 @@ Effort (relative, no calendar): S · M · L · XL · ? (not sizeable yet).
 | [A](#a--data-pipeline-to_duckdb) | `to_duckdb` schema, CLI, compute pipelines | 24 | database and dashboard work of [PLAN_finish_and_deploy.md](plans/PLAN_finish_and_deploy.md) done; the final full rebuild is running on calcul22 (A21, since 2026-11-16), then its post-build checks (A22), then deploy it to calcul18 (F7); tag review (A27) any time; hybrid files in `operationaldata` (A26) after F7; code health from the review: lint clean-up (A31) first, A28 before A1, A29 before A3–A5 |
 | [B](#b--digital-twin--etl) | installations, run config, characteristics, Pupitre ETL, signatures, sessions | 14 steps | file-check rules done (steps 1–7) and kept across rebuilds (A25); approve the D1 = a code (text aligned 2026-11-07); approve step R (sessions); write the S1 execution choices |
 | [C](#c--dashboards-appsdashboardsmagnetdb) | Dash app | 11 | evaluation with advanced users (F7) on the rebuilt DB; maintainer's look at the file-check columns and the geometry colour; shared viewer code (C11) before C9 (CSV download) and C10 (hybrid viewer), both to approve; reconcile C2; waterflow (C1) after E3 |
-| [D](#d--python_magnetrun) | data-access library | 16 | `cirrus-mirror` and the `runetl` check rules committed; D2 parquet is ready to execute |
-| [E](#e--python_magnetsetup--python_magnetgeo--python_magnetcooling) | setup / geometry / cooling libraries | 5 | approve E1 (Supra fix) — unblocks A2 and M8 |
+| [D](#d--python_magnetrun) | data-access library | 17 | `cirrus-mirror` and the `runetl` check rules committed; D2 parquet is ready to execute; approve D17 (last lint findings) |
+| [E](#e--python_magnetsetup--python_magnetgeo--python_magnetcooling) | setup / geometry / cooling libraries | 6 | approve E1 (Supra fix) — unblocks A2 and M8; lint findings left (E6) |
 | [F](#f--infrastructure-ci-packaging-deployment) | runner, apt depot, magnettools packaging, DB architecture, deployment | 9 | F7 evaluation on calcul18 (step 11); decide F5 (option F); approve F1 → F2 → F3; write the F9 plan (cirrus mirror on calcul18) |
 | [G](#g--external-integrations--research) | external DBs/APIs, research items | 10 | mostly blocked on external input |
 
@@ -50,6 +50,7 @@ Effort (relative, no calendar): S · M · L · XL · ? (not sizeable yet).
 |---|---|
 | A17 — `assembly add` refuses retired/dead magnets and writes nothing; `magnet add` refuses a part ID that exists with another `design_office_reference` (parts A and B of the [plan](to_duckdb/plans/PLAN_retired_magnet_guard.md)) | `ecc8cb7` |
 | Plan and notes files moved into `plans/` folders (repo root, `to_duckdb/`, the dashboard) | `ed87429` |
+| A31, mechanical part — `ruff check --fix` on `to_duckdb`, the dashboard, notebooks and `stage/` (60 files; imports sorted, whitespace) | `8b2018f`; submodules: see D and E6 (pins bumped in `4494b15`) |
 
 ### Done since the 2026-11-07 snapshot
 
@@ -132,7 +133,7 @@ rename Track A) is recorded in [to_duckdb/plans/ROADMAP.md](to_duckdb/plans/ROAD
 | A14 | Hoop-stress `--check` mode against `magnettools.Bmap.getHoop()` | [to_duckdb/TODOs.md](to_duckdb/TODOs.md) (POSTPONED) | ⛔ | S | fix in `~/github/my-magnettools`, then a reinstall — **F4** makes this routine |
 | A19 | `demos/plot_magnet_incidents.py`: defaults & spikes over a magnet's lifetime | [PLAN_magnet_incidents_plot.md](to_duckdb/plans/PLAN_magnet_incidents_plot.md) | 📝 awaiting approval | S | — |
 | A20 | Hybrid and run-log files in `archive_magnet_data.py` | [PLAN_archive_magnet_hybrid_runlog.md](to_duckdb/plans/PLAN_archive_magnet_hybrid_runlog.md) | 📝 2026-10-22 | S | on-disk layout of hybrid/run-log files to confirm; columns empty today (fed by B step R) |
-| A21 | Full rebuild from scratch with the fixed source JSON (`hifimagnet-projects/magnetdb.json`, fixes and rings committed there) and the housing-config versions (loaded by `assembly add`, so no `housing sync` and no separate recompute of the M8 stats since 2026-03-05 are needed) | `scripts/build_from_scratch.sh` | 🔄 `magnetdb-2026-11-05.duckdb` (2026-11-07) and `magnetdb-2026-11-10.duckdb` (calcul22, 2026-11-12) built; the **final full rebuild** `magnetdb-2026-11-16.duckdb` is running on calcul22 since 2026-11-16 10:24 (screen `rebuild`, console `~/magnetdb-checks/rebuild-2026-11-16.console`); it carries A24 phase G, the M8 builder, #18 (`pupitre_skip.json` found), the file-check steps and A23, with the A17 guards active ([PLAN_finish_and_deploy.md](plans/PLAN_finish_and_deploy.md) stage 3). python_magnetrun `0b231c6` is pushed and pulled there; calcul22's superproject is 3 merge commits ahead of `origin` (to push or reset). calcul18 still serves `magnetdb-2026-10-08.duckdb` until F7 | M | ≈ 1.5 days (the `operationaldata-metadata` step took 8 h 06 on 11-10); A1 would shorten it |
+| A21 | Full rebuild from scratch with the fixed source JSON (`hifimagnet-projects/magnetdb.json`, fixes and rings committed there) and the housing-config versions (loaded by `assembly add`, so no `housing sync` and no separate recompute of the M8 stats since 2026-03-05 are needed) | `scripts/build_from_scratch.sh` | 🔄 `magnetdb-2026-11-05.duckdb` (2026-11-07) and `magnetdb-2026-11-10.duckdb` (calcul22, 2026-11-12) built; the **final full rebuild** `magnetdb-2026-11-16.duckdb` is running on calcul22 since 2026-11-16 10:24 (screen `rebuild`, console `~/magnetdb-checks/rebuild-2026-11-16.console`); it carries A24 phase G, the M8 builder, #18 (`pupitre_skip.json` found), the file-check steps and A23, with the A17 guards active ([PLAN_finish_and_deploy.md](plans/PLAN_finish_and_deploy.md) stage 3). python_magnetrun `0b231c6` is pushed and pulled there; calcul22's superproject is 3 merge commits ahead of `origin` (to push or reset). The build uses superproject `5ae96b6` and python_magnetrun `0b231c6`, i.e. the code before the lint commits (A31, D17, E6); no pull on calcul22 until it ends. calcul18 still serves `magnetdb-2026-10-08.duckdb` until F7 | M | ≈ 1.5 days (the `operationaldata-metadata` step took 8 h 06 on 11-10); A1 would shorten it |
 | A22 | After A21: hoop-stress compute (not in `build_from_scratch.sh`, `# TODO add hoop stress`; needs magnettools, absent from `.venv`) and checks on the new DB: `check --entity dates`, `housing_config_versions` holds `M8-260305`, M8 experiments since 2026-03-05 use `Ucoil14`; `pupitre_etl_magnet` starts empty (`housing sync`, then `etl import` of `pupitre_checks.json`, then `check_experiment_files.py --etl`); recompute the stats of the M7 2014 and M10 2021-03-25 → 07-10 files once their housing versions are synced (data issue #13) | — | 🔄 on the 11-10 DB (2026-11-12): `check --entity dates` 5 OK; M8 housing versions and `Ucoil14` checked (`IH_vs_Icoil7` OK); M8 stats since 2026-03-05 computed by the build; `etl import` / `--etl` now run by the build (`etl-config`, `etl-check`). Left: hoop stress, and the post-build checks of the next rebuild (stage 3 step 7 of [PLAN_finish_and_deploy.md](plans/PLAN_finish_and_deploy.md)) | S–M | A21; M8 hoop stress waits for **E1**; doing A2 first avoids a second full stress run |
 | A25 | Keep tags, check rules and magnet wirings across rebuilds: `hifimagnet-projects/magnetdb.json/pupitre_checks.json`, `etl import` / `etl dump`, build step `etl-config` | [PLAN_pupitre_checks_file.md](plans/PLAN_pupitre_checks_file.md) | ✅ 2026-11-07: `etl import` / `etl dump`, build step `etl-config`; [revision 2](plans/PLAN_pupitre_checks_file.md#revision-2-2026-11-07-simplified-model): insert wiring derived from the helix count (stored wirings = overrides, none needed so far), global rules; `pupitre_checks.json` = 2 tags, 11 rules (`IH_vs_Icoil7`, `A1_vs_A2`, `A3_vs_A4`, housing values M7/M8/M10, `M7-140317` pairs); M7/M10 housing versions for swapped supplies (python_magnetrun `69f6c49`, `4774ec2`) | S–M | data issues #13–#15 of the [schema plan](plans/PLAN_digital_twin_schema.md) open: `M8_A211225_00`, `M10_A220223_00` boundary; M7 2014 current offset kept tagged |
 
@@ -141,7 +142,7 @@ rename Track A) is recorded in [to_duckdb/plans/ROADMAP.md](to_duckdb/plans/ROAD
 | A28 | Shared module for the code common to `compute_exp_stats.py` and `compute_op_stats.py` (72 % shared lines); settle the `field.abs() > FIELD_THRESHOLD` (exp) vs signed (op) difference in `compute_scalars` | [review §1](REVIEW_readability_maintainability.md) (plan to write) | 💡 | S–M | A31; before **A1**; the 2026-11-16 rebuild runs with the signed op version (only the op stats to recompute if it is a bug) |
 | A29 | Split `crud.py` (4619 lines) and `build_parser` (869 lines) by entity, `crud` kept as a re-exporting facade; until then new entities go in new modules | [review §2](REVIEW_readability_maintainability.md) (plan to write) | 💡 | M–L | A31; before A3, A4, A5 |
 | A30 | `print` → `logging` in `to_duckdb` and the dashboard (147 `print` in `crud.py`); narrow the 40 broad `except Exception` handlers | [review §5–6](REVIEW_readability_maintainability.md) (plan to write) | 💡 | M | before A8 and F8 (unattended runs); pairs with D12 |
-| A31 | Lint clean-up in `to_duckdb` and the dashboard: `ruff check --fix` applied 2026-11-16 (219 → 114 findings, uncommitted); left: the 114 findings that need a decision (broad `except` under A30, `zip` without `strict`, …) and public names or `config.py` for the ≈ 56 cross-module uses of private names | [review §4, smaller items](REVIEW_readability_maintainability.md) (plan to write) | 🔄 mechanical part applied | S | — ; first, so the A28, A29 and C11 diffs stay readable |
+| A31 | Lint clean-up in `to_duckdb` and the dashboard: `ruff check --fix` applied 2026-11-16 (219 → 114 findings, `8b2018f`; on these changes before the commit: `to_duckdb` 874 passed / 3 skipped, dashboard 202 passed without `mrun_test.py`; not re-run on the commit); left: the 114 findings that need a decision (broad `except` under A30, `zip` without `strict`, …) and public names or `config.py` for the ≈ 56 cross-module uses of private names | [review §4, smaller items](REVIEW_readability_maintainability.md) (plan to write) | 🔄 mechanical part applied | S | — ; first, so the A28, A29 and C11 diffs stay readable |
 
 **Order for the data-quality chain:** JSON dates ✅ → A15 ✅ → A16 ✅ → A21 rebuilds ✅ (11-05, 11-10) → final full rebuild (calcul22, running since 2026-11-16) → A22 post-build checks → deploy to calcul18 (F7). A27 can land before or after the rebuild.
 
@@ -299,6 +300,12 @@ through the `6f124c8` template.
 Only open and recent streams are listed here. Completed history lives in
 [python_magnetrun/prompts/ROADMAP.md](python_magnetrun/prompts/ROADMAP.md).
 
+### Done since the 2026-11-15 snapshot
+
+| Item | Plan | Evidence |
+|---|---|---|
+| `ruff check --fix` (13 files; mechanical fixes) — test suite not run on this commit yet | — | `8ff434c` (pushed; superproject `8b2018f`); rest in D17 |
+
 ### Done since the 2026-11-07 snapshot
 
 | Item | Plan | Evidence |
@@ -364,6 +371,7 @@ Only open and recent streams are listed here. Completed history lives in
 | D14 | Dash / pywry / Textual GUIs | [dash-plan](python_magnetrun/docs/dash-plan.md), [gui-plan](python_magnetrun/docs/gui-plan.md), [tui-plan](python_magnetrun/docs/tui-plan.md) | 💡 not started | L | overlaps track C — [Q4](#open-questions) |
 | D15 | HoloViews plotting migration | [holoviews-migration.plan.md](python_magnetrun/prompts/holoviews-migration.plan.md) | ⏸ optional | M | — |
 | D16 | Legacy TODO list (spike removal, smoothing, mrecord rework, …) | [python_magnetrun/TODO.md](python_magnetrun/python_magnetrun/TODO.md) | 💡 unsorted | ? | partly superseded by B |
+| D17 | Last lint findings: one B007 false positive in `readers/csv_readers.py` (`# noqa` with a reason); exclude the nested `python_magnetcooling` submodule from ruff (its 22 findings belong to E6); test suite before and after | — (plan given in session 2026-11-16, no plan file) | 📝 awaiting approval | S | — ; `.pre-commit-config.yaml` still pins ruff `v0.4.0` (`.venv` has 0.17.4) |
 
 Archive TDMS files log formula warnings (`Référence_GR2 = Référence_A3 +
 Référence_A4`, variables missing in `M9_Archive_*`); seen during F7, a
@@ -380,6 +388,7 @@ Référence_A4`, variables missing in `M9_Archive_*`); seen during F7, a
 | E3 | Cooling TODOs: thermohydraulics check (gradHZH), z-dependent dh/sh, waterflow_factory via magnetrun, mrun input for waterflow pipeline, secondary-flow hysteresis | [python_magnetcooling/TODOs.md](python_magnetcooling/TODOs.md) | 💡 no plans | ? | feeds C1 |
 | E4 | Cooling models from the M1 student (primary heat exchanger) | [to_duckdb/plans/ROADMAP.md](to_duckdb/plans/ROADMAP.md) Later | ⛔ | M | student's models |
 | E5 | `python_magnetgeo` | — | no open plans | — | Track B of the rename is under G3 |
+| E6 | Lint findings left after `ruff check --fix`: `python_magnetsetup` 85 (25 unused variables, 13 star-import uses, …), `python_magnetgeo` 53 (incl. a syntax error in `data/template-gmsh-suprastruct.py`), `python_magnetcooling` 22 (not started; 4 undefined names in quoted annotations) | — (to write) | 🔄 mechanical part: python_magnetsetup `42a0c56`, python_magnetgeo `c4ba865` (pins bumped in `4494b15`); test suites not run on these commits yet | S–M | python_magnetcooling is on a detached HEAD (branch first); the python_magnetgeo checkout is 1 commit behind its `origin` |
 
 Reference: [Cooling Boundary Conditions for Electromagnets.md](Cooling_Boundary_Conditions_for_Electromagnets.md)
 *(uncommitted, 2026-10-09)*: per-magnet Robin condition (h, T_w) driven by
@@ -545,9 +554,11 @@ marks the ones that unblock other work.
 15. C1 [PLAN_waterflow_dashboard.md](plans/PLAN_waterflow_dashboard.md)
 16. D2 [parquet-save-load.plan.md](python_magnetrun/prompts/parquet-save-load.plan.md) — design is complete
 17. A26 — [PLAN_m8_overview_records.md](plans/PLAN_m8_overview_records.md) part C, to revise after F7
+18. D17 — last lint findings in python_magnetrun (two one-line changes; no plan file)
 
 Plans still **to be written** before work can start: A27 (tag review);
 A28–A31 and C11–C13 (from the [review](REVIEW_readability_maintainability.md));
+E6 (lint findings left in the setup / geometry / cooling libraries);
 B steps S2, 2a, 2b, 2c;
 the B step 1 follow-ups (spec re-export, raw pupitre
 view; the transient tolerance is covered by the file-check rules);
@@ -642,7 +653,9 @@ Ordered by dependency, not by date.
    (A22) → run the dashboard on it → deploy DB and image to calcul18 (F7:
    maintainer's browser check, then testers). A27 (tag review) before the
    testers if possible.
-2. **While the rebuild runs** (≈ 1.5 days): the lint clean-up (A31), then
+2. **While the rebuild runs** (≈ 1.5 days): the lint clean-up (A31,
+   mechanical part done in every repository but python_magnetcooling;
+   D17 and E6 for the rest, with the submodule test suites), then
    the shared viewer code (C11) on a branch — the first calcul18 image
    keeps the code that was already checked, C11 goes into the second one.
    Decide the `field.abs()` question of A28.
