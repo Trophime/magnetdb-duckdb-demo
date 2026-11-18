@@ -84,6 +84,9 @@ def to_display_tz(value):
     return pd.Timestamp(value).tz_localize(UTC_TZ).tz_convert(DISPLAY_TZ).tz_localize(None)
 
 
+_DB_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 def get_available_databases(db_dir=None):
     """List the DuckDB database files selectable in the database dropdown.
 
@@ -96,13 +99,19 @@ def get_available_databases(db_dir=None):
     -------
     list of dict
         Each item has ``label`` (filename) and ``value`` (absolute path),
-        suitable for a Dash ``dcc.Dropdown`` ``options`` argument.
+        suitable for a Dash ``dcc.Dropdown`` ``options`` argument. Files whose
+        name holds a ``YYYY-MM-DD`` date come first, newest first (same date:
+        by name, so ``magnetdb-2026-11-10.duckdb`` before
+        ``magnetdb-2026-11-10.mode17.duckdb``); undated files follow by name.
     """
     directory = db_dir or DB_DIR
     if not os.path.isdir(directory):
         return []
     paths = sorted(glob.glob(os.path.join(directory, "*.duckdb")))
-    return [{"label": os.path.basename(p), "value": p} for p in paths]
+    dated = [p for p in paths if _DB_DATE_RE.search(os.path.basename(p))]
+    dated.sort(key=lambda p: _DB_DATE_RE.search(os.path.basename(p)).group(0), reverse=True)
+    undated = [p for p in paths if p not in dated]
+    return [{"label": os.path.basename(p), "value": p} for p in dated + undated]
 
 
 def get_all_tables(db_path=None):
