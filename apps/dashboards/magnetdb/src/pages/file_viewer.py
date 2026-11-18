@@ -284,8 +284,9 @@ def update_magnets_table(selected_assembly, selected_db):
     Input("dd-assembly", "value"),
     Input("dd-x-axis", "value"),
     Input({"type": "dynamic-graph", "index": ALL}, "relayoutData"),
+    Input("dd-database", "value"),
 )
-def update_file_stats(selected_file, selected_assembly, x_mode, all_relayout_data):
+def update_file_stats(selected_file, selected_assembly, x_mode, all_relayout_data, selected_db):
     empty = selectors.file_stats_banner(None, None), plot.field_histogram_figure(None)
     if not selected_file or not selected_assembly:
         return empty
@@ -330,9 +331,26 @@ def update_file_stats(selected_file, selected_assembly, x_mode, all_relayout_dat
 
     field_stats = db.get_field_column_stats([mrun], x_range=analysis_range, x_col=x_mode)
     energy_stats = db.get_energy_stats([mrun], x_range=analysis_range, x_col=x_mode)
+    # SupraField / TotalField of this pupitre file (M8 Hybrid)
+    pupitre_field_stats = db.get_pupitre_field_stats([mrun], x_range=analysis_range, x_col=x_mode)
+
+    # Hybrid sources of the overview record holding this file: shown when
+    # there are any, or as "none" for an assembly with a supra magnet.
+    hybrid_files = db.get_hybrid_sources_for_pupitre(housing, selected_file, selected_db)
+    if not (hybrid_files and any(hybrid_files.values())) and db.assembly_has_supra(
+        selected_assembly, selected_db
+    ):
+        hybrid_files = {}
+    elif hybrid_files is not None and not any(hybrid_files.values()):
+        hybrid_files = None
 
     banner = selectors.file_stats_banner(
-        duration, field_stats, energy_stats=energy_stats, zoomed=x_range is not None
+        duration,
+        field_stats,
+        energy_stats=energy_stats,
+        zoomed=x_range is not None,
+        hybrid_files=hybrid_files,
+        extra_field_stats=pupitre_field_stats,
     )
     return banner, plot.field_histogram_figure(field_stats)
 

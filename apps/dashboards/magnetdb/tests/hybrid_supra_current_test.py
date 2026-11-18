@@ -63,6 +63,47 @@ def test_get_hybrid_khz_source_returns_none_when_unlinked(supra_db):
     assert db.get_hybrid_khz_source("M8", "no-such-file.txt", db_path=supra_db) is None
 
 
+@pytest.fixture
+def hybrid_sources_db(tmp_path):
+    """overview_records with the four hybrid source lists (one row with NULLs)."""
+    db_path = tmp_path / "hybrid_sources.duckdb"
+    con = duckdb.connect(str(db_path))
+    con.execute("""
+        CREATE TABLE overview_records (
+            filename VARCHAR, housing VARCHAR, sources_pupitre VARCHAR[],
+            sources_hybrid_kHz VARCHAR[], sources_hybrid_rms VARCHAR[],
+            sources_hybrid_trigger VARCHAR[], sources_hybrid_vprocess VARCHAR[]
+        )
+    """)
+    con.execute("""
+        INSERT INTO overview_records VALUES
+        ('M8_Overview_260415-1348', 'M8', ['a.txt', 'b.txt'],
+         ['k1.bin', 'k2.bin'], ['r1.rms'], [], ['v1.vprocess']),
+        ('M8_Overview_261113-0813', 'M8', ['c.txt'], NULL, NULL, NULL, NULL)
+    """)
+    con.close()
+    return str(db_path)
+
+
+def test_get_hybrid_sources_for_pupitre_returns_the_four_lists(hybrid_sources_db):
+    sources = db.get_hybrid_sources_for_pupitre("M8", "b.txt", db_path=hybrid_sources_db)
+    assert sources == {
+        "kHz": ["k1.bin", "k2.bin"],
+        "RMS": ["r1.rms"],
+        "trigger": [],
+        "vprocess": ["v1.vprocess"],
+    }
+
+
+def test_get_hybrid_sources_for_pupitre_null_lists_are_empty(hybrid_sources_db):
+    sources = db.get_hybrid_sources_for_pupitre("M8", "c.txt", db_path=hybrid_sources_db)
+    assert sources == {"kHz": [], "RMS": [], "trigger": [], "vprocess": []}
+
+
+def test_get_hybrid_sources_for_pupitre_none_without_record(hybrid_sources_db):
+    assert db.get_hybrid_sources_for_pupitre("M8", "z.txt", db_path=hybrid_sources_db) is None
+
+
 class _FakeHybridData:
     pass
 

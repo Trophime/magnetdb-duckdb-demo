@@ -2512,6 +2512,47 @@ def get_hybrid_khz_source(housing, pupitre_filename, db_path=None):
     return result[0] if result else None
 
 
+# Labels of the Hybrid source lists returned by get_hybrid_sources_for_pupitre
+_HYBRID_SOURCE_LABELS = ("kHz", "RMS", "trigger", "vprocess")
+
+
+def get_hybrid_sources_for_pupitre(housing, pupitre_filename, db_path=None):
+    """Return the Hybrid source lists of the overview record holding a Pupitre file.
+
+    Parameters
+    ----------
+    housing : str
+        Housing name (e.g. ``"M8"``).
+    pupitre_filename : str
+        Pupitre filename to look up in ``overview_records.sources_pupitre``.
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    dict of str to list of str or None
+        Filenames by kind label (``"kHz"``, ``"RMS"``, ``"trigger"``,
+        ``"vprocess"``, in that order; a NULL list gives ``[]``), as expected
+        by :func:`dash_selectors.file_stats_banner`; these are the record's
+        lists, which may span several Pupitre files. ``None`` if no overview
+        record lists *pupitre_filename*.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT sources_hybrid_kHz, sources_hybrid_rms,
+                   sources_hybrid_trigger, sources_hybrid_vprocess
+            FROM overview_records
+            WHERE housing = ? AND list_contains(sources_pupitre, ?)
+        """
+        result = conn.execute(query, [housing, pupitre_filename]).fetchone()
+    if result is None:
+        return None
+    return {
+        label: list(value) if value is not None else []
+        for label, value in zip(_HYBRID_SOURCE_LABELS, result, strict=True)
+    }
+
+
 @functools.lru_cache(maxsize=32)
 def load_hybrid_supra_current(hybrid_source, housing, assembly_name, start, end):
     """Load the Hybrid supra current (I_BOB), downsampled to 1 Hz.
