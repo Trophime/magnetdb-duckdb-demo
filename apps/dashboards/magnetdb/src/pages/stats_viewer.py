@@ -24,9 +24,9 @@ import style_editor
 dash.register_page(
     __name__,
     path="/stats_viewer",
-    name="Pigbrother Stats viewer",
+    name="Signal Stats viewer",
     order=9,
-    title=lambda: i18n._("Pigbrother Stats viewer"),
+    title=lambda: i18n._("Signal Stats viewer"),
 )
 
 
@@ -40,7 +40,7 @@ def layout(assembly=None, file=None, **kwargs):
             html.Div(
                 [
                     html.H2(
-                        i18n._("Pigbrother Stats Viewer"),
+                        i18n._("Signal Stats Viewer"),
                         style={"marginTop": "0px", "marginBottom": "20px"},
                     ),
                     html.Hr(),
@@ -73,14 +73,14 @@ def layout(assembly=None, file=None, **kwargs):
                     html.Div(id="sv-magnets-table", style={"marginBottom": "10px"}),
                     html.Br(),
                     html.Label(
-                        i18n._("2. Choose a Pigbrother Stats File:"),
+                        i18n._("2. Choose a Signal Stats File:"),
                         style={"fontWeight": "bold"},
                     ),
                     dcc.Dropdown(
                         id="sv-file",
                         options=[file] if file else [],
                         value=file,
-                        placeholder=i18n._("Choose a Pigbrother Stats file..."),
+                        placeholder=i18n._("Choose a Signal Stats file..."),
                     ),
                     html.Br(),
                     html.Div(id="sv-file-stats", style={"marginBottom": "10px"}),

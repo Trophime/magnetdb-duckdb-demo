@@ -851,3 +851,19 @@ msgstr "unlesbar / Ladefehler"
 #: src/dash_selectors.py
 msgid "Colours:"
 msgstr "Farben:"
+
+#: src/pages/stats_viewer.py
+msgid "Signal Stats viewer"
+msgstr "Signalstatistik"
+
+#: src/pages/stats_viewer.py
+msgid "Signal Stats Viewer"
+msgstr "Signalstatistik-Betrachter"
+
+#: src/pages/stats_viewer.py
+msgid "2. Choose a Signal Stats File:"
+msgstr "2. Signalstatistik-Datei wählen:"
+
+#: src/pages/stats_viewer.py
+msgid "Choose a Signal Stats file..."
+msgstr "Signalstatistik-Datei wählen..."

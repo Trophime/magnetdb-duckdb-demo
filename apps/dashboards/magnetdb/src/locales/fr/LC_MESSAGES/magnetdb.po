@@ -854,3 +854,19 @@ msgstr "illisible / erreur de chargement"
 #: src/dash_selectors.py
 msgid "Colours:"
 msgstr "Couleurs :"
+
+#: src/pages/stats_viewer.py
+msgid "Signal Stats viewer"
+msgstr "Statistiques de signaux"
+
+#: src/pages/stats_viewer.py
+msgid "Signal Stats Viewer"
+msgstr "Visualiseur de statistiques de signaux"
+
+#: src/pages/stats_viewer.py
+msgid "2. Choose a Signal Stats File:"
+msgstr "2. Choisir un fichier de statistiques de signaux :"
+
+#: src/pages/stats_viewer.py
+msgid "Choose a Signal Stats file..."
+msgstr "Choisir un fichier de statistiques de signaux..."

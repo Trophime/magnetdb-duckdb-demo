@@ -829,3 +829,19 @@ msgstr ""
 #: src/dash_selectors.py
 msgid "Colours:"
 msgstr ""
+
+#: src/pages/stats_viewer.py
+msgid "Signal Stats viewer"
+msgstr ""
+
+#: src/pages/stats_viewer.py
+msgid "Signal Stats Viewer"
+msgstr ""
+
+#: src/pages/stats_viewer.py
+msgid "2. Choose a Signal Stats File:"
+msgstr ""
+
+#: src/pages/stats_viewer.py
+msgid "Choose a Signal Stats file..."
+msgstr ""

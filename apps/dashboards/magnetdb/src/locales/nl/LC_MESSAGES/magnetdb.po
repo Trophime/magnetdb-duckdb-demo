@@ -848,3 +848,19 @@ msgstr "onleesbaar / laadfout"
 #: src/dash_selectors.py
 msgid "Colours:"
 msgstr "Kleuren:"
+
+#: src/pages/stats_viewer.py
+msgid "Signal Stats viewer"
+msgstr "Signaalstatistieken"
+
+#: src/pages/stats_viewer.py
+msgid "Signal Stats Viewer"
+msgstr "Signaalstatistiekenviewer"
+
+#: src/pages/stats_viewer.py
+msgid "2. Choose a Signal Stats File:"
+msgstr "2. Kies een signaalstatistiekbestand:"
+
+#: src/pages/stats_viewer.py
+msgid "Choose a Signal Stats file..."
+msgstr "Kies een signaalstatistiekbestand..."

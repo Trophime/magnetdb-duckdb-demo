@@ -107,7 +107,7 @@ faux, lent ou peu clair.
 | **Visualiseur de fichiers** | Afficher un fichier pupitre, un fichier TDMS et un fichier d'archive ; zoomer, puis double-cliquer pour revenir à la vue complète ; le bouton **⚙** d'un groupe de courbes pour changer leur style |
 | **Enregistrements de synthèse** | Choisir un enregistrement (filtres site, année, statut, assemblage), cocher des capteurs pour afficher leurs courbes ; un clic sur une courbe pose un curseur ; bouton **⚙** comme ci-dessus |
 | **Défauts et pics** | Choisir un enregistrement puis un défaut ou un pic, cocher un capteur pour afficher sa courbe |
-| **Pigbrother Stats viewer** | Choisir un fichier de statistiques Pigbrother et l'axe des abscisses (titre non traduit) |
+| **Statistiques de signaux** | Choisir un fichier de statistiques de signaux (fichiers Stats Pigbrother) et l'axe des abscisses |
 | **À propos** | Journal des opérations sur la base, avec filtres par table, opération, statut et date |
 
 À vérifier aussi :
