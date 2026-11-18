@@ -88,6 +88,9 @@ run on a copy; item 3b goes with item 1 (same build step).
   [PLAN_m8_overview_records.md](PLAN_m8_overview_records.md)): year folders in
   `HybridData`, hybrid kinds matched by overlap, paths instead of basenames;
   answers A20's layout question.
+- A32 (ROADMAP): the 259 overview records with `teb` = 0 in
+  `magnetdb-2026-11-16.duckdb` (Overview-sourced, 2019–2026): source files
+  without `teb`, or records the SQL builder does not match.
 - C9 [CSV download](../apps/dashboards/magnetdb/plans/PLAN_csv_download.md), C10
   [Hybrid viewer](../apps/dashboards/magnetdb/plans/PLAN_hybrid_viewer.md).
 - A1 [exp-stats performance](../to_duckdb/plans/PLAN_exp_stats_performance.md), if a
