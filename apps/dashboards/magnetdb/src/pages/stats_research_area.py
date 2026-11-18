@@ -8,7 +8,12 @@ from plotly import graph_objects as go
 import dash_selectors as selectors
 import i18n
 import magnetdb_analysis as db
-from experiment_links import assembly_link, experiment_link, overview_record_link
+from experiment_links import (
+    assembly_link,
+    experiment_link,
+    overview_record_link,
+    signal_stats_links,
+)
 
 dash.register_page(
     __name__, path="/research-area", name="Manips", order=1, title=lambda: i18n._("Manips")
@@ -42,7 +47,7 @@ def overview_record_columns():
     return [
         (
             {"name": c, "id": c, "presentation": "markdown"}
-            if c in ("Overview Record", "Assembly")
+            if c in ("Overview Record", "Assembly", "Signal stats")
             else {"name": c, "id": c}
         )
         for c in ("Overview Record", "Assembly", "Housing", "Mode", "t0", "Signal stats")
@@ -121,6 +126,7 @@ def _overview_records_section(ov_df):
         ["Overview Record", "Assembly", "Housing", "Mode", "t0", "Signal stats"]
     ].copy()
     table_df["Overview Record"] = source_df.apply(overview_record_link, axis=1)
+    table_df["Signal stats"] = source_df.apply(signal_stats_links, axis=1)
     table_df["Assembly"] = source_df.apply(assembly_link, axis=1)
     table_df["t0"] = table_df["t0"].apply(i18n.format_date)
 

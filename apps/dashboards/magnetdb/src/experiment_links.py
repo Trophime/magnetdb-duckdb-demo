@@ -73,6 +73,33 @@ def overview_record_link(row):
     return f"[{label}]({href})"
 
 
+def signal_stats_links(row):
+    """Render a Signal stats cell as markdown links into ``/stats_viewer``.
+
+    Parameters
+    ----------
+    row : :class:`~pandas.Series`
+        Row with ``"Signal stats"`` (``", "``-joined
+        ``overview_records.sources_signal_stats`` filenames) and
+        ``"Assembly"`` entries.
+
+    Returns
+    -------
+    str
+        One markdown link per stats file to ``/stats_viewer`` pre-loaded with
+        the row's assembly and that file, joined by ``", "``; an empty string
+        if the row has no stats file.
+    """
+    stats = row["Signal stats"]
+    if pd.isna(stats) or not stats:
+        return ""
+    assembly = quote(str(row["Assembly"]), safe="")
+    return ", ".join(
+        f"[{name}](/stats_viewer?assembly={assembly}&file={quote(name, safe='')})"
+        for name in str(stats).split(", ")
+    )
+
+
 def assembly_link(row):
     """Render an Assembly cell as a markdown link into ``/assembly_stats`` pre-filtered to it.
 

@@ -40,3 +40,20 @@ def test_overview_records_section_newest_first():
     })
     table = ra._overview_records_section(ov_df)
     assert [r["Mode"] for r in table.data] == ["new", "mid", "old"]
+
+
+def test_overview_records_section_signal_stats_links():
+    ov_df = pd.DataFrame({
+        "filename": ["M9_Overview_a.tdms"],
+        "assembly_name": ["M9_A1"],
+        "housing": ["M9"],
+        "mode": ["m"],
+        "t0": pd.to_datetime(["2025-03-05"]),
+        "signal_stats": ["M9_Stats_a.tdms"],
+    })
+    table = ra._overview_records_section(ov_df)
+    assert table.data[0]["Signal stats"] == (
+        "[M9_Stats_a.tdms](/stats_viewer?assembly=M9_A1&file=M9_Stats_a.tdms)"
+    )
+    col = next(c for c in table.columns if c["id"] == "Signal stats")
+    assert col.get("presentation") == "markdown"
