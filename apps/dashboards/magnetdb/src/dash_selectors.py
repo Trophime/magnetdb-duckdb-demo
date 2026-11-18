@@ -8,7 +8,7 @@ from natsort import natsorted
 
 import i18n
 import magnetdb_analysis as db
-from experiment_links import file_viewer_href, magnet_link
+from experiment_links import file_viewer_href, magnet_link, overview_record_href
 
 ALL = "All"
 
@@ -672,6 +672,7 @@ def file_stats_banner(
     zoomed=False,
     hybrid_files=None,
     extra_field_stats=None,
+    overview_records=None,
 ):
     """Build a duration + field stats + Energy + pupitre/hybrid-sources summary, one item per line.
 
@@ -708,15 +709,22 @@ def file_stats_banner(
         (e.g. ``SupraField``, ``TotalField`` from
         :func:`magnetdb_analysis.get_pupitre_field_stats`), each on its own
         line after *field_stats*.
+    overview_records : list of str, optional
+        ``overview_records.filename`` values shown last, on an
+        "Overview record: " line, each linked to ``/overview-records``
+        pre-loaded with *assembly_name* and that record (see
+        :func:`experiment_links.overview_record_href`; plain text when
+        *assembly_name* is not given). Omitted if ``None`` or empty.
 
     Returns
     -------
     :class:`~dash.html.Div`
         A styled summary with one child ``Div`` per line, in order: duration,
-        each field statistics, energy, pupitre sources, hybrid sources (a
-        single text line is returned as a plain string child). An empty
-        ``Div`` if there are no duration, field or energy statistics, no
-        *pupitre_files* and *hybrid_files* is ``None``.
+        each field statistics, energy, pupitre sources, hybrid sources,
+        overview records (a single text line is returned as a plain string
+        child). An empty ``Div`` if there are no duration, field or energy
+        statistics, no *pupitre_files* or *overview_records* and
+        *hybrid_files* is ``None``.
     """
     field_lines = [s for s in [field_stats, *(extra_field_stats or [])] if s is not None]
     if (
@@ -725,6 +733,7 @@ def file_stats_banner(
         and energy_stats is None
         and not pupitre_files
         and hybrid_files is None
+        and not overview_records
     ):
         return html.Div()
 
@@ -761,6 +770,18 @@ def file_stats_banner(
         lines.append(html.Span(pupitre_children))
     if hybrid_files is not None:
         lines.append(_hybrid_sources_segment(hybrid_files))
+    if overview_records:
+        record_children = [i18n._("Overview record: ")]
+        for i, record in enumerate(overview_records):
+            if i:
+                record_children.append(", ")
+            if assembly_name:
+                record_children.append(
+                    html.A(record, href=overview_record_href(assembly_name, record))
+                )
+            else:
+                record_children.append(record)
+        lines.append(html.Span(record_children))
 
     if len(lines) == 1 and isinstance(lines[0], str):
         content = lines[0]

@@ -84,11 +84,6 @@ def layout(assembly=None, file=None, **kwargs):
                     ),
                     html.Br(),
                     html.Div(id="sv-file-stats", style={"marginBottom": "10px"}),
-                    selectors.graph(
-                        id="sv-field-histogram",
-                        figure=plot.field_histogram_figure(None),
-                        style={"height": "250px"},
-                    ),
                     html.Br(),
                     html.Label(
                         i18n._("3. Choose X-axis :"),
@@ -251,14 +246,17 @@ def update_magnets_table(selected_assembly, selected_db):
 
 @dash.callback(
     Output("sv-file-stats", "children"),
-    Output("sv-field-histogram", "figure"),
     Input("sv-file", "value"),
     Input("sv-assembly", "value"),
     Input("sv-x-axis", "value"),
     Input({"type": "sv-dynamic-graph", "index": ALL}, "relayoutData"),
+    Input("dd-database", "value"),
 )
-def update_file_stats(selected_file, selected_assembly, x_mode, all_relayout_data):
-    empty = selectors.file_stats_banner(None, None), plot.field_histogram_figure(None)
+def update_file_stats(selected_file, selected_assembly, x_mode, all_relayout_data, selected_db):
+    # Stats files have no Field/Champ_magn or power channel: the banner shows
+    # the duration and links to the overview record(s) listing the file,
+    # whose own banner has the field, energy and source statistics.
+    empty = selectors.file_stats_banner(None, None)
     if not selected_file or not selected_assembly:
         return empty
 
@@ -282,16 +280,6 @@ def update_file_stats(selected_file, selected_assembly, x_mode, all_relayout_dat
                     x_range = [relayout["xaxis.range"][0], relayout["xaxis.range"][1]]
                     break
 
-    analysis_range = x_range
-    if x_range is not None and x_mode == "timestamp":
-        # relayoutData holds the displayed local time (see
-        # magnetdb_plot._display_x_series); the "timestamp" column is stored
-        # as naive UTC, so the range needs converting back before filtering.
-        analysis_range = [
-            local_to_utc_naive(pd.Timestamp(x_range[0]), "Europe/Paris"),
-            local_to_utc_naive(pd.Timestamp(x_range[1]), "Europe/Paris"),
-        ]
-
     if x_range is not None:
         if x_mode == "timestamp":
             duration = (pd.Timestamp(x_range[1]) - pd.Timestamp(x_range[0])).total_seconds()
@@ -300,13 +288,16 @@ def update_file_stats(selected_file, selected_assembly, x_mode, all_relayout_dat
     else:
         duration = mrun.MagnetData.getDuration()
 
-    field_stats = db.get_field_column_stats([mrun], x_range=analysis_range, x_col=x_mode)
-    energy_stats = db.get_energy_stats([mrun], x_range=analysis_range, x_col=x_mode)
-
-    banner = selectors.file_stats_banner(
-        duration, field_stats, energy_stats=energy_stats, zoomed=x_range is not None
+    records = db.get_overview_records_for_signal_stats(
+        selected_assembly, selected_file, selected_db
     )
-    return banner, plot.field_histogram_figure(field_stats)
+    return selectors.file_stats_banner(
+        duration,
+        None,
+        assembly_name=selected_assembly,
+        zoomed=x_range is not None,
+        overview_records=records,
+    )
 
 
 def _sensor_group_block(group_name, options, saved_values, open_by_default=False):

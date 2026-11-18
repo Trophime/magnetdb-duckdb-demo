@@ -131,6 +131,25 @@ def test_file_stats_banner_no_extra_field_lines_by_default():
     ]
 
 
+def test_file_stats_banner_overview_record_links():
+    banner = selectors.file_stats_banner(
+        12.5, None, assembly_name="M8_A1", overview_records=["rec_a", "rec_b"]
+    )
+    duration_line, record_line = banner.children
+    assert duration_line.children == "Duration: 12.5 s"
+    label, link_a, sep, link_b = record_line.children.children
+    assert label == "Overview record: "
+    assert sep == ", "
+    assert link_a.children == "rec_a"
+    assert link_a.href == "/overview-records?assembly=M8_A1&record=rec_a"
+    assert link_b.href == "/overview-records?assembly=M8_A1&record=rec_b"
+
+
+def test_file_stats_banner_no_record_line_when_empty():
+    banner = selectors.file_stats_banner(12.5, None, assembly_name="M8_A1", overview_records=[])
+    assert banner.children == "Duration: 12.5 s"
+
+
 def test_file_stats_banner_sources_only_without_stats_line():
     banner = selectors.file_stats_banner(None, None, ["a.txt"])
     (pupitre_line,) = banner.children

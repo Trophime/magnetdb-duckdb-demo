@@ -21,6 +21,27 @@ def file_viewer_href(assembly_name, filename):
     return f"/file_viewer?assembly={quote(str(assembly_name), safe='')}&file={quote(str(filename), safe='')}"
 
 
+def overview_record_href(assembly_name, record):
+    """Build a ``/overview-records`` URL pre-loaded with *assembly_name* and *record*.
+
+    Parameters
+    ----------
+    assembly_name : str
+        Assembly owning *record*.
+    record : str
+        ``overview_records.filename`` to preselect.
+
+    Returns
+    -------
+    str
+        ``/overview-records?assembly=...&record=...`` URL, query-escaped.
+    """
+    return (
+        f"/overview-records?assembly={quote(str(assembly_name), safe='')}"
+        f"&record={quote(str(record), safe='')}"
+    )
+
+
 def experiment_link(row):
     """Render an Experiment cell as a markdown link pre-loading Home with this row's assembly/file.
 

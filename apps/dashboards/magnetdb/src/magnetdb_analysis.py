@@ -616,6 +616,37 @@ def get_stats_files_for_assembly(assembly_name, db_path=None):
         return conn.execute(query, [assembly_name]).df()["stats"].tolist()
 
 
+def get_overview_records_for_signal_stats(assembly_name, stats_filename, db_path=None):
+    """List the overview records of an assembly that list a pigbrother Stats file.
+
+    Parameters
+    ----------
+    assembly_name : str
+        ``assemblies.name`` the records belong to.
+    stats_filename : str
+        Stats filename to look up in ``overview_records.sources_signal_stats``.
+    db_path : str or :class:`~pathlib.Path`, optional
+        Path to the DuckDB database. Defaults to `DB_PATH`.
+
+    Returns
+    -------
+    list of str
+        ``overview_records.filename`` of the matching records not merged into
+        another one (same filter as :func:`get_stats_files_for_assembly`),
+        oldest ``t0`` first; empty if none.
+    """
+    with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
+        query = """
+            SELECT filename
+            FROM overview_records
+            WHERE assembly_name = ? AND merged_into IS NULL
+              AND list_contains(sources_signal_stats, ?)
+            ORDER BY t0, filename
+        """
+        rows = conn.execute(query, [assembly_name, stats_filename]).fetchall()
+    return [r[0] for r in rows]
+
+
 def get_assembly_history_for_magnet(magnet_name, db_path=None):
     """Return every assembly a magnet has been linked to, ordered by commissioning date.
 

@@ -104,6 +104,40 @@ def test_get_hybrid_sources_for_pupitre_none_without_record(hybrid_sources_db):
     assert db.get_hybrid_sources_for_pupitre("M8", "z.txt", db_path=hybrid_sources_db) is None
 
 
+@pytest.fixture
+def signal_stats_db(tmp_path):
+    """overview_records listing pigbrother Stats files (one merged row)."""
+    db_path = tmp_path / "signal_stats.duckdb"
+    con = duckdb.connect(str(db_path))
+    con.execute("""
+        CREATE TABLE overview_records (
+            filename VARCHAR, assembly_name VARCHAR, t0 TIMESTAMP,
+            sources_signal_stats VARCHAR[], merged_into VARCHAR
+        )
+    """)
+    con.execute("""
+        INSERT INTO overview_records VALUES
+        ('rec_b', 'M8_A1', '2026-11-13 12:00', ['s1.tdms', 's2.tdms'], NULL),
+        ('rec_a', 'M8_A1', '2026-11-13 08:00', ['s1.tdms'], NULL),
+        ('rec_merged', 'M8_A1', '2026-11-13 09:00', ['s1.tdms'], 'rec_a'),
+        ('rec_other', 'M9_A1', '2026-11-13 08:00', ['s1.tdms'], NULL)
+    """)
+    con.close()
+    return str(db_path)
+
+
+def test_get_overview_records_for_signal_stats(signal_stats_db):
+    assert db.get_overview_records_for_signal_stats(
+        "M8_A1", "s1.tdms", db_path=signal_stats_db
+    ) == ["rec_a", "rec_b"]
+    assert db.get_overview_records_for_signal_stats(
+        "M8_A1", "s2.tdms", db_path=signal_stats_db
+    ) == ["rec_b"]
+    assert db.get_overview_records_for_signal_stats(
+        "M8_A1", "none.tdms", db_path=signal_stats_db
+    ) == []
+
+
 class _FakeHybridData:
     pass
 
