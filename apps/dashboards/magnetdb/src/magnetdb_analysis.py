@@ -1117,7 +1117,7 @@ def merge_supervision_group_entries(group_entries: dict) -> dict:
 
     Merges into a same-named native group's entry list when one already
     exists (e.g. ``"Refroidissement"``), or adds a fresh group otherwise
-    (``"Water_Resistivity"``/``"Nitrogen_Level"`` never have a native
+    (``"Water_Resistivity"``/``"Loop_Pressurisation"`` never have a native
     counterpart in either format).
 
     Parameters

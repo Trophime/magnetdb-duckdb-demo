@@ -542,7 +542,7 @@ def update_sensors_menus(
 
     # SUPERVISION groups with no native counterpart in this file (e.g. a
     # Pigbrother file has no "Refroidissement" group; "Water_Resistivity" and
-    # "Nitrogen_Level" never have one in any format) get their own fresh block.
+    # "Loop_Pressurisation" never have one in any format) get their own fresh block.
     for group_name in supervision_groups:
         if group_name in covered_supervision_groups:
             continue
