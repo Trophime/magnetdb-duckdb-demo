@@ -1,7 +1,8 @@
 # Water flow parameters: reference, checks per experiment, history
 
-**Status (2026-11-17): 📝 drafted, awaiting approval.** Each phase below is
-approved separately. Supersedes the "Flow parameters" section of
+**Status (2026-11-18): 📝 drafted, awaiting approval; phase 0 items 1-2 done**
+(python_magnetcooling `9254d59` on `msite_to_assembly`, pinned here in
+`acdff56`). Each phase below is approved separately. Supersedes the "Flow parameters" section of
 [PLAN_digital_twin_schema.md](PLAN_digital_twin_schema.md) (L3) and the
 reference lookup of [PLAN_waterflow_dashboard.md](PLAN_waterflow_dashboard.md)
 (`get_flow_params_for_assembly` on `overview_records.flow_params`).
@@ -67,7 +68,17 @@ and its `examples/fit_M23072801_flow_params.py`):
 4. **Data-quality cases seen**: pupitre current frozen after a trip
    (2023-09-19, 15 594 A while the hydraulics move); `Rpm2` reading 200 rpm
    (2023-10-25); duplicate pupitre timestamps.
-5. **`python_magnetcooling` cannot be used unattended yet** (phase 0).
+5. **`python_magnetcooling` cannot be used unattended yet** (phase 0). The
+   fitting bugs are fixed (items 1-2, 2026-11-18); the free-Imax pump law,
+   the fits against the measured rpm and the check module are still to do
+   (items 3-4).
+6. **Hand-filled flow params files with Vp0/Vpmax swapped** (found
+   2026-11-18): `M9_M19061901`, `M10_M19020601_M19020601` and
+   `M9Bitters-flow_params.json` (copies in `apps/notebooks`, python_magnetapi,
+   hifimagnet-projects) have Vp0 = rise, Vpmax = idle speed, and the
+   template defaults elsewhere (F0 = 0, Fmax = 61.72, Pmin = 4, Pmax = 22, no
+   Pout): never fitted. The fitted `M10_M19020601_M10Bitters` has
+   Pout = 2923.35, not a pressure. None of these may seed a reference.
 
 ## Design
 
@@ -182,9 +193,9 @@ at `at` (latest `valid_from <= at`), `reference` if none;
 
 | Path | Phase | Action |
 |---|---|---|
-| `python_magnetcooling/python_magnetcooling/fitting.py` | 0 | edit |
+| `python_magnetcooling/python_magnetcooling/fitting.py` | 0 | edit (items 1-2 done; 3 to do) |
 | `python_magnetcooling/python_magnetcooling/flow_check.py` | 0 | create |
-| `python_magnetcooling/tests/test_fitting_clamped.py` | 0 | create |
+| `python_magnetcooling/tests/test_fitting.py` | 0 | edit (items 1-2 done: saturation tests) |
 | `python_magnetcooling/tests/test_flow_check.py` | 0 | create |
 | `to_duckdb/schema.py` | 1 | edit (3 tables) |
 | `to_duckdb/flow_params.py` | 1-4 | create (extraction, store, lookup, check, refit) |
@@ -215,6 +226,30 @@ order, with samples above Imax.
    Pmin/Pmax recovered within 1 %; on the M9 insert, ECO two-supply samples
    of all 201 pupitre files with Imax = 27 066 A: F0 = 0.62,
    Fmax = 135.6 l/s, Pmin = 3.78, Pmax = 18.92 bar.
+
+   **Done 2026-11-18 (items 1-2)**, python_magnetcooling `9254d59`
+   (branch `fix/fitting-clamp`, merged into `msite_to_assembly`):
+   - shared clamped model `_pump_speed_model`, used by the three fits and
+     the two plot helpers;
+   - piecewise: sorted by current; segment check with `predict`; Vpmax/Vp0
+     from the clamped least-squares fit at the detected Imax, so `vpmax` is
+     the rise and `fit_result` is set; segment equations rebuilt from
+     `predict`;
+   - also fixed: the `'N/A':.4f` crash in `fit_hydraulic_system` (piecewise)
+     and `back_pressure.mean` in `plot_flow_pressure_fit`.
+
+   Verified on synthetic data with a plateau to 1.2 Imax:
+   - noiseless: exact;
+   - 0.2 % noise, shuffled: piecewise within 2 %.
+
+   On the magnet-scipy campaign (20 pupitre files, 257k ECO samples,
+   Imax = 27 066 A), the insert fit is F0 = 0.80, Fmax = 133.9 l/s,
+   Pmin = 3.68, Pmax = 19.23 bar. That is a smaller sample than the 201 files
+   above, hence the small differences.
+
+   The same Vpmax and sort fixes went into python_magnetrun
+   `flow_params.compute` (`d882a6d`) and python_magnetcooling's
+   `examples/flow_params_magnetrun.py` (`be99b1f`).
 3. Add `fit_pump_law(current, rpm, imax=None)`: clamped least squares with
    Imax free (or fixed); and `fit_hydraulics(rpm, flow, hp, bp, pump_law)`:
    flow and HP against the **measured** pump speed.
