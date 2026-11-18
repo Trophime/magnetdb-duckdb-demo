@@ -103,6 +103,14 @@ msgstr ""
 msgid "Pupitre sources: "
 msgstr ""
 
+#: src/dash_selectors.py
+msgid "Hybrid sources: "
+msgstr ""
+
+#: src/dash_selectors.py
+msgid "none"
+msgstr ""
+
 #: src/magnetdb_app.py:112
 msgid "Dashboard MagnetDB - LNCMI monitoring"
 msgstr ""

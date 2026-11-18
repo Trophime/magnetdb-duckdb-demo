@@ -20,6 +20,14 @@ dash.register_page(
     title=lambda: i18n._("Overview records"),
 )
 
+# (label, overview_records column) of the Hybrid source lists, in banner order
+_HYBRID_SOURCE_KINDS = (
+    ("kHz", "sources_hybrid_kHz"),
+    ("RMS", "sources_hybrid_rms"),
+    ("trigger", "sources_hybrid_trigger"),
+    ("vprocess", "sources_hybrid_vprocess"),
+)
+
 
 def _empty_fig():
     """Placeholder figure, rebuilt on every call so its text tracks the request's language."""
@@ -480,8 +488,21 @@ def update_file_stats(
     energy_stats = (
         db.get_energy_stats(mruns, x_range=analysis_range, x_col=x_mode) if mruns else None
     )
+    # SupraField / TotalField from the pupitre sources (M8 Hybrid)
+    pupitre_field_stats = db.get_pupitre_field_stats(mruns, x_range=analysis_range, x_col=x_mode)
 
     pupitre_files = list(info["sources_pupitre"])
+
+    # Hybrid sources: shown when the record has any, or as "none" for an
+    # assembly with a supra magnet (a missing link to the Hybrid data).
+    hybrid_files = {
+        label: list(info[column]) if info[column] is not None else []
+        for label, column in _HYBRID_SOURCE_KINDS
+    }
+    if not any(hybrid_files.values()) and not db.assembly_has_supra(
+        info["assembly_name"], selected_db
+    ):
+        hybrid_files = None
 
     banner = selectors.file_stats_banner(
         duration,
@@ -490,6 +511,8 @@ def update_file_stats(
         assembly_name=info["assembly_name"],
         energy_stats=energy_stats,
         zoomed=x_range is not None,
+        hybrid_files=hybrid_files,
+        extra_field_stats=pupitre_field_stats,
     )
     return banner, plot.field_histogram_figure(field_stats)
 

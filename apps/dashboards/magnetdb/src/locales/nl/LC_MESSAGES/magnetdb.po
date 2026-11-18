@@ -103,6 +103,14 @@ msgstr "(ingezoomd bereik)"
 msgid "Pupitre sources: "
 msgstr "Pupitre-bronnen: "
 
+#: src/dash_selectors.py
+msgid "Hybrid sources: "
+msgstr "Hybride bronnen: "
+
+#: src/dash_selectors.py
+msgid "none"
+msgstr "geen"
+
 #: src/magnetdb_app.py:112
 msgid "Dashboard MagnetDB - LNCMI monitoring"
 msgstr "MagnetDB-dashboard - LNCMI-bewaking"

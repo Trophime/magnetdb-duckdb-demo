@@ -645,6 +645,24 @@ def magnets_table_section(assembly_name, db_path=None):
     )
 
 
+def _hybrid_sources_segment(hybrid_files):
+    """Expandable "Hybrid sources: kHz N, ..." banner segment, or "Hybrid sources: none"."""
+    kinds = [(kind, list(files)) for kind, files in hybrid_files.items() if len(files)]
+    if not kinds:
+        return html.Span([i18n._("Hybrid sources: "), i18n._("none")])
+    counts = ", ".join(f"{kind} {len(files)}" for kind, files in kinds)
+    return html.Details(
+        [
+            html.Summary(i18n._("Hybrid sources: ") + counts, style={"cursor": "pointer"}),
+            html.Div(
+                [html.Div(f"{kind}: " + ", ".join(files)) for kind, files in kinds],
+                style={"fontSize": "0.9em", "wordBreak": "break-all"},
+            ),
+        ],
+        style={"display": "inline-block", "verticalAlign": "top"},
+    )
+
+
 def file_stats_banner(
     duration_seconds,
     field_stats,
@@ -652,8 +670,10 @@ def file_stats_banner(
     assembly_name=None,
     energy_stats=None,
     zoomed=False,
+    hybrid_files=None,
+    extra_field_stats=None,
 ):
-    """Build a one-line duration + Field/Champ_magn stats + Energy + pupitre-sources summary.
+    """Build a duration + field stats + Energy + pupitre/hybrid-sources summary, one item per line.
 
     Parameters
     ----------
@@ -676,41 +696,59 @@ def file_stats_banner(
     zoomed : bool, optional
         When ``True``, *duration_seconds*/*field_stats*/*energy_stats* are
         understood to cover the current graph zoom rather than the whole
-        file/record, and the banner is suffixed accordingly.
+        file/record, and "(zoomed range)" is appended to the duration line.
+    hybrid_files : dict of str to list of str, optional
+        Hybrid source filenames by kind label (e.g. ``"kHz"``, ``"RMS"``), in
+        display order. Shown after the pupitre sources as an expandable
+        "Hybrid sources: kHz 52, RMS 8" segment listing the files of each
+        non-empty kind; "Hybrid sources: none" when every list is empty (or
+        the dict is empty). Omitted when ``None`` (the default).
+    extra_field_stats : list of dict, optional
+        Further :func:`magnetdb_analysis.get_field_column_stats` results
+        (e.g. ``SupraField``, ``TotalField`` from
+        :func:`magnetdb_analysis.get_pupitre_field_stats`), each on its own
+        line after *field_stats*.
 
     Returns
     -------
     :class:`~dash.html.Div`
-        A styled one-line summary, or an empty ``Div`` if *duration_seconds*,
-        *field_stats* and *energy_stats* are all ``None`` and *pupitre_files*
-        is empty.
+        A styled summary with one child ``Div`` per line, in order: duration,
+        each field statistics, energy, pupitre sources, hybrid sources (a
+        single text line is returned as a plain string child). An empty
+        ``Div`` if there are no duration, field or energy statistics, no
+        *pupitre_files* and *hybrid_files* is ``None``.
     """
+    field_lines = [s for s in [field_stats, *(extra_field_stats or [])] if s is not None]
     if (
         duration_seconds is None
-        and field_stats is None
+        and not field_lines
         and energy_stats is None
         and not pupitre_files
+        and hybrid_files is None
     ):
         return html.Div()
 
-    segments = []
+    lines = []  # one item per line
+    duration_line = []
     if duration_seconds is not None:
-        segments.append(i18n._("Duration: {value:.1f} s").format(value=duration_seconds))
-    if field_stats is not None:
-        unit_suffix = f" {field_stats['unit']}" if field_stats["unit"] else ""
-        segments.append(
-            f"{field_stats['column']}: "
-            f"min={field_stats['min']:.3g}{unit_suffix}, "
-            f"mean={field_stats['mean']:.3g}{unit_suffix}, "
-            f"max={field_stats['max']:.3g}{unit_suffix}, "
-            f"std={field_stats['std']:.3g}{unit_suffix}"
+        duration_line.append(i18n._("Duration: {value:.1f} s").format(value=duration_seconds))
+    if zoomed:
+        duration_line.append(i18n._("(zoomed range)"))
+    if duration_line:
+        lines.append(" ".join(duration_line))
+    for stats in field_lines:
+        unit_suffix = f" {stats['unit']}" if stats["unit"] else ""
+        lines.append(
+            f"{stats['column']}: "
+            f"min={stats['min']:.3g}{unit_suffix}, "
+            f"mean={stats['mean']:.3g}{unit_suffix}, "
+            f"max={stats['max']:.3g}{unit_suffix}, "
+            f"std={stats['std']:.3g}{unit_suffix}"
         )
     if energy_stats is not None:
-        segments.append(
+        lines.append(
             i18n._("Energy: {value:.3g} MWh").format(value=energy_stats["energy_mwh"])
         )
-    if zoomed:
-        segments.append(i18n._("(zoomed range)"))
     if pupitre_files:
         pupitre_children = [i18n._("Pupitre sources: ")]
         for i, fname in enumerate(pupitre_files):
@@ -720,16 +758,14 @@ def file_stats_banner(
                 pupitre_children.append(html.A(fname, href=file_viewer_href(assembly_name, fname)))
             else:
                 pupitre_children.append(fname)
-        segments.append(html.Span(pupitre_children))
+        lines.append(html.Span(pupitre_children))
+    if hybrid_files is not None:
+        lines.append(_hybrid_sources_segment(hybrid_files))
 
-    if len(segments) == 1 and isinstance(segments[0], str):
-        content = segments[0]
+    if len(lines) == 1 and isinstance(lines[0], str):
+        content = lines[0]
     else:
-        content = []
-        for i, segment in enumerate(segments):
-            if i:
-                content.append(" | ")
-            content.append(segment)
+        content = [html.Div(line) for line in lines]
 
     return html.Div(
         content,

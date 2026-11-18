@@ -103,6 +103,14 @@ msgstr "(plage zoomée)"
 msgid "Pupitre sources: "
 msgstr "Sources pupitre : "
 
+#: src/dash_selectors.py
+msgid "Hybrid sources: "
+msgstr "Sources hybride : "
+
+#: src/dash_selectors.py
+msgid "none"
+msgstr "aucune"
+
 #: src/magnetdb_app.py:112
 msgid "Dashboard MagnetDB - LNCMI monitoring"
 msgstr "Tableau de bord MagnetDB - Supervision LNCMI"

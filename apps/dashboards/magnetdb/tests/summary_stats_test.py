@@ -234,6 +234,26 @@ def test_get_field_column_stats_time_range_narrows_sample_count(monkeypatch):
     assert len(zoomed["values"]) < len(full["values"])
 
 
+def test_get_field_column_stats_custom_candidates(monkeypatch):
+    monkeypatch.chdir(Path(__file__).resolve().parent)
+    pupitre = db.load_mrun_object(_PUPITRE_FILE, _HOUSING)
+    tdms = db.load_mrun_object(_TDMS_FILE, _HOUSING)
+    assert db.get_field_column_stats([pupitre], candidates=("Field",))["column"] == "Field"
+    assert db.get_field_column_stats([pupitre], candidates=("Champ_magn",)) is None
+    assert db.get_field_column_stats([tdms], candidates=("Champ_magn",))["column"] == "Champ_magn"
+
+
+def test_get_pupitre_field_stats_skips_tdms_and_missing_columns(monkeypatch):
+    monkeypatch.chdir(Path(__file__).resolve().parent)
+    pupitre = db.load_mrun_object(_PUPITRE_FILE, _HOUSING)
+    tdms = db.load_mrun_object(_TDMS_FILE, _HOUSING)
+    stats = db.get_pupitre_field_stats([tdms, pupitre], columns=("Field", "SupraField"))
+    assert [s["column"] for s in stats] == ["Field"]
+    assert stats[0]["unit"] == "tesla"
+    # Champ_magn exists only in the TDMS run, which is not a pupitre source
+    assert db.get_pupitre_field_stats([tdms, pupitre], columns=("Champ_magn",)) == []
+
+
 def test_get_energy_stats_pupitre_and_tdms(monkeypatch):
     monkeypatch.chdir(Path(__file__).resolve().parent)
     pupitre = db.load_mrun_object(_PUPITRE_FILE, _HOUSING)

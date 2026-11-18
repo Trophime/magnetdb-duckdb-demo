@@ -879,13 +879,16 @@ def get_overview_record_sources(filename, db_path=None):
     dict or None
         Keys ``housing``, ``assembly_name``, ``sources_overview``,
         ``sources_archive``, ``sources_pupitre``, ``sources_default``,
-        ``sources_spike``, ``t0``, ``duration``. ``None`` if *filename* has
-        no matching row.
+        ``sources_spike``, ``sources_hybrid_kHz``, ``sources_hybrid_rms``,
+        ``sources_hybrid_trigger``, ``sources_hybrid_vprocess``, ``t0``,
+        ``duration``. ``None`` if *filename* has no matching row.
     """
     with duckdb.connect(db_path or DB_PATH, read_only=True) as conn:
         query = """
             SELECT housing, assembly_name, sources_overview, sources_archive,
-                   sources_pupitre, sources_default, sources_spike, t0, duration
+                   sources_pupitre, sources_default, sources_spike,
+                   sources_hybrid_kHz, sources_hybrid_rms,
+                   sources_hybrid_trigger, sources_hybrid_vprocess, t0, duration
             FROM overview_records
             WHERE filename = ?
         """
@@ -1236,7 +1239,7 @@ def filter_by_x_range(df, x_col, x_range):
     return df[(df[x_col] >= lo) & (df[x_col] <= hi)]
 
 
-def get_field_column_stats(mruns, x_range=None, x_col="timestamp"):
+def get_field_column_stats(mruns, x_range=None, x_col="timestamp", candidates=_FIELD_COLUMN_CANDIDATES):
     """Aggregate min/mean/max/std of the magnetic-field column across MagnetRun objects.
 
     Looks for whichever of ``"Field"`` (pupitre) or ``"Champ_magn"``
@@ -1257,12 +1260,15 @@ def get_field_column_stats(mruns, x_range=None, x_col="timestamp"):
         (e.g. a graph's current zoom); ``None`` uses each run's full data.
     x_col : str, optional
         ``"timestamp"`` or ``"t"`` — which column *x_range* is expressed in.
+    candidates : tuple of str, optional
+        Column names to look for, bare or as a ``"Group/Channel"`` suffix
+        (default ``("Field", "Champ_magn")``; e.g. ``("SupraField",)``).
 
     Returns
     -------
     dict or None
-        Keys ``column`` (``"Field"`` or ``"Champ_magn"``, whichever was
-        found first), ``unit`` (str, ``"tesla"`` when resolvable, else
+        Keys ``column`` (the first of *candidates* found, e.g. ``"Field"`` or
+        ``"Champ_magn"``), ``unit`` (str, ``"tesla"`` when resolvable, else
         ``None``), ``min``, ``mean``, ``max``, ``std`` [tesla], ``values``
         (:class:`~numpy.ndarray`, the combined tesla values feeding the
         stats — for building a histogram). ``None`` if none of *mruns* has
@@ -1276,7 +1282,7 @@ def get_field_column_stats(mruns, x_range=None, x_col="timestamp"):
         key = next(
             (
                 k for k in keys
-                if k in _FIELD_COLUMN_CANDIDATES or k.split("/")[-1] in _FIELD_COLUMN_CANDIDATES
+                if k in candidates or k.split("/")[-1] in candidates
             ),
             None,
         )
@@ -1313,6 +1319,38 @@ def get_field_column_stats(mruns, x_range=None, x_col="timestamp"):
         "std": float(combined.std()),
         "values": combined.to_numpy(),
     }
+
+
+def get_pupitre_field_stats(
+    mruns, x_range=None, x_col="timestamp", columns=("SupraField", "TotalField")
+):
+    """Min/mean/max/std of extra field columns, read from the pupitre runs only.
+
+    Parameters
+    ----------
+    mruns : list of :class:`~python_magnetrun.MagnetRun.MagnetRun`
+        Loaded MagnetRun objects; only those of pupitre format are used.
+    x_range : list, optional
+        ``[start, end]`` in *x_col* units to restrict the aggregation to;
+        ``None`` uses each run's full data.
+    x_col : str, optional
+        ``"timestamp"`` or ``"t"`` — which column *x_range* is expressed in.
+    columns : tuple of str, optional
+        Pupitre columns to summarize, in order (e.g. ``"SupraField"`` [T],
+        ``"TotalField"`` [T] of the M8 Hybrid).
+
+    Returns
+    -------
+    list of dict
+        One :func:`get_field_column_stats` result per column of *columns*
+        found in the pupitre runs, in *columns* order; empty if none.
+    """
+    pupitre = [m for m in mruns if m.MagnetData.Type == DataType.PUPITRE]
+    stats = (
+        get_field_column_stats(pupitre, x_range=x_range, x_col=x_col, candidates=(column,))
+        for column in columns
+    )
+    return [s for s in stats if s is not None]
 
 
 def get_energy_stats(mruns, x_range=None, x_col="timestamp"):
