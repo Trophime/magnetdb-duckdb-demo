@@ -441,7 +441,10 @@ def update_file_stats(
 
     include_archive = bool(include_archive_value)
     housing, regular_files, _event_files = _record_sources(selected_record, selected_db, include_archive)
-    mruns = [m for m in (db.load_mrun_object(f, housing) for f in regular_files) if m is not None]
+    loaded = {f: db.load_mrun_object(f, housing) for f in regular_files}
+    mruns = [m for m in loaded.values() if m is not None]
+    pupitre_mruns = [loaded[f] for f in info["sources_pupitre"] if loaded.get(f) is not None]
+    overview_mruns = [loaded[f] for f in info["sources_overview"] if loaded.get(f) is not None]
 
     # Same zoom-range extraction as update_graphs: any currently zoomed/panned
     # graph narrows the summary to that time window; switching record/database/
@@ -485,8 +488,18 @@ def update_file_stats(
     field_stats = (
         db.get_field_column_stats(mruns, x_range=analysis_range, x_col=x_mode) if mruns else None
     )
-    energy_stats = (
-        db.get_energy_stats(mruns, x_range=analysis_range, x_col=x_mode) if mruns else None
+    # Energy from the pupitre sources only: the Overview file covers the same
+    # run, so summing both would count it twice. The check compares the
+    # pupitre Pmagnet energy with the Overview Puissance_Alims one.
+    energy_stats = db.get_energy_stats(pupitre_mruns, x_range=analysis_range, x_col=x_mode)
+    pmagnet = db.get_energy_stats(
+        pupitre_mruns, x_range=analysis_range, x_col=x_mode, power_keys=db.PMAGNET_POWER_KEYS
+    )
+    alims = db.get_energy_stats(overview_mruns, x_range=analysis_range, x_col=x_mode)
+    energy_check = (
+        {"pupitre_mwh": pmagnet["energy_mwh"], "overview_mwh": alims["energy_mwh"]}
+        if pmagnet and alims
+        else None
     )
     # SupraField / TotalField from the pupitre sources (M8 Hybrid)
     pupitre_field_stats = db.get_pupitre_field_stats(mruns, x_range=analysis_range, x_col=x_mode)
@@ -513,6 +526,7 @@ def update_file_stats(
         zoomed=x_range is not None,
         hybrid_files=hybrid_files,
         extra_field_stats=pupitre_field_stats,
+        energy_check=energy_check,
     )
     return banner, plot.field_histogram_figure(field_stats)
 

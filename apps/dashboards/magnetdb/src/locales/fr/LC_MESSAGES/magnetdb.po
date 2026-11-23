@@ -95,6 +95,11 @@ msgstr "Durée : {value:.1f} s"
 msgid "Energy: {value:.3g} MWh"
 msgstr "Énergie : {value:.3g} MWh"
 
+#: src/dash_selectors.py
+#, python-brace-format
+msgid "Energy check: Pmagnet {pupitre:.3g} MWh (pupitre), Puissance_Alims {overview:.3g} MWh (Overview), difference {diff:+.1f} %"
+msgstr "Contrôle d'énergie : Pmagnet {pupitre:.3g} MWh (pupitre), Puissance_Alims {overview:.3g} MWh (Overview), écart {diff:+.1f} %"
+
 #: src/dash_selectors.py:470
 msgid "(zoomed range)"
 msgstr "(plage zoomée)"

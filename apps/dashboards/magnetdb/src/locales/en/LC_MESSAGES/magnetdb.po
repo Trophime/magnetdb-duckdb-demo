@@ -95,6 +95,11 @@ msgstr ""
 msgid "Energy: {value:.3g} MWh"
 msgstr ""
 
+#: src/dash_selectors.py
+#, python-brace-format
+msgid "Energy check: Pmagnet {pupitre:.3g} MWh (pupitre), Puissance_Alims {overview:.3g} MWh (Overview), difference {diff:+.1f} %"
+msgstr ""
+
 #: src/dash_selectors.py:470
 msgid "(zoomed range)"
 msgstr ""

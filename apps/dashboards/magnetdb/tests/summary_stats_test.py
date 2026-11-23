@@ -263,6 +263,17 @@ def test_get_energy_stats_pupitre_and_tdms(monkeypatch):
     assert db.get_energy_stats([tdms])["energy_mwh"] > 0
 
 
+def test_get_energy_stats_power_keys_override(monkeypatch):
+    monkeypatch.chdir(Path(__file__).resolve().parent)
+    pupitre = db.load_mrun_object(_PUPITRE_FILE, _HOUSING)
+    tdms = db.load_mrun_object(_TDMS_FILE, _HOUSING)
+    pmagnet = db.get_energy_stats([pupitre], power_keys=db.PMAGNET_POWER_KEYS)
+    assert pmagnet["n_included"] == 1  # the sample's Pmagnet is all zeros: no value check
+    # the override has no TDMS entry: an Overview run does not contribute
+    assert db.get_energy_stats([tdms], power_keys=db.PMAGNET_POWER_KEYS) is None
+    assert db.get_energy_stats([tdms, pupitre], power_keys=db.PMAGNET_POWER_KEYS)["n_included"] == 1
+
+
 def test_get_energy_stats_time_range_reduces_total(monkeypatch):
     monkeypatch.chdir(Path(__file__).resolve().parent)
     mrun = db.load_mrun_object(_TDMS_FILE, _HOUSING)

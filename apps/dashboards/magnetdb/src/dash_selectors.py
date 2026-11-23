@@ -673,6 +673,7 @@ def file_stats_banner(
     hybrid_files=None,
     extra_field_stats=None,
     overview_records=None,
+    energy_check=None,
 ):
     """Build a duration + field stats + Energy + pupitre/hybrid-sources summary, one item per line.
 
@@ -715,6 +716,11 @@ def file_stats_banner(
         pre-loaded with *assembly_name* and that record (see
         :func:`experiment_links.overview_record_href`; plain text when
         *assembly_name* is not given). Omitted if ``None`` or empty.
+    energy_check : dict, optional
+        Energy cross-check shown after the energy line: ``pupitre_mwh``
+        (pupitre ``Pmagnet``) and ``overview_mwh`` (Overview
+        ``Puissance_Alims``) [MWh], with their relative difference to the
+        Overview value. Omitted when ``None`` or when ``overview_mwh`` is 0.
 
     Returns
     -------
@@ -757,6 +763,18 @@ def file_stats_banner(
     if energy_stats is not None:
         lines.append(
             i18n._("Energy: {value:.3g} MWh").format(value=energy_stats["energy_mwh"])
+        )
+    if energy_check is not None and energy_check["overview_mwh"]:
+        pupitre_mwh, overview_mwh = energy_check["pupitre_mwh"], energy_check["overview_mwh"]
+        lines.append(
+            i18n._(
+                "Energy check: Pmagnet {pupitre:.3g} MWh (pupitre), Puissance_Alims "
+                "{overview:.3g} MWh (Overview), difference {diff:+.1f} %"
+            ).format(
+                pupitre=pupitre_mwh,
+                overview=overview_mwh,
+                diff=(pupitre_mwh - overview_mwh) / overview_mwh * 100,
+            )
         )
     if pupitre_files:
         pupitre_children = [i18n._("Pupitre sources: ")]

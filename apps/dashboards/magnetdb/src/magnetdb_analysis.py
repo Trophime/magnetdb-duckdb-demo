@@ -1206,6 +1206,10 @@ _POWER_KEY_BY_TYPE = {
     DataType.TDMS: "Puissances/Puissance_Alims",
 }
 
+# Magnet power of pupitre runs only (an energy cross-check against the
+# Overview "Puissance_Alims"): pass as get_energy_stats(power_keys=...).
+PMAGNET_POWER_KEYS = {DataType.PUPITRE: "Pmagnet"}
+
 _J_TO_MWH = 3.6e9  # J -> MWh
 
 
@@ -1384,7 +1388,7 @@ def get_pupitre_field_stats(
     return [s for s in stats if s is not None]
 
 
-def get_energy_stats(mruns, x_range=None, x_col="timestamp"):
+def get_energy_stats(mruns, x_range=None, x_col="timestamp", power_keys=None):
     """Time-integrate each MagnetRun's total-power channel and sum the result.
 
     Uses ``"Ptot"`` [MW] for pupitre-format runs and
@@ -1404,6 +1408,11 @@ def get_energy_stats(mruns, x_range=None, x_col="timestamp"):
         (e.g. a graph's current zoom); ``None`` integrates each run's full data.
     x_col : str, optional
         ``"timestamp"`` or ``"t"`` — which column *x_range* is expressed in.
+    power_keys : dict, optional
+        Power channel to integrate by :class:`~python_magnetrun.magnetdata_base.DataType`
+        (default :data:`_POWER_KEY_BY_TYPE`; e.g. :data:`PMAGNET_POWER_KEYS`
+        for the pupitre ``"Pmagnet"`` [MW]). Runs of a type without an entry
+        are skipped.
 
     Returns
     -------
@@ -1415,7 +1424,7 @@ def get_energy_stats(mruns, x_range=None, x_col="timestamp"):
     total_j = 0.0
     n_included = 0
     for mrun in mruns:
-        key = _POWER_KEY_BY_TYPE.get(mrun.MagnetData.Type)
+        key = (power_keys or _POWER_KEY_BY_TYPE).get(mrun.MagnetData.Type)
         if key is None or key not in mrun.MagnetData.getKeys():
             continue
         column = key.split("/")[-1]

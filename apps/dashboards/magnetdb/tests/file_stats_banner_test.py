@@ -131,6 +131,27 @@ def test_file_stats_banner_no_extra_field_lines_by_default():
     ]
 
 
+def test_file_stats_banner_energy_check_line_after_energy():
+    banner = selectors.file_stats_banner(
+        12.5,
+        None,
+        energy_stats={"energy_mwh": 101.8, "n_included": 1},
+        energy_check={"pupitre_mwh": 99.5, "overview_mwh": 90.7},
+    )
+    assert [line.children for line in banner.children] == [
+        "Duration: 12.5 s",
+        "Energy: 102 MWh",
+        "Energy check: Pmagnet 99.5 MWh (pupitre), Puissance_Alims 90.7 MWh (Overview),"
+        " difference +9.7 %",
+    ]
+
+
+def test_file_stats_banner_no_energy_check_without_overview_energy():
+    for check in (None, {"pupitre_mwh": 1.0, "overview_mwh": 0.0}):
+        banner = selectors.file_stats_banner(12.5, None, energy_check=check)
+        assert banner.children == "Duration: 12.5 s"
+
+
 def test_file_stats_banner_overview_record_links():
     banner = selectors.file_stats_banner(
         12.5, None, assembly_name="M8_A1", overview_records=["rec_a", "rec_b"]
