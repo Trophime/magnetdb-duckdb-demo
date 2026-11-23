@@ -2646,6 +2646,36 @@ def load_hybrid_supra_current(hybrid_source, housing, assembly_name, start, end)
     return downsampled.rename(columns={downsampled.columns[0]: "timestamp"})
 
 
+def align_hybrid_to_pupitre(pupitre_df, hybrid_df):
+    """Match Hybrid I_BOB samples onto a Pupitre file's own timestamps.
+
+    Parameters
+    ----------
+    pupitre_df : :class:`~pandas.DataFrame`
+        Pupitre data with columns ``t`` and ``timestamp`` (naive UTC).
+    hybrid_df : :class:`~pandas.DataFrame`
+        Output of :func:`load_hybrid_supra_current`: columns ``timestamp``
+        (naive UTC) and ``I_BOB`` [A].
+
+    Returns
+    -------
+    :class:`~pandas.DataFrame`
+        One row per Pupitre row, with columns ``t``, ``timestamp`` and
+        ``hybrid:I_BOB`` [A] (nearest Hybrid sample within 0.5 s, NaN otherwise).
+    """
+    # merge_asof refuses keys of different resolutions (e.g. Pupitre [us] vs Hybrid [ns]).
+    hybrid = hybrid_df.rename(columns={"I_BOB": "hybrid:I_BOB"}).astype(
+        {"timestamp": pupitre_df["timestamp"].dtype}
+    )
+    return pd.merge_asof(
+        pupitre_df[["t", "timestamp"]],
+        hybrid,
+        on="timestamp",
+        direction="nearest",
+        tolerance=pd.Timedelta("0.5s"),
+    )
+
+
 def get_research_areas(db_path=None):
     """Return the list of distinct research areas defined in ``users``, sorted.
 

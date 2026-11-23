@@ -732,13 +732,7 @@ def update_outputs(
                 # Match onto the Pupitre file's own timestamps (nominally 1 Hz,
                 # like `hourly`, but not a perfectly regular grid) rather than
                 # plotting Hybrid's independent 1 Hz grid.
-                hybrid_df = pd.merge_asof(
-                    pupitre_df[["t", "timestamp"]],
-                    hourly.rename(columns={"I_BOB": "hybrid:I_BOB"}),
-                    on="timestamp",
-                    direction="nearest",
-                    tolerance=pd.Timedelta("0.5s"),
-                )
+                hybrid_df = db.align_hybrid_to_pupitre(pupitre_df, hourly)
                 hybrid_fig = plot.create_plot(
                     hybrid_df,
                     selected_x,

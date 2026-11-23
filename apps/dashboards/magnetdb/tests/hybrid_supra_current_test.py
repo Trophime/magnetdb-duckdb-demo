@@ -235,15 +235,27 @@ def test_load_hybrid_supra_current_matches_pupitre_grid_via_merge_asof(monkeypat
     )
     pupitre_df = pd.DataFrame({"t": [0, 0, 1, 10], "timestamp": pupitre_timestamps})
 
-    aligned = pd.merge_asof(
-        pupitre_df[["t", "timestamp"]],
-        hourly.rename(columns={"I_BOB": "hybrid:I_BOB"}),
-        on="timestamp",
-        direction="nearest",
-        tolerance=pd.Timedelta("0.5s"),
-    )
+    aligned = db.align_hybrid_to_pupitre(pupitre_df, hourly)
 
     assert len(aligned) == len(pupitre_df)
     assert list(aligned["timestamp"]) == list(pupitre_df["timestamp"])
     assert aligned["hybrid:I_BOB"].iloc[:3].tolist() == [42.0, 42.0, 42.0]
     assert pd.isna(aligned["hybrid:I_BOB"].iloc[3])
+
+
+def test_align_hybrid_to_pupitre_accepts_microsecond_pupitre_timestamps():
+    """Pupitre timestamps can be datetime64[us] while Hybrid ones are
+    datetime64[ns]; the alignment must not raise a MergeError."""
+    pupitre_df = pd.DataFrame({
+        "t": [0, 1],
+        "timestamp": pd.to_datetime(["2026-11-13 07:12:02", "2026-11-13 07:12:03"]).astype("datetime64[us]"),
+    })
+    hourly = pd.DataFrame({
+        "timestamp": pd.to_datetime(["2026-11-13 07:12:02", "2026-11-13 07:12:03"]).astype("datetime64[ns]"),
+        "I_BOB": [7180.0, 7181.0],
+    })
+
+    aligned = db.align_hybrid_to_pupitre(pupitre_df, hourly)
+
+    assert aligned["timestamp"].dtype == pupitre_df["timestamp"].dtype
+    assert aligned["hybrid:I_BOB"].tolist() == [7180.0, 7181.0]
