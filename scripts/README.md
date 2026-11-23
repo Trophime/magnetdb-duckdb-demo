@@ -153,7 +153,9 @@ units. Used on calcul18 (`PLAN_dashboard_server_deployment.md`).
 | `magnetdb.network` | `~/.config/containers/systemd/` | Network `magnetdb` |
 | `magnetdb-dashboard.container` | `~/.config/containers/systemd/` | Dashboard, no published port; stops and starts with the rclone mount |
 | `magnetdb-traefik.container` | `~/.config/containers/systemd/` | Traefik on `:8443`, configuration from `~/traefik/` |
-| `traefik/dynamic.yml` | `~/traefik/` | Router for `calcul18.lncmig.local` and `dashboard.magnetdb-dev.local`, login, certificate |
+| `traefik/dynamic.yml` | `~/traefik/` | Router for `calcul18.lncmig.local` and `dashboard.magnetdb-dev.local`, login, certificate, maintenance page on 502–504 |
+| `magnetdb-maintenance.container` | `~/.config/containers/systemd/` | Static "dashboard unavailable" page (`busybox httpd`), shown by Traefik after login while the dashboard is stopped or restarting |
+| `maintenance/index.html` | `~/maintenance/` | That page (FR + EN, reloads every 30 s); edits need no restart |
 
 Traefik serves `https://calcul18.lncmig.local:8443/` (in the LNCMI DNS, no
 client setup) with a certificate signed by python_magnetdb's mkcert CA (on
@@ -167,15 +169,16 @@ As `magnetdb` (log in over SSH, not `sudo -iu`: Podman needs the user's
 systemd session):
 
 ```bash
-mkdir -p ~/traefik/certs ~/duckdb ~/magnetdb-data/supervision
-# copy scripts/traefik/traefik.yml and scripts/quadlet/traefik/dynamic.yml to ~/traefik/;
+mkdir -p ~/traefik/certs ~/duckdb ~/magnetdb-data/supervision ~/maintenance ~/.config/magnetdb
+# copy scripts/traefik/traefik.yml and scripts/quadlet/traefik/dynamic.yml to ~/traefik/,
+# and scripts/quadlet/maintenance/index.html to ~/maintenance/;
 # on calcul22: mkcert -cert-file dashboard.magnetdb-dev.local.pem -key-file dashboard.magnetdb-dev.local-key.pem \
 #   calcul18.lncmig.local dashboard.magnetdb-dev.local, then copy both .pem files to ~/traefik/certs/
 htpasswd -cB ~/traefik/htpasswd <user>   # shared login; Traefik reads it at start only
 chmod 600 ~/traefik/htpasswd
 systemctl --user daemon-reload
 systemctl --user enable --now rclone-mount
-systemctl --user start magnetdb-dashboard magnetdb-traefik
+systemctl --user start magnetdb-dashboard magnetdb-maintenance magnetdb-traefik
 journalctl --user -u magnetdb-dashboard -f
 ```
 

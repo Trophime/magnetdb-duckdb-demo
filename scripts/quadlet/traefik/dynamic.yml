@@ -9,6 +9,7 @@ http:
         - websecure
       middlewares:
         - dashboard-auth
+        - dashboard-down
       service: dashboard
       tls: {}
 
@@ -16,12 +17,24 @@ http:
     dashboard-auth:
       basicAuth:
         usersFile: /etc/traefik/htpasswd
+    # Dashboard stopped, restarting or starting a new image: show the static
+    # maintenance page (status code kept); after the login, so no 401 bypass.
+    dashboard-down:
+      errors:
+        status:
+          - "502-504"
+        service: maintenance
+        query: /index.html
 
   services:
     dashboard:
       loadBalancer:
         servers:
           - url: "http://magnetdb-dashboard:8050"
+    maintenance:
+      loadBalancer:
+        servers:
+          - url: "http://magnetdb-maintenance:8080"
 
 tls:
   stores:

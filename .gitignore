@@ -230,6 +230,7 @@ scripts/traefik/htpasswd
 PLAN_dashboard_server_deployment.md
 NOTES_python_magnetdb_deployment.md
 PLAN_dashboard_podman_operations.md
+NOTES_dashboard_podman_operations.md
 PLAN_group_order_server_deployment.md
 NOTES_cirrus_A1_runlogs.md
 NOTES_cirrus_A1_experiment_matching.md

@@ -1,0 +1,18 @@
+# Static "dashboard unavailable" page (Quadlet, magnetdb user).
+# Traefik's errors middleware serves it when the dashboard answers 502-504 (after login).
+# ~/maintenance/ holds index.html from scripts/quadlet/maintenance/ (edits need no restart).
+[Unit]
+Description=MagnetDB dashboard maintenance page
+
+[Container]
+Image=docker.io/library/busybox:1.38
+ContainerName=magnetdb-maintenance
+Network=magnetdb.network
+Volume=%h/maintenance:/www:ro
+Exec=httpd -f -p 8080 -h /www
+
+[Service]
+Restart=on-failure
+
+[Install]
+WantedBy=default.target

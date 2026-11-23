@@ -3,8 +3,8 @@
 # plus htpasswd and certs/ (never committed).
 [Unit]
 Description=MagnetDB dashboard proxy (Traefik)
-Wants=magnetdb-dashboard.service
-After=magnetdb-dashboard.service
+Wants=magnetdb-dashboard.service magnetdb-maintenance.service
+After=magnetdb-dashboard.service magnetdb-maintenance.service
 
 [Container]
 Image=docker.io/library/traefik:v3.6.7
