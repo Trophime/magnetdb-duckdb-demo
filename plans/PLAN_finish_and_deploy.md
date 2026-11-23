@@ -78,9 +78,17 @@ run on a copy; item 3b goes with item 1 (same build step).
 9. calcul18 deployment plan: dashboard image, DB copy, Quadlet units, the
    maintainer's browser check, then the testers
    ([PLAN_dashboard_server_deployment.md](PLAN_dashboard_server_deployment.md)).
+   ✅ 2026-11-23: image `magnetdb-dashboard:2026.11.23` and
+   `magnetdb-2026-11-16-m8hybrid.duckdb` (2026-11-16 rebuild + merged M8
+   summary) live on calcul18, with calcul22's `bdd.csv` (naive UTC, to
+   2026-11-17); automated checks and the maintainer's browser check passed.
+   Testers: not started yet.
 
 ## After the deployment
 
+- Maintenance page and operations note, before the testers start:
+  [PLAN_dashboard_podman_operations.md](PLAN_dashboard_podman_operations.md)
+  (awaiting approval since 2026-11-04).
 - E1 → A2 → hoop stress (A22): [../python_magnetsetup/PLAN_supra_umagnet.md](../python_magnetsetup/PLAN_supra_umagnet.md),
   [../to_duckdb/plans/PLAN_hoop_stress_part_names.md](../to_duckdb/plans/PLAN_hoop_stress_part_names.md);
   needs magnettools in the environment (F4).
