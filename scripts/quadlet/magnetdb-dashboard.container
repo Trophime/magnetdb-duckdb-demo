@@ -17,7 +17,7 @@ UserNS=keep-id:uid=1000,gid=100
 # Otherwise Podman names uid 1000 after the host user with that uid
 PodmanArgs=--passwd-entry=magnetdb:*:1000:100::/home/app:/bin/sh
 Environment=USER=magnetdb
-Environment=MAGNETDB_DB_PATH=/data/duckdb/magnetdb-2026-10-08.duckdb
+Environment=MAGNETDB_DB_PATH=/data/duckdb/magnetdb-2026-11-16-m8hybrid.duckdb
 Environment=MAGNETDB_DB_DIR=/data/duckdb
 Environment=MAGNETDB_RECORDS_DIR=/mnt/LNCMIG-Data/records
 Environment=MAGNETDB_SUPERVISION_BDD_CSV=/data/supervision/bdd.csv
