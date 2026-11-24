@@ -64,7 +64,8 @@ For the database CLI and schema reference, see
 
 [`scripts/build_from_scratch.sh`](scripts/build_from_scratch.sh) rebuilds the
 database from scratch into `to_duckdb/magnetdb-<YYYY-MM-DD>.duckdb`: it loads
-the assemblies, magnet statuses, pupitre check rules, experiments and their
+the standalone materials (`MAT_ISOLANT`, needed by the hoop stress and
+simulation setups), the assemblies, magnet statuses, pupitre check rules, experiments and their
 statistics, file-quality and ETL checks (with their tags), operational data
 and their statistics, overview records and the users table, and finally tags
 the LNCMI Tech Staff sessions. Each step prints `OK`, `FAILED` or `SKIPPED`;

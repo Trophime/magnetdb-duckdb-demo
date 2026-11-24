@@ -2,7 +2,7 @@
 set -eo pipefail
 
 # step IDs, in build order (see --help)
-STEPS=(create assemblies statuses etl-config check experiments exp-stats file-check etl-check operationaldata
+STEPS=(create materials assemblies statuses etl-config check experiments exp-stats file-check etl-check operationaldata
        operationaldata-metadata op-stats
        overview-json overview-ops overview-infer export users link-users unlinked-users
        tech-staff)
@@ -292,6 +292,11 @@ unload_credentials() {
 # --- build ------------------------------------------------------------------
 
 section create "Create database" python magnetdb.py db create --db $DB
+
+# materials no part references: MAT_ISOLANT (glue between turns) is required by
+# stress_map.load_assembly_config_from_duckdb (hoop stress, simulation setups)
+section materials "Load standalone materials" \
+    python magnetdb.py material add MAT_ISOLANT.json --input-dir "$JSON" --db "$DB"
 
 # load assembly by data and check data; a failed file is reported but does not stop the build
 if wanted assemblies; then

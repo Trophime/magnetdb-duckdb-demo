@@ -172,8 +172,9 @@ def load_assembly_config_from_duckdb(
         if owns_con:
             con.close()
         raise ValueError(
-            "MAT_ISOLANT not found in the database. "
-            "Run seeds_to_duckdb.py to populate structural data first."
+            "MAT_ISOLANT not found in the database. Add it with: python magnetdb.py "
+            "material add MAT_ISOLANT.json --input-dir ~/github/hifimagnet-projects/magnetdb.json "
+            "--db <database> (scripts/build_from_scratch.sh loads it in its 'materials' step)."
         )
     insulator_payload = _format_material_row(
         dict(
