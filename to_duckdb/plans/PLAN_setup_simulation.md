@@ -1,6 +1,6 @@
 # Plan: `setup_simulation.py`, a Feel++ setup from DuckDB
 
-**Status (2026-11-25): ✅ done, not committed** (revised the same day for
+**Status (2026-11-25): ✅ done, committed `8ba3500`** (revised the same day for
 option F, see [Relation to option F](#relation-to-option-f)). Open questions
 1–5 take their defaults: no CAD/mesh commands, explicit currents,
 `to_duckdb/`, independent of `export_inductance_matrix.py`, no DB results.
@@ -228,7 +228,8 @@ of this plan.
      integration test is not written yet, so the suite does not fail on it.
    - **Unblocked (2026-11-25)** by
      [python_magnetsetup/PLAN_fix_json_templates.md](../../python_magnetsetup/PLAN_fix_json_templates.md)
-     (9 templates and the assembly branch of `setup()`, not committed yet):
+     (9 templates and the assembly branch of `setup()`, python_magnetsetup
+     `e78a6c3`):
      on the latest DB the magnet setup (`thelec`) and the assembly setup
      (`thmag_hcurl`, `gradHZ`) both succeed with this script. Steps 5–7 can
      resume.
@@ -285,6 +286,6 @@ of this plan.
    documented commands run as written on the latest DB (exit 0, files as
    listed); the documented options match `--help`.
 
-**Status: ✅ done, not committed.** The setups are the inputs of the
+**Status: ✅ done, committed `8ba3500`.** The setups are the inputs of the
 magnet-scipy numerical commissioning (its "Order of work" steps 2–4: CAD,
 mesh, L_H, L_B, M_HB), which needs the CAD / mesh toolchain.

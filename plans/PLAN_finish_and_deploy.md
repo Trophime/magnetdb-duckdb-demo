@@ -1,8 +1,12 @@
 # Plan: finish the database and dashboard work, then deploy on calcul18
 
-**Status (2026-11-13): draft for discussion; nothing approved.** Each item
-below gets its own short plan (or uses an existing one) and needs `approve`
-before any step.
+**Status (2026-11-25): ✅ done except step 11 of the server deployment (the
+testers).** Steps 1–9 below are done: the 2026-11-16 rebuild with the M8
+hybrid patch (`magnetdb-2026-11-16-m8hybrid.duckdb`) and image
+`magnetdb-dashboard:2026.11.23` are live on calcul18 since 2026-11-23, with
+the maintenance page. Follow-ups are tracked in the [ROADMAP](../ROADMAP.md).
+*Original status (2026-11-13): draft for discussion; each item got its own
+short plan or used an existing one.*
 
 ## Goal
 
@@ -86,9 +90,9 @@ run on a copy; item 3b goes with item 1 (same build step).
 
 ## After the deployment
 
-- Maintenance page and operations note, before the testers start:
+- ✅ Maintenance page and operations note, before the testers start:
   [PLAN_dashboard_podman_operations.md](PLAN_dashboard_podman_operations.md)
-  (awaiting approval since 2026-11-04).
+  (done 2026-11-23, `8f9a4fb`).
 - E1 → A2 → hoop stress (A22): [../python_magnetsetup/PLAN_supra_umagnet.md](../python_magnetsetup/PLAN_supra_umagnet.md),
   [../to_duckdb/plans/PLAN_hoop_stress_part_names.md](../to_duckdb/plans/PLAN_hoop_stress_part_names.md);
   needs magnettools in the environment (F4).
@@ -105,12 +109,13 @@ run on a copy; item 3b goes with item 1 (same build step).
   later rebuild is too slow.
 - Tester issues from F7 (GitHub issue template).
 
-Any time: update the [ROADMAP](../ROADMAP.md) snapshot (dated 2026-11-07) once
-its uncommitted edits are committed.
+✅ ROADMAP snapshot updated 2026-11-25.
 
 ## Decisions to confirm
 
-Suggested by Claude on 2026-11-13, not yet confirmed by the user:
+*Superseded (2026-11-25): settled by what was done. #18 went into the
+2026-11-16 rebuild, C8 was done before the deployment, C9 / C10 and A1 stay
+after it.* Suggested by Claude on 2026-11-13:
 
 1. **#18 before the deployment** (implies the full rebuild of stage 3).
 2. **C9 / C10 and A1 after the deployment.**
