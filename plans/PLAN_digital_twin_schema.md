@@ -888,7 +888,7 @@ CREATE TABLE IF NOT EXISTS electrical_characteristics (
     source                VARCHAR,           -- magfile_conf | mysql | magnettools | workflow | fem | measurement | fit | manual
     model                 VARCHAR,           -- model / method / version
     source_ref            VARCHAR,           -- config id, file sha256, ...
-    simulation_id         INTEGER,           -- when computed by an L5 simulation
+    simulation_uid        VARCHAR,           -- when computed by an L5 simulation (simulation_results.uid)
     conditions            JSON DEFAULT '{}', -- reference Tin, flow, cooling, FF reference point {"r":0,"z":..} [m]
     -- time and default
     valid_from            TIMESTAMP,
@@ -1308,50 +1308,60 @@ CREATE TABLE IF NOT EXISTS storage_objects (
     created_at    TIMESTAMP DEFAULT current_timestamp
 );
 
-CREATE SEQUENCE IF NOT EXISTS simulations_id_seq START 1;
-CREATE TABLE IF NOT EXISTS simulations (
-    id                 INTEGER PRIMARY KEY DEFAULT nextval('simulations_id_seq'),
-    kind               VARCHAR,         -- fem (python_magnetsetup) | ode (magnet-scipy) | workflow
-    target_type        VARCHAR,         -- magnet | assembly | digital_magnet | digital_assembly
-    target_name        VARCHAR,
-    experiment_id      INTEGER,         -- realistic context: the run being replayed
-    overview_filename  VARCHAR,         -- signatures / reference currents
-    config_id          INTEGER,         -- L2 operating configuration used
-    method             VARCHAR,         -- fem: cfpdes, ...
-    model              VARCHAR,
-    geometry           VARCHAR,         -- Axi | 3D
-    cooling            VARCHAR,
-    static             BOOLEAN,
-    non_linear         BOOLEAN,
-    status             VARCHAR DEFAULT 'pending',
-    setup_status       VARCHAR DEFAULT 'pending',
-    setup_state        JSON DEFAULT '{}',
-    setup_object       INTEGER,         -- storage_objects
-    output_object      INTEGER,
-    log_object         INTEGER,
-    owner              VARCHAR,
-    inputs             JSON DEFAULT '{}',  -- ids of every L3 characteristic, L1/L2 row used
-    metadata           JSON DEFAULT '{}',
-    created_at         TIMESTAMP DEFAULT current_timestamp,
-    updated_at         TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS simulation_currents (
-    simulation_id  INTEGER REFERENCES simulations(id),
-    magnet_name    VARCHAR,
-    value          DOUBLE,              -- [A]
-    PRIMARY KEY (simulation_id, magnet_name)
+-- Kept results of a simulation. Job state (status, owner, server, logs) is in
+-- Postgres (option F); only the immutable facts of a finished run are here.
+CREATE TABLE IF NOT EXISTS simulation_results (
+    uid                   VARCHAR PRIMARY KEY,  -- UUID created with the run (setup.json "uid"), also in Postgres
+    kind                  VARCHAR,         -- fem (python_magnetsetup) | ode (magnet-scipy) | workflow
+    target_type           VARCHAR,         -- magnet | assembly | digital_magnet | digital_assembly
+    target_name           VARCHAR,
+    experiment_id         INTEGER,         -- realistic context: the run being replayed
+    overview_filename     VARCHAR,         -- signatures / reference currents
+    config_id             INTEGER,         -- L2 operating configuration used
+    method                VARCHAR,         -- fem: cfpdes, ...
+    model                 VARCHAR,
+    geometry              VARCHAR,         -- Axi | 3D
+    cooling               VARCHAR,
+    static                BOOLEAN,
+    non_linear            BOOLEAN,
+    currents              JSON DEFAULT '{}',  -- {magnet_name: value [A]}
+    mesh                  VARCHAR,         -- mesh attachment name in Postgres / rustfs key
+    geometry_fingerprint  VARCHAR,         -- sha256 of the geometry YAMLs the run used
+    inputs                JSON DEFAULT '{}',  -- ids of every L3 characteristic, L1/L2 row used
+    metrics               JSON DEFAULT '{}',  -- per-channel residuals, summary values
+    output_object         INTEGER,         -- storage_objects
+    metadata              JSON DEFAULT '{}',  -- provenance: DB sha256, library versions
+    finished_at           TIMESTAMP,
+    imported_at           TIMESTAMP DEFAULT current_timestamp,
+    imported_by           VARCHAR          -- the admin who imported it
 );
 ```
+
+**Where simulations live (2026-11-25).** A simulation is split by kind of
+data, following option F
+([PLAN_duckdb_master_control_plane.md](PLAN_duckdb_master_control_plane.md),
+"Simulation runs and meshes"):
+
+- **Postgres:** job and control state (owner, role check, server and SSH
+  key, status, logs, attachment references, requested currents). This
+  replaces the `simulations` / `simulation_currents` tables first planned
+  here.
+- **DuckDB:** `simulation_results` above, plus L3 rows with
+  `source = fem | magnettools | ode` that point to it. Rows are written only
+  by an **admin import** (`write_results`) of a run someone asked to keep.
+  Exploratory runs are not imported.
+- **rustfs:** setup archives, outputs, meshes and CAD files.
+- The stores are linked by `uid` and by names, never by a Postgres integer
+  id.
 
 - `inputs` records the exact characteristic / configuration ids a run used
   (`get_characteristic_by_id`), so it can be reproduced even after the
   `preferred` default changes.
 - S3 key convention and client: reuse `rustfs/magnetfs` and the convention
   being defined by `python_magnetrun` Stream 4.7 (D7), not a second one.
-- **DuckDB single-writer constraint:** a runner must not hold a write
-  connection while a job runs (it would lock out dashboards). Open → update
-  status → close; results are written in one short transaction at the end.
+- **DuckDB single-writer constraint:** job status is updated in Postgres,
+  never in DuckDB, so a running job holds no DuckDB connection. Results are
+  written in one short transaction at import time.
 - `simulation_measures` (optional, later): load `*.measures/values.csv`
   into a table so simulated and measured values can be compared in SQL.
 - Plateaux: `v_run_plateaux` view flattening `overview_records.plateaux`
@@ -1427,8 +1437,11 @@ following the existing `to_duckdb/tests/test_*_db.py` pattern.
    → verify: against a test rustfs instance (or a local S3-compatible
    fixture in tests).
 6. **L4 digital variants** — after the A/B decision.
-7. **L5 simulations** — FEM (magnetsetup, Axi first) and ODE runners,
-   CLI subcommands in `to_duckdb/magnetdb.py`.
+7. **L5 simulations** — `simulation_results` and its import command
+   (admin only; reads a run directory's `setup.json` / `provenance.json`);
+   FEM setups from DuckDB via `to_duckdb/setup_simulation.py`
+   ([PLAN_setup_simulation.md](../to_duckdb/plans/PLAN_setup_simulation.md));
+   job running stays in python_magnetdb (Postgres + worker).
 
 Files expected per phase (to be confirmed in each phase plan): edit
 `to_duckdb/schema.py`, `to_duckdb/docs/schema.md`; create new snake_case

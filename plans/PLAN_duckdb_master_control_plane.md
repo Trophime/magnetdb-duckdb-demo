@@ -34,9 +34,9 @@ compares online simulations with live operating data.
 
 | Store | Content | Writers |
 |---|---|---|
-| **DuckDB** (one file) | materials, parts, magnets, assemblies, `magnet_parts`, `assembly_magnets`, `housing_config`, experiments, `operationaldata`, `overview_records`, proposal sessions, `operation_log`, all stats tables, comparison results (new) | the API process only |
-| **Postgres** (Django) | `users` (role, api_key), `servers` (SSH keys), `simulations`, `simulation_currents`, `audit_logs`, attachment metadata | API + Celery worker, concurrently |
-| **MinIO** | attachments, simulation outputs | API + worker |
+| **DuckDB** (one file) | materials, parts, magnets, assemblies, `magnet_parts`, `assembly_magnets`, `housing_config`, experiments, `operationaldata`, `overview_records`, proposal sessions, `operation_log`, all stats tables, comparison results (new), `simulation_results` (new, kept results only) | the API process only |
+| **Postgres** (Django) | `users` (role, api_key), `servers` (SSH keys), `simulations` (job state), `simulation_currents`, `audit_logs`, attachment metadata (incl. `mesh_attachments`) | API + Celery worker, concurrently |
+| **rustfs** (replaces MinIO, 2026-11-25) | attachments (meshes, CAD), setup archives, simulation outputs | API + worker |
 | **Parquet** (rolling buffer) | live samples from the robot, last N hours | the robot service |
 
 The rules:
@@ -60,13 +60,19 @@ The rules:
 5. **Links between the two databases use names.** `simulations.magnet`/`site`
    and `simulation_currents.magnet` become magnet or assembly names; the API
    checks them (for example, it refuses to delete a magnet that still has
-   simulations).
+   simulations). A simulation also gets a `uid` (UUID) at creation, written
+   in its `setup.json` and used as the key of DuckDB `simulation_results`.
 6. **Business rules live in `to_duckdb` only** (`crud.py`, `impact.py`,
    `checks.py`); python_magnetdb never runs its own schema changes on DuckDB.
    Stale hoop-stress tracking keeps using `impact.py`, with no triggers
    needed.
 7. **Secrets never enter the DuckDB file.** SSH keys stay in Postgres, because
    the file gets copied for the dashboard and for students.
+   **The file itself is confidential** (2026-11-25): it holds design-office
+   geometry, material properties and proposal data. Copies go only to people
+   allowed to see them, and the dashboard serves views, never the file. Which
+   columns are confidential, and whether students need a redacted copy, is
+   open question 7.
 
 ## Roles and actions
 
@@ -89,6 +95,38 @@ The rules:
     `read` (`routes/api/simulations.py:153`);
   - `run` accepts a `server_id` the user doesn't own
     (`routes/api/simulations.py:198-213`).
+
+## Simulation runs and meshes
+
+Decided 2026-11-25; kept deliberately simple for the expected volume (see
+Resources).
+
+- **The role gates every run.** `simulate` (simulator, designer, admin,
+  robot) is needed to create or run a simulation, including access to a
+  compute server (`servers`, SSH keys).
+- **Job state stays in Postgres**, as today. The setup inputs come from
+  DuckDB: the worker calls `to_duckdb/setup_simulation.py` on the snapshot
+  ([PLAN_setup_simulation.md](../to_duckdb/plans/PLAN_setup_simulation.md)),
+  which replaces `generate_magnet_directory` / `generate_site_directory` in
+  phase 5.
+- **Exploratory runs are normal.** A run's results are not saved anywhere
+  shared unless someone asks. An **admin imports** the results of a run
+  worth keeping into DuckDB `simulation_results` (`write_results`), under
+  the run's `uid`. The review is that import, done on request (issue or
+  email).
+- **Meshes and CAD files are kept artifacts**, because they are costly to
+  make. They stay attachments (`mesh_attachments`, files in rustfs), linked
+  to the magnet or assembly by name. Each records a **geometry
+  fingerprint** (sha256 of the geometry YAMLs it was made from) and the
+  meshing options (Axi / 3D, air box, mesh size, units, CAD and mesher
+  versions). A setup compares the fingerprint with the current geometry and
+  warns about a mesh that no longer matches.
+- **`audit_logs`** records the creation and deletion of simulations and
+  meshes, kept or not (who, when, server, target, model, `uid`).
+- **Cleanup by hand:** an admin deletes unwanted runs and meshes now and
+  then; a small script listing old ones is enough.
+- **Deferred** until the volume justifies it: a `keep` flag, request and
+  review statuses, a review screen, automatic expiry of unkept outputs.
 
 ## Robot and live data
 
@@ -120,12 +158,12 @@ review time.
 
 | # | Phase | Main files | Weeks | Verify |
 |---|---|---|---|---|
-| 0 | Decisions: Postgres-only columns to carry over (`inner_bore`, `outer_bore`, `flow_params`, `design_office_reference`, `angle`, offsets), fate of `probes`/`records`, part attachment references | this plan | 0.5 | Decisions written here |
+| 0 | Decisions: Postgres-only columns to carry over (`inner_bore`, `outer_bore`, `flow_params`, `design_office_reference`, `angle`, offsets), fate of `probes`/`records`, part attachment references, mesh and CAD attachment metadata (geometry fingerprint, meshing options) | this plan | 0.5 | Decisions written here |
 | 1 | Roles and actions + the 2 bugs | python_magnetdb `models/user.py`, `dependencies.py`, `routes/api/{simulations,servers,admin/users}.py`, `web/src/filters.js`, `web/src/views/admin/users/show.vue`, `tests/test_roles.py` | 0.5–1 | Tests written first fail, then pass; route tests for both bugs |
 | 2 | `crud.py`: `get_*` (return data) / `view_*` (print), progress messages moved to logging | `to_duckdb/crud.py`, `magnetdb.py`, `to_duckdb/tests/` | 1.5–2 | CLI output identical before/after on the test DB; new `get_*` tests |
 | 3 | API owns the DuckDB file: connection, cursor per request, `ensure_schema` at startup, snapshot, background jobs | new module in python_magnetdb, `web.py`, `pyproject.toml` (to_duckdb dependency) | 1–1.5 | Concurrent read/write test; snapshot opens read-only during writes; a job runs while the API serves requests |
 | 4 | Entity routes rebuilt on `crud.py`, with the site → assembly rename | `routes/api/{materials,parts,magnets,sites,site_magnets,magnet_parts,records}.py` (~1,150 lines), `serializers.py`, python_magnetapi | 2–3 | Route tests per entity; python_magnetapi commands work against staging |
-| 5 | Links by name; Django entity models removed; Postgres-only data migrated | `models/simulation.py`, `simulation_current.py`, Django migration, migration script | 1–1.5 | Every simulation linked to an existing magnet or assembly; row counts before/after |
+| 5 | Links by name; Django entity models removed; Postgres-only data migrated; `uid` on simulations; mesh attachments linked by name; the worker's setup inputs from `setup_simulation()` | `models/simulation.py`, `simulation_current.py`, `models/mesh_attachment.py`, `actions/run_simulation_setup.py`, Django migration, migration script | 1–1.5 | Every simulation and mesh linked to an existing magnet or assembly; row counts before/after; a setup built by the worker matches one built by `setup_simulation.py` on the same snapshot |
 | 6 | Vue: ids → names, new fields (status history, dates, housing, experiments) | `web/src/router.js`, `web/src/views/{materials,parts,magnets,sites}/` | 2–4 | `npm run build`; manual check on staging |
 | 7 | Dashboard on the snapshot; CLI through the API | `apps/dashboards/magnetdb` config, `to_duckdb/magnetdb.py` | 0.5–1 | 145 dashboard tests pass; CLI against staging |
 | 8 | Tests, docs, cutover (freeze writes, final migration, switch) | READMEs, merge plan, `PLAN_digital_twin_schema.md:1087` | 1 | Checklist on staging, then production |
@@ -144,8 +182,9 @@ Order: 1 can start right away and doesn't depend on the rest;
 | **Staging** | calcul22: NVMe with 328 GB free, 40 threads, 62 GB RAM |
 | **Production** | kelvin: 563 GB free, 64 threads, 1.5 TB RAM; CPU limits so it doesn't compete with simulations |
 | **Compute** | ≤ 2 simulations in parallel for the robot; cores per simulation to be decided |
-| **Containers** | api (owns DuckDB), worker, nginx web, Postgres, Redis, MinIO, LemonLDAP, Traefik: ≈ 3.3–4.4 GB of images, the same as today ([NOTES_python_magnetdb_deployment.md](NOTES_python_magnetdb_deployment.md)), plus the dashboards and the robot |
-| **Disk** | DuckDB 120 MB + snapshot 120 MB + Parquet buffer (size depends on the feed rates) |
+| **Containers** | api (owns DuckDB), worker, nginx web, Postgres, Redis, rustfs (replaces MinIO), LemonLDAP, Traefik: ≈ 3.3–4.4 GB of images, the same as today ([NOTES_python_magnetdb_deployment.md](NOTES_python_magnetdb_deployment.md)), plus the dashboards and the robot |
+| **Disk** | DuckDB 120 MB + snapshot 120 MB + Parquet buffer (size depends on the feed rates). rustfs, sized by the meshes (2–20 GB each): about 2 new magnets per year (at most 3) and 6–7 new assemblies (at most 8), counted in `magnetdb-2026-11-16-m8hybrid.duckdb` for 2018–2026, give **4–60 GB per year** for magnet meshes, up to **≈ 220 GB per year** if assembly meshes are kept too (open question 8) |
+| **Simulations** | one numerical commissioning per new assembly, ≈ 11 runs each (L per magnet, M, R at 4 inlet temperatures × 2 magnets): **≈ 70–90 runs per year**, plus a few exploratory runs; imported results are a few MB |
 | **Skills** | FastAPI, DuckDB, Vue 3; Django only for auth and simulations |
 | **Maintenance afterwards** | One domain schema (`to_duckdb`) and one rules module; a small Django schema for control data |
 
@@ -194,3 +233,10 @@ E was discussed on 2026-10-28.
 5. Pupitre feed and NI pigbrother streaming: protocols and rates.
 6. One robot for all housings (suggested, since there are at most 2 sessions
    at once) or one per housing?
+7. Confidential data in the DuckDB file: which columns (candidates:
+   `parts.geometry_data`, `parts.cad`, `parts.design_office_reference`, the
+   material properties, `users.local_contact`), and do students need a
+   redacted copy? To decide before phase 7 (dashboard and students on the
+   snapshot).
+8. Meshes: keep assembly meshes, or only magnet meshes? Sets the rustfs
+   size (Resources).

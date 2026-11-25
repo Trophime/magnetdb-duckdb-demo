@@ -628,6 +628,28 @@ They are listed here and **were not edited**.
     ([PLAN_duckdb_master_control_plane.md](plans/PLAN_duckdb_master_control_plane.md),
     its own "Open questions" section), which supersedes "Solution 1" of
     [PLAN_duckdb_postgres_merge.md](plans/PLAN_duckdb_postgres_merge.md)?
+    **Simulation storage, decided 2026-11-25** (section "Simulation runs and
+    meshes" of that plan):
+    - Postgres keeps the job state; the Postgres role gates every run,
+      compute servers included.
+    - DuckDB `simulation_results` (L5 of the
+      [schema plan](plans/PLAN_digital_twin_schema.md)) holds kept results
+      only, imported by an admin on request, keyed by a UUID.
+    - Meshes and CAD stay attachments, with a geometry fingerprint and the
+      meshing options.
+    - `audit_logs` records create and delete; cleanup by hand.
+    - The object store is **rustfs** (replaces MinIO).
+    - Exploratory runs are normal and are not saved unless asked;
+      setups come from
+      [PLAN_setup_simulation.md](to_duckdb/plans/PLAN_setup_simulation.md).
+    - Deferred: `keep` flag, review statuses and screen, automatic expiry.
+    - Sizing (2018–2026 counts): ≈ 2 new magnets and 6–7 new assemblies
+      per year; meshes 4–60 GB per year (≈ 220 GB with assembly meshes);
+      ≈ 70–90 runs per year.
+
+    Still open: confidential columns of the DuckDB file and a redacted copy
+    for students (the file is confidential); whether assembly meshes are
+    kept.
 11. ~~**A18** — the 7 default choices at the end of
     [PLAN_operation_log_coverage.md](plans/PLAN_operation_log_coverage.md)
     (e.g. `db drop-table operation_log`, stale marks from `check --fix`,
