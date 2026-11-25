@@ -24,6 +24,7 @@ to_duckdb/
 ├── stress_map.py                ← hoop-stress analysis library (geometry, plots)
 ├── impact.py                    ← impact of updates on stored results (stale marking)
 ├── suggest_rings.py             ← propose rings for insert magnets that have none
+├── setup_simulation.py          ← Feel++ simulation setup for an assembly or magnet
 ├── conftest.py                  ← pytest fixtures
 ├── docs/
 │   ├── loading.md               ← adding magnets, assemblies, materials
@@ -336,6 +337,52 @@ python suggest_rings.py --db ../magnetdb-scratch --json-dir ../../hifimagnet-pro
 
 `--magnet NAME` restricts the run to one target. The ring geometry files are
 searched under the parent of `--json-dir`.
+
+---
+
+## Feel++ setup from DuckDB — `setup_simulation.py`
+
+Writes the Feel++ setup files of an assembly, or of one of its magnets, from
+the DuckDB configuration, geometry and materials. It calls
+`python_magnetsetup.setup.setup()` locally: no magnetdb server, no Postgres,
+no magnettools. Plan and results:
+[PLAN_setup_simulation.md](plans/PLAN_setup_simulation.md).
+
+```bash
+DB=$(ls -t magnetdb-*.duckdb | head -1)   # newest database (opened read-only)
+WD=$HOME/setups                            # one empty directory per setup
+
+# One magnet (e.g. its own inductance)
+python setup_simulation.py --db $DB --assembly M9_A230801_00 \
+    --magnet M23072801 --current M23072801=31000 \
+    --model thmag_hcurl --cooling gradHZ --wd $WD/M23072801
+
+# The whole assembly: one --current per magnet
+python setup_simulation.py --db $DB --assembly M9_A230801_00 \
+    --current M23072801=31000 --current M9Bitters-newBi08=33000 \
+    --model thmag_hcurl --cooling gradHZ --wd $WD/M9_A230801_00
+```
+
+Written in `--wd` (refused if not empty, unless `--force`):
+
+- `<target>-<method>-<model>-<geom>-sim.cfg` / `.json`, the generic material
+  jsons, and the csv files written by the setup;
+- `geometries/*.yaml`, the geometry the CAD step reads;
+- `setup.json`: a new UUID, the simulation descriptors (`kind`,
+  `target_type`, `target_name`, `method`, `model`, `geometry`, `cooling`,
+  `static`, `non_linear`, `currents` [A]), the provenance (DB path and
+  sha256, python_magnetsetup and python_magnetgeo versions) and the
+  geometry fingerprint (sha256 of `geometries/*.yaml`).
+
+Other options: `--method` (default `cfpdes`), `--geom` (default `Axi`),
+`--cooling` (default `mean`), `--transient`, `--nonlinear`, `--debug`.
+
+- Run it on a copy or a snapshot of the database. The setup directory holds
+  geometry and material values: it is as confidential as the database.
+- CAD (Salome), mesh (gmsh) and solve (Feel++) are separate steps.
+- Needs python_magnetsetup `f1cf3d7` or later (json templates and multi-part
+  Bitters fixed). M8 assemblies (supra magnet) fail until the Supra branch of
+  python_magnetsetup is fixed (ROADMAP E1).
 
 ---
 

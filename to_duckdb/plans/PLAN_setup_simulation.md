@@ -1,8 +1,9 @@
 # Plan: `setup_simulation.py`, a Feel++ setup from DuckDB
 
-**Status (2026-11-25): 📝 drafted, awaiting approval; revised the same day
-for option F** (see [Relation to option F](#relation-to-option-f)).
-Nothing is implemented.
+**Status (2026-11-25): ✅ done, not committed** (revised the same day for
+option F, see [Relation to option F](#relation-to-option-f)). Open questions
+1–5 take their defaults: no CAD/mesh commands, explicit currents,
+`to_duckdb/`, independent of `export_inductance_matrix.py`, no DB results.
 
 Requested by: magnet-scipy
 [prompts/numerical_commissioning_M23072801.md](../../../magnet-scipy/prompts/numerical_commissioning_M23072801.md),
@@ -149,9 +150,11 @@ there). This script fits that design as follows.
    → verify: they fail (module missing).
 4. `setup_simulation.py` → verify: the step-3 tests pass; the full
    `to_duckdb` suite passes; `ruff check` is clean on the new files.
-5. Integration test: the real `setup()` on the `test-magnetdb.duckdb` hoop
-   fixture (`thelec`, Axi, static) → verify: the cfg and json exist, and the
-   json `Parameters` contain `U_*`, `N_*` and `Area_*` for every part.
+5. Integration test: the real `setup()` on the **latest** DuckDB file (the
+   newest `to_duckdb/magnetdb-*.duckdb`, skipped if none; user, 2026-11-25:
+   not `test-magnetdb.duckdb`), `M9_A230801_00`, `--magnet M23072801`
+   (`thelec`, Axi, static) → verify: the cfg and json exist, and the json
+   `Parameters` contain `U_*`, `N_*` and `Area_*` for every part.
 6. Real run, read-only, into scratch directories:
    - `M9_A230801_00`, `--magnet M23072801 --current M23072801=31000`;
    - `--magnet M9Bitters-newBi08 --current M9Bitters-newBi08=33000`;
@@ -187,4 +190,101 @@ of this plan.
 
 ## Results
 
-(none yet)
+2. (2026-11-25) Baseline, `to_duckdb`: **817 passed, 4 skipped, 2 failed**,
+   with `tests/test_check_overview_records.py` and `tests/test_tags.py`
+   ignored. Those two modules and the 2 failures
+   (`test_schema.py::test_overview_records_check_columns_exist[checks|checked_at]`)
+   are the tests-first part of the paused
+   [PLAN_overview_record_checks.md](../../plans/PLAN_overview_record_checks.md)
+   (code not written yet), not this plan.
+3. (2026-11-25) `tests/test_setup_simulation.py`, 27 tests (fake stress_map
+   chain, fake YAML order, fake `setup()`): collection failed before the
+   module existed.
+4. (2026-11-25) `setup_simulation.py` written: 27/27 pass; full suite
+   **844 passed, 4 skipped**, the same 2 known failures; `ruff check` clean
+   on both files.
+5. (2026-11-25, **stopped**) The real `setup()` fails, before any json is
+   written:
+   - On `magnetdb-2026-11-16-m8hybrid.duckdb` (latest), `M23072801`,
+     `thelec`: the geometry loads (14 helices, 13 rings) and the cfg is
+     written, then `create_json` fails rendering
+     `templates/cfpdes/Axi/thelec/json.mustache`: chevron
+     `Unexpected EOF: the tag "T_magnet" was never closed (line 139)`.
+   - **Cause:** python_magnetsetup `f8d15d4` (2026-02-23, "remove stats for
+     T over whole comput domain") deleted the `Stat_Temperature` block
+     together with the closing `{{/T_magnet}}` in 9 json templates
+     (`thelec`, `thmag`, `thmag_hcurl`, `thmagel`, `thmagel_hcurl`,
+     `thmqs`, …). Every setup with one of these models fails today, through
+     python_magnetdb as well. Restoring only `{{/T_magnet}}` is not enough:
+     the item before it ends with `}` and no comma, so JSON with more than one
+     magnet (assembly setups) would still be invalid.
+   - (First attempt, on `test-magnetdb.duckdb`, 2026-09-07: failed earlier,
+     `IndexError` in python_magnetgeo `Insert.get_params` (`Zr[i]`), which
+     needs Nhelices − 1 rings. Not investigated further: that DB predates the
+     rings added in A15 (2026-10-29) [unverified], and tests use the latest
+     DB.)
+   - Steps 5–7 wait for a python_magnetsetup template fix, a separate plan
+     (with E1 and E6 on the same branch, as in the ROADMAP order). The
+     integration test is not written yet, so the suite does not fail on it.
+   - **Unblocked (2026-11-25)** by
+     [python_magnetsetup/PLAN_fix_json_templates.md](../../python_magnetsetup/PLAN_fix_json_templates.md)
+     (9 templates and the assembly branch of `setup()`, not committed yet):
+     on the latest DB the magnet setup (`thelec`) and the assembly setup
+     (`thmag_hcurl`, `gradHZ`) both succeed with this script. Steps 5–7 can
+     resume.
+   - (2026-11-25, resumed, python_magnetsetup `e78a6c3`, superproject
+     `77a9cdf`) Integration test `test_real_insert_setup_on_latest_db` added:
+     the real `setup()` on the newest `magnetdb-*.duckdb`
+     (`magnetdb-2026-11-16-m8hybrid.duckdb`), `--magnet M23072801`,
+     `thelec`; every helix `H1`…`H14` has `Area_H<i>`, `U_H<i>_*` and
+     `N_H<i>_*`. **28 passed**, `ruff` clean.
+6. (2026-11-25, **stopped**) The three real setups on the latest DB, all
+   `thmag_hcurl`, `gradHZ`, exit 0 and write a json that parses, with no
+   `Stat_Temperature`:
+
+   | Setup | `U_` / `N_` / `Area_` | `Stat_T_` |
+   |---|---|---|
+   | `--magnet M23072801` (31 kA) | 280 / 280 / 14 (`H1`…`H14`, 20 sections each) | `Stat_T_` (empty name, `setup()` line 524) |
+   | `--magnet M9Bitters-newBi08` (33 kA) | 3 / 3 / 0, **`M9Be` only** | `Stat_T_` |
+   | assembly, both | 283 / 283 / 14 | `Stat_T_M23072801`, `Stat_T_M9Bitters-newBi08` |
+
+   - **The inner Bitter part `M9_newBi08` is missing** from both setups that
+     contain the Bitters: Parameters (only `U_M9Be_B1..3`, `N_M9Be_*`,
+     `M9Be` slits) and Materials (only `Conductor_M9Be`, `Insulator_M9Be`),
+     although the log shows `Bitter_setup` processing `M9_newBi08`.
+   - **Cause (python_magnetsetup `setup.py` `magnet_setup()`, Bitters and
+     Supras branches):** the loop over the parts assigns
+     `(mdict, mmat, mmodels, mpost) = _setup(...)` on each part, and `_setup()`
+     starts from empty dicts and returns only that part. Each part replaces
+     the previous one; only the last survives. Every Bitters magnet with
+     more than one part is set up incomplete, through python_magnetdb too.
+     Inductance (L_B, M_HB) and Bitters resistance from these setups would be
+     wrong.
+   - The insert setup is complete. Step 7 (README) waits; the fix is a
+     python_magnetsetup plan.
+   - **Fixed (2026-11-25)** by
+     [python_magnetsetup/PLAN_fix_multipart_magnets.md](../../python_magnetsetup/PLAN_fix_multipart_magnets.md)
+     (python_magnetsetup `f1cf3d7`, superproject pin `bc5f947`). Rerun on the
+     latest DB, `thmag_hcurl`, `gradHZ`, all exit 0, json parses, no
+     `Stat_Temperature`:
+
+     | Setup | `U_` / `N_` / `Area_` | Conductors | `Stat_T_` |
+     |---|---|---|---|
+     | `--magnet M23072801` (31 kA) | 280 / 280 / 14 | `H1`…`H14` | `Stat_T_` (empty name, `setup()` line 524) |
+     | `--magnet M9Bitters-newBi08` (33 kA) | 6 / 6 / 0 | `M9_newBi08`, `M9Be` | `Stat_T_` |
+     | assembly, both | 286 / 286 / 14 | 14 insert + both Bitters | `Stat_T_M23072801`, `Stat_T_M9Bitters-newBi08` |
+
+   - Integration test `test_real_bitters_setup_keeps_every_part` added:
+     `--magnet M9Bitters-newBi08` on the latest DB; every Bitter part of the
+     DB config has `Conductor_<part>`, `U_<part>_*` and `N_<part>_*`.
+     `tests/test_setup_simulation.py` **29 passed**; full `to_duckdb` suite
+     **846 passed, 4 skipped**, the same 2 known failures (paused overview
+     checks); `ruff` clean.
+7. (2026-11-25) README section "Feel++ setup from DuckDB —
+   `setup_simulation.py`" (and one line in the directory layout). Both
+   documented commands run as written on the latest DB (exit 0, files as
+   listed); the documented options match `--help`.
+
+**Status: ✅ done, not committed.** The setups are the inputs of the
+magnet-scipy numerical commissioning (its "Order of work" steps 2–4: CAD,
+mesh, L_H, L_B, M_HB), which needs the CAD / mesh toolchain.
