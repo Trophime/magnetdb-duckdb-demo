@@ -383,6 +383,67 @@ python to_duckdb/demos/magnet_first_signatures.py --db to_duckdb/magnetdb-2026-1
 
 ---
 
+## find_experiments_by_signature.py
+
+Finds experiments whose `Field` signature matches a pattern and whose
+highest plateau is in a given field range and lasts long enough. An
+experiment matches when:
+
+1. if `--pattern` is given, its compacted signature (`U`/`P`/`D` string,
+   same computation as `magnet_first_signatures.py`) **fully** matches that
+   regular expression; without `--pattern` any signature is accepted;
+2. its *max plateau*, the `P` regime with the highest mean field, has a
+   mean field in `[--bmin, --bmax]` [T];
+3. that plateau lasts at least `--min-plateau` [s].
+
+Pattern examples: `P?(UP)+(DP)*DP?` is a staircase (`UPUP…UP` up to the
+top plateau, then `DPD…PD` back down, with optional zero-field plateaux at
+both ends); `P?UPDP?` is a single plateau; `P?(UP)+D.*` is a staircase up,
+anything after.
+
+No signature is stored in the DB (`overview_records.signatures` is empty),
+so the pupitre file of each candidate is loaded, which takes about 0.7 s per
+file on the records mount. To keep that small, a SQL pre-filter on
+`exp_run_scalars` loads only experiments with `field_max` in
+`[bmin, bmax + overshoot]` and `duration_field_on_s >= min_plateau`; narrow
+it further with `--housing`, `--assembly`, `--from`/`--to` and `--limit`.
+
+As in `magnet_first_signatures.py`, `--threshold` is a ramp rate at 1 Hz:
+ramps slower than it are seen as plateaux, so a slow staircase may come out
+as a single `P` and miss the pattern. Lower it for such files. Read-only:
+prints a Markdown table and a count summary (candidates, loaded, pattern
+matches, final matches); unreadable files are reported on stderr and
+skipped.
+
+```bash
+python to_duckdb/demos/find_experiments_by_signature.py \
+    --db to_duckdb/magnetdb-2026-11-16.duckdb --housing M9 \
+    --pattern 'P?(UP)+(DP)*DP?' --bmin 30 --bmax 32 --min-plateau 300
+python to_duckdb/demos/find_experiments_by_signature.py \
+    --db to_duckdb/magnetdb-2026-11-16.duckdb --housing M9 \
+    --bmin 30 --bmax 32 --min-plateau 300
+python to_duckdb/demos/find_experiments_by_signature.py \
+    --db to_duckdb/magnetdb-2026-11-16.duckdb --pattern 'P?UPDP?' \
+    --bmin 35 --bmax 37 --from 2024-01-01 --to 2025-01-01
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--db` | `test-magnetdb.duckdb` | Target DuckDB file |
+| `--records-base` | parent of python_magnetrun's `PUPITRE_DATA_DIR` | Root of the records tree; pupitre files in `<records-base>/srv-data-install/<housing>/` |
+| `--pattern` | none (any signature) | Regex the whole compacted signature must match, e.g. `P?(UP)+(DP)*DP?` for a staircase |
+| `--bmin` | *(required)* | [T] lower bound of the max-plateau mean field |
+| `--bmax` | *(required)* | [T] upper bound of the max-plateau mean field |
+| `--min-plateau` | `60` | [s] minimum duration of the max plateau |
+| `--overshoot` | `0.5` | [T] `field_max` may exceed `--bmax` by this in the SQL pre-filter |
+| `--threshold` | `0.1` | [T per sample] signature threshold (T/s at 1 Hz) |
+| `--housing` | all | Only these housings |
+| `--assembly` | all | Only these assemblies (`assemblies.name`) |
+| `--from` / `--to` | none | Only experiments with a name timestamp on/after `--from` and before `--to` |
+| `--limit` | none | At most this many candidates are loaded |
+
+---
+
 ## Building `Data/unmatched_users.csv`
 
 This file is a report of `EXPERIENCES_LOG` acronyms that `users_table_demo.py`
