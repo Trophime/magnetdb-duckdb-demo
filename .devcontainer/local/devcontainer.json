@@ -6,7 +6,7 @@
     "target": "with-magnettools",
     "args": {
       "BASE_IMAGE": "debian:trixie",
-      "MAGNETTOOLS_IMAGE": "magnettools-db:trixie-1.2.6"
+      "MAGNETTOOLS_IMAGE": "registry.lncmig.local/lncmi/magnettools-db:1.2.6-5-amd64"
     }
   },
 
